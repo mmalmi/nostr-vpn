@@ -1,5 +1,9 @@
 use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::Command as ProcessCommand;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -7,6 +11,9 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use boringtun::device::{DeviceConfig, DeviceHandle};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
     AppConfig, derive_mesh_tunnel_ip, maybe_autoconfigure_node, normalize_nostr_pubkey,
@@ -24,6 +31,115 @@ const LAN_DISCOVERY_PORT: u16 = 38911;
 const LAN_DISCOVERY_STALE_AFTER_SECS: u64 = 16;
 const TRAY_OPEN_MENU_ID: &str = "tray_open_main";
 const TRAY_QUIT_MENU_ID: &str = "tray_quit";
+const TUNNEL_IFACE: &str = "utun100";
+
+#[derive(Debug, Clone)]
+struct WireGuardPeer {
+    pubkey_hex: String,
+    endpoint: String,
+    allowed_ip: String,
+}
+
+struct TunnelRuntime {
+    iface: String,
+    handle: Option<DeviceHandle>,
+    uapi_socket_path: Option<String>,
+    last_fingerprint: Option<String>,
+}
+
+impl TunnelRuntime {
+    fn new(iface: impl Into<String>) -> Self {
+        Self {
+            iface: iface.into(),
+            handle: None,
+            uapi_socket_path: None,
+            last_fingerprint: None,
+        }
+    }
+
+    fn ensure_started(&mut self) -> Result<()> {
+        #[cfg(not(unix))]
+        {
+            return Err(anyhow!(
+                "boringtun runtime in GUI is currently supported on unix targets only"
+            ));
+        }
+
+        #[cfg(unix)]
+        {
+            if self.handle.is_some() {
+                return Ok(());
+            }
+
+            let handle = DeviceHandle::new(
+                &self.iface,
+                DeviceConfig {
+                    n_threads: 2,
+                    use_connected_socket: true,
+                    #[cfg(target_os = "linux")]
+                    use_multi_queue: false,
+                    #[cfg(target_os = "linux")]
+                    uapi_fd: -1,
+                },
+            )
+            .with_context(|| format!("failed to create boringtun interface {}", self.iface))?;
+
+            let socket = uapi_socket_path(&self.iface);
+            wait_for_socket(&socket)?;
+
+            self.handle = Some(handle);
+            self.uapi_socket_path = Some(socket);
+            Ok(())
+        }
+    }
+
+    fn apply(
+        &mut self,
+        config: &AppConfig,
+        peer_announcements: &HashMap<String, PeerAnnouncement>,
+    ) -> Result<()> {
+        let own_pubkey = config.own_nostr_pubkey_hex().ok();
+        let mut peers = config
+            .participants
+            .iter()
+            .filter(|participant| Some(participant.as_str()) != own_pubkey.as_deref())
+            .filter_map(|participant| peer_announcements.get(participant))
+            .map(peer_from_announcement)
+            .collect::<Result<Vec<_>>>()?;
+        peers.sort_by(|left, right| left.pubkey_hex.cmp(&right.pubkey_hex));
+
+        let local_address = local_tunnel_address_for_interface(&config.node.tunnel_ip);
+        let fingerprint = tunnel_fingerprint(
+            &self.iface,
+            &config.node.private_key,
+            config.node.listen_port,
+            &local_address,
+            &peers,
+        );
+        if self.last_fingerprint.as_deref() == Some(fingerprint.as_str()) && self.handle.is_some() {
+            return Ok(());
+        }
+
+        self.ensure_started()?;
+        let socket = self
+            .uapi_socket_path
+            .as_deref()
+            .ok_or_else(|| anyhow!("missing uapi socket path"))?;
+
+        apply_base_tunnel_config(socket, config.node.listen_port, &config.node.private_key)?;
+        apply_local_interface_network(&self.iface, &local_address)?;
+        apply_peer_set(socket, &peers)?;
+
+        self.last_fingerprint = Some(fingerprint);
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.handle = None;
+        self.uapi_socket_path = None;
+        self.last_fingerprint = None;
+    }
+}
 
 #[derive(Debug, Clone)]
 struct RelayCheckResult {
@@ -193,6 +309,7 @@ struct NvpnBackend {
 
     peer_status: HashMap<String, PeerLinkStatus>,
     peer_signal_seen_at: HashMap<String, SystemTime>,
+    peer_announcements: HashMap<String, PeerAnnouncement>,
     peer_check_rx: Option<mpsc::Receiver<Vec<PeerCheckResult>>>,
     peer_check_inflight: bool,
     next_peer_check_at: Option<Instant>,
@@ -204,6 +321,8 @@ struct NvpnBackend {
     lan_discovery_rx: Option<mpsc::Receiver<LanDiscoverySignal>>,
     lan_discovery_stop: Option<Arc<AtomicBool>>,
     lan_peers: HashMap<String, LanPeerRecord>,
+    tunnel_runtime: TunnelRuntime,
+    tunnel_error: Option<String>,
 }
 
 impl NvpnBackend {
@@ -251,6 +370,7 @@ impl NvpnBackend {
             next_relay_retry_at: None,
             peer_status,
             peer_signal_seen_at: HashMap::new(),
+            peer_announcements: HashMap::new(),
             peer_check_rx: None,
             peer_check_inflight: false,
             next_peer_check_at: None,
@@ -260,6 +380,8 @@ impl NvpnBackend {
             lan_discovery_rx: None,
             lan_discovery_stop: None,
             lan_peers: HashMap::new(),
+            tunnel_runtime: TunnelRuntime::new(TUNNEL_IFACE),
+            tunnel_error: None,
         };
 
         backend.ensure_relay_status_entries();
@@ -274,6 +396,7 @@ impl NvpnBackend {
 
     fn connect_session(&mut self) -> Result<()> {
         if self.session_active {
+            self.reconcile_tunnel_runtime();
             return Ok(());
         }
 
@@ -284,7 +407,10 @@ impl NvpnBackend {
             return Err(error);
         }
 
-        self.session_status = "Connected".to_string();
+        self.reconcile_tunnel_runtime();
+        if self.tunnel_error.is_none() {
+            self.session_status = "Connected".to_string();
+        }
         Ok(())
     }
 
@@ -344,8 +470,13 @@ impl NvpnBackend {
     }
 
     fn disconnect_session(&mut self) {
+        if self.relay_connected {
+            let _ = self.publish_disconnect();
+        }
         self.session_active = false;
         self.disconnect_relays();
+        self.peer_announcements.clear();
+        self.tunnel_runtime.stop();
 
         self.relay_check_inflight = false;
         self.relay_check_rx = None;
@@ -355,6 +486,11 @@ impl NvpnBackend {
         self.peer_check_inflight = false;
         self.peer_check_rx = None;
         self.next_peer_check_at = None;
+        for status in self.peer_status.values_mut() {
+            status.checking = false;
+            status.reachable = None;
+            status.latency_ms = None;
+        }
 
         self.session_status = "Disconnected".to_string();
     }
@@ -383,6 +519,17 @@ impl NvpnBackend {
 
         self.runtime
             .block_on(client.publish(SignalPayload::Announce(announcement)))
+    }
+
+    fn publish_disconnect(&self) -> Result<()> {
+        let Some(client) = self.client.clone() else {
+            return Ok(());
+        };
+
+        self.runtime
+            .block_on(client.publish(SignalPayload::Disconnect {
+                node_id: self.config.node.id.clone(),
+            }))
     }
 
     fn start_relay_check(&mut self, timeout_secs: u64) {
@@ -627,17 +774,22 @@ impl NvpnBackend {
     }
 
     fn handle_signals(&mut self) {
+        let mut changed = false;
         if let Some(rx) = &self.signal_rx {
             while let Ok(message) = rx.try_recv() {
                 self.peer_signal_seen_at
                     .insert(message.sender_pubkey.clone(), SystemTime::now());
 
                 match message.payload {
-                    SignalPayload::Announce(_) => {
+                    SignalPayload::Announce(announcement) => {
+                        self.peer_announcements
+                            .insert(message.sender_pubkey.clone(), announcement);
                         let state = self.peer_status.entry(message.sender_pubkey).or_default();
                         state.error = None;
+                        changed = true;
                     }
                     SignalPayload::Disconnect { .. } => {
+                        self.peer_announcements.remove(&message.sender_pubkey);
                         self.peer_status.insert(
                             message.sender_pubkey,
                             PeerLinkStatus {
@@ -648,9 +800,14 @@ impl NvpnBackend {
                                 checked_at: Some(SystemTime::now()),
                             },
                         );
+                        changed = true;
                     }
                 }
             }
+        }
+
+        if changed {
+            self.reconcile_tunnel_runtime();
         }
     }
 
@@ -685,6 +842,45 @@ impl NvpnBackend {
             if let Err(error) = self.connect_relays() {
                 self.session_status = format!("Relay reconnect failed: {error}");
                 self.next_relay_retry_at = Some(now + Duration::from_secs(5));
+            }
+        }
+    }
+
+    fn reconcile_tunnel_runtime(&mut self) {
+        if !self.session_active {
+            self.tunnel_runtime.stop();
+            self.tunnel_error = None;
+            return;
+        }
+
+        if self.config.participants.is_empty() {
+            self.tunnel_runtime.stop();
+            self.tunnel_error = None;
+            return;
+        }
+
+        match self
+            .tunnel_runtime
+            .apply(&self.config, &self.peer_announcements)
+        {
+            Ok(()) => {
+                if self.tunnel_error.is_some()
+                    && self.session_status.starts_with("Tunnel setup failed:")
+                {
+                    self.session_status = if self.relay_connected {
+                        "Connected".to_string()
+                    } else {
+                        "Connected (relays paused)".to_string()
+                    };
+                }
+                self.tunnel_error = None;
+            }
+            Err(error) => {
+                let message = error.to_string();
+                if self.tunnel_error.as_deref() != Some(message.as_str()) {
+                    self.session_status = format!("Tunnel setup failed: {message}");
+                }
+                self.tunnel_error = Some(message);
             }
         }
     }
@@ -726,6 +922,7 @@ impl NvpnBackend {
             self.connect_session()?;
         }
         self.maybe_refresh_lan_discovery();
+        self.reconcile_tunnel_runtime();
 
         Ok(())
     }
@@ -743,12 +940,14 @@ impl NvpnBackend {
 
         self.peer_status.remove(&normalized);
         self.peer_signal_seen_at.remove(&normalized);
+        self.peer_announcements.remove(&normalized);
 
         maybe_autoconfigure_node(&mut self.config);
         self.schedule_autosave();
         self.ensure_peer_status_entries();
         self.restart_relay_if_needed()?;
         self.maybe_refresh_lan_discovery();
+        self.reconcile_tunnel_runtime();
 
         Ok(())
     }
@@ -857,6 +1056,10 @@ impl NvpnBackend {
             let _ = self.publish_announcement();
         }
 
+        if self.session_active {
+            self.reconcile_tunnel_runtime();
+        }
+
         Ok(())
     }
 
@@ -937,6 +1140,8 @@ impl NvpnBackend {
         self.peer_status
             .retain(|participant, _| configured.contains(participant));
         self.peer_signal_seen_at
+            .retain(|participant, _| configured.contains(participant));
+        self.peer_announcements
             .retain(|participant, _| configured.contains(participant));
 
         for participant in &self.config.participants {
@@ -1111,6 +1316,7 @@ impl NvpnBackend {
         self.handle_relay_checks();
         self.handle_peer_checks();
         self.handle_signals();
+        self.reconcile_tunnel_runtime();
 
         self.maybe_schedule_periodic_relay_check();
         self.maybe_schedule_periodic_peer_check();
@@ -1321,6 +1527,7 @@ impl Drop for NvpnBackend {
     fn drop(&mut self) {
         self.stop_lan_discovery();
         self.disconnect_relays();
+        self.tunnel_runtime.stop();
     }
 }
 
@@ -1389,6 +1596,229 @@ fn parse_ping_latency_ms(output: &str) -> Option<u128> {
     let cleaned = raw.trim_end_matches("ms").trim_end_matches("msec");
     let parsed = cleaned.parse::<f64>().ok()?;
     Some(parsed.round() as u128)
+}
+
+fn peer_from_announcement(announcement: &PeerAnnouncement) -> Result<WireGuardPeer> {
+    let endpoint: SocketAddr = announcement
+        .endpoint
+        .parse()
+        .with_context(|| format!("invalid peer endpoint {}", announcement.endpoint))?;
+
+    Ok(WireGuardPeer {
+        pubkey_hex: key_b64_to_hex(&announcement.public_key)?,
+        endpoint: endpoint.to_string(),
+        allowed_ip: normalize_cidr32(&announcement.tunnel_ip),
+    })
+}
+
+fn local_tunnel_address_for_interface(tunnel_ip: &str) -> String {
+    format!("{}/24", strip_cidr(tunnel_ip))
+}
+
+fn normalize_cidr32(ip_or_cidr: &str) -> String {
+    format!("{}/32", strip_cidr(ip_or_cidr))
+}
+
+fn strip_cidr(value: &str) -> &str {
+    value.split('/').next().unwrap_or(value)
+}
+
+fn tunnel_fingerprint(
+    iface: &str,
+    private_key: &str,
+    listen_port: u16,
+    local_address: &str,
+    peers: &[WireGuardPeer],
+) -> String {
+    let mut peer_entries = peers
+        .iter()
+        .map(|peer| format!("{}|{}|{}", peer.pubkey_hex, peer.endpoint, peer.allowed_ip))
+        .collect::<Vec<_>>();
+    peer_entries.sort();
+    format!(
+        "{iface}|{private_key}|{listen_port}|{local_address}|{}",
+        peer_entries.join(";")
+    )
+}
+
+fn apply_base_tunnel_config(socket: &str, listen_port: u16, private_key_b64: &str) -> Result<()> {
+    let private_key_hex = key_b64_to_hex(private_key_b64)?;
+    wg_set(
+        socket,
+        &format!("private_key={private_key_hex}\nlisten_port={listen_port}"),
+    )
+}
+
+fn apply_peer_set(socket: &str, peers: &[WireGuardPeer]) -> Result<()> {
+    wg_set(socket, "replace_peers=true")?;
+    for peer in peers {
+        wg_set(
+            socket,
+            &format!(
+                "public_key={}\nendpoint={}\nreplace_allowed_ips=true\nallowed_ip={}\npersistent_keepalive_interval=5",
+                peer.pubkey_hex, peer.endpoint, peer.allowed_ip
+            ),
+        )?;
+    }
+    Ok(())
+}
+
+fn apply_local_interface_network(iface: &str, address: &str) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("address")
+                .arg("replace")
+                .arg(address)
+                .arg("dev")
+                .arg(iface),
+        )?;
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("link")
+                .arg("set")
+                .arg("mtu")
+                .arg("1380")
+                .arg("up")
+                .arg("dev")
+                .arg(iface),
+        )?;
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("route")
+                .arg("replace")
+                .arg("10.44.0.0/24")
+                .arg("dev")
+                .arg(iface),
+        )?;
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let ip = strip_cidr(address).to_string();
+        run_checked(
+            ProcessCommand::new("ifconfig")
+                .arg(iface)
+                .arg("inet")
+                .arg(&ip)
+                .arg(&ip)
+                .arg("netmask")
+                .arg("255.255.255.0")
+                .arg("up"),
+        )?;
+        run_checked(
+            ProcessCommand::new("route")
+                .arg("-n")
+                .arg("add")
+                .arg("-net")
+                .arg("10.44.0.0/24")
+                .arg("-interface")
+                .arg(iface),
+        )
+        .or_else(|_| {
+            run_checked(
+                ProcessCommand::new("route")
+                    .arg("-n")
+                    .arg("change")
+                    .arg("-net")
+                    .arg("10.44.0.0/24")
+                    .arg("-interface")
+                    .arg(iface),
+            )
+        })?;
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err(anyhow!(
+        "local interface configuration not implemented for this platform"
+    ))
+}
+
+fn key_b64_to_hex(value: &str) -> Result<String> {
+    let bytes = STANDARD
+        .decode(value)
+        .with_context(|| "invalid WireGuard key encoding (base64 expected)")?;
+    if bytes.len() != 32 {
+        return Err(anyhow!("expected 32-byte WireGuard key material"));
+    }
+    Ok(encode_hex_lower(&bytes))
+}
+
+fn encode_hex_lower(bytes: &[u8]) -> String {
+    let mut result = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut result, "{byte:02x}");
+    }
+    result
+}
+
+fn uapi_socket_path(iface: &str) -> String {
+    format!("/var/run/wireguard/{iface}.sock")
+}
+
+fn wait_for_socket(path: &str) -> Result<()> {
+    for _ in 0..50 {
+        if fs::metadata(path).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Err(anyhow!("timed out waiting for uapi socket at {path}"))
+}
+
+fn wg_set(socket_path: &str, body: &str) -> Result<()> {
+    #[cfg(not(unix))]
+    {
+        let _ = socket_path;
+        let _ = body;
+        return Err(anyhow!(
+            "wireguard uapi writes are supported on unix targets only"
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let mut socket =
+            UnixStream::connect(socket_path).with_context(|| format!("connect {socket_path}"))?;
+        write!(socket, "set=1\n{body}\n\n").context("failed to send uapi set")?;
+        socket
+            .shutdown(std::net::Shutdown::Write)
+            .context("failed to close uapi write half")?;
+
+        let mut response = String::new();
+        socket
+            .read_to_string(&mut response)
+            .context("failed to read uapi response")?;
+
+        if !response.contains("errno=0") {
+            return Err(anyhow!("uapi set failed: {}", response.trim()));
+        }
+
+        Ok(())
+    }
+}
+
+fn run_checked(command: &mut ProcessCommand) -> Result<()> {
+    let display = format!("{command:?}");
+    let output = command
+        .output()
+        .with_context(|| format!("failed to execute {display}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(anyhow!(
+            "command failed: {display}\nstdout: {}\nstderr: {}",
+            stdout.trim(),
+            stderr.trim()
+        ));
+    }
+
+    Ok(())
 }
 
 fn shorten_middle(value: &str, head: usize, tail: usize) -> String {
@@ -1732,7 +2162,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        let _ = show_main_window(&tray.app_handle());
+                        let _ = show_main_window(tray.app_handle());
                     }
                 })
                 .show_menu_on_left_click(false);
@@ -1767,7 +2197,7 @@ pub fn run() {
             }
 
             if let WindowEvent::CloseRequested { api, .. } = event {
-                if should_close_to_tray(&window.app_handle()) {
+                if should_close_to_tray(window.app_handle()) {
                     api.prevent_close();
                     let _ = window.hide();
                 } else {
@@ -1804,11 +2234,16 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{connected_configured_peer_count, expected_peer_count, is_mesh_complete};
+    use super::{
+        connected_configured_peer_count, expected_peer_count, is_mesh_complete,
+        local_tunnel_address_for_interface, normalize_cidr32, peer_from_announcement,
+    };
     use std::collections::HashMap;
 
     use crate::PeerLinkStatus;
     use nostr_vpn_core::config::AppConfig;
+    use nostr_vpn_core::control::PeerAnnouncement;
+    use nostr_vpn_core::crypto::generate_keypair;
 
     #[test]
     fn expected_peer_count_excludes_own_participant_when_present() {
@@ -1847,5 +2282,32 @@ mod tests {
         assert!(!is_mesh_complete(0, 0));
         assert!(!is_mesh_complete(1, 2));
         assert!(is_mesh_complete(2, 2));
+    }
+
+    #[test]
+    fn tunnel_ip_helpers_expand_to_expected_ranges() {
+        assert_eq!(normalize_cidr32("10.44.0.12"), "10.44.0.12/32");
+        assert_eq!(normalize_cidr32("10.44.0.12/24"), "10.44.0.12/32");
+        assert_eq!(
+            local_tunnel_address_for_interface("10.44.0.12/32"),
+            "10.44.0.12/24"
+        );
+    }
+
+    #[test]
+    fn peer_from_announcement_converts_b64_public_key_for_uapi() {
+        let keypair = generate_keypair();
+        let announcement = PeerAnnouncement {
+            node_id: "node-a".to_string(),
+            public_key: keypair.public_key,
+            endpoint: "203.0.113.7:51820".to_string(),
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            timestamp: 1,
+        };
+
+        let peer = peer_from_announcement(&announcement).expect("peer conversion");
+        assert_eq!(peer.endpoint, "203.0.113.7:51820");
+        assert_eq!(peer.allowed_ip, "10.44.0.2/32");
+        assert_eq!(peer.pubkey_hex.len(), 64);
     }
 }

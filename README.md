@@ -15,6 +15,7 @@
 - Automatic key generation for both WireGuard and Nostr identities
 - Tauri + Svelte desktop GUI (single-pane settings UX)
 - LAN multicast peer discovery helper (active when no participants are configured)
+- GUI-managed boringtun tunnel orchestration on unix targets (applies peers from private Nostr announcements)
 - Docker e2e that validates signaling + data-plane ping across 2 containers
 - UDP NAT endpoint discovery + hole-punch helpers (reflector-based)
 
@@ -89,6 +90,9 @@ nvpn render-wg \
 pnpm --dir crates/nostr-vpn-gui install
 pnpm --dir crates/nostr-vpn-gui tauri:dev
 ```
+
+Note: bringing the tunnel interface up requires OS network privileges.
+On Linux/macOS, run the app with permissions that allow interface/routing updates.
 
 ### 8. Run Tauri-driver UI smoke test (Docker)
 

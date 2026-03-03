@@ -2610,6 +2610,8 @@ name = "nostr-vpn-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "boringtun",
  "dirs 6.0.0",
  "nostr-sdk",
  "nostr-vpn-core",
