@@ -24,13 +24,13 @@ cleanup
 sleep 3
 
 "${COMPOSE[@]}" exec -T node-a sh -lc \
-  "nostr-vpn listen --network-id '$NETWORK_ID' --relay '$RELAY_URL' --limit 1 > /tmp/listen.log 2>&1 &"
+  "nvpn listen --network-id '$NETWORK_ID' --relay '$RELAY_URL' --limit 1 > /tmp/listen.log 2>&1 &"
 "${COMPOSE[@]}" exec -T node-b sh -lc \
-  "nostr-vpn listen --network-id '$NETWORK_ID' --relay '$RELAY_URL' --limit 1 > /tmp/listen.log 2>&1 &"
+  "nvpn listen --network-id '$NETWORK_ID' --relay '$RELAY_URL' --limit 1 > /tmp/listen.log 2>&1 &"
 
 sleep 2
 
-"${COMPOSE[@]}" exec -T node-a nostr-vpn announce \
+"${COMPOSE[@]}" exec -T node-a nvpn announce \
   --network-id "$NETWORK_ID" \
   --relay "$RELAY_URL" \
   --node-id alice-node \
@@ -38,7 +38,7 @@ sleep 2
   --tunnel-ip 10.44.0.1/32 \
   --public-key "$ALICE_WG_PUBLIC" >/dev/null
 
-"${COMPOSE[@]}" exec -T node-b nostr-vpn announce \
+"${COMPOSE[@]}" exec -T node-b nvpn announce \
   --network-id "$NETWORK_ID" \
   --relay "$RELAY_URL" \
   --node-id bob-node \
@@ -74,7 +74,7 @@ if ! grep -Eq '"node_id"\s*:\s*"alice-node"' <<<"$BOB_LISTEN_LOGS"; then
 fi
 
 "${COMPOSE[@]}" exec -T node-a sh -lc \
-  "nostr-vpn tunnel-up \
+  "nvpn tunnel-up \
      --iface utun100 \
      --private-key '$ALICE_WG_PRIVATE' \
      --listen-port 51820 \
@@ -85,7 +85,7 @@ fi
      --keepalive-secs 1 > /tmp/tunnel.log 2>&1 &"
 
 "${COMPOSE[@]}" exec -T node-b sh -lc \
-  "nostr-vpn tunnel-up \
+  "nvpn tunnel-up \
      --iface utun100 \
      --private-key '$BOB_WG_PRIVATE' \
      --listen-port 51820 \

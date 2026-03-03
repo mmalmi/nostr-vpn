@@ -1,0 +1,366 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g., v0.2.3)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            gui: false
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            cross: true
+            gui: false
+          - target: x86_64-apple-darwin
+            os: macos-14
+            cross: false
+            gui: true
+          - target: aarch64-apple-darwin
+            os: macos-14
+            cross: false
+            gui: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            cross: false
+            gui: true
+    env:
+      MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+      MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+      MACOS_NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
+      MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (cross)
+        if: matrix.cross
+        run: |
+          cross build --release --target ${{ matrix.target }} -p nostr-vpn-cli -p nostr-vpn-relay
+
+      - name: Build (native)
+        if: ${{ !matrix.cross }}
+        shell: bash
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p nostr-vpn-cli -p nostr-vpn-relay
+          if [ "${{ matrix.gui }}" = "true" ]; then
+            cargo build --release --target ${{ matrix.target }} -p nostr-vpn-gui
+          fi
+
+      - name: Validate macOS signing secret completeness (optional)
+        if: ${{ startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-') }}
+        shell: bash
+        run: |
+          if { [ -n "${MACOS_SIGNING_IDENTITY}" ] || [ -n "${MACOS_CERTIFICATE_P12}" ] || [ -n "${MACOS_CERTIFICATE_PASSWORD}" ]; } && \
+             { [ -z "${MACOS_SIGNING_IDENTITY}" ] || [ -z "${MACOS_CERTIFICATE_P12}" ] || [ -z "${MACOS_CERTIFICATE_PASSWORD}" ]; }; then
+            echo "macOS signing requires all three secrets or none."
+            echo "Required: MACOS_SIGNING_IDENTITY, MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD"
+            exit 1
+          fi
+
+      - name: Validate macOS notarization secret completeness (optional)
+        if: ${{ startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-') }}
+        shell: bash
+        run: |
+          if { [ -n "${MACOS_NOTARIZE_APPLE_ID}" ] || [ -n "${MACOS_NOTARIZE_APP_PASSWORD}" ] || [ -n "${MACOS_NOTARIZE_TEAM_ID}" ]; } && \
+             { [ -z "${MACOS_NOTARIZE_APPLE_ID}" ] || [ -z "${MACOS_NOTARIZE_APP_PASSWORD}" ] || [ -z "${MACOS_NOTARIZE_TEAM_ID}" ]; }; then
+            echo "macOS notarization requires all three secrets or none."
+            echo "Required: MACOS_NOTARIZE_APPLE_ID, MACOS_NOTARIZE_APP_PASSWORD, MACOS_NOTARIZE_TEAM_ID"
+            exit 1
+          fi
+
+      - name: Install macOS signing certificate (optional)
+        if: ${{ (startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-')) && env.MACOS_SIGNING_IDENTITY != '' && env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' }}
+        shell: bash
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/nvpn-signing.keychain-db"
+          KEYCHAIN_PASSWORD="${MACOS_KEYCHAIN_PASSWORD:-temp_signing_password}"
+          CERT_PATH="$RUNNER_TEMP/nvpn-signing-cert.p12"
+
+          printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 --decode > "${CERT_PATH}" 2>/dev/null || \
+            printf '%s' "${MACOS_CERTIFICATE_P12}" | base64 -D > "${CERT_PATH}"
+
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security set-keychain-settings -lut 21600 "${KEYCHAIN_PATH}"
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security import "${CERT_PATH}" -k "${KEYCHAIN_PATH}" -P "${MACOS_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN_PATH}"
+          security list-keychains -d user -s "${KEYCHAIN_PATH}"
+          security default-keychain -d user -s "${KEYCHAIN_PATH}"
+
+          if ! security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | grep -Fq "${MACOS_SIGNING_IDENTITY}"; then
+            echo "Expected signing identity not found: ${MACOS_SIGNING_IDENTITY}"
+            exit 1
+          fi
+
+      - name: Code sign macOS binaries (optional)
+        if: ${{ (startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-')) && env.MACOS_SIGNING_IDENTITY != '' && env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' }}
+        shell: bash
+        run: |
+          BIN_DIR="target/${{ matrix.target }}/release"
+          for bin in nvpn nostr-vpn-relay nostr-vpn-gui; do
+            if [ -f "${BIN_DIR}/${bin}" ]; then
+              codesign --force --options runtime --timestamp --sign "${MACOS_SIGNING_IDENTITY}" "${BIN_DIR}/${bin}"
+              codesign --verify --strict --verbose=2 "${BIN_DIR}/${bin}"
+            fi
+          done
+
+      - name: Prepare Unix package directory
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          BIN_DIR="target/${{ matrix.target }}/release"
+          mkdir -p dist/nvpn
+
+          cp "${BIN_DIR}/nvpn" dist/nvpn/
+          cp "${BIN_DIR}/nostr-vpn-relay" dist/nvpn/
+          if [ -f "${BIN_DIR}/nostr-vpn-gui" ]; then
+            cp "${BIN_DIR}/nostr-vpn-gui" dist/nvpn/
+          fi
+
+          cat > dist/nvpn/install.sh << 'INSTALL_SCRIPT'
+          #!/bin/bash
+          set -e
+
+          INSTALL_DIR="${1:-/usr/local/bin}"
+          BINARIES=(nvpn nostr-vpn-relay nostr-vpn-gui)
+          PRESENT=()
+
+          for bin in "${BINARIES[@]}"; do
+            if [ -f "${bin}" ]; then
+              PRESENT+=("${bin}")
+            fi
+          done
+
+          if [ "${#PRESENT[@]}" -eq 0 ]; then
+            echo "No binaries found in current directory"
+            exit 1
+          fi
+
+          echo "Installing ${PRESENT[*]} to ${INSTALL_DIR}"
+
+          if [ ! -w "${INSTALL_DIR}" ]; then
+            echo "Need sudo to install to ${INSTALL_DIR}"
+            sudo install -m 755 "${PRESENT[@]}" "${INSTALL_DIR}/"
+          else
+            install -m 755 "${PRESENT[@]}" "${INSTALL_DIR}/"
+          fi
+
+          echo "✓ Installed ${PRESENT[*]}"
+          echo "Verify with:"
+          echo "  nvpn --help"
+          INSTALL_SCRIPT
+          chmod +x dist/nvpn/install.sh
+
+          cat > dist/nvpn/README.txt << 'README_TXT'
+          nvpn - Nostr-signaled WireGuard control plane
+          ============================================
+
+          Binaries included:
+            nvpn             - CLI control plane (up/down/status/set/ping/netcheck/ip/whois)
+            nostr-vpn-relay  - local relay binary used for integration testing
+            nostr-vpn-gui    - desktop GUI (included on selected targets)
+
+          Quick install:
+            ./install.sh              # installs to /usr/local/bin (may need sudo)
+            ./install.sh ~/.local/bin # installs to custom directory
+
+          Quick start:
+            nvpn init --participant npub1...alice --participant npub1...bob
+            nvpn up
+            nvpn status
+
+          More info: https://github.com/${{ github.repository }}
+          README_TXT
+
+      - name: Notarize macOS package (optional)
+        if: ${{ (startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-')) && env.MACOS_SIGNING_IDENTITY != '' && env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' && env.MACOS_NOTARIZE_APPLE_ID != '' && env.MACOS_NOTARIZE_APP_PASSWORD != '' && env.MACOS_NOTARIZE_TEAM_ID != '' }}
+        shell: bash
+        run: |
+          NOTARIZE_ZIP="$RUNNER_TEMP/nvpn-notarize-${{ matrix.target }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist/nvpn "${NOTARIZE_ZIP}"
+
+          SUBMIT_OUTPUT="$(xcrun notarytool submit "${NOTARIZE_ZIP}" \
+            --apple-id "${MACOS_NOTARIZE_APPLE_ID}" \
+            --password "${MACOS_NOTARIZE_APP_PASSWORD}" \
+            --team-id "${MACOS_NOTARIZE_TEAM_ID}" \
+            --wait \
+            --output-format json)"
+
+          echo "${SUBMIT_OUTPUT}"
+
+          SUBMISSION_ID="$(printf '%s' "${SUBMIT_OUTPUT}" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+          SUBMISSION_STATUS="$(printf '%s' "${SUBMIT_OUTPUT}" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+
+          if [ "${SUBMISSION_STATUS}" != "Accepted" ]; then
+            echo "Notarization status was '${SUBMISSION_STATUS}' (expected 'Accepted')."
+            if [ -n "${SUBMISSION_ID}" ]; then
+              xcrun notarytool log "${SUBMISSION_ID}" \
+                --apple-id "${MACOS_NOTARIZE_APPLE_ID}" \
+                --password "${MACOS_NOTARIZE_APP_PASSWORD}" \
+                --team-id "${MACOS_NOTARIZE_TEAM_ID}" || true
+            fi
+            exit 1
+          fi
+
+      - name: Archive Unix artifacts
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd dist
+          tar -czvf nvpn-${{ matrix.target }}.tar.gz nvpn
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum nvpn-${{ matrix.target }}.tar.gz > nvpn-${{ matrix.target }}.sha256
+          else
+            shasum -a 256 nvpn-${{ matrix.target }}.tar.gz > nvpn-${{ matrix.target }}.sha256
+          fi
+          rm -rf nvpn
+
+      - name: Package Windows artifacts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/nvpn
+          Copy-Item target/${{ matrix.target }}/release/nvpn.exe dist/nvpn/
+          Copy-Item target/${{ matrix.target }}/release/nostr-vpn-relay.exe dist/nvpn/
+          if (Test-Path target/${{ matrix.target }}/release/nostr-vpn-gui.exe) {
+            Copy-Item target/${{ matrix.target }}/release/nostr-vpn-gui.exe dist/nvpn/
+          }
+
+          @"
+          nvpn - Nostr-signaled WireGuard control plane
+          ============================================
+
+          Binaries included:
+            nvpn.exe            - CLI control plane
+            nostr-vpn-relay.exe - local relay for integration tests
+            nostr-vpn-gui.exe   - desktop GUI (when included)
+
+          Install:
+            Copy binaries to a directory in PATH.
+
+          Verify:
+            nvpn --help
+          "@ | Out-File -FilePath dist/nvpn/README.txt -Encoding UTF8
+
+          Compress-Archive -Path dist/nvpn -DestinationPath dist/nvpn-${{ matrix.target }}.zip
+          $hash = (Get-FileHash dist/nvpn-${{ matrix.target }}.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  nvpn-${{ matrix.target }}.zip" | Out-File -FilePath dist/nvpn-${{ matrix.target }}.sha256 -Encoding ASCII
+          Remove-Item -Recurse dist/nvpn
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nvpn-${{ matrix.target }}
+          path: dist/nvpn-*
+          retention-days: 7
+
+      - name: Cleanup macOS signing keychain (optional)
+        if: ${{ always() && (startsWith(matrix.target, 'x86_64-apple-') || startsWith(matrix.target, 'aarch64-apple-')) && env.MACOS_SIGNING_IDENTITY != '' && env.MACOS_CERTIFICATE_P12 != '' && env.MACOS_CERTIFICATE_PASSWORD != '' }}
+        shell: bash
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/nvpn-signing.keychain-db"
+          security delete-keychain "${KEYCHAIN_PATH}" || true
+          rm -f "$RUNNER_TEMP/nvpn-signing-cert.p12" "$RUNNER_TEMP/nvpn-notarize-${{ matrix.target }}.zip"
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: ${{ github.event.inputs.tag || github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
+          files: artifacts/*
+          body: |
+            ## Installation
+
+            ### Linux / macOS (auto-detect)
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/apple-darwin/' | sed 's/linux/unknown-linux-musl/').tar.gz | tar -xz && cd nvpn && ./install.sh
+            ```
+
+            ### macOS (manual)
+            ```bash
+            # Apple Silicon
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz
+
+            # Intel Mac
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-apple-darwin.tar.gz
+
+            tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh
+            ```
+
+            ### Linux (manual)
+            ```bash
+            # x86_64
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz
+
+            # ARM64
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz
+
+            tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh
+            ```
+
+            ### Windows
+            Download `nvpn-x86_64-pc-windows-msvc.zip`, extract, and add the directory to PATH.
+
+            ### Verify
+            ```bash
+            nvpn --help
+            ```
+
+            ## Included
+            - `nvpn` - CLI control plane
+            - `nostr-vpn-gui` - desktop GUI (selected targets)
+            - `nostr-vpn-relay` - local test relay
+            - `install.sh` - Unix installer script

@@ -334,12 +334,12 @@ impl eframe::App for NostrVpnGui {
 
 fn default_config_path() -> PathBuf {
     if let Some(mut path) = dirs::config_dir() {
-        path.push("nostr-vpn");
+        path.push("nvpn");
         path.push("config.toml");
         return path;
     }
 
-    PathBuf::from("nostr-vpn.toml")
+    PathBuf::from("nvpn.toml")
 }
 
 fn unix_timestamp() -> u64 {

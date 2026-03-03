@@ -12,6 +12,7 @@ boringtun.workspace = true
 clap.workspace = true
 dirs.workspace = true
 hex.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true
@@ -20,5 +21,5 @@ tracing-subscriber.workspace = true
 nostr-vpn-core = { path = "../nostr-vpn-core" }
 
 [[bin]]
-name = "nostr-vpn"
+name = "nvpn"
 path = "src/main.rs"

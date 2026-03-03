@@ -11,7 +11,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates iproute2 iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/nostr-vpn /usr/local/bin/nostr-vpn
+COPY --from=builder /app/target/release/nvpn /usr/local/bin/nvpn
 COPY --from=builder /app/target/release/nostr-vpn-relay /usr/local/bin/nostr-vpn-relay
 
 ENV RUST_LOG=info

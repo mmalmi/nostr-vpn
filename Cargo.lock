@@ -2714,6 +2714,7 @@ dependencies = [
  "dirs",
  "hex",
  "nostr-vpn-core",
+ "serde",
  "serde_json",
  "tokio",
  "toml",
