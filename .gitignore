@@ -6,3 +6,7 @@ crates/nostr-vpn-gui/src-tauri/target
 .DS_Store
 *.log
 *.swp
+.pnpm-store/
+artifacts/
+crates/nostr-vpn-gui/src-tauri/icons/android/
+crates/nostr-vpn-gui/src-tauri/icons/ios/
