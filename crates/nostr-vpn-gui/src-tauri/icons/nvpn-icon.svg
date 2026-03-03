@@ -17,26 +17,16 @@
 
   <rect x="0" y="0" width="1024" height="1024" rx="226" fill="url(#bg)" />
 
-  <rect x="146" y="146" width="732" height="732" rx="188" fill="none" stroke="#3d2b88" stroke-width="18" opacity="0.8" />
-
   <g stroke="url(#edge)" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <polyline points="310,736 310,288 716,736 716,288" stroke-width="72" />
-
-    <line x1="310" y1="640" x2="430" y2="516" stroke-width="32" opacity="0.68" />
-    <line x1="430" y1="516" x2="534" y2="624" stroke-width="32" opacity="0.68" />
-    <line x1="534" y1="624" x2="636" y2="516" stroke-width="32" opacity="0.68" />
-    <line x1="430" y1="516" x2="560" y2="390" stroke-width="32" opacity="0.68" />
+    <polyline points="300,740 300,280 724,740 724,280" stroke-width="74" />
   </g>
 
   <g fill="url(#node)" stroke="#f26bf0" stroke-width="12">
-    <circle cx="310" cy="288" r="38" />
-    <circle cx="310" cy="736" r="38" />
-    <circle cx="716" cy="288" r="38" />
-    <circle cx="716" cy="736" r="38" />
-
-    <circle cx="430" cy="516" r="24" />
-    <circle cx="560" cy="390" r="24" />
-    <circle cx="534" cy="624" r="24" />
-    <circle cx="636" cy="516" r="24" />
+    <circle cx="300" cy="280" r="38" />
+    <circle cx="300" cy="740" r="38" />
+    <circle cx="724" cy="280" r="38" />
+    <circle cx="724" cy="740" r="38" />
+    <circle cx="440" cy="434" r="24" />
+    <circle cx="582" cy="586" r="24" />
   </g>
 </svg>
