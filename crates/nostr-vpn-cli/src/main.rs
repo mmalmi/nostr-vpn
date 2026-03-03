@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::{IpAddr, SocketAddr};
@@ -52,6 +53,8 @@ enum Command {
     },
     /// Bring the node up (announce and optionally discover peers).
     Up(UpArgs),
+    /// Run a full data-plane session from config (announce + boringtun tunnel).
+    Connect(ConnectArgs),
     /// Bring the node down (publish disconnect signal).
     Down(DownArgs),
     /// Show local and discovered peer status.
@@ -110,7 +113,8 @@ enum Command {
     NatDiscover(NatDiscoverArgs),
     /// Send UDP punch packets to a peer endpoint to open NAT mappings.
     HolePunch(HolePunchArgs),
-    /// Bring up a boringtun interface (Linux) for e2e testing.
+    /// Internal low-level tunnel helper for e2e scripts.
+    #[command(hide = true)]
     TunnelUp(TunnelUpArgs),
 }
 
@@ -162,6 +166,22 @@ struct UpArgs {
     discover_secs: u64,
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ConnectArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    #[arg(long)]
+    network_id: Option<String>,
+    #[arg(long = "participant")]
+    participants: Vec<String>,
+    #[arg(long)]
+    relay: Vec<String>,
+    #[arg(long, default_value = "utun100")]
+    iface: String,
+    #[arg(long, default_value_t = 20)]
+    announce_interval_secs: u64,
 }
 
 #[derive(Debug, Args)]
@@ -391,6 +411,9 @@ async fn main() -> Result<()> {
                     println!("discovered_peers={}", peers.len());
                 }
             }
+        }
+        Command::Connect(args) => {
+            connect_session(args).await?;
         }
         Command::Down(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
@@ -934,6 +957,283 @@ async fn discover_peers(
     Ok(values)
 }
 
+#[derive(Debug, Clone)]
+struct TunnelPeer {
+    pubkey_hex: String,
+    endpoint: String,
+    allowed_ip: String,
+}
+
+struct CliTunnelRuntime {
+    iface: String,
+    handle: Option<DeviceHandle>,
+    uapi_socket_path: Option<String>,
+    last_fingerprint: Option<String>,
+}
+
+impl CliTunnelRuntime {
+    fn new(iface: impl Into<String>) -> Self {
+        Self {
+            iface: iface.into(),
+            handle: None,
+            uapi_socket_path: None,
+            last_fingerprint: None,
+        }
+    }
+
+    fn ensure_started(&mut self) -> Result<()> {
+        if cfg!(not(unix)) {
+            return Err(anyhow!(
+                "connect is currently supported on unix platforms only"
+            ));
+        }
+
+        if self.handle.is_some() {
+            return Ok(());
+        }
+
+        let handle = DeviceHandle::new(
+            &self.iface,
+            DeviceConfig {
+                n_threads: 2,
+                use_connected_socket: true,
+                #[cfg(target_os = "linux")]
+                use_multi_queue: false,
+                #[cfg(target_os = "linux")]
+                uapi_fd: -1,
+            },
+        )
+        .with_context(|| format!("failed to create boringtun interface {}", self.iface))?;
+
+        let socket = format!("/var/run/wireguard/{}.sock", self.iface);
+        wait_for_socket(&socket)?;
+
+        self.handle = Some(handle);
+        self.uapi_socket_path = Some(socket);
+        Ok(())
+    }
+
+    fn apply(
+        &mut self,
+        app: &AppConfig,
+        own_pubkey: Option<&str>,
+        peer_announcements: &HashMap<String, PeerAnnouncement>,
+    ) -> Result<()> {
+        let mut peers = app
+            .participants
+            .iter()
+            .filter(|participant| Some(participant.as_str()) != own_pubkey)
+            .filter_map(|participant| peer_announcements.get(participant))
+            .map(tunnel_peer_from_announcement)
+            .collect::<Result<Vec<_>>>()?;
+        peers.sort_by(|left, right| left.pubkey_hex.cmp(&right.pubkey_hex));
+
+        let local_address = local_interface_address_for_tunnel(&app.node.tunnel_ip);
+        let fingerprint = tunnel_fingerprint(
+            &self.iface,
+            &app.node.private_key,
+            app.node.listen_port,
+            &local_address,
+            &peers,
+        );
+        if self.last_fingerprint.as_deref() == Some(fingerprint.as_str()) && self.handle.is_some() {
+            return Ok(());
+        }
+
+        self.ensure_started()?;
+        let socket = self
+            .uapi_socket_path
+            .as_deref()
+            .ok_or_else(|| anyhow!("missing uapi socket path"))?;
+
+        let private_key_hex = key_b64_to_hex(&app.node.private_key)?;
+        wg_set(
+            socket,
+            &format!(
+                "private_key={private_key_hex}\nlisten_port={}",
+                app.node.listen_port
+            ),
+        )?;
+        wg_set(socket, "replace_peers=true")?;
+
+        for peer in peers {
+            wg_set(
+                socket,
+                &format!(
+                    "public_key={}\nendpoint={}\nreplace_allowed_ips=true\nallowed_ip={}\npersistent_keepalive_interval=5",
+                    peer.pubkey_hex, peer.endpoint, peer.allowed_ip
+                ),
+            )?;
+        }
+
+        apply_local_interface_network(
+            &self.iface,
+            &local_address,
+            &[String::from("10.44.0.0/24")],
+        )?;
+
+        self.last_fingerprint = Some(fingerprint);
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        self.handle = None;
+        self.uapi_socket_path = None;
+        self.last_fingerprint = None;
+    }
+}
+
+fn tunnel_peer_from_announcement(announcement: &PeerAnnouncement) -> Result<TunnelPeer> {
+    let endpoint: SocketAddr = announcement
+        .endpoint
+        .parse()
+        .with_context(|| format!("invalid peer endpoint {}", announcement.endpoint))?;
+    let pubkey_hex = key_b64_to_hex(&announcement.public_key)?;
+    let allowed_ip = format!("{}/32", strip_cidr(&announcement.tunnel_ip));
+
+    Ok(TunnelPeer {
+        pubkey_hex,
+        endpoint: endpoint.to_string(),
+        allowed_ip,
+    })
+}
+
+fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {
+    format!("{}/24", strip_cidr(tunnel_ip))
+}
+
+fn tunnel_fingerprint(
+    iface: &str,
+    private_key: &str,
+    listen_port: u16,
+    local_address: &str,
+    peers: &[TunnelPeer],
+) -> String {
+    let mut peer_entries = peers
+        .iter()
+        .map(|peer| format!("{}|{}|{}", peer.pubkey_hex, peer.endpoint, peer.allowed_ip))
+        .collect::<Vec<_>>();
+    peer_entries.sort();
+    format!(
+        "{iface}|{private_key}|{listen_port}|{local_address}|{}",
+        peer_entries.join(";")
+    )
+}
+
+async fn connect_session(args: ConnectArgs) -> Result<()> {
+    if args.iface.trim().is_empty() {
+        return Err(anyhow!("--iface must not be empty"));
+    }
+
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    let (app, network_id) =
+        load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+    if app.participants.is_empty() {
+        return Err(anyhow!(
+            "at least one participant must be configured before running connect"
+        ));
+    }
+
+    let relays = resolve_relays(&args.relay, &app);
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let expected_peers = expected_peer_count(&app);
+    let mut peer_announcements = HashMap::<String, PeerAnnouncement>::new();
+    let mut tunnel_runtime = CliTunnelRuntime::new(args.iface);
+
+    let client = NostrSignalingClient::from_secret_key(
+        network_id.clone(),
+        &app.nostr.secret_key,
+        app.participant_pubkeys_hex(),
+    )?;
+    client.connect(&relays).await?;
+
+    let local_announcement = PeerAnnouncement {
+        node_id: app.node.id.clone(),
+        public_key: app.node.public_key.clone(),
+        endpoint: app.node.endpoint.clone(),
+        tunnel_ip: app.node.tunnel_ip.clone(),
+        timestamp: unix_timestamp(),
+    };
+    client
+        .publish(SignalPayload::Announce(local_announcement.clone()))
+        .await
+        .context("failed to publish local announcement")?;
+    tunnel_runtime
+        .apply(&app, own_pubkey.as_deref(), &peer_announcements)
+        .context("failed to initialize tunnel runtime")?;
+
+    println!(
+        "connect: network {} on {} relays; waiting for {expected_peers} configured peer(s)",
+        network_id,
+        relays.len()
+    );
+
+    let mut announce_interval =
+        tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
+    announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut last_mesh_count = 0_usize;
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+            _ = announce_interval.tick() => {
+                let refreshed = PeerAnnouncement {
+                    timestamp: unix_timestamp(),
+                    ..local_announcement.clone()
+                };
+                let _ = client.publish(SignalPayload::Announce(refreshed)).await;
+            }
+            message = client.recv() => {
+                let Some(message) = message else {
+                    break;
+                };
+
+                match message.payload {
+                    SignalPayload::Announce(announcement) => {
+                        if let Some(existing) = peer_announcements.get(&message.sender_pubkey)
+                            && existing.timestamp > announcement.timestamp
+                        {
+                            continue;
+                        }
+                        peer_announcements.insert(message.sender_pubkey, announcement);
+                    }
+                    SignalPayload::Disconnect { .. } => {
+                        peer_announcements.remove(&message.sender_pubkey);
+                    }
+                }
+
+                tunnel_runtime
+                    .apply(&app, own_pubkey.as_deref(), &peer_announcements)
+                    .context("failed to apply tunnel update")?;
+
+                let connected = app
+                    .participants
+                    .iter()
+                    .filter(|participant| Some(participant.as_str()) != own_pubkey.as_deref())
+                    .filter(|participant| peer_announcements.contains_key(*participant))
+                    .count();
+                if connected != last_mesh_count {
+                    println!("mesh: {connected}/{expected_peers} peers signaled");
+                    last_mesh_count = connected;
+                }
+            }
+        }
+    }
+
+    let _ = client
+        .publish(SignalPayload::Disconnect {
+            node_id: app.node.id.clone(),
+        })
+        .await;
+    client.disconnect().await;
+    tunnel_runtime.stop();
+    println!("connect: disconnected");
+
+    Ok(())
+}
+
 fn run_ping(target: &str, count: u32, timeout_secs: u64) -> Result<()> {
     let mut command = ProcessCommand::new("ping");
     if cfg!(target_os = "windows") {
@@ -1131,8 +1431,10 @@ fn unix_timestamp() -> u64 {
 }
 
 fn tunnel_up(args: &TunnelUpArgs) -> Result<()> {
-    if cfg!(not(target_os = "linux")) {
-        return Err(anyhow!("tunnel-up is currently supported on Linux only"));
+    if cfg!(not(unix)) {
+        return Err(anyhow!(
+            "tunnel-up is currently supported on unix platforms only"
+        ));
     }
 
     if args.iface.trim().is_empty() {
@@ -1196,31 +1498,10 @@ fn tunnel_up(args: &TunnelUpArgs) -> Result<()> {
         ),
     )?;
 
-    run_checked(
-        ProcessCommand::new("ip")
-            .arg("address")
-            .arg("add")
-            .arg(&args.address)
-            .arg("dev")
-            .arg(&args.iface),
-    )?;
-    run_checked(
-        ProcessCommand::new("ip")
-            .arg("link")
-            .arg("set")
-            .arg("mtu")
-            .arg("1380")
-            .arg("up")
-            .arg("dev")
-            .arg(&args.iface),
-    )?;
-    run_checked(
-        ProcessCommand::new("ip")
-            .arg("route")
-            .arg("replace")
-            .arg(&args.peer_allowed_ip)
-            .arg("dev")
-            .arg(&args.iface),
+    apply_local_interface_network(
+        &args.iface,
+        &args.address,
+        std::slice::from_ref(&args.peer_allowed_ip),
     )?;
 
     println!(
@@ -1241,6 +1522,123 @@ fn key_b64_to_hex(value: &str) -> Result<String> {
         return Err(anyhow!("expected 32-byte key material"));
     }
     Ok(encode_hex(bytes))
+}
+
+fn apply_local_interface_network(
+    iface: &str,
+    address: &str,
+    route_targets: &[String],
+) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("address")
+                .arg("replace")
+                .arg(address)
+                .arg("dev")
+                .arg(iface),
+        )?;
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("link")
+                .arg("set")
+                .arg("mtu")
+                .arg("1380")
+                .arg("up")
+                .arg("dev")
+                .arg(iface),
+        )?;
+        for target in route_targets {
+            run_checked(
+                ProcessCommand::new("ip")
+                    .arg("route")
+                    .arg("replace")
+                    .arg(target)
+                    .arg("dev")
+                    .arg(iface),
+            )?;
+        }
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let ip = strip_cidr(address).to_string();
+        run_checked(
+            ProcessCommand::new("ifconfig")
+                .arg(iface)
+                .arg("inet")
+                .arg(&ip)
+                .arg(&ip)
+                .arg("netmask")
+                .arg("255.255.255.0")
+                .arg("up"),
+        )?;
+        for target in route_targets {
+            apply_macos_route(iface, target)?;
+        }
+        return Ok(());
+    }
+
+    #[allow(unreachable_code)]
+    Err(anyhow!(
+        "interface setup is not implemented for this platform"
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn apply_macos_route(iface: &str, target: &str) -> Result<()> {
+    let target_ip = strip_cidr(target);
+    let is_host = target.ends_with("/32") || !target.contains('/');
+
+    let add_result = if is_host {
+        run_checked(
+            ProcessCommand::new("route")
+                .arg("-n")
+                .arg("add")
+                .arg("-host")
+                .arg(target_ip)
+                .arg("-interface")
+                .arg(iface),
+        )
+    } else {
+        run_checked(
+            ProcessCommand::new("route")
+                .arg("-n")
+                .arg("add")
+                .arg("-net")
+                .arg(target)
+                .arg("-interface")
+                .arg(iface),
+        )
+    };
+
+    if add_result.is_ok() {
+        return Ok(());
+    }
+
+    if is_host {
+        run_checked(
+            ProcessCommand::new("route")
+                .arg("-n")
+                .arg("change")
+                .arg("-host")
+                .arg(target_ip)
+                .arg("-interface")
+                .arg(iface),
+        )
+    } else {
+        run_checked(
+            ProcessCommand::new("route")
+                .arg("-n")
+                .arg("change")
+                .arg("-net")
+                .arg(target)
+                .arg("-interface")
+                .arg(iface),
+        )
+    }
 }
 
 fn wait_for_socket(path: &str) -> Result<()> {
@@ -1309,6 +1707,7 @@ mod tests {
         let command = Cli::command();
         for name in [
             "up",
+            "connect",
             "down",
             "status",
             "set",

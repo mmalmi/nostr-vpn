@@ -68,7 +68,16 @@ nvpn up
 
 You can still override with `--endpoint` / `--tunnel-ip` for advanced/manual setups.
 
-### 5. Check status
+### 5. Start a full tunnel session from config
+
+```bash
+nvpn connect
+```
+
+`nvpn connect` keeps running, consumes private peer announcements from your configured
+participants, and applies boringtun interface/peer config automatically.
+
+### 6. Check status
 
 ```bash
 nvpn status --json
@@ -77,14 +86,14 @@ nvpn status --json
 `status` reports relay policy and mesh progress, including whether
 `auto_disconnect_relays_when_mesh_ready` is enabled (default: `true`).
 
-### 6. Render WireGuard config
+### 7. Render WireGuard config
 
 ```bash
 nvpn render-wg \
   --peer "<wg-pubkey>,10.44.0.3/32,198.51.100.20:51820"
 ```
 
-### 7. Start GUI
+### 8. Start GUI
 
 ```bash
 pnpm --dir crates/nostr-vpn-gui install
@@ -94,7 +103,7 @@ pnpm --dir crates/nostr-vpn-gui tauri:dev
 Note: bringing the tunnel interface up requires OS network privileges.
 On Linux/macOS, run the app with permissions that allow interface/routing updates.
 
-### 8. Run Tauri-driver UI smoke test (Docker)
+### 9. Run Tauri-driver UI smoke test (Docker)
 
 ```bash
 ./scripts/e2e-tauri-driver-docker.sh
@@ -108,6 +117,7 @@ and writes a screenshot to `artifacts/screenshots/tauri-driver-smoke.png`.
 `nvpn` includes these Tailscale-style commands:
 
 - `up`
+- `connect`
 - `down`
 - `status`
 - `set`
@@ -123,7 +133,6 @@ Legacy control-plane commands are still available:
 - `announce`
 - `listen`
 - `render-wg`
-- `tunnel-up`
 - `keygen`
 - `init`
 
@@ -146,6 +155,12 @@ Run a real cross-container signaling + tunnel check (local relay + 2 nodes):
 
 ```bash
 ./scripts/e2e-docker.sh
+```
+
+Run config-driven CLI connect e2e (same `config.toml` flow GUI uses):
+
+```bash
+./scripts/e2e-connect-docker.sh
 ```
 
 What it validates:
