@@ -2057,14 +2057,25 @@ fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Result<u32> {
         .context("failed to spawn daemonized connect process")?;
     let pid = child.id();
 
-    thread::sleep(Duration::from_millis(200));
-    if let Some(status) = child
-        .try_wait()
-        .context("failed to verify daemon process state")?
-    {
-        return Err(anyhow!(
-            "daemon process exited immediately with status {status}"
-        ));
+    // Wait briefly to catch startup failures that occur after initial bootstrapping
+    // (for example: missing tunnel permissions or resolver install errors).
+    for _ in 0..25 {
+        if let Some(status) = child
+            .try_wait()
+            .context("failed to verify daemon process state")?
+        {
+            let log_tail = read_daemon_log_tail(&log_file_path, 20);
+            return if log_tail.is_empty() {
+                Err(anyhow!(
+                    "daemon process exited during startup with status {status}"
+                ))
+            } else {
+                Err(anyhow!(
+                    "daemon process exited during startup with status {status}\nlog tail:\n{log_tail}"
+                ))
+            };
+        }
+        thread::sleep(Duration::from_millis(100));
     }
 
     let record = DaemonPidRecord {
@@ -2074,6 +2085,22 @@ fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Result<u32> {
     };
     write_daemon_pid_record(&pid_file, &record)?;
     Ok(pid)
+}
+
+fn read_daemon_log_tail(path: &Path, max_lines: usize) -> String {
+    let Ok(raw) = fs::read_to_string(path) else {
+        return String::new();
+    };
+
+    let mut lines = raw
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.len() > max_lines {
+        lines.drain(0..(lines.len() - max_lines));
+    }
+    lines.join("\n")
 }
 
 fn is_process_running(pid: u32) -> bool {
