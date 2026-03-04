@@ -1976,7 +1976,7 @@ fn write_daemon_pid_record(path: &Path, record: &DaemonPidRecord) -> Result<()> 
     let raw = serde_json::to_string_pretty(record)?;
     fs::write(path, raw)
         .with_context(|| format!("failed to write daemon pid file {}", path.display()))?;
-    set_private_file_permissions(path)?;
+    set_daemon_runtime_file_permissions(path)?;
     Ok(())
 }
 
@@ -2000,7 +2000,7 @@ fn write_daemon_state(path: &Path, state: &DaemonRuntimeState) -> Result<()> {
     let raw = serde_json::to_string_pretty(state)?;
     fs::write(path, raw)
         .with_context(|| format!("failed to write daemon state file {}", path.display()))?;
-    set_private_file_permissions(path)?;
+    set_daemon_runtime_file_permissions(path)?;
     Ok(())
 }
 
@@ -2022,7 +2022,7 @@ fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Result<u32> {
         .append(true)
         .open(&log_file_path)
         .with_context(|| format!("failed to open {}", log_file_path.display()))?;
-    let _ = set_private_file_permissions(&log_file_path);
+    let _ = set_daemon_runtime_file_permissions(&log_file_path);
     let stderr_log = log_file
         .try_clone()
         .context("failed to clone daemon log file handle")?;
@@ -2141,12 +2141,18 @@ fn daemon_process_matches(pid: u32, config_path: &Path) -> bool {
         && command.contains(config_text.as_str())
 }
 
-fn set_private_file_permissions(path: &Path) -> Result<()> {
+fn set_daemon_runtime_file_permissions(path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
-        let permissions = fs::Permissions::from_mode(0o600);
-        fs::set_permissions(path, permissions)
-            .with_context(|| format!("failed to set private permissions on {}", path.display()))?;
+        // Daemon runtime files must stay readable by the desktop app even when
+        // the daemon was started with elevated privileges.
+        let permissions = fs::Permissions::from_mode(0o644);
+        fs::set_permissions(path, permissions).with_context(|| {
+            format!(
+                "failed to set daemon runtime file permissions on {}",
+                path.display()
+            )
+        })?;
     }
 
     Ok(())

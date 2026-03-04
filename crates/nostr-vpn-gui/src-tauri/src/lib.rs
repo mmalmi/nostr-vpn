@@ -588,7 +588,7 @@ impl NvpnBackend {
     }
 
     fn start_daemon_process(&self) -> Result<()> {
-        let output = self.run_nvpn_command([
+        let args = [
             "start",
             "--daemon",
             "--connect",
@@ -596,7 +596,8 @@ impl NvpnBackend {
             self.config_path
                 .to_str()
                 .ok_or_else(|| anyhow!("config path is not valid UTF-8"))?,
-        ])?;
+        ];
+        let output = self.run_nvpn_command(args)?;
 
         if output.status.success() {
             return Ok(());
@@ -614,11 +615,17 @@ impl NvpnBackend {
             return Ok(());
         }
 
+        #[cfg(target_os = "macos")]
+        if requires_admin_privileges(&message) {
+            self.run_nvpn_command_with_admin_privileges(args)?;
+            return Ok(());
+        }
+
         Err(anyhow!(message))
     }
 
     fn stop_daemon_process(&self) -> Result<()> {
-        let output = self.run_nvpn_command([
+        let args = [
             "stop",
             "--config",
             self.config_path
@@ -626,7 +633,8 @@ impl NvpnBackend {
                 .ok_or_else(|| anyhow!("config path is not valid UTF-8"))?,
             "--timeout-secs",
             "5",
-        ])?;
+        ];
+        let output = self.run_nvpn_command(args)?;
 
         if output.status.success() {
             return Ok(());
@@ -641,6 +649,12 @@ impl NvpnBackend {
         );
 
         if message.contains("not running") {
+            return Ok(());
+        }
+
+        #[cfg(target_os = "macos")]
+        if requires_admin_privileges(&message) {
+            self.run_nvpn_command_with_admin_privileges(args)?;
             return Ok(());
         }
 
@@ -705,6 +719,50 @@ impl NvpnBackend {
                     args.join(" ")
                 )
             })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn run_nvpn_command_with_admin_privileges<const N: usize>(
+        &self,
+        args: [&str; N],
+    ) -> Result<()> {
+        let Some(nvpn_bin) = &self.nvpn_bin else {
+            return Err(anyhow!(
+                "nvpn CLI binary not found; set {} or install nvpn in PATH",
+                NVPN_BIN_ENV
+            ));
+        };
+        let nvpn_bin = nvpn_bin
+            .to_str()
+            .ok_or_else(|| anyhow!("nvpn binary path is not valid UTF-8"))?;
+
+        let mut shell_parts = Vec::with_capacity(N + 1);
+        shell_parts.push(shell_quote_single(nvpn_bin));
+        shell_parts.extend(args.iter().map(|arg| shell_quote_single(arg)));
+        let shell_command = shell_parts.join(" ");
+
+        let script = format!(
+            "do shell script \"{}\" with administrator privileges",
+            applescript_escape(&shell_command)
+        );
+
+        let output = ProcessCommand::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .output()
+            .context("failed to execute elevated command prompt on macOS")?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(anyhow!(
+            "elevated nvpn command failed\nstdout: {}\nstderr: {}",
+            stdout.trim(),
+            stderr.trim()
+        ))
     }
 
     fn sync_daemon_state(&mut self) {
@@ -1417,6 +1475,24 @@ fn extract_json_document(raw: &str) -> Result<&str> {
     }
 
     Ok(&raw[start..=end])
+}
+
+fn requires_admin_privileges(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("operation not permitted")
+        || lower.contains("permission denied")
+        || lower.contains("did you run with sudo")
+        || lower.contains("admin privileges")
+}
+
+#[cfg(target_os = "macos")]
+fn shell_quote_single(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\"', "\\\"")
 }
 
 fn epoch_secs_to_system_time(value: u64) -> Option<SystemTime> {
