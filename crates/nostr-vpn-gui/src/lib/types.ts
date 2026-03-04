@@ -25,6 +25,15 @@ export interface ParticipantView {
   lastSignalText: string
 }
 
+export interface NetworkView {
+  id: string
+  name: string
+  enabled: boolean
+  onlineCount: number
+  expectedCount: number
+  participants: ParticipantView[]
+}
+
 export interface LanPeerView {
   npub: string
   nodeName: string
@@ -45,18 +54,17 @@ export interface UiState {
   endpoint: string
   tunnelIp: string
   listenPort: number
-  networkId: string
-  effectiveNetworkId: string
   magicDnsSuffix: string
   magicDnsStatus: string
   autoDisconnectRelaysWhenMeshReady: boolean
+  autoconnect: boolean
   lanDiscoveryEnabled: boolean
   launchOnStartup: boolean
   closeToTrayOnClose: boolean
   connectedPeerCount: number
   expectedPeerCount: number
   meshReady: boolean
-  participants: ParticipantView[]
+  networks: NetworkView[]
   relays: RelayView[]
   relaySummary: RelaySummary
   lanPeers: LanPeerView[]
@@ -67,9 +75,9 @@ export interface SettingsPatch {
   endpoint?: string
   tunnelIp?: string
   listenPort?: number
-  networkId?: string
   magicDnsSuffix?: string
   autoDisconnectRelaysWhenMeshReady?: boolean
+  autoconnect?: boolean
   lanDiscoveryEnabled?: boolean
   launchOnStartup?: boolean
   closeToTrayOnClose?: boolean

@@ -52,6 +52,8 @@ fn default_relays() -> Vec<String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default)]
+    pub networks: Vec<NetworkConfig>,
     #[serde(default = "default_network_id")]
     pub network_id: String,
     #[serde(default = "default_node_name")]
@@ -62,12 +64,12 @@ pub struct AppConfig {
     pub lan_discovery_enabled: bool,
     #[serde(default = "default_launch_on_startup")]
     pub launch_on_startup: bool,
+    #[serde(default = "default_autoconnect")]
+    pub autoconnect: bool,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
     #[serde(default = "default_magic_dns_suffix")]
     pub magic_dns_suffix: String,
-    #[serde(default)]
-    pub participants: Vec<String>,
     #[serde(default = "default_peer_aliases")]
     pub peer_aliases: HashMap<String, String>,
     #[serde(default)]
@@ -76,18 +78,36 @@ pub struct AppConfig {
     pub node: NodeConfig,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default = "default_network_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    pub participants: Vec<String>,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         let mut config = Self {
+            networks: vec![NetworkConfig {
+                id: default_network_entry_id(1),
+                name: default_network_name(1),
+                enabled: default_network_enabled(),
+                participants: Vec::new(),
+            }],
             network_id: default_network_id(),
             node_name: default_node_name(),
             auto_disconnect_relays_when_mesh_ready: default_auto_disconnect_relays_when_mesh_ready(
             ),
             lan_discovery_enabled: default_lan_discovery_enabled(),
             launch_on_startup: default_launch_on_startup(),
+            autoconnect: default_autoconnect(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             magic_dns_suffix: default_magic_dns_suffix(),
-            participants: Vec::new(),
             peer_aliases: default_peer_aliases(),
             nostr: NostrConfig::default(),
             node: NodeConfig::default(),
@@ -193,19 +213,48 @@ impl AppConfig {
 
         self.ensure_nostr_identity();
 
-        self.participants = self
-            .participants
-            .iter()
-            .filter_map(|participant| normalize_nostr_pubkey(participant).ok())
-            .collect();
-        self.participants.sort();
-        self.participants.dedup();
+        if self.networks.is_empty() {
+            self.networks.push(NetworkConfig {
+                id: default_network_entry_id(1),
+                name: default_network_name(1),
+                enabled: true,
+                participants: Vec::new(),
+            });
+        }
+
+        let mut used_ids = HashSet::new();
+        for (index, network) in self.networks.iter_mut().enumerate() {
+            let ordinal = index + 1;
+            if network.name.trim().is_empty() {
+                network.name = default_network_name(ordinal);
+            } else {
+                network.name = network.name.trim().to_string();
+            }
+
+            if network.id.trim().is_empty() {
+                network.id = default_network_entry_id(ordinal);
+            } else {
+                network.id = normalize_network_entry_id(&network.id, ordinal);
+            }
+
+            if !used_ids.insert(network.id.clone()) {
+                network.id = uniquify_network_entry_id(network.id.clone(), &mut used_ids);
+            }
+
+            network.participants = network
+                .participants
+                .iter()
+                .filter_map(|participant| normalize_nostr_pubkey(participant).ok())
+                .collect();
+            network.participants.sort();
+            network.participants.dedup();
+        }
 
         self.normalize_peer_aliases();
     }
 
     pub fn effective_network_id(&self) -> String {
-        if self.participants.is_empty() {
+        if self.participant_pubkeys_hex().is_empty() {
             return self.network_id.clone();
         }
 
@@ -218,7 +267,143 @@ impl AppConfig {
     }
 
     pub fn participant_pubkeys_hex(&self) -> Vec<String> {
-        self.participants.clone()
+        let mut participants = self
+            .networks
+            .iter()
+            .filter(|network| network.enabled)
+            .flat_map(|network| network.participants.iter().cloned())
+            .collect::<Vec<_>>();
+        participants.sort();
+        participants.dedup();
+        participants
+    }
+
+    pub fn all_participant_pubkeys_hex(&self) -> Vec<String> {
+        let mut participants = self
+            .networks
+            .iter()
+            .flat_map(|network| network.participants.iter().cloned())
+            .collect::<Vec<_>>();
+        participants.sort();
+        participants.dedup();
+        participants
+    }
+
+    pub fn enabled_network_count(&self) -> usize {
+        self.networks
+            .iter()
+            .filter(|network| network.enabled)
+            .count()
+    }
+
+    pub fn network_by_id(&self, network_id: &str) -> Option<&NetworkConfig> {
+        self.networks
+            .iter()
+            .find(|network| network.id == network_id)
+    }
+
+    pub fn network_by_id_mut(&mut self, network_id: &str) -> Option<&mut NetworkConfig> {
+        self.networks
+            .iter_mut()
+            .find(|network| network.id == network_id)
+    }
+
+    pub fn add_network(&mut self, name: &str) -> String {
+        let ordinal = self.networks.len() + 1;
+        let mut used_ids = self
+            .networks
+            .iter()
+            .map(|network| network.id.clone())
+            .collect::<HashSet<_>>();
+        let id = uniquify_network_entry_id(default_network_entry_id(ordinal), &mut used_ids);
+        let name = if name.trim().is_empty() {
+            default_network_name(ordinal)
+        } else {
+            name.trim().to_string()
+        };
+
+        self.networks.push(NetworkConfig {
+            id: id.clone(),
+            name,
+            enabled: true,
+            participants: Vec::new(),
+        });
+        id
+    }
+
+    pub fn rename_network(&mut self, network_id: &str, name: &str) -> Result<()> {
+        let network = self
+            .network_by_id_mut(network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        let normalized = name.trim();
+        if normalized.is_empty() {
+            return Err(anyhow::anyhow!("network name cannot be empty"));
+        }
+        network.name = normalized.to_string();
+        Ok(())
+    }
+
+    pub fn remove_network(&mut self, network_id: &str) -> Result<()> {
+        if self.networks.len() <= 1 {
+            return Err(anyhow::anyhow!("at least one network is required"));
+        }
+
+        let previous_len = self.networks.len();
+        self.networks.retain(|network| network.id != network_id);
+        if self.networks.len() == previous_len {
+            return Err(anyhow::anyhow!("network not found"));
+        }
+
+        self.normalize_peer_aliases();
+        Ok(())
+    }
+
+    pub fn set_network_enabled(&mut self, network_id: &str, enabled: bool) -> Result<()> {
+        let network = self
+            .network_by_id_mut(network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        network.enabled = enabled;
+        Ok(())
+    }
+
+    pub fn add_participant_to_network(
+        &mut self,
+        network_id: &str,
+        participant: &str,
+    ) -> Result<String> {
+        let normalized = normalize_nostr_pubkey(participant)?;
+        let network = self
+            .network_by_id_mut(network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        if !network
+            .participants
+            .iter()
+            .any(|configured| configured == &normalized)
+        {
+            network.participants.push(normalized.clone());
+            network.participants.sort();
+            network.participants.dedup();
+        }
+
+        self.normalize_peer_aliases();
+        Ok(normalized)
+    }
+
+    pub fn remove_participant_from_network(
+        &mut self,
+        network_id: &str,
+        participant: &str,
+    ) -> Result<()> {
+        let normalized = normalize_nostr_pubkey(participant)?;
+        let network = self
+            .network_by_id_mut(network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        network
+            .participants
+            .retain(|configured| configured != &normalized);
+
+        self.normalize_peer_aliases();
+        Ok(())
     }
 
     pub fn mesh_members_pubkeys(&self) -> Vec<String> {
@@ -275,11 +460,11 @@ impl AppConfig {
 
         let mut used_aliases = HashSet::new();
         let mut final_aliases = HashMap::new();
-        for participant in &self.participants {
+        for participant in &self.all_participant_pubkeys_hex() {
             let participant_npub = npub_for_pubkey_hex(participant);
             let preferred = normalized_aliases
                 .remove(&participant_npub)
-                .unwrap_or_else(|| default_magic_dns_label_for_pubkey(participant));
+                .unwrap_or_else(|| default_magic_dns_label_for_pubkey(participant, &used_aliases));
             let alias = uniquify_magic_dns_label(preferred, &mut used_aliases);
             final_aliases.insert(participant_npub, alias);
         }
@@ -295,7 +480,7 @@ impl AppConfig {
     pub fn set_peer_alias(&mut self, participant: &str, alias: &str) -> Result<String> {
         let participant_hex = normalize_nostr_pubkey(participant)?;
         if !self
-            .participants
+            .all_participant_pubkeys_hex()
             .iter()
             .any(|configured| configured == &participant_hex)
         {
@@ -340,7 +525,7 @@ impl AppConfig {
             return None;
         }
 
-        for participant in &self.participants {
+        for participant in &self.participant_pubkeys_hex() {
             let participant_npub = npub_for_pubkey_hex(participant);
             let Some(alias) = self.peer_aliases.get(&participant_npub) else {
                 continue;
@@ -465,6 +650,38 @@ fn default_network_id() -> String {
     "nostr-vpn".to_string()
 }
 
+const fn default_network_enabled() -> bool {
+    true
+}
+
+fn default_network_name(ordinal: usize) -> String {
+    format!("Network {ordinal}")
+}
+
+fn default_network_entry_id(ordinal: usize) -> String {
+    format!("network-{ordinal}")
+}
+
+fn normalize_network_entry_id(value: &str, ordinal: usize) -> String {
+    normalize_magic_dns_label(value).unwrap_or_else(|| default_network_entry_id(ordinal))
+}
+
+fn uniquify_network_entry_id(candidate: String, used_ids: &mut HashSet<String>) -> String {
+    if used_ids.insert(candidate.clone()) {
+        return candidate;
+    }
+
+    let base = candidate;
+    let mut suffix = 2_usize;
+    loop {
+        let next = format!("{base}-{suffix}");
+        if used_ids.insert(next.clone()) {
+            return next;
+        }
+        suffix += 1;
+    }
+}
+
 fn default_magic_dns_suffix() -> String {
     "nvpn".to_string()
 }
@@ -486,6 +703,10 @@ const fn default_lan_discovery_enabled() -> bool {
 }
 
 const fn default_launch_on_startup() -> bool {
+    true
+}
+
+const fn default_autoconnect() -> bool {
     true
 }
 
@@ -560,10 +781,237 @@ pub fn normalize_magic_dns_label(value: &str) -> Option<String> {
     if label.is_empty() { None } else { Some(label) }
 }
 
-pub fn default_magic_dns_label_for_pubkey(pubkey_hex: &str) -> String {
+pub fn default_magic_dns_label_for_pubkey(
+    pubkey_hex: &str,
+    used_aliases: &HashSet<String>,
+) -> String {
+    if !HASHTREE_ANIMAL_ALIASES.is_empty() {
+        let digest = Sha256::digest(pubkey_hex.as_bytes());
+        let mut index =
+            ((digest[0] as usize) << 8 | digest[1] as usize) % HASHTREE_ANIMAL_ALIASES.len();
+        for _ in 0..HASHTREE_ANIMAL_ALIASES.len() {
+            let candidate = HASHTREE_ANIMAL_ALIASES[index];
+            if !used_aliases.contains(candidate) {
+                return candidate.to_string();
+            }
+            index = (index + 1) % HASHTREE_ANIMAL_ALIASES.len();
+        }
+    }
+
     let short = pubkey_hex.chars().take(12).collect::<String>();
     format!("peer-{short}")
 }
+
+// Derived from hashtree animals list:
+// - apps/hashtree-cc/src/lib/data/animals.json
+// - apps/iris-files/src/utils/data/animals.json
+const HASHTREE_ANIMAL_ALIASES: &[&str] = &[
+    "aardvark",
+    "aardwolf",
+    "albatross",
+    "alligator",
+    "alpaca",
+    "anaconda",
+    "angelfish",
+    "ant",
+    "anteater",
+    "antelope",
+    "ape",
+    "armadillo",
+    "baboon",
+    "badger",
+    "barracuda",
+    "bat",
+    "bear",
+    "beaver",
+    "bee",
+    "beetle",
+    "bison",
+    "blackbird",
+    "boa",
+    "boar",
+    "bobcat",
+    "bonobo",
+    "butterfly",
+    "buzzard",
+    "camel",
+    "capybara",
+    "cardinal",
+    "caribou",
+    "carp",
+    "cat",
+    "catfish",
+    "centipede",
+    "chameleon",
+    "cheetah",
+    "chicken",
+    "chimpanzee",
+    "chinchilla",
+    "chipmunk",
+    "clam",
+    "clownfish",
+    "cobra",
+    "cockroach",
+    "condor",
+    "cougar",
+    "cow",
+    "coyote",
+    "crab",
+    "crane",
+    "crayfish",
+    "cricket",
+    "crocodile",
+    "crow",
+    "cuckoo",
+    "deer",
+    "dingo",
+    "dolphin",
+    "donkey",
+    "dove",
+    "dragonfly",
+    "duck",
+    "eagle",
+    "earthworm",
+    "echidna",
+    "eel",
+    "egret",
+    "elephant",
+    "elk",
+    "emu",
+    "falcon",
+    "ferret",
+    "finch",
+    "firefly",
+    "fish",
+    "flamingo",
+    "fox",
+    "frog",
+    "gazelle",
+    "gecko",
+    "gerbil",
+    "giraffe",
+    "goat",
+    "goldfish",
+    "goose",
+    "gorilla",
+    "grasshopper",
+    "grouse",
+    "guanaco",
+    "gull",
+    "hamster",
+    "hare",
+    "hawk",
+    "hedgehog",
+    "heron",
+    "hippopotamus",
+    "hornet",
+    "horse",
+    "hummingbird",
+    "hyena",
+    "ibis",
+    "iguana",
+    "impala",
+    "jackal",
+    "jaguar",
+    "jellyfish",
+    "kangaroo",
+    "koala",
+    "koi",
+    "ladybug",
+    "lemur",
+    "leopard",
+    "lion",
+    "lizard",
+    "llama",
+    "lobster",
+    "lynx",
+    "macaw",
+    "magpie",
+    "manatee",
+    "marten",
+    "meerkat",
+    "mink",
+    "mole",
+    "mongoose",
+    "monkey",
+    "moose",
+    "mosquito",
+    "moth",
+    "mouse",
+    "mule",
+    "narwhal",
+    "newt",
+    "nightingale",
+    "octopus",
+    "opossum",
+    "orangutan",
+    "orca",
+    "ostrich",
+    "otter",
+    "owl",
+    "oyster",
+    "panda",
+    "panther",
+    "parrot",
+    "peacock",
+    "pelican",
+    "penguin",
+    "pheasant",
+    "pig",
+    "pigeon",
+    "piranha",
+    "platypus",
+    "porcupine",
+    "porpoise",
+    "puffin",
+    "python",
+    "quail",
+    "rabbit",
+    "raccoon",
+    "ram",
+    "rat",
+    "raven",
+    "reindeer",
+    "rhino",
+    "salamander",
+    "salmon",
+    "scorpion",
+    "seahorse",
+    "seal",
+    "shark",
+    "sheep",
+    "skunk",
+    "sloth",
+    "snail",
+    "snake",
+    "sparrow",
+    "spider",
+    "squid",
+    "squirrel",
+    "starfish",
+    "stork",
+    "swan",
+    "tapir",
+    "termite",
+    "tiger",
+    "toad",
+    "toucan",
+    "trout",
+    "turkey",
+    "turtle",
+    "viper",
+    "vulture",
+    "walrus",
+    "wasp",
+    "weasel",
+    "whale",
+    "wildcat",
+    "wolf",
+    "wombat",
+    "woodpecker",
+    "yak",
+    "zebra",
+];
 
 fn npub_for_pubkey_hex(pubkey_hex: &str) -> String {
     PublicKey::from_hex(pubkey_hex)

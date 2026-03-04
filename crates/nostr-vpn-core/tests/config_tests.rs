@@ -5,6 +5,13 @@ use nostr_vpn_core::config::{
     normalize_nostr_pubkey,
 };
 
+fn set_default_network_participants(config: &mut AppConfig, participants: Vec<String>) {
+    config.ensure_defaults();
+    if let Some(network) = config.networks.first_mut() {
+        network.participants = participants;
+    }
+}
+
 #[test]
 fn default_relays_match_hashtree_defaults() {
     assert_eq!(
@@ -39,6 +46,7 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.nostr.public_key.is_empty());
     assert!(!config.nostr.relays.is_empty());
     assert!(config.auto_disconnect_relays_when_mesh_ready);
+    assert!(config.autoconnect);
     assert!(config.lan_discovery_enabled);
     assert!(config.launch_on_startup);
     assert!(config.close_to_tray_on_close);
@@ -51,10 +59,10 @@ fn participants_are_normalized_to_hex_pubkeys() {
     let hex = keys.public_key().to_hex();
 
     let mut config = AppConfig::generated();
-    config.participants = vec![npub, hex.clone()];
+    set_default_network_participants(&mut config, vec![npub, hex.clone()]);
     config.ensure_defaults();
 
-    assert_eq!(config.participants, vec![hex]);
+    assert_eq!(config.participant_pubkeys_hex(), vec![hex]);
 }
 
 #[test]
@@ -82,7 +90,7 @@ fn maybe_autoconfigure_node_assigns_tunnel_ip_from_participants() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = keys.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex.clone();
-    config.participants = vec!["0".repeat(64), own_hex];
+    set_default_network_participants(&mut config, vec!["0".repeat(64), own_hex]);
     config.node.tunnel_ip = "10.44.0.1/32".to_string();
     config.node.endpoint = "198.51.100.10:51820".to_string();
 
@@ -107,6 +115,10 @@ fn lan_discovery_defaults_true_when_missing_from_toml() {
 network_id = "nostr-vpn"
 node_name = "node"
 auto_disconnect_relays_when_mesh_ready = true
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
 participants = []
 
 [nostr]
@@ -134,6 +146,10 @@ network_id = "nostr-vpn"
 node_name = "node"
 auto_disconnect_relays_when_mesh_ready = true
 lan_discovery_enabled = true
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
 participants = []
 
 [nostr]
@@ -162,6 +178,10 @@ node_name = "node"
 auto_disconnect_relays_when_mesh_ready = true
 lan_discovery_enabled = true
 close_to_tray_on_close = true
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
 participants = []
 
 [nostr]
@@ -183,6 +203,39 @@ listen_port = 51820
 }
 
 #[test]
+fn autoconnect_defaults_true_when_missing_from_toml() {
+    let raw = r#"
+network_id = "nostr-vpn"
+node_name = "node"
+auto_disconnect_relays_when_mesh_ready = true
+lan_discovery_enabled = true
+launch_on_startup = true
+close_to_tray_on_close = true
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
+participants = []
+
+[nostr]
+relays = ["wss://temp.iris.to"]
+secret_key = ""
+public_key = ""
+
+[node]
+id = "node-id"
+private_key = ""
+public_key = ""
+endpoint = "127.0.0.1:51820"
+tunnel_ip = "10.44.0.1/32"
+listen_port = 51820
+"#;
+
+    let config: AppConfig = toml::from_str(raw).expect("parse config");
+    assert!(config.autoconnect);
+}
+
+#[test]
 fn reciprocal_participant_configs_share_effective_network_id() {
     let alice = Keys::generate();
     let bob = Keys::generate();
@@ -192,13 +245,13 @@ fn reciprocal_participant_configs_share_effective_network_id() {
     let mut alice_config = AppConfig::generated();
     alice_config.nostr.secret_key = alice.secret_key().to_secret_hex();
     alice_config.nostr.public_key = alice_hex.clone();
-    alice_config.participants = vec![bob_hex.clone()];
+    set_default_network_participants(&mut alice_config, vec![bob_hex.clone()]);
     maybe_autoconfigure_node(&mut alice_config);
 
     let mut bob_config = AppConfig::generated();
     bob_config.nostr.secret_key = bob.secret_key().to_secret_hex();
     bob_config.nostr.public_key = bob_hex.clone();
-    bob_config.participants = vec![alice_hex.clone()];
+    set_default_network_participants(&mut bob_config, vec![alice_hex.clone()]);
     maybe_autoconfigure_node(&mut bob_config);
 
     assert_eq!(
@@ -228,7 +281,7 @@ fn magic_dns_aliases_are_generated_and_resolve_to_configured_participant() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex;
-    config.participants = vec![peer_hex.clone()];
+    set_default_network_participants(&mut config, vec![peer_hex.clone()]);
     config.ensure_defaults();
 
     let alias = config.peer_alias(&peer_hex).expect("generated alias");
@@ -256,7 +309,7 @@ fn set_peer_alias_normalizes_and_blank_resets_to_default() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex;
-    config.participants = vec![peer_hex.clone()];
+    set_default_network_participants(&mut config, vec![peer_hex.clone()]);
     config.ensure_defaults();
 
     let default_alias = config.peer_alias(&peer_hex).expect("default alias");
@@ -288,7 +341,7 @@ fn peer_aliases_use_npub_keys_in_serialized_config() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex;
-    config.participants = vec![peer_hex.clone()];
+    set_default_network_participants(&mut config, vec![peer_hex.clone()]);
     config.ensure_defaults();
     config
         .set_peer_alias(&peer_hex, "server-a")
@@ -296,4 +349,35 @@ fn peer_aliases_use_npub_keys_in_serialized_config() {
 
     assert!(config.peer_aliases.contains_key(&peer_npub));
     assert!(!config.peer_aliases.contains_key(&peer_hex));
+}
+
+#[test]
+fn default_aliases_prefer_animals_and_stay_unique() {
+    let own = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let peer_a = Keys::generate().public_key().to_hex();
+    let peer_b = Keys::generate().public_key().to_hex();
+    let peer_c = Keys::generate().public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    set_default_network_participants(
+        &mut config,
+        vec![peer_a.clone(), peer_b.clone(), peer_c.clone()],
+    );
+    config.ensure_defaults();
+
+    let alias_a = config.peer_alias(&peer_a).expect("alias a");
+    let alias_b = config.peer_alias(&peer_b).expect("alias b");
+    let alias_c = config.peer_alias(&peer_c).expect("alias c");
+
+    assert!(!alias_a.starts_with("peer-"));
+    assert!(!alias_b.starts_with("peer-"));
+    assert!(!alias_c.starts_with("peer-"));
+
+    let mut aliases = std::collections::HashSet::new();
+    assert!(aliases.insert(alias_a));
+    assert!(aliases.insert(alias_b));
+    assert!(aliases.insert(alias_c));
 }

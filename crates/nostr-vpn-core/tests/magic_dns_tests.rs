@@ -20,7 +20,9 @@ fn build_magic_dns_records_emits_alias_and_suffix_variants() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex.clone();
-    config.participants = vec![peer_hex.clone()];
+    if let Some(network) = config.networks.first_mut() {
+        network.participants = vec![peer_hex.clone()];
+    }
     config.ensure_defaults();
     config
         .set_peer_alias(&peer_hex, "home-server")

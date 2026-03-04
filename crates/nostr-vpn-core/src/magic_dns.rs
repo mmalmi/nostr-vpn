@@ -173,7 +173,7 @@ pub fn build_magic_dns_records(config: &AppConfig) -> HashMap<String, Ipv4Addr> 
     let mesh_members = config.mesh_members_pubkeys();
     let mut records = HashMap::new();
 
-    for participant in &config.participants {
+    for participant in &config.participant_pubkeys_hex() {
         let Some(alias) = config.peer_alias(participant) else {
             continue;
         };

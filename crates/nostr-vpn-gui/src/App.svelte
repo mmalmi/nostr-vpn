@@ -1,36 +1,44 @@
-  <script lang="ts">
+<script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import { Check, Copy, Trash2 } from 'lucide-svelte'
 
   import {
+    addNetwork,
     addParticipant,
     addRelay,
     connectSession,
     disconnectSession,
     isAutostartEnabled,
+    removeNetwork,
     removeParticipant,
     removeRelay,
+    renameNetwork,
+    setNetworkEnabled,
     setParticipantAlias,
     setAutostartEnabled,
     tick,
     updateSettings,
   } from './lib/tauri'
-  import type { SettingsPatch, UiState } from './lib/types'
+  import type { NetworkView, SettingsPatch, UiState } from './lib/types'
 
   let state: UiState | null = null
-  let participantInput = ''
   let relayInput = ''
   let error = ''
   let copiedPubkey = false
 
-  let networkIdDraft = ''
+  let newNetworkName = ''
   let nodeNameDraft = ''
   let endpointDraft = ''
   let tunnelIpDraft = ''
   let listenPortDraft = ''
   let magicDnsSuffixDraft = ''
   let draftsInitialized = false
+
+  let networkNameDrafts: Record<string, string> = {}
+  let participantInputDrafts: Record<string, string> = {}
+  let participantAddAliasDrafts: Record<string, string> = {}
   let participantAliasDrafts: Record<string, string> = {}
+
   let autostartReady = false
   let autostartUpdating = false
 
@@ -45,6 +53,9 @@
 
     return `${value.slice(0, head)}...${value.slice(-tail)}`
   }
+
+  const networkHasParticipant = (network: NetworkView, npub: string) =>
+    network.participants.some((participant) => participant.npub === npub)
 
   async function refresh() {
     try {
@@ -62,48 +73,52 @@
       return
     }
 
-    networkIdDraft = state.networkId
     nodeNameDraft = state.nodeName
     endpointDraft = state.endpoint
     tunnelIpDraft = state.tunnelIp
     listenPortDraft = String(state.listenPort)
     magicDnsSuffixDraft = state.magicDnsSuffix
     draftsInitialized = true
-    syncParticipantAliasDrafts()
+    syncDraftsFromState()
   }
 
   function syncDraftsFromState() {
     if (!state) {
+      networkNameDrafts = {}
       participantAliasDrafts = {}
       return
     }
+
+    const nextNetworkNames: Record<string, string> = {}
+    const nextParticipantInput: Record<string, string> = {}
+    const nextParticipantAddAlias: Record<string, string> = {}
+    const nextParticipantAliases: Record<string, string> = {}
+
+    for (const network of state.networks) {
+      const nameDebounceKey = `network-name-${network.id}`
+      nextNetworkNames[network.id] = debouncers.has(nameDebounceKey)
+        ? (networkNameDrafts[network.id] ?? network.name)
+        : network.name
+
+      nextParticipantInput[network.id] = participantInputDrafts[network.id] ?? ''
+      nextParticipantAddAlias[network.id] = participantAddAliasDrafts[network.id] ?? ''
+
+      for (const participant of network.participants) {
+        const aliasDebounceKey = `alias-${participant.pubkeyHex}`
+        nextParticipantAliases[participant.pubkeyHex] = debouncers.has(aliasDebounceKey)
+          ? (participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias)
+          : participant.magicDnsAlias
+      }
+    }
+
+    networkNameDrafts = nextNetworkNames
+    participantInputDrafts = nextParticipantInput
+    participantAddAliasDrafts = nextParticipantAddAlias
+    participantAliasDrafts = nextParticipantAliases
 
     if (!debouncers.has('magicDnsSuffix')) {
       magicDnsSuffixDraft = state.magicDnsSuffix
     }
-
-    syncParticipantAliasDrafts()
-  }
-
-  function syncParticipantAliasDrafts() {
-    if (!state) {
-      participantAliasDrafts = {}
-      return
-    }
-
-    const next: Record<string, string> = {}
-    for (const participant of state.participants) {
-      const debounceKey = `alias-${participant.pubkeyHex}`
-      if (debouncers.has(debounceKey)) {
-        next[participant.pubkeyHex] =
-          participantAliasDrafts[participant.pubkeyHex] ??
-          participant.magicDnsAlias
-      } else {
-        next[participant.pubkeyHex] = participant.magicDnsAlias
-      }
-    }
-
-    participantAliasDrafts = next
   }
 
   function debounce(key: string, fn: () => Promise<void>, delay = 450) {
@@ -131,14 +146,43 @@
     }
   }
 
-  async function onAddParticipant() {
-    const npub = participantInput.trim()
+  async function onAddNetwork() {
+    const name = newNetworkName.trim()
+    await runAction(() => addNetwork(name))
+    newNetworkName = ''
+  }
+
+  function onNetworkNameInput(networkId: string, value: string) {
+    networkNameDrafts = {
+      ...networkNameDrafts,
+      [networkId]: value,
+    }
+
+    debounce(`network-name-${networkId}`, async () => {
+      await runAction(() => renameNetwork(networkId, value))
+    }, 500)
+  }
+
+  async function onAddParticipant(networkId: string) {
+    const npub = participantInputDrafts[networkId]?.trim() || ''
+    const alias = participantAddAliasDrafts[networkId]?.trim() || ''
     if (!npub) {
       return
     }
 
-    await runAction(() => addParticipant(npub))
-    participantInput = ''
+    await runAction(() => addParticipant(networkId, npub, alias))
+    participantInputDrafts = {
+      ...participantInputDrafts,
+      [networkId]: '',
+    }
+    participantAddAliasDrafts = {
+      ...participantAddAliasDrafts,
+      [networkId]: '',
+    }
+  }
+
+  async function onAddLanPeer(networkId: string, npub: string) {
+    await runAction(() => addParticipant(networkId, npub, ''))
   }
 
   async function onAddRelay() {
@@ -279,7 +323,7 @@
     {#if state}
       <div class="row status-row">
         <span class={`badge ${state.sessionActive ? 'ok' : 'bad'}`}>
-          VPN {state.sessionActive ? 'Connected' : 'Disconnected'}
+          VPN {state.sessionActive ? 'On' : 'Off'}
         </span>
         <span class={`badge ${state.relayConnected ? 'ok' : 'muted'}`}>
           Relays {state.relayConnected ? 'Connected' : 'Disconnected'}
@@ -298,8 +342,10 @@
   {#if state}
     <section class="panel">
       <div class="section-title-row">
-        <h2>Participants</h2>
-        <div class="section-meta">Online: {state.connectedPeerCount}/{state.expectedPeerCount}</div>
+        <h2>Networks</h2>
+        <div class="section-meta">
+          Enabled: {state.networks.filter((network) => network.enabled).length}/{state.networks.length}
+        </div>
       </div>
 
       <label class="toggle-row lan-discovery-toggle">
@@ -315,78 +361,152 @@
         LAN discovery (multicast)
       </label>
 
-      <div class="row form-row">
+      <div class="row form-row network-create-row">
         <input
           class="text-input"
-          placeholder="Add participant (npub)"
-          data-testid="participant-input"
-          bind:value={participantInput}
-          on:keydown={(event) => event.key === 'Enter' && onAddParticipant()}
+          placeholder="Add network name (optional)"
+          data-testid="network-add-input"
+          bind:value={newNetworkName}
+          on:keydown={(event) => event.key === 'Enter' && onAddNetwork()}
         />
-        <button class="btn" data-testid="participant-add" on:click={onAddParticipant}>
-          Add
+        <button class="btn" data-testid="network-add" on:click={onAddNetwork}>
+          Add network
         </button>
       </div>
 
-      <div class="stack rows">
-        {#each state.participants as participant}
-          <div class="item-row" data-testid="participant-row">
-            <div class="item-main">
-              <div class="item-title">{short(participant.npub, 22, 12)}</div>
-              <div class="row alias-row">
+      <div class="stack rows network-stack">
+        {#each state.networks as network}
+          <section class={`network-card ${network.enabled ? '' : 'network-disabled'}`} data-testid="network-card">
+            <div class="row spread network-header">
+              <div class="row network-title-group">
                 <input
-                  class="text-input alias-input"
-                  value={participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias}
-                  data-testid="participant-alias-input"
+                  class="text-input network-name-input"
+                  value={networkNameDrafts[network.id] ?? network.name}
+                  data-testid="network-name-input"
                   on:input={(event) =>
-                    onParticipantAliasInput(
-                      participant.npub,
-                      participant.pubkeyHex,
-                      (event.currentTarget as HTMLInputElement).value,
-                    )}
+                    onNetworkNameInput(network.id, (event.currentTarget as HTMLInputElement).value)}
                 />
-                {#if state.magicDnsSuffix}
-                  <span class="alias-suffix">.{state.magicDnsSuffix}</span>
-                {/if}
+                <span class="badge muted" data-testid="network-mesh-badge">
+                  {network.onlineCount}/{network.expectedCount}
+                </span>
               </div>
-              <div class="item-sub" data-testid="participant-status-text">
-                {participant.magicDnsName} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
+              <div class="row network-actions">
+                <label class="toggle-row compact">
+                  <input
+                    type="checkbox"
+                    checked={network.enabled}
+                    data-testid="network-enabled-toggle"
+                    on:change={(event) =>
+                      runAction(() =>
+                        setNetworkEnabled(network.id, (event.currentTarget as HTMLInputElement).checked),
+                      )}
+                  />
+                  <span>{network.enabled ? 'On' : 'Off'}</span>
+                </label>
+                <button
+                  class="btn ghost icon-btn"
+                  data-testid="network-remove"
+                  title="Delete network"
+                  aria-label="Delete network"
+                  disabled={state.networks.length <= 1}
+                  on:click={() => runAction(() => removeNetwork(network.id))}
+                >
+                  <Trash2 size={16} strokeWidth={2.2} />
+                </button>
               </div>
             </div>
-            <span class={`badge ${participant.state === 'online' ? 'ok' : participant.state === 'offline' ? 'bad' : participant.state === 'local' ? 'muted' : 'warn'}`}>
-              <span data-testid="participant-state">{participant.state}</span>
-            </span>
-            <button
-              class="btn ghost icon-btn"
-              data-testid="participant-remove"
-              title="Delete participant"
-              aria-label="Delete participant"
-              on:click={() => runAction(() => removeParticipant(participant.npub))}
-            >
-              <Trash2 size={16} strokeWidth={2.2} />
-            </button>
-          </div>
+
+            <div class="row form-row participant-add-row">
+              <input
+                class="text-input"
+                placeholder="Add participant (npub)"
+                data-testid="participant-input"
+                value={participantInputDrafts[network.id] ?? ''}
+                on:input={(event) =>
+                  (participantInputDrafts = {
+                    ...participantInputDrafts,
+                    [network.id]: (event.currentTarget as HTMLInputElement).value,
+                  })}
+                on:keydown={(event) => event.key === 'Enter' && onAddParticipant(network.id)}
+              />
+              <input
+                class="text-input participant-add-alias"
+                placeholder="Alias (optional)"
+                data-testid="participant-add-alias-input"
+                value={participantAddAliasDrafts[network.id] ?? ''}
+                on:input={(event) =>
+                  (participantAddAliasDrafts = {
+                    ...participantAddAliasDrafts,
+                    [network.id]: (event.currentTarget as HTMLInputElement).value,
+                  })}
+                on:keydown={(event) => event.key === 'Enter' && onAddParticipant(network.id)}
+              />
+              <button class="btn" data-testid="participant-add" on:click={() => onAddParticipant(network.id)}>
+                Add
+              </button>
+            </div>
+
+            <div class="stack rows">
+              {#each network.participants as participant}
+                <div class="item-row" data-testid="participant-row">
+                  <div class="item-main">
+                    <div class="item-title">{short(participant.npub, 22, 12)}</div>
+                    <div class="row alias-row">
+                      <input
+                        class="text-input alias-input"
+                        value={participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias}
+                        data-testid="participant-alias-input"
+                        on:input={(event) =>
+                          onParticipantAliasInput(
+                            participant.npub,
+                            participant.pubkeyHex,
+                            (event.currentTarget as HTMLInputElement).value,
+                          )}
+                      />
+                      {#if state.magicDnsSuffix}
+                        <span class="alias-suffix">.{state.magicDnsSuffix}</span>
+                      {/if}
+                    </div>
+                    <div class="item-sub" data-testid="participant-status-text">
+                      {participant.magicDnsName} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
+                    </div>
+                  </div>
+                  <span class={`badge ${participant.state === 'online' ? 'ok' : participant.state === 'offline' ? 'bad' : participant.state === 'local' ? 'muted' : 'warn'}`}>
+                    <span data-testid="participant-state">{participant.state}</span>
+                  </span>
+                  <button
+                    class="btn ghost icon-btn"
+                    data-testid="participant-remove"
+                    title="Delete participant"
+                    aria-label="Delete participant"
+                    on:click={() => runAction(() => removeParticipant(network.id, participant.npub))}
+                  >
+                    <Trash2 size={16} strokeWidth={2.2} />
+                  </button>
+                </div>
+              {/each}
+            </div>
+
+            {#if state.lanDiscoveryEnabled}
+              {@const unconfiguredLan = state.lanPeers.filter((peer) => !networkHasParticipant(network, peer.npub))}
+              {#if unconfiguredLan.length > 0}
+                <div class="lan-title">LAN peers</div>
+                <div class="stack rows">
+                  {#each unconfiguredLan as peer}
+                    <div class="item-row" data-testid="lan-peer-row">
+                      <div class="item-main">
+                        <div class="item-title">{short(peer.npub, 22, 12)}</div>
+                        <div class="item-sub">{peer.nodeName} | {peer.endpoint} | seen {peer.lastSeenText}</div>
+                      </div>
+                      <button class="btn" on:click={() => onAddLanPeer(network.id, peer.npub)}>Add</button>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
+          </section>
         {/each}
       </div>
-
-      {#if state.lanDiscoveryEnabled && state.lanPeers.length > 0}
-        <div class="lan-title">LAN peers found</div>
-        <div class="stack rows">
-          {#each state.lanPeers as peer}
-            <div class="item-row">
-              <div class="item-main">
-                <div class="item-title">{short(peer.npub, 22, 12)}</div>
-                <div class="item-sub">{peer.nodeName} | {peer.endpoint} | seen {peer.lastSeenText}</div>
-              </div>
-              {#if peer.configured}
-                <span class="badge ok">configured</span>
-              {:else}
-                <button class="btn" on:click={() => runAction(() => addParticipant(peer.npub))}>Add</button>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
     </section>
 
     <section class="panel">
@@ -436,7 +556,7 @@
 
     <section class="panel">
       <div class="section-title-row">
-        <h2>Node & Session</h2>
+        <h2>Session & Node</h2>
       </div>
 
       <div class="row spread settings-action-row">
@@ -472,6 +592,18 @@
       <label class="toggle-row">
         <input
           type="checkbox"
+          checked={state.autoconnect}
+          on:change={(event) =>
+            onUpdateSettings({
+              autoconnect: (event.currentTarget as HTMLInputElement).checked,
+            })}
+        />
+        <span>Auto-connect session on app start</span>
+      </label>
+
+      <label class="toggle-row">
+        <input
+          type="checkbox"
           data-testid="autostart-toggle"
           checked={state.launchOnStartup}
           disabled={!autostartReady || autostartUpdating}
@@ -494,16 +626,6 @@
       </label>
 
       <div class="field-grid">
-        <label>
-          <span>Fallback Network ID</span>
-          <input
-            class="text-input"
-            data-testid="network-id-input"
-            bind:value={networkIdDraft}
-            on:input={() => debounce('networkId', () => onUpdateSettings({ networkId: networkIdDraft }))}
-          />
-        </label>
-
         <label>
           <span>MagicDNS Suffix (Optional)</span>
           <input

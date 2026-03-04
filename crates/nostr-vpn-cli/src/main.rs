@@ -1327,8 +1327,8 @@ impl CliTunnelRuntime {
         own_pubkey: Option<&str>,
         peer_announcements: &HashMap<String, PeerAnnouncement>,
     ) -> Result<()> {
-        let mut peers = app
-            .participants
+        let configured_participants = app.participant_pubkeys_hex();
+        let mut peers = configured_participants
             .iter()
             .filter(|participant| Some(participant.as_str()) != own_pubkey)
             .filter_map(|participant| peer_announcements.get(participant))
@@ -1445,7 +1445,8 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let (app, network_id) =
         load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-    if app.participants.is_empty() {
+    let configured_participants = app.participant_pubkeys_hex();
+    if configured_participants.is_empty() {
         return Err(anyhow!(
             "at least one participant must be configured before running connect"
         ));
@@ -1461,7 +1462,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let client = NostrSignalingClient::from_secret_key(
         network_id.clone(),
         &app.nostr.secret_key,
-        app.participant_pubkeys_hex(),
+        configured_participants.clone(),
     )?;
     client.connect(&relays).await?;
 
@@ -1527,7 +1528,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     .context("failed to apply tunnel update")?;
 
                 let connected = app
-                    .participants
+                    .participant_pubkeys_hex()
                     .iter()
                     .filter(|participant| Some(participant.as_str()) != own_pubkey.as_deref())
                     .filter(|participant| peer_announcements.contains_key(*participant))
@@ -1560,7 +1561,8 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
     let (app, network_id) =
         load_config_with_overrides(&config_path, args.network_id, args.participants)?;
-    if app.participants.is_empty() {
+    let configured_participants = app.participant_pubkeys_hex();
+    if configured_participants.is_empty() {
         return Err(anyhow!(
             "at least one participant must be configured before running daemon"
         ));
@@ -1578,7 +1580,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let client = NostrSignalingClient::from_secret_key(
         network_id.clone(),
         &app.nostr.secret_key,
-        app.participant_pubkeys_hex(),
+        configured_participants.clone(),
     )?;
     client.connect(&relays).await?;
 
@@ -1688,7 +1690,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 }
 
                 let connected = app
-                    .participants
+                    .participant_pubkeys_hex()
                     .iter()
                     .filter(|participant| Some(participant.as_str()) != own_pubkey.as_deref())
                     .filter(|participant| peer_announcements.contains_key(*participant))
@@ -1738,7 +1740,7 @@ fn build_daemon_runtime_state(
     let mut peers = Vec::new();
     let mut connected_peer_count = 0usize;
 
-    for participant in &app.participants {
+    for participant in &app.participant_pubkeys_hex() {
         if Some(participant.as_str()) == own_pubkey.as_deref() {
             continue;
         }
@@ -2199,14 +2201,14 @@ fn strip_cidr(value: &str) -> &str {
 }
 
 fn expected_peer_count(config: &AppConfig) -> usize {
-    if config.participants.is_empty() {
+    let participants = config.participant_pubkeys_hex();
+    if participants.is_empty() {
         return 0;
     }
 
-    let mut expected = config.participants.len();
+    let mut expected = participants.len();
     if let Ok(own_pubkey) = config.own_nostr_pubkey_hex()
-        && config
-            .participants
+        && participants
             .iter()
             .any(|participant| participant == &own_pubkey)
     {
@@ -2312,10 +2314,14 @@ fn apply_participants_override(config: &mut AppConfig, participants: Vec<String>
 
     normalized.sort();
     normalized.dedup();
-    config.participants = normalized;
+    config.ensure_defaults();
+    if let Some(network) = config.networks.first_mut() {
+        network.participants = normalized.clone();
+        network.enabled = true;
+    }
 
     if config.network_id.trim().is_empty() {
-        config.network_id = derive_network_id_from_participants(&config.participants);
+        config.network_id = derive_network_id_from_participants(&normalized);
     }
 
     Ok(())

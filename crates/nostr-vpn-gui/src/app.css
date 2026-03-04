@@ -336,6 +336,68 @@ body {
   margin-top: 10px;
 }
 
+.network-stack {
+  gap: 12px;
+}
+
+.network-card {
+  border: 1px solid rgba(92, 95, 171, 0.48);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(11, 12, 38, 0.62);
+}
+
+.network-disabled {
+  opacity: 0.78;
+}
+
+.network-header {
+  margin-bottom: 10px;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.network-title-group {
+  flex: 1;
+  min-width: 220px;
+}
+
+.network-name-input {
+  max-width: 360px;
+  font-size: 16px;
+  padding: 8px 10px;
+}
+
+.network-actions {
+  margin-left: auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.toggle-row.compact {
+  margin: 0;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.toggle-row.compact input {
+  width: 14px;
+  height: 14px;
+}
+
+.network-create-row {
+  margin-bottom: 10px;
+}
+
+.participant-add-row {
+  flex-wrap: wrap;
+}
+
+.participant-add-alias {
+  max-width: 220px;
+}
+
 .item-row {
   width: 100%;
   min-width: 0;
@@ -516,5 +578,10 @@ body {
 
   .btn {
     padding: 9px 12px;
+  }
+
+  .network-name-input,
+  .participant-add-alias {
+    max-width: 100%;
   }
 }

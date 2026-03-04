@@ -1,11 +1,36 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { SettingsPatch, UiState } from './types'
+import type { NetworkView, SettingsPatch, UiState } from './types'
 
 const isTauriRuntime = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
 const composeMagicDnsName = (alias: string, suffix: string) =>
   suffix.trim().length > 0 ? `${alias}.${suffix}` : alias
+
+const normalizeAlias = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+const pseudoHexFromNpub = (npub: string) => {
+  const seed = npub
+    .replace(/^npub1/i, '')
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase()
+  return (seed + 'a'.repeat(64)).slice(0, 64)
+}
+
+const countExpected = (network: NetworkView) =>
+  network.enabled
+    ? network.participants.filter((participant) => participant.state !== 'local').length
+    : 0
+
+const countOnline = (network: NetworkView) =>
+  network.enabled
+    ? network.participants.filter((participant) => participant.state === 'online').length
+    : 0
 
 const mockState: UiState = {
   sessionActive: false,
@@ -19,18 +44,26 @@ const mockState: UiState = {
   endpoint: '192.168.1.4:51820',
   tunnelIp: '10.44.0.1/32',
   listenPort: 51820,
-  networkId: 'nostr-vpn',
-  effectiveNetworkId: 'nostr-vpn',
   magicDnsSuffix: 'nvpn',
   magicDnsStatus: 'System DNS active for .nvpn via 127.0.0.1:1053',
   autoDisconnectRelaysWhenMeshReady: true,
+  autoconnect: true,
   lanDiscoveryEnabled: true,
   launchOnStartup: true,
   closeToTrayOnClose: true,
   connectedPeerCount: 0,
   expectedPeerCount: 0,
   meshReady: false,
-  participants: [],
+  networks: [
+    {
+      id: 'network-1',
+      name: 'Network 1',
+      enabled: true,
+      onlineCount: 0,
+      expectedCount: 0,
+      participants: [],
+    },
+  ],
   relays: [
     { url: 'wss://temp.iris.to', state: 'unknown', statusText: 'not checked' },
     { url: 'wss://relay.damus.io', state: 'unknown', statusText: 'not checked' },
@@ -59,7 +92,44 @@ const updateMockRelaySummary = () => {
   }
 }
 
-const asResult = async () => cloneMockState()
+const recomputeMockConnectivity = () => {
+  mockState.networks = mockState.networks.map((network) => ({
+    ...network,
+    onlineCount: countOnline(network),
+    expectedCount: countExpected(network),
+  }))
+
+  mockState.connectedPeerCount = mockState.networks.reduce(
+    (sum, network) => sum + network.onlineCount,
+    0,
+  )
+  mockState.expectedPeerCount = mockState.networks.reduce(
+    (sum, network) => sum + network.expectedCount,
+    0,
+  )
+  mockState.meshReady =
+    mockState.expectedPeerCount > 0 &&
+    mockState.connectedPeerCount >= mockState.expectedPeerCount
+}
+
+const refreshMockLanConfigured = () => {
+  const configured = new Set(
+    mockState.networks.flatMap((network) =>
+      network.participants.map((participant) => participant.npub),
+    ),
+  )
+
+  mockState.lanPeers = mockState.lanPeers.map((peer) => ({
+    ...peer,
+    configured: configured.has(peer.npub),
+  }))
+}
+
+const asResult = async () => {
+  recomputeMockConnectivity()
+  refreshMockLanConfigured()
+  return cloneMockState()
+}
 
 export const tick = () =>
   isTauriRuntime() ? invoke<UiState>('tick') : asResult()
@@ -74,7 +144,20 @@ export const connectSession = () =>
         mockState.relays = mockState.relays.map((relay) => ({
           ...relay,
           state: 'up',
-          statusText: 'up (mock)',
+          statusText: 'connected (mock)',
+        }))
+        mockState.networks = mockState.networks.map((network) => ({
+          ...network,
+          participants: network.participants.map((participant) => ({
+            ...participant,
+            state: participant.state === 'local' ? 'local' : 'online',
+            statusText:
+              participant.state === 'local'
+                ? 'local'
+                : 'online (handshake 0s ago)',
+            lastSignalText:
+              participant.state === 'local' ? 'self' : 'presence 0s ago',
+          })),
         }))
         updateMockRelaySummary()
         return asResult()
@@ -87,40 +170,130 @@ export const disconnectSession = () =>
         mockState.sessionActive = false
         mockState.relayConnected = false
         mockState.sessionStatus = 'Disconnected'
+        mockState.relays = mockState.relays.map((relay) => ({
+          ...relay,
+          state: 'unknown',
+          statusText: 'not checked',
+        }))
+        mockState.networks = mockState.networks.map((network) => ({
+          ...network,
+          participants: network.participants.map((participant) => ({
+            ...participant,
+            state: participant.state === 'local' ? 'local' : 'unknown',
+            statusText: participant.state === 'local' ? 'local' : 'unknown',
+            lastSignalText:
+              participant.state === 'local' ? 'self' : 'no presence yet',
+          })),
+        }))
+        updateMockRelaySummary()
         return asResult()
       })()
 
-export const addParticipant = (npub: string) =>
+export const addNetwork = (name: string) =>
   isTauriRuntime()
-    ? invoke<UiState>('add_participant', { npub })
+    ? invoke<UiState>('add_network', { name })
     : (() => {
-        if (!mockState.participants.some((participant) => participant.npub === npub)) {
-          mockState.participants.push({
-            npub,
-            pubkeyHex: 'a'.repeat(64),
-            tunnelIp: '10.44.0.2/32',
-            magicDnsAlias: `peer-${'a'.repeat(12)}`,
-            magicDnsName: composeMagicDnsName(
-              `peer-${'a'.repeat(12)}`,
-              mockState.magicDnsSuffix,
-            ),
-            state: 'unknown',
-            statusText: 'not checked',
-            lastSignalText: 'no signal yet',
-          })
-          mockState.expectedPeerCount = mockState.participants.length
+        const index = mockState.networks.length + 1
+        const normalized = name.trim() || `Network ${index}`
+        let id = `network-${index}`
+        let suffix = 2
+        while (mockState.networks.some((network) => network.id === id)) {
+          id = `network-${index}-${suffix}`
+          suffix += 1
         }
+        mockState.networks.push({
+          id,
+          name: normalized,
+          enabled: true,
+          onlineCount: 0,
+          expectedCount: 0,
+          participants: [],
+        })
         return asResult()
       })()
 
-export const removeParticipant = (npub: string) =>
+export const renameNetwork = (networkId: string, name: string) =>
   isTauriRuntime()
-    ? invoke<UiState>('remove_participant', { npub })
+    ? invoke<UiState>('rename_network', { networkId, name })
     : (() => {
-        mockState.participants = mockState.participants.filter(
-          (participant) => participant.npub !== npub,
+        mockState.networks = mockState.networks.map((network) =>
+          network.id === networkId
+            ? { ...network, name: name.trim() || network.name }
+            : network,
         )
-        mockState.expectedPeerCount = mockState.participants.length
+        return asResult()
+      })()
+
+export const removeNetwork = (networkId: string) =>
+  isTauriRuntime()
+    ? invoke<UiState>('remove_network', { networkId })
+    : (() => {
+        if (mockState.networks.length <= 1) {
+          return asResult()
+        }
+        mockState.networks = mockState.networks.filter(
+          (network) => network.id !== networkId,
+        )
+        return asResult()
+      })()
+
+export const setNetworkEnabled = (networkId: string, enabled: boolean) =>
+  isTauriRuntime()
+    ? invoke<UiState>('set_network_enabled', { networkId, enabled })
+    : (() => {
+        mockState.networks = mockState.networks.map((network) =>
+          network.id === networkId ? { ...network, enabled } : network,
+        )
+        return asResult()
+      })()
+
+export const addParticipant = (networkId: string, npub: string, alias = '') =>
+  isTauriRuntime()
+    ? invoke<UiState>('add_participant', { networkId, npub, alias: alias.trim() || null })
+    : (() => {
+        const target = mockState.networks.find((network) => network.id === networkId)
+        if (!target) {
+          return asResult()
+        }
+
+        if (target.participants.some((participant) => participant.npub === npub)) {
+          return asResult()
+        }
+
+        const pubkeyHex = pseudoHexFromNpub(npub)
+        const aliasCandidate = normalizeAlias(alias)
+        const magicDnsAlias = aliasCandidate.length > 0 ? aliasCandidate : `peer-${pubkeyHex.slice(0, 10)}`
+
+        target.participants.push({
+          npub,
+          pubkeyHex,
+          tunnelIp: '10.44.0.2/32',
+          magicDnsAlias,
+          magicDnsName: composeMagicDnsName(magicDnsAlias, mockState.magicDnsSuffix),
+          state: 'unknown',
+          statusText: 'no signal yet',
+          lastSignalText: 'no presence yet',
+        })
+
+        return asResult()
+      })()
+
+export const removeParticipant = (networkId: string, npub: string) =>
+  isTauriRuntime()
+    ? invoke<UiState>('remove_participant', { networkId, npub })
+    : (() => {
+        mockState.networks = mockState.networks.map((network) => {
+          if (network.id !== networkId) {
+            return network
+          }
+          return {
+            ...network,
+            participants: network.participants.filter(
+              (participant) => participant.npub !== npub,
+            ),
+          }
+        })
+
         return asResult()
       })()
 
@@ -128,18 +301,22 @@ export const setParticipantAlias = (npub: string, alias: string) =>
   isTauriRuntime()
     ? invoke<UiState>('set_participant_alias', { npub, alias })
     : (() => {
-        mockState.participants = mockState.participants.map((participant) => {
-          if (participant.npub !== npub) {
-            return participant
-          }
+        const normalized = normalizeAlias(alias)
+        mockState.networks = mockState.networks.map((network) => ({
+          ...network,
+          participants: network.participants.map((participant) => {
+            if (participant.npub !== npub) {
+              return participant
+            }
 
-          const normalized = alias.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || participant.magicDnsAlias
-          return {
-            ...participant,
-            magicDnsAlias: normalized,
-            magicDnsName: composeMagicDnsName(normalized, mockState.magicDnsSuffix),
-          }
-        })
+            const magicDnsAlias = normalized || participant.magicDnsAlias
+            return {
+              ...participant,
+              magicDnsAlias,
+              magicDnsName: composeMagicDnsName(magicDnsAlias, mockState.magicDnsSuffix),
+            }
+          }),
+        }))
         return asResult()
       })()
 
@@ -178,22 +355,21 @@ export const updateSettings = (patch: SettingsPatch) =>
         if (patch.tunnelIp !== undefined) {
           mockState.tunnelIp = patch.tunnelIp
         }
-        if (patch.networkId !== undefined) {
-          mockState.networkId = patch.networkId
-          mockState.effectiveNetworkId = patch.networkId
-        }
         if (patch.magicDnsSuffix !== undefined) {
           mockState.magicDnsSuffix = patch.magicDnsSuffix
           mockState.magicDnsStatus =
             patch.magicDnsSuffix.trim().length > 0
               ? `System DNS active for .${patch.magicDnsSuffix} via 127.0.0.1:1053`
               : 'Local DNS only on 127.0.0.1:1053 (set suffix for system split-dns)'
-          mockState.participants = mockState.participants.map((participant) => ({
-            ...participant,
-            magicDnsName: composeMagicDnsName(
-              participant.magicDnsAlias,
-              mockState.magicDnsSuffix,
-            ),
+          mockState.networks = mockState.networks.map((network) => ({
+            ...network,
+            participants: network.participants.map((participant) => ({
+              ...participant,
+              magicDnsName: composeMagicDnsName(
+                participant.magicDnsAlias,
+                mockState.magicDnsSuffix,
+              ),
+            })),
           }))
         }
         if (patch.listenPort !== undefined) {
@@ -202,6 +378,9 @@ export const updateSettings = (patch: SettingsPatch) =>
         if (patch.autoDisconnectRelaysWhenMeshReady !== undefined) {
           mockState.autoDisconnectRelaysWhenMeshReady =
             patch.autoDisconnectRelaysWhenMeshReady
+        }
+        if (patch.autoconnect !== undefined) {
+          mockState.autoconnect = patch.autoconnect
         }
         if (patch.lanDiscoveryEnabled !== undefined) {
           mockState.lanDiscoveryEnabled = patch.lanDiscoveryEnabled

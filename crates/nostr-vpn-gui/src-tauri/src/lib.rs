@@ -149,6 +149,17 @@ struct ParticipantView {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct NetworkView {
+    id: String,
+    name: String,
+    enabled: bool,
+    online_count: usize,
+    expected_count: usize,
+    participants: Vec<ParticipantView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LanPeerView {
     npub: String,
     node_name: String,
@@ -171,8 +182,6 @@ struct UiState {
     endpoint: String,
     tunnel_ip: String,
     listen_port: u16,
-    network_id: String,
-    effective_network_id: String,
     magic_dns_suffix: String,
     magic_dns_status: String,
     auto_disconnect_relays_when_mesh_ready: bool,
@@ -183,7 +192,7 @@ struct UiState {
     connected_peer_count: usize,
     expected_peer_count: usize,
     mesh_ready: bool,
-    participants: Vec<ParticipantView>,
+    networks: Vec<NetworkView>,
     relays: Vec<RelayView>,
     relay_summary: RelaySummary,
     lan_peers: Vec<LanPeerView>,
@@ -196,7 +205,6 @@ struct SettingsPatch {
     endpoint: Option<String>,
     tunnel_ip: Option<String>,
     listen_port: Option<u16>,
-    network_id: Option<String>,
     magic_dns_suffix: Option<String>,
     auto_disconnect_relays_when_mesh_ready: Option<bool>,
     autoconnect: Option<bool>,
@@ -261,7 +269,7 @@ impl NvpnBackend {
             .collect::<HashMap<_, _>>();
 
         let peer_status = config
-            .participants
+            .all_participant_pubkeys_hex()
             .iter()
             .map(|participant| (participant.clone(), PeerLinkStatus::default()))
             .collect::<HashMap<_, _>>();
@@ -290,7 +298,7 @@ impl NvpnBackend {
         backend.ensure_peer_status_entries();
         backend.maybe_refresh_lan_discovery();
 
-        if backend.config.autoconnect && !backend.config.participants.is_empty() {
+        if backend.config.autoconnect && !backend.config.participant_pubkeys_hex().is_empty() {
             let _ = backend.start_daemon_process();
         }
 
@@ -313,7 +321,51 @@ impl NvpnBackend {
         self.sync_daemon_state();
     }
 
-    fn add_participant(&mut self, npub: &str) -> Result<()> {
+    fn add_network(&mut self, name: &str) -> Result<()> {
+        self.config.add_network(name);
+        self.config.ensure_defaults();
+        maybe_autoconfigure_node(&mut self.config);
+        self.persist_config()?;
+
+        self.ensure_peer_status_entries();
+        self.restart_daemon_if_running()?;
+        self.sync_daemon_state();
+
+        Ok(())
+    }
+
+    fn rename_network(&mut self, network_id: &str, name: &str) -> Result<()> {
+        self.config.rename_network(network_id, name)?;
+        self.persist_config()?;
+        self.sync_daemon_state();
+        Ok(())
+    }
+
+    fn remove_network(&mut self, network_id: &str) -> Result<()> {
+        self.config.remove_network(network_id)?;
+        self.config.ensure_defaults();
+        maybe_autoconfigure_node(&mut self.config);
+        self.persist_config()?;
+
+        self.ensure_peer_status_entries();
+        self.restart_daemon_if_running()?;
+        self.sync_daemon_state();
+
+        Ok(())
+    }
+
+    fn set_network_enabled(&mut self, network_id: &str, enabled: bool) -> Result<()> {
+        self.config.set_network_enabled(network_id, enabled)?;
+        self.config.ensure_defaults();
+        maybe_autoconfigure_node(&mut self.config);
+        self.persist_config()?;
+
+        self.restart_daemon_if_running()?;
+        self.sync_daemon_state();
+        Ok(())
+    }
+
+    fn add_participant(&mut self, network_id: &str, npub: &str, alias: Option<&str>) -> Result<()> {
         let input = npub.trim();
         if input.is_empty() {
             return Err(anyhow!("participant npub is empty"));
@@ -322,19 +374,13 @@ impl NvpnBackend {
             return Err(anyhow!("participant must be an npub"));
         }
 
-        let normalized = normalize_nostr_pubkey(input)?;
-        if self
-            .config
-            .participants
-            .iter()
-            .any(|participant| participant == &normalized)
-        {
-            return Ok(());
+        let normalized = self.config.add_participant_to_network(network_id, input)?;
+        if let Some(alias) = alias {
+            let alias = alias.trim();
+            if !alias.is_empty() {
+                self.config.set_peer_alias(&normalized, alias)?;
+            }
         }
-
-        self.config.participants.push(normalized.clone());
-        self.config.participants.sort();
-        self.config.participants.dedup();
         self.peer_status.entry(normalized).or_default();
 
         self.config.ensure_defaults();
@@ -349,17 +395,10 @@ impl NvpnBackend {
         Ok(())
     }
 
-    fn remove_participant(&mut self, npub_or_hex: &str) -> Result<()> {
+    fn remove_participant(&mut self, network_id: &str, npub_or_hex: &str) -> Result<()> {
         let normalized = normalize_nostr_pubkey(npub_or_hex)?;
-        let previous_len = self.config.participants.len();
         self.config
-            .participants
-            .retain(|participant| participant != &normalized);
-
-        if self.config.participants.len() == previous_len {
-            return Ok(());
-        }
-
+            .remove_participant_from_network(network_id, &normalized)?;
         self.peer_status.remove(&normalized);
 
         self.config.ensure_defaults();
@@ -455,11 +494,6 @@ impl NvpnBackend {
             restart_required = true;
         }
 
-        if let Some(network_id) = patch.network_id {
-            self.config.network_id = network_id;
-            restart_required = true;
-        }
-
         if let Some(magic_dns_suffix) = patch.magic_dns_suffix {
             self.config.magic_dns_suffix = magic_dns_suffix;
             restart_required = true;
@@ -540,12 +574,16 @@ impl NvpnBackend {
     }
 
     fn ensure_peer_status_entries(&mut self) {
-        let configured: HashSet<String> = self.config.participants.iter().cloned().collect();
+        let configured: HashSet<String> = self
+            .config
+            .all_participant_pubkeys_hex()
+            .into_iter()
+            .collect();
         self.peer_status
             .retain(|participant, _| configured.contains(participant));
 
-        for participant in &self.config.participants {
-            self.peer_status.entry(participant.clone()).or_default();
+        for participant in configured {
+            self.peer_status.entry(participant).or_default();
         }
     }
 
@@ -692,8 +730,8 @@ impl NvpnBackend {
                     );
                 }
 
-                for participant in &self.config.participants {
-                    let status = self.peer_status.entry(participant.clone()).or_default();
+                for participant in self.config.all_participant_pubkeys_hex() {
+                    let status = self.peer_status.entry(participant).or_default();
                     status.reachable = None;
                     status.last_handshake_at = None;
                     status.endpoint = None;
@@ -787,7 +825,7 @@ impl NvpnBackend {
             })
             .unwrap_or_default();
 
-        for participant in &self.config.participants {
+        for participant in self.config.all_participant_pubkeys_hex() {
             let status = self.peer_status.entry(participant.clone()).or_default();
             status.checked_at = Some(now);
 
@@ -890,40 +928,87 @@ impl NvpnBackend {
             .unwrap_or_else(|| "not checked".to_string())
     }
 
-    fn configured_peer_rows(&self) -> Vec<ParticipantView> {
+    fn participant_view(
+        &self,
+        participant: &str,
+        mesh_members: &[String],
+        own_pubkey_hex: Option<&str>,
+    ) -> ParticipantView {
+        let tunnel_ip =
+            derive_mesh_tunnel_ip(mesh_members, participant).unwrap_or_else(|| "-".to_string());
+        let state = self.peer_state_for(participant, own_pubkey_hex);
+        let status_text = self.peer_status_line(participant, state);
+        let last_signal_text = self.peer_presence_line(participant, own_pubkey_hex);
+        let magic_dns_alias = self.config.peer_alias(participant).unwrap_or_default();
+        let magic_dns_name = self
+            .config
+            .magic_dns_name_for_participant(participant)
+            .unwrap_or_default();
+
+        ParticipantView {
+            npub: to_npub(participant),
+            pubkey_hex: participant.to_string(),
+            tunnel_ip,
+            magic_dns_alias,
+            magic_dns_name,
+            state: peer_state_label(state).to_string(),
+            status_text,
+            last_signal_text,
+        }
+    }
+
+    fn network_rows(&self) -> Vec<NetworkView> {
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().ok();
         let mesh_members = self.config.mesh_members_pubkeys();
-        let mut participants = self.config.participants.clone();
-        participants.sort();
-        participants.dedup();
+        let mut rows = Vec::with_capacity(self.config.networks.len());
 
-        participants
-            .into_iter()
-            .map(|participant| {
-                let tunnel_ip = derive_mesh_tunnel_ip(&mesh_members, &participant)
-                    .unwrap_or_else(|| "-".to_string());
-                let state = self.peer_state_for(&participant, own_pubkey_hex.as_deref());
-                let status_text = self.peer_status_line(&participant, state);
-                let last_signal_text =
-                    self.peer_presence_line(&participant, own_pubkey_hex.as_deref());
-                let magic_dns_alias = self.config.peer_alias(&participant).unwrap_or_default();
-                let magic_dns_name = self
-                    .config
-                    .magic_dns_name_for_participant(&participant)
-                    .unwrap_or_default();
+        for network in &self.config.networks {
+            let mut participants = network.participants.clone();
+            participants.sort();
+            participants.dedup();
 
-                ParticipantView {
-                    npub: to_npub(&participant),
-                    pubkey_hex: participant,
-                    tunnel_ip,
-                    magic_dns_alias,
-                    magic_dns_name,
-                    state: peer_state_label(state).to_string(),
-                    status_text,
-                    last_signal_text,
-                }
-            })
-            .collect()
+            let participant_rows = participants
+                .iter()
+                .map(|participant| {
+                    self.participant_view(participant, &mesh_members, own_pubkey_hex.as_deref())
+                })
+                .collect::<Vec<_>>();
+
+            let expected_count = if network.enabled {
+                participants
+                    .iter()
+                    .filter(|participant| Some(participant.as_str()) != own_pubkey_hex.as_deref())
+                    .count()
+            } else {
+                0
+            };
+
+            let online_count = if network.enabled {
+                participants
+                    .iter()
+                    .filter(|participant| Some(participant.as_str()) != own_pubkey_hex.as_deref())
+                    .filter(|participant| {
+                        matches!(
+                            self.peer_state_for(participant.as_str(), own_pubkey_hex.as_deref()),
+                            ConfiguredPeerStatus::Online
+                        )
+                    })
+                    .count()
+            } else {
+                0
+            };
+
+            rows.push(NetworkView {
+                id: network.id.clone(),
+                name: network.name.clone(),
+                enabled: network.enabled,
+                online_count,
+                expected_count,
+                participants: participant_rows,
+            });
+        }
+
+        rows
     }
 
     fn peer_presence_line(&self, participant: &str, own_pubkey_hex: Option<&str>) -> String {
@@ -1126,16 +1211,17 @@ impl NvpnBackend {
     fn lan_peer_rows(&self) -> Vec<LanPeerView> {
         let mut peers = self.lan_peers.values().cloned().collect::<Vec<_>>();
         peers.sort_by(|left, right| left.npub.cmp(&right.npub));
+        let configured_npubs = self
+            .config
+            .all_participant_pubkeys_hex()
+            .iter()
+            .filter_map(|value| self.npub_or_none(value))
+            .collect::<HashSet<_>>();
 
         peers
             .into_iter()
             .map(|peer| {
-                let configured = self
-                    .config
-                    .participants
-                    .iter()
-                    .filter_map(|value| self.npub_or_none(value))
-                    .any(|npub| npub == peer.npub);
+                let configured = configured_npubs.contains(&peer.npub);
 
                 let last_seen_secs = peer
                     .last_seen
@@ -1164,7 +1250,7 @@ impl NvpnBackend {
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().unwrap_or_default();
         let own_npub = to_npub(&own_pubkey_hex);
 
-        let participants = self.configured_peer_rows();
+        let networks = self.network_rows();
         let relays = self
             .config
             .nostr
@@ -1210,8 +1296,6 @@ impl NvpnBackend {
             endpoint: self.config.node.endpoint.clone(),
             tunnel_ip: self.config.node.tunnel_ip.clone(),
             listen_port: self.config.node.listen_port,
-            network_id: self.config.network_id.clone(),
-            effective_network_id: self.config.effective_network_id(),
             magic_dns_suffix: self.config.magic_dns_suffix.clone(),
             magic_dns_status: self.magic_dns_status.clone(),
             auto_disconnect_relays_when_mesh_ready: self
@@ -1224,7 +1308,7 @@ impl NvpnBackend {
             connected_peer_count,
             expected_peer_count,
             mesh_ready,
-            participants,
+            networks,
             relays,
             relay_summary,
             lan_peers: self.lan_peer_rows(),
@@ -1363,14 +1447,14 @@ fn shorten_middle(value: &str, head: usize, tail: usize) -> String {
 }
 
 fn expected_peer_count(config: &AppConfig) -> usize {
-    if config.participants.is_empty() {
+    let participants = config.participant_pubkeys_hex();
+    if participants.is_empty() {
         return 0;
     }
 
-    let mut expected = config.participants.len();
+    let mut expected = participants.len();
     if let Ok(own_pubkey) = config.own_nostr_pubkey_hex()
-        && config
-            .participants
+        && participants
             .iter()
             .any(|participant| participant == &own_pubkey)
     {
@@ -1385,9 +1469,9 @@ fn connected_configured_peer_count(
     peer_status: &HashMap<String, PeerLinkStatus>,
 ) -> usize {
     let own_pubkey = config.own_nostr_pubkey_hex().ok();
+    let participants = config.participant_pubkeys_hex();
 
-    config
-        .participants
+    participants
         .iter()
         .filter(|participant| Some(participant.as_str()) != own_pubkey.as_deref())
         .filter(|participant| {
@@ -1578,18 +1662,71 @@ fn disconnect_session(state: State<'_, AppState>) -> Result<UiState, String> {
 }
 
 #[tauri::command]
-fn add_participant(state: State<'_, AppState>, npub: String) -> Result<UiState, String> {
+fn add_network(state: State<'_, AppState>, name: String) -> Result<UiState, String> {
     with_backend(state, |backend| {
-        backend.add_participant(&npub)?;
+        backend.add_network(&name)?;
         backend.tick();
         Ok(backend.ui_state())
     })
 }
 
 #[tauri::command]
-fn remove_participant(state: State<'_, AppState>, npub: String) -> Result<UiState, String> {
+fn rename_network(
+    state: State<'_, AppState>,
+    network_id: String,
+    name: String,
+) -> Result<UiState, String> {
     with_backend(state, |backend| {
-        backend.remove_participant(&npub)?;
+        backend.rename_network(&network_id, &name)?;
+        backend.tick();
+        Ok(backend.ui_state())
+    })
+}
+
+#[tauri::command]
+fn remove_network(state: State<'_, AppState>, network_id: String) -> Result<UiState, String> {
+    with_backend(state, |backend| {
+        backend.remove_network(&network_id)?;
+        backend.tick();
+        Ok(backend.ui_state())
+    })
+}
+
+#[tauri::command]
+fn set_network_enabled(
+    state: State<'_, AppState>,
+    network_id: String,
+    enabled: bool,
+) -> Result<UiState, String> {
+    with_backend(state, |backend| {
+        backend.set_network_enabled(&network_id, enabled)?;
+        backend.tick();
+        Ok(backend.ui_state())
+    })
+}
+
+#[tauri::command]
+fn add_participant(
+    state: State<'_, AppState>,
+    network_id: String,
+    npub: String,
+    alias: Option<String>,
+) -> Result<UiState, String> {
+    with_backend(state, |backend| {
+        backend.add_participant(&network_id, &npub, alias.as_deref())?;
+        backend.tick();
+        Ok(backend.ui_state())
+    })
+}
+
+#[tauri::command]
+fn remove_participant(
+    state: State<'_, AppState>,
+    network_id: String,
+    npub: String,
+) -> Result<UiState, String> {
+    with_backend(state, |backend| {
+        backend.remove_participant(&network_id, &npub)?;
         backend.tick();
         Ok(backend.ui_state())
     })
@@ -1711,6 +1848,10 @@ pub fn run() {
             tick,
             connect_session,
             disconnect_session,
+            add_network,
+            rename_network,
+            remove_network,
+            set_network_enabled,
             add_participant,
             remove_participant,
             set_participant_alias,
@@ -1744,7 +1885,7 @@ mod tests {
         let mut config = AppConfig::generated();
         let own_hex =
             "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_string();
-        config.participants = vec![
+        config.networks[0].participants = vec![
             own_hex.clone(),
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
