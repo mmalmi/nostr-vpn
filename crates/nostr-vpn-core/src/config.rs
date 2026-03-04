@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::net::{IpAddr, UdpSocket};
 use std::path::Path;
@@ -63,8 +64,12 @@ pub struct AppConfig {
     pub launch_on_startup: bool,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
+    #[serde(default = "default_magic_dns_suffix")]
+    pub magic_dns_suffix: String,
     #[serde(default)]
     pub participants: Vec<String>,
+    #[serde(default = "default_peer_aliases")]
+    pub peer_aliases: HashMap<String, String>,
     #[serde(default)]
     pub nostr: NostrConfig,
     #[serde(default)]
@@ -81,7 +86,9 @@ impl Default for AppConfig {
             lan_discovery_enabled: default_lan_discovery_enabled(),
             launch_on_startup: default_launch_on_startup(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
+            magic_dns_suffix: default_magic_dns_suffix(),
             participants: Vec::new(),
+            peer_aliases: default_peer_aliases(),
             nostr: NostrConfig::default(),
             node: NodeConfig::default(),
         };
@@ -156,6 +163,7 @@ impl AppConfig {
         if self.network_id.trim().is_empty() {
             self.network_id = default_network_id();
         }
+        self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
 
         if self.nostr.relays.is_empty() {
             self.nostr.relays = default_relays();
@@ -192,6 +200,8 @@ impl AppConfig {
             .collect();
         self.participants.sort();
         self.participants.dedup();
+
+        self.normalize_peer_aliases();
     }
 
     pub fn effective_network_id(&self) -> String {
@@ -251,6 +261,103 @@ impl AppConfig {
         let (secret_key, public_key) = generate_nostr_identity();
         self.nostr.secret_key = secret_key;
         self.nostr.public_key = public_key;
+    }
+
+    fn normalize_peer_aliases(&mut self) {
+        let mut normalized_aliases = HashMap::new();
+        for (participant, alias) in &self.peer_aliases {
+            if let Some(participant_npub) = normalize_npub_key(participant)
+                && let Some(alias) = normalize_magic_dns_label(alias)
+            {
+                normalized_aliases.insert(participant_npub, alias);
+            }
+        }
+
+        let mut used_aliases = HashSet::new();
+        let mut final_aliases = HashMap::new();
+        for participant in &self.participants {
+            let participant_npub = npub_for_pubkey_hex(participant);
+            let preferred = normalized_aliases
+                .remove(&participant_npub)
+                .unwrap_or_else(|| default_magic_dns_label_for_pubkey(participant));
+            let alias = uniquify_magic_dns_label(preferred, &mut used_aliases);
+            final_aliases.insert(participant_npub, alias);
+        }
+        self.peer_aliases = final_aliases;
+    }
+
+    pub fn peer_alias(&self, participant: &str) -> Option<String> {
+        let participant_hex = normalize_nostr_pubkey(participant).ok()?;
+        let participant_npub = npub_for_pubkey_hex(&participant_hex);
+        self.peer_aliases.get(&participant_npub).cloned()
+    }
+
+    pub fn set_peer_alias(&mut self, participant: &str, alias: &str) -> Result<String> {
+        let participant_hex = normalize_nostr_pubkey(participant)?;
+        if !self
+            .participants
+            .iter()
+            .any(|configured| configured == &participant_hex)
+        {
+            return Err(anyhow::anyhow!("participant is not configured"));
+        }
+
+        let alias = alias.trim();
+        let participant_npub = npub_for_pubkey_hex(&participant_hex);
+        if alias.is_empty() {
+            self.peer_aliases.remove(&participant_npub);
+            self.normalize_peer_aliases();
+            return self
+                .peer_aliases
+                .get(&participant_npub)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("failed to persist alias"));
+        }
+
+        let normalized_alias =
+            normalize_magic_dns_label(alias).ok_or_else(|| anyhow::anyhow!("invalid alias"))?;
+        self.peer_aliases
+            .insert(participant_npub.clone(), normalized_alias);
+        self.normalize_peer_aliases();
+        self.peer_aliases
+            .get(&participant_npub)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("failed to persist alias"))
+    }
+
+    pub fn magic_dns_name_for_participant(&self, participant: &str) -> Option<String> {
+        let alias = self.peer_alias(participant)?;
+        if self.magic_dns_suffix.is_empty() {
+            Some(alias)
+        } else {
+            Some(format!("{alias}.{}", self.magic_dns_suffix))
+        }
+    }
+
+    pub fn resolve_magic_dns_query(&self, query: &str) -> Option<String> {
+        let query = query.trim().trim_end_matches('.').to_lowercase();
+        if query.is_empty() {
+            return None;
+        }
+
+        for participant in &self.participants {
+            let participant_npub = npub_for_pubkey_hex(participant);
+            let Some(alias) = self.peer_aliases.get(&participant_npub) else {
+                continue;
+            };
+
+            if query == alias.as_str() {
+                return Some(participant.clone());
+            }
+
+            if !self.magic_dns_suffix.is_empty()
+                && query == format!("{alias}.{}", self.magic_dns_suffix)
+            {
+                return Some(participant.clone());
+            }
+        }
+
+        None
     }
 }
 
@@ -358,6 +465,14 @@ fn default_network_id() -> String {
     "nostr-vpn".to_string()
 }
 
+fn default_magic_dns_suffix() -> String {
+    "nvpn".to_string()
+}
+
+fn default_peer_aliases() -> HashMap<String, String> {
+    HashMap::new()
+}
+
 fn default_node_name() -> String {
     "nostr-vpn-node".to_string()
 }
@@ -392,4 +507,108 @@ fn default_tunnel_ip() -> String {
 
 const fn default_listen_port() -> u16 {
     51820
+}
+
+pub fn normalize_magic_dns_suffix(value: &str) -> String {
+    let mut normalized_labels = value
+        .trim()
+        .trim_end_matches('.')
+        .split('.')
+        .filter_map(normalize_magic_dns_label)
+        .collect::<Vec<_>>();
+    normalized_labels.retain(|label| !label.is_empty());
+
+    if normalized_labels.is_empty() {
+        return default_magic_dns_suffix();
+    }
+
+    normalized_labels.join(".")
+}
+
+pub fn normalize_magic_dns_label(value: &str) -> Option<String> {
+    let mut label = String::new();
+    let mut previous_dash = false;
+
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            label.push(ch.to_ascii_lowercase());
+            previous_dash = false;
+        } else if !previous_dash {
+            label.push('-');
+            previous_dash = true;
+        }
+    }
+
+    while label.ends_with('-') {
+        label.pop();
+    }
+    while label.starts_with('-') {
+        label.remove(0);
+    }
+
+    if label.is_empty() {
+        return None;
+    }
+
+    if label.len() > 63 {
+        label.truncate(63);
+        while label.ends_with('-') {
+            label.pop();
+        }
+    }
+
+    if label.is_empty() { None } else { Some(label) }
+}
+
+pub fn default_magic_dns_label_for_pubkey(pubkey_hex: &str) -> String {
+    let short = pubkey_hex.chars().take(12).collect::<String>();
+    format!("peer-{short}")
+}
+
+fn npub_for_pubkey_hex(pubkey_hex: &str) -> String {
+    PublicKey::from_hex(pubkey_hex)
+        .ok()
+        .and_then(|public_key| public_key.to_bech32().ok())
+        .unwrap_or_else(|| pubkey_hex.to_string())
+}
+
+fn normalize_npub_key(value: &str) -> Option<String> {
+    let candidate = value.trim();
+    if !candidate.starts_with("npub1") {
+        return None;
+    }
+
+    PublicKey::parse(candidate)
+        .ok()
+        .and_then(|public_key| public_key.to_bech32().ok())
+}
+
+fn uniquify_magic_dns_label(mut base: String, used: &mut HashSet<String>) -> String {
+    if base.is_empty() {
+        base = "peer".to_string();
+    }
+
+    if !used.contains(&base) {
+        used.insert(base.clone());
+        return base;
+    }
+
+    for counter in 2..10_000 {
+        let suffix = format!("-{counter}");
+        let max_base_len = 63usize.saturating_sub(suffix.len());
+        let mut candidate_base = base.clone();
+        if candidate_base.len() > max_base_len {
+            candidate_base.truncate(max_base_len);
+            while candidate_base.ends_with('-') {
+                candidate_base.pop();
+            }
+        }
+        let candidate = format!("{candidate_base}{suffix}");
+        if !used.contains(&candidate) {
+            used.insert(candidate.clone());
+            return candidate;
+        }
+    }
+
+    base
 }

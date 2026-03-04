@@ -19,6 +19,10 @@ use nostr_vpn_core::config::{
     AppConfig, derive_mesh_tunnel_ip, maybe_autoconfigure_node, normalize_nostr_pubkey,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
+use nostr_vpn_core::magic_dns::{
+    MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
+    uninstall_system_resolver,
+};
 use nostr_vpn_core::signaling::{NostrSignalingClient, SignalPayload};
 use serde::{Deserialize, Serialize};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -32,6 +36,7 @@ const LAN_DISCOVERY_STALE_AFTER_SECS: u64 = 16;
 const TRAY_OPEN_MENU_ID: &str = "tray_open_main";
 const TRAY_QUIT_MENU_ID: &str = "tray_quit";
 const TUNNEL_IFACE: &str = "utun100";
+const MAGIC_DNS_PORT: u16 = 1053;
 
 #[derive(Debug, Clone)]
 struct WireGuardPeer {
@@ -139,6 +144,15 @@ impl TunnelRuntime {
         self.uapi_socket_path = None;
         self.last_fingerprint = None;
     }
+
+    fn peer_status(&self) -> Result<HashMap<String, WireGuardPeerStatus>> {
+        let socket = self
+            .uapi_socket_path
+            .as_deref()
+            .ok_or_else(|| anyhow!("missing uapi socket path"))?;
+        let response = wg_get(socket)?;
+        Ok(parse_wg_peer_status(&response))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -166,22 +180,46 @@ struct RelaySummary {
     unknown: usize,
 }
 
-#[derive(Debug, Clone)]
-struct PeerCheckResult {
-    participant: String,
-    reachable: bool,
-    latency_ms: Option<u128>,
-    error: Option<String>,
-    checked_at: SystemTime,
-}
-
 #[derive(Debug, Clone, Default)]
 struct PeerLinkStatus {
     checking: bool,
     reachable: Option<bool>,
-    latency_ms: Option<u128>,
+    last_handshake_at: Option<SystemTime>,
+    rx_bytes: Option<u64>,
+    tx_bytes: Option<u64>,
+    endpoint: Option<String>,
     error: Option<String>,
     checked_at: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WireGuardPeerStatus {
+    endpoint: Option<String>,
+    last_handshake_sec: Option<u64>,
+    last_handshake_nsec: Option<u64>,
+    rx_bytes: Option<u64>,
+    tx_bytes: Option<u64>,
+}
+
+impl WireGuardPeerStatus {
+    fn has_handshake(&self) -> bool {
+        self.last_handshake_sec.unwrap_or(0) > 0 || self.last_handshake_nsec.unwrap_or(0) > 0
+    }
+
+    fn last_handshake(&self) -> Option<SystemTime> {
+        let sec = self.last_handshake_sec?;
+        // Some platforms expose monotonic seconds here instead of unix epoch;
+        // avoid interpreting those as 1970 timestamps.
+        if sec < 946_684_800 {
+            return None;
+        }
+
+        let mut ts = UNIX_EPOCH.checked_add(Duration::from_secs(sec))?;
+        if let Some(nsec) = self.last_handshake_nsec {
+            ts = ts.checked_add(Duration::from_nanos(nsec.min(999_999_999)))?;
+        }
+        Some(ts)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,6 +270,8 @@ struct ParticipantView {
     npub: String,
     pubkey_hex: String,
     tunnel_ip: String,
+    magic_dns_alias: String,
+    magic_dns_name: String,
     state: String,
     status_text: String,
     last_signal_text: String,
@@ -263,6 +303,8 @@ struct UiState {
     listen_port: u16,
     network_id: String,
     effective_network_id: String,
+    magic_dns_suffix: String,
+    magic_dns_status: String,
     auto_disconnect_relays_when_mesh_ready: bool,
     lan_discovery_enabled: bool,
     launch_on_startup: bool,
@@ -284,6 +326,7 @@ struct SettingsPatch {
     tunnel_ip: Option<String>,
     listen_port: Option<u16>,
     network_id: Option<String>,
+    magic_dns_suffix: Option<String>,
     auto_disconnect_relays_when_mesh_ready: Option<bool>,
     lan_discovery_enabled: Option<bool>,
     launch_on_startup: Option<bool>,
@@ -310,9 +353,6 @@ struct NvpnBackend {
     peer_status: HashMap<String, PeerLinkStatus>,
     peer_signal_seen_at: HashMap<String, SystemTime>,
     peer_announcements: HashMap<String, PeerAnnouncement>,
-    peer_check_rx: Option<mpsc::Receiver<Vec<PeerCheckResult>>>,
-    peer_check_inflight: bool,
-    next_peer_check_at: Option<Instant>,
 
     autosave_pending: bool,
     autosave_due_at: Option<Instant>,
@@ -323,6 +363,9 @@ struct NvpnBackend {
     lan_peers: HashMap<String, LanPeerRecord>,
     tunnel_runtime: TunnelRuntime,
     tunnel_error: Option<String>,
+    magic_dns_server: Option<MagicDnsServer>,
+    magic_dns_resolver_suffix: Option<String>,
+    magic_dns_status: String,
 }
 
 impl NvpnBackend {
@@ -371,9 +414,6 @@ impl NvpnBackend {
             peer_status,
             peer_signal_seen_at: HashMap::new(),
             peer_announcements: HashMap::new(),
-            peer_check_rx: None,
-            peer_check_inflight: false,
-            next_peer_check_at: None,
             autosave_pending: false,
             autosave_due_at: None,
             lan_discovery_running: false,
@@ -382,6 +422,9 @@ impl NvpnBackend {
             lan_peers: HashMap::new(),
             tunnel_runtime: TunnelRuntime::new(TUNNEL_IFACE),
             tunnel_error: None,
+            magic_dns_server: None,
+            magic_dns_resolver_suffix: None,
+            magic_dns_status: "DNS disabled (session disconnected)".to_string(),
         };
 
         backend.ensure_relay_status_entries();
@@ -397,6 +440,7 @@ impl NvpnBackend {
     fn connect_session(&mut self) -> Result<()> {
         if self.session_active {
             self.reconcile_tunnel_runtime();
+            self.refresh_magic_dns_runtime();
             return Ok(());
         }
 
@@ -408,6 +452,7 @@ impl NvpnBackend {
         }
 
         self.reconcile_tunnel_runtime();
+        self.refresh_magic_dns_runtime();
         if self.tunnel_error.is_none() {
             self.session_status = "Connected".to_string();
         }
@@ -457,8 +502,6 @@ impl NvpnBackend {
         self.ensure_peer_status_entries();
         self.start_relay_check(4);
         self.next_relay_check_at = Some(Instant::now() + Duration::from_secs(45));
-        self.start_peer_check(2);
-        self.next_peer_check_at = Some(Instant::now() + Duration::from_secs(12));
 
         if let Err(error) = self.publish_announcement()
             && !is_no_participants_error(&error)
@@ -477,22 +520,26 @@ impl NvpnBackend {
         self.disconnect_relays();
         self.peer_announcements.clear();
         self.tunnel_runtime.stop();
+        self.stop_magic_dns_runtime();
 
         self.relay_check_inflight = false;
         self.relay_check_rx = None;
         self.next_relay_check_at = None;
         self.next_relay_retry_at = None;
 
-        self.peer_check_inflight = false;
-        self.peer_check_rx = None;
-        self.next_peer_check_at = None;
         for status in self.peer_status.values_mut() {
             status.checking = false;
             status.reachable = None;
-            status.latency_ms = None;
+            status.last_handshake_at = None;
+            status.rx_bytes = None;
+            status.tx_bytes = None;
+            status.endpoint = None;
+            status.checked_at = None;
+            status.error = Some("disconnected".to_string());
         }
 
         self.session_status = "Disconnected".to_string();
+        self.magic_dns_status = "DNS disabled (session disconnected)".to_string();
     }
 
     fn disconnect_relays(&mut self) {
@@ -643,133 +690,91 @@ impl NvpnBackend {
         }
     }
 
-    fn start_peer_check(&mut self, timeout_secs: u64) {
+    fn refresh_peer_link_statuses(&mut self) {
         self.ensure_peer_status_entries();
 
-        if self.peer_check_inflight || self.config.participants.is_empty() || !self.session_active {
+        let now = SystemTime::now();
+        let own_pubkey_hex = self.config.own_nostr_pubkey_hex().ok();
+
+        if !self.session_active || self.config.participants.is_empty() {
+            for participant in &self.config.participants {
+                if Some(participant.as_str()) == own_pubkey_hex.as_deref() {
+                    continue;
+                }
+
+                if let Some(status) = self.peer_status.get_mut(participant) {
+                    status.checking = false;
+                    status.reachable = None;
+                    status.last_handshake_at = None;
+                    status.rx_bytes = None;
+                    status.tx_bytes = None;
+                    status.endpoint = None;
+                    status.error = if self.session_active {
+                        Some("waiting for peer signal".to_string())
+                    } else {
+                        Some("disconnected".to_string())
+                    };
+                    status.checked_at = Some(now);
+                }
+            }
             return;
         }
 
-        let own_pubkey = self.config.own_nostr_pubkey_hex().ok();
-        let participants = self.config.participants.clone();
-        let mesh_members = self.config.mesh_members_pubkeys();
+        let (runtime_peers, runtime_error) = match self.tunnel_runtime.peer_status() {
+            Ok(peers) => (Some(peers), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
 
-        for participant in &participants {
-            if Some(participant.as_str()) == own_pubkey.as_deref() {
+        for participant in &self.config.participants {
+            if Some(participant.as_str()) == own_pubkey_hex.as_deref() {
                 continue;
             }
 
-            self.peer_status
-                .entry(participant.clone())
-                .and_modify(|status| {
-                    status.checking = true;
-                    status.error = None;
-                })
-                .or_insert_with(|| PeerLinkStatus {
-                    checking: true,
-                    ..PeerLinkStatus::default()
-                });
-        }
+            let status = self.peer_status.entry(participant.clone()).or_default();
+            status.checking = false;
+            status.reachable = Some(false);
+            status.last_handshake_at = None;
+            status.rx_bytes = None;
+            status.tx_bytes = None;
+            status.endpoint = None;
+            status.error = None;
+            status.checked_at = Some(now);
 
-        let (tx, rx) = mpsc::channel();
-        self.peer_check_rx = Some(rx);
-        self.peer_check_inflight = true;
+            let Some(announcement) = self.peer_announcements.get(participant) else {
+                status.error = Some("no signal yet".to_string());
+                continue;
+            };
 
-        self.runtime.spawn(async move {
-            let mut results = Vec::new();
-
-            for participant in &participants {
-                if Some(participant.as_str()) == own_pubkey.as_deref() {
+            let peer_pubkey_hex = match key_b64_to_hex(&announcement.public_key) {
+                Ok(value) => value.to_lowercase(),
+                Err(error) => {
+                    status.error = Some(format!("invalid peer key: {error}"));
                     continue;
                 }
+            };
 
-                let Some(tunnel_ip) = derive_mesh_tunnel_ip(&mesh_members, participant) else {
-                    results.push(PeerCheckResult {
-                        participant: participant.clone(),
-                        reachable: false,
-                        latency_ms: None,
-                        error: Some("failed to derive tunnel ip".to_string()),
-                        checked_at: SystemTime::now(),
-                    });
-                    continue;
-                };
+            let Some(peers) = runtime_peers.as_ref() else {
+                status.error = runtime_error
+                    .clone()
+                    .map(|message| format!("runtime unavailable: {message}"));
+                continue;
+            };
 
-                let target_ip = tunnel_ip
-                    .split('/')
-                    .next()
-                    .unwrap_or(&tunnel_ip)
-                    .to_string();
+            let Some(wg_peer) = peers.get(&peer_pubkey_hex) else {
+                status.error = Some("peer not in tunnel runtime".to_string());
+                continue;
+            };
 
-                let probe =
-                    tokio::task::spawn_blocking(move || run_ping_probe(&target_ip, timeout_secs))
-                        .await;
+            status.endpoint = wg_peer.endpoint.clone();
+            status.rx_bytes = wg_peer.rx_bytes;
+            status.tx_bytes = wg_peer.tx_bytes;
+            status.last_handshake_at = wg_peer.last_handshake();
 
-                let (reachable, latency_ms, error) = match probe {
-                    Ok(result) => result,
-                    Err(join_error) => (
-                        false,
-                        None,
-                        Some(format!("probe task failed: {join_error}")),
-                    ),
-                };
-
-                results.push(PeerCheckResult {
-                    participant: participant.clone(),
-                    reachable,
-                    latency_ms,
-                    error,
-                    checked_at: SystemTime::now(),
-                });
+            if wg_peer.has_handshake() {
+                status.reachable = Some(true);
+            } else {
+                status.error = Some("awaiting handshake".to_string());
             }
-
-            let _ = tx.send(results);
-        });
-    }
-
-    fn handle_peer_checks(&mut self) {
-        let recv_result = self
-            .peer_check_rx
-            .as_ref()
-            .map(|receiver| receiver.try_recv());
-
-        match recv_result {
-            Some(Ok(results)) => {
-                for result in results {
-                    self.peer_status.insert(
-                        result.participant,
-                        PeerLinkStatus {
-                            checking: false,
-                            reachable: Some(result.reachable),
-                            latency_ms: result.latency_ms,
-                            error: result.error,
-                            checked_at: Some(result.checked_at),
-                        },
-                    );
-                }
-                self.peer_check_inflight = false;
-                self.peer_check_rx = None;
-            }
-            Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                self.peer_check_inflight = false;
-                self.peer_check_rx = None;
-            }
-            _ => {}
-        }
-    }
-
-    fn maybe_schedule_periodic_peer_check(&mut self) {
-        if !self.session_active || self.peer_check_inflight {
-            return;
-        }
-
-        let now = Instant::now();
-        let due = self
-            .next_peer_check_at
-            .is_none_or(|next_check| now >= next_check);
-
-        if due {
-            self.start_peer_check(2);
-            self.next_peer_check_at = Some(now + Duration::from_secs(12));
         }
     }
 
@@ -795,7 +800,10 @@ impl NvpnBackend {
                             PeerLinkStatus {
                                 checking: false,
                                 reachable: Some(false),
-                                latency_ms: None,
+                                last_handshake_at: None,
+                                rx_bytes: None,
+                                tx_bytes: None,
+                                endpoint: None,
                                 error: Some("peer disconnected".to_string()),
                                 checked_at: Some(SystemTime::now()),
                             },
@@ -912,10 +920,12 @@ impl NvpnBackend {
         if had_no_participants && self.config.lan_discovery_enabled {
             self.config.lan_discovery_enabled = false;
         }
+        self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
 
         self.schedule_autosave();
         self.ensure_peer_status_entries();
+        self.refresh_magic_dns_runtime();
         if self.session_active {
             self.restart_relay_if_needed()?;
         } else if !self.config.participants.is_empty() {
@@ -942,9 +952,11 @@ impl NvpnBackend {
         self.peer_signal_seen_at.remove(&normalized);
         self.peer_announcements.remove(&normalized);
 
+        self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
         self.schedule_autosave();
         self.ensure_peer_status_entries();
+        self.refresh_magic_dns_runtime();
         self.restart_relay_if_needed()?;
         self.maybe_refresh_lan_discovery();
         self.reconcile_tunnel_runtime();
@@ -1027,6 +1039,9 @@ impl NvpnBackend {
             self.config.network_id = network_id;
             reconnect_required = true;
         }
+        if let Some(magic_dns_suffix) = patch.magic_dns_suffix {
+            self.config.magic_dns_suffix = magic_dns_suffix;
+        }
 
         if let Some(auto_disconnect_relays_when_mesh_ready) =
             patch.auto_disconnect_relays_when_mesh_ready
@@ -1058,8 +1073,16 @@ impl NvpnBackend {
 
         if self.session_active {
             self.reconcile_tunnel_runtime();
+            self.refresh_magic_dns_runtime();
         }
 
+        Ok(())
+    }
+
+    fn set_participant_alias(&mut self, npub: &str, alias: &str) -> Result<()> {
+        self.config.set_peer_alias(npub, alias)?;
+        self.schedule_autosave();
+        self.refresh_magic_dns_runtime();
         Ok(())
     }
 
@@ -1218,11 +1241,18 @@ impl NvpnBackend {
                 let status_text = self.peer_status_line(&participant, state);
                 let last_signal_text =
                     self.peer_presence_line(&participant, own_pubkey_hex.as_deref());
+                let magic_dns_alias = self.config.peer_alias(&participant).unwrap_or_default();
+                let magic_dns_name = self
+                    .config
+                    .magic_dns_name_for_participant(&participant)
+                    .unwrap_or_default();
 
                 ParticipantView {
                     npub: to_npub(&participant),
                     pubkey_hex: participant,
                     tunnel_ip,
+                    magic_dns_alias,
+                    magic_dns_name,
                     state: peer_state_label(state).to_string(),
                     status_text,
                     last_signal_text,
@@ -1272,27 +1302,30 @@ impl NvpnBackend {
                 let Some(link) = self.peer_status.get(participant) else {
                     return "online".to_string();
                 };
-                let age = link.checked_at.and_then(|checked_at| {
-                    checked_at.elapsed().ok().map(|elapsed| elapsed.as_secs())
+                let handshake_age = link.last_handshake_at.and_then(|handshake_at| {
+                    handshake_at.elapsed().ok().map(|elapsed| elapsed.as_secs())
                 });
-                match (link.latency_ms, age) {
-                    (Some(latency), Some(age_secs)) => {
-                        format!("online ({latency} ms, {age_secs}s ago)")
+
+                let tx = link.tx_bytes.map(format_bytes);
+                let rx = link.rx_bytes.map(format_bytes);
+
+                match (handshake_age, tx, rx) {
+                    (Some(age_secs), Some(tx), Some(rx)) => {
+                        format!("online (handshake {age_secs}s ago, tx {tx}, rx {rx})")
                     }
-                    (Some(latency), None) => format!("online ({latency} ms)"),
-                    (None, Some(age_secs)) => format!("online ({age_secs}s ago)"),
-                    (None, None) => "online".to_string(),
+                    (Some(age_secs), _, _) => format!("online (handshake {age_secs}s ago)"),
+                    _ => "online".to_string(),
                 }
             }
             ConfiguredPeerStatus::Offline => {
                 let Some(link) = self.peer_status.get(participant) else {
                     return "offline".to_string();
                 };
-                let age = link.checked_at.and_then(|checked_at| {
+                let checked_age = link.checked_at.and_then(|checked_at| {
                     checked_at.elapsed().ok().map(|elapsed| elapsed.as_secs())
                 });
                 if let Some(error) = &link.error {
-                    match age {
+                    match checked_age {
                         Some(age_secs) => {
                             format!(
                                 "offline ({}, {age_secs}s ago)",
@@ -1302,24 +1335,23 @@ impl NvpnBackend {
                         None => format!("offline ({})", shorten_middle(error, 18, 8)),
                     }
                 } else {
-                    match age {
+                    match checked_age {
                         Some(age_secs) => format!("offline ({age_secs}s ago)"),
                         None => "offline".to_string(),
                     }
                 }
             }
-            ConfiguredPeerStatus::Unknown => "not checked".to_string(),
+            ConfiguredPeerStatus::Unknown => "unknown".to_string(),
         }
     }
 
     fn tick(&mut self) {
         self.handle_relay_checks();
-        self.handle_peer_checks();
         self.handle_signals();
         self.reconcile_tunnel_runtime();
+        self.refresh_peer_link_statuses();
 
         self.maybe_schedule_periodic_relay_check();
-        self.maybe_schedule_periodic_peer_check();
         self.maybe_auto_relay_policy();
 
         self.maybe_refresh_lan_discovery();
@@ -1327,6 +1359,118 @@ impl NvpnBackend {
         self.prune_lan_peers();
 
         self.maybe_run_autosave();
+    }
+
+    fn stop_magic_dns_runtime(&mut self) {
+        if let Some(mut server) = self.magic_dns_server.take() {
+            server.stop();
+        }
+
+        if let Some(suffix) = self.magic_dns_resolver_suffix.take() {
+            let _ = uninstall_system_resolver(&suffix);
+        }
+    }
+
+    fn refresh_magic_dns_runtime(&mut self) {
+        if !self.session_active {
+            self.stop_magic_dns_runtime();
+            self.magic_dns_status = "DNS disabled (session disconnected)".to_string();
+            return;
+        }
+
+        let records = build_magic_dns_records(&self.config);
+        if records.is_empty() {
+            self.stop_magic_dns_runtime();
+            self.magic_dns_status = "DNS disabled (no alias records)".to_string();
+            return;
+        }
+
+        if let Some(server) = self.magic_dns_server.as_ref() {
+            server.update_records(records);
+        } else {
+            match MagicDnsServer::start(
+                SocketAddr::from((Ipv4Addr::LOCALHOST, MAGIC_DNS_PORT)),
+                records.clone(),
+            ) {
+                Ok(server) => {
+                    self.magic_dns_server = Some(server);
+                }
+                Err(error) => {
+                    match MagicDnsServer::start(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)), records)
+                    {
+                        Ok(server) => {
+                            self.magic_dns_server = Some(server);
+                            self.magic_dns_status = format!(
+                                "DNS server fallback: preferred port {MAGIC_DNS_PORT} unavailable ({error})"
+                            );
+                        }
+                        Err(fallback_error) => {
+                            self.stop_magic_dns_runtime();
+                            self.magic_dns_status = format!("DNS server failed: {fallback_error}");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        let Some(server) = self.magic_dns_server.as_ref() else {
+            self.magic_dns_status = "DNS server unavailable".to_string();
+            return;
+        };
+
+        let local_addr = server.local_addr();
+        let suffix = self
+            .config
+            .magic_dns_suffix
+            .trim()
+            .trim_matches('.')
+            .to_ascii_lowercase();
+
+        if suffix.is_empty() {
+            if let Some(existing) = self.magic_dns_resolver_suffix.take() {
+                let _ = uninstall_system_resolver(&existing);
+            }
+            self.magic_dns_status =
+                format!("Local DNS only on {local_addr} (set suffix for system split-dns)");
+            return;
+        }
+
+        let nameserver = match local_addr {
+            SocketAddr::V4(v4) => *v4.ip(),
+            SocketAddr::V6(_) => {
+                self.magic_dns_status =
+                    format!("Local DNS on {local_addr}; split-dns unavailable (IPv6 bind)");
+                return;
+            }
+        };
+
+        if let Some(existing) = self.magic_dns_resolver_suffix.clone()
+            && existing != suffix
+        {
+            let _ = uninstall_system_resolver(&existing);
+            self.magic_dns_resolver_suffix = None;
+        }
+
+        let resolver_config = MagicDnsResolverConfig {
+            suffix: suffix.clone(),
+            nameserver,
+            port: local_addr.port(),
+        };
+        match install_system_resolver(&resolver_config) {
+            Ok(()) => {
+                self.magic_dns_resolver_suffix = Some(suffix.clone());
+                self.magic_dns_status = format!(
+                    "System DNS active for .{suffix} via {}:{}",
+                    resolver_config.nameserver, resolver_config.port
+                );
+            }
+            Err(error) => {
+                self.magic_dns_resolver_suffix = None;
+                self.magic_dns_status =
+                    format!("Local DNS on {local_addr}; resolver install failed: {error}");
+            }
+        }
     }
 
     fn maybe_refresh_lan_discovery(&mut self) {
@@ -1506,6 +1650,8 @@ impl NvpnBackend {
             listen_port: self.config.node.listen_port,
             network_id: self.config.network_id.clone(),
             effective_network_id: self.config.effective_network_id(),
+            magic_dns_suffix: self.config.magic_dns_suffix.clone(),
+            magic_dns_status: self.magic_dns_status.clone(),
             auto_disconnect_relays_when_mesh_ready: self
                 .config
                 .auto_disconnect_relays_when_mesh_ready,
@@ -1525,77 +1671,11 @@ impl NvpnBackend {
 
 impl Drop for NvpnBackend {
     fn drop(&mut self) {
+        self.stop_magic_dns_runtime();
         self.stop_lan_discovery();
         self.disconnect_relays();
         self.tunnel_runtime.stop();
     }
-}
-
-fn run_ping_probe(target: &str, timeout_secs: u64) -> (bool, Option<u128>, Option<String>) {
-    let mut command = ProcessCommand::new("ping");
-
-    #[cfg(target_os = "windows")]
-    {
-        command
-            .arg("-n")
-            .arg("1")
-            .arg("-w")
-            .arg((timeout_secs.max(1) * 1000).to_string())
-            .arg(target);
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        command
-            .arg("-c")
-            .arg("1")
-            .arg("-W")
-            .arg((timeout_secs.max(1) * 1000).to_string())
-            .arg(target);
-    }
-
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        command
-            .arg("-c")
-            .arg("1")
-            .arg("-W")
-            .arg(timeout_secs.max(1).to_string())
-            .arg(target);
-    }
-
-    match command.output() {
-        Ok(output) => {
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-            if output.status.success() {
-                (true, parse_ping_latency_ms(&stdout), None)
-            } else {
-                let err = if stderr.trim().is_empty() {
-                    stdout.trim().to_string()
-                } else {
-                    stderr.trim().to_string()
-                };
-                (false, None, Some(err))
-            }
-        }
-        Err(error) => (false, None, Some(error.to_string())),
-    }
-}
-
-fn parse_ping_latency_ms(output: &str) -> Option<u128> {
-    let needle = "time=";
-    let start = output.find(needle)? + needle.len();
-    let raw = output[start..].split_whitespace().next()?.trim();
-
-    if raw.starts_with('<') {
-        return Some(1);
-    }
-
-    let cleaned = raw.trim_end_matches("ms").trim_end_matches("msec");
-    let parsed = cleaned.parse::<f64>().ok()?;
-    Some(parsed.round() as u128)
 }
 
 fn peer_from_announcement(announcement: &PeerAnnouncement) -> Result<WireGuardPeer> {
@@ -1802,6 +1882,102 @@ fn wg_set(socket_path: &str, body: &str) -> Result<()> {
     }
 }
 
+fn wg_get(socket_path: &str) -> Result<String> {
+    #[cfg(not(unix))]
+    {
+        let _ = socket_path;
+        return Err(anyhow!(
+            "wireguard uapi reads are supported on unix targets only"
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        let mut socket =
+            UnixStream::connect(socket_path).with_context(|| format!("connect {socket_path}"))?;
+        write!(socket, "get=1\n\n").context("failed to send uapi get")?;
+        socket
+            .shutdown(std::net::Shutdown::Write)
+            .context("failed to close uapi write half")?;
+
+        let mut response = String::new();
+        socket
+            .read_to_string(&mut response)
+            .context("failed to read uapi get response")?;
+
+        if !response.contains("errno=0") {
+            return Err(anyhow!("uapi get failed: {}", response.trim()));
+        }
+
+        Ok(response)
+    }
+}
+
+fn parse_wg_peer_status(response: &str) -> HashMap<String, WireGuardPeerStatus> {
+    let mut peers = HashMap::new();
+    let mut current_pubkey: Option<String> = None;
+    let mut current = WireGuardPeerStatus::default();
+
+    let commit_current = |peers: &mut HashMap<String, WireGuardPeerStatus>,
+                          current_pubkey: &mut Option<String>,
+                          current: &mut WireGuardPeerStatus| {
+        if let Some(pubkey) = current_pubkey.take() {
+            peers.insert(pubkey, std::mem::take(current));
+        }
+    };
+
+    for line in response.lines() {
+        if line.is_empty() || line == "errno=0" {
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("public_key=") {
+            commit_current(&mut peers, &mut current_pubkey, &mut current);
+            current_pubkey = Some(value.trim().to_lowercase());
+            continue;
+        }
+
+        let Some(_pubkey) = current_pubkey.as_ref() else {
+            continue;
+        };
+
+        if let Some(value) = line.strip_prefix("endpoint=") {
+            current.endpoint = Some(value.trim().to_string());
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("last_handshake_time_sec=") {
+            if let Ok(parsed) = value.trim().parse::<u64>() {
+                current.last_handshake_sec = Some(parsed);
+            }
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("last_handshake_time_nsec=") {
+            if let Ok(parsed) = value.trim().parse::<u64>() {
+                current.last_handshake_nsec = Some(parsed);
+            }
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("rx_bytes=") {
+            if let Ok(parsed) = value.trim().parse::<u64>() {
+                current.rx_bytes = Some(parsed);
+            }
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("tx_bytes=") {
+            if let Ok(parsed) = value.trim().parse::<u64>() {
+                current.tx_bytes = Some(parsed);
+            }
+        }
+    }
+
+    commit_current(&mut peers, &mut current_pubkey, &mut current);
+    peers
+}
+
 fn run_checked(command: &mut ProcessCommand) -> Result<()> {
     let display = format!("{command:?}");
     let output = command
@@ -1838,6 +2014,19 @@ fn shorten_middle(value: &str, head: usize, tail: usize) -> String {
             .rev()
             .collect::<String>()
     )
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+
+    if bytes as f64 >= MIB {
+        format!("{:.1} MiB", bytes as f64 / MIB)
+    } else if bytes as f64 >= KIB {
+        format!("{:.1} KiB", bytes as f64 / KIB)
+    } else {
+        format!("{bytes} B")
+    }
 }
 
 fn expected_peer_count(config: &AppConfig) -> usize {
@@ -2080,6 +2269,19 @@ fn remove_participant(state: State<'_, AppState>, npub: String) -> Result<UiStat
 }
 
 #[tauri::command]
+fn set_participant_alias(
+    state: State<'_, AppState>,
+    npub: String,
+    alias: String,
+) -> Result<UiState, String> {
+    with_backend(state, |backend| {
+        backend.set_participant_alias(&npub, &alias)?;
+        backend.tick();
+        Ok(backend.ui_state())
+    })
+}
+
+#[tauri::command]
 fn add_relay(state: State<'_, AppState>, relay: String) -> Result<UiState, String> {
     with_backend(state, |backend| {
         backend.add_relay(&relay)?;
@@ -2214,6 +2416,7 @@ pub fn run() {
             disconnect_session,
             add_participant,
             remove_participant,
+            set_participant_alias,
             add_relay,
             remove_relay,
             update_settings
@@ -2236,7 +2439,8 @@ pub fn run() {
 mod tests {
     use super::{
         connected_configured_peer_count, expected_peer_count, is_mesh_complete,
-        local_tunnel_address_for_interface, normalize_cidr32, peer_from_announcement,
+        local_tunnel_address_for_interface, normalize_cidr32, parse_wg_peer_status,
+        peer_from_announcement,
     };
     use std::collections::HashMap;
 
@@ -2309,5 +2513,43 @@ mod tests {
         assert_eq!(peer.endpoint, "203.0.113.7:51820");
         assert_eq!(peer.allowed_ip, "10.44.0.2/32");
         assert_eq!(peer.pubkey_hex.len(), 64);
+    }
+
+    #[test]
+    fn parse_wg_peer_status_reads_runtime_fields() {
+        let status = parse_wg_peer_status(
+            "private_key=<redacted>\n\
+             listen_port=51820\n\
+             public_key=ABCDEF012345\n\
+             endpoint=203.0.113.8:51820\n\
+             last_handshake_time_sec=1700000000\n\
+             last_handshake_time_nsec=222\n\
+             rx_bytes=101\n\
+             tx_bytes=202\n\
+             errno=0\n",
+        );
+
+        let peer = status
+            .get("abcdef012345")
+            .expect("expected parsed peer status");
+        assert_eq!(peer.endpoint.as_deref(), Some("203.0.113.8:51820"));
+        assert_eq!(peer.rx_bytes, Some(101));
+        assert_eq!(peer.tx_bytes, Some(202));
+        assert!(peer.last_handshake().is_some());
+    }
+
+    #[test]
+    fn parse_wg_peer_status_zero_handshake_is_none() {
+        let status = parse_wg_peer_status(
+            "public_key=0123ABCD\n\
+             last_handshake_time_sec=0\n\
+             last_handshake_time_nsec=0\n\
+             rx_bytes=0\n\
+             tx_bytes=0\n\
+             errno=0\n",
+        );
+
+        let peer = status.get("0123abcd").expect("expected parsed peer");
+        assert!(peer.last_handshake().is_none());
     }
 }

@@ -21,6 +21,7 @@ toml.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 hex.workspace = true
+hickory-proto.workspace = true
 
 [dev-dependencies]
 axum.workspace = true

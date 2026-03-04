@@ -10,6 +10,7 @@
     isAutostartEnabled,
     removeParticipant,
     removeRelay,
+    setParticipantAlias,
     setAutostartEnabled,
     tick,
     updateSettings,
@@ -27,7 +28,9 @@
   let endpointDraft = ''
   let tunnelIpDraft = ''
   let listenPortDraft = ''
+  let magicDnsSuffixDraft = ''
   let draftsInitialized = false
+  let participantAliasDrafts: Record<string, string> = {}
   let autostartReady = false
   let autostartUpdating = false
 
@@ -48,6 +51,7 @@
       state = await tick()
       error = ''
       initializeDraftsOnce()
+      syncDraftsFromState()
     } catch (err) {
       error = String(err)
     }
@@ -63,7 +67,43 @@
     endpointDraft = state.endpoint
     tunnelIpDraft = state.tunnelIp
     listenPortDraft = String(state.listenPort)
+    magicDnsSuffixDraft = state.magicDnsSuffix
     draftsInitialized = true
+    syncParticipantAliasDrafts()
+  }
+
+  function syncDraftsFromState() {
+    if (!state) {
+      participantAliasDrafts = {}
+      return
+    }
+
+    if (!debouncers.has('magicDnsSuffix')) {
+      magicDnsSuffixDraft = state.magicDnsSuffix
+    }
+
+    syncParticipantAliasDrafts()
+  }
+
+  function syncParticipantAliasDrafts() {
+    if (!state) {
+      participantAliasDrafts = {}
+      return
+    }
+
+    const next: Record<string, string> = {}
+    for (const participant of state.participants) {
+      const debounceKey = `alias-${participant.pubkeyHex}`
+      if (debouncers.has(debounceKey)) {
+        next[participant.pubkeyHex] =
+          participantAliasDrafts[participant.pubkeyHex] ??
+          participant.magicDnsAlias
+      } else {
+        next[participant.pubkeyHex] = participant.magicDnsAlias
+      }
+    }
+
+    participantAliasDrafts = next
   }
 
   function debounce(key: string, fn: () => Promise<void>, delay = 450) {
@@ -85,6 +125,7 @@
       state = await action()
       error = ''
       initializeDraftsOnce()
+      syncDraftsFromState()
     } catch (err) {
       error = String(err)
     }
@@ -112,6 +153,25 @@
 
   async function onUpdateSettings(patch: SettingsPatch) {
     await runAction(() => updateSettings(patch))
+  }
+
+  function onParticipantAliasInput(
+    participantNpub: string,
+    participantHex: string,
+    value: string,
+  ) {
+    participantAliasDrafts = {
+      ...participantAliasDrafts,
+      [participantHex]: value,
+    }
+
+    debounce(
+      `alias-${participantHex}`,
+      async () => {
+        await runAction(() => setParticipantAlias(participantNpub, value))
+      },
+      500,
+    )
   }
 
   async function refreshAutostart() {
@@ -224,7 +284,7 @@
         <span class={`badge ${state.relayConnected ? 'ok' : 'muted'}`}>
           Relays {state.relayConnected ? 'Connected' : 'Disconnected'}
         </span>
-        <span class="badge muted">
+        <span class="badge muted" data-testid="mesh-badge">
           Mesh {state.connectedPeerCount}/{state.expectedPeerCount}
         </span>
       </div>
@@ -273,10 +333,28 @@
           <div class="item-row" data-testid="participant-row">
             <div class="item-main">
               <div class="item-title">{short(participant.npub, 22, 12)}</div>
-              <div class="item-sub">{participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}</div>
+              <div class="row alias-row">
+                <input
+                  class="text-input alias-input"
+                  value={participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias}
+                  data-testid="participant-alias-input"
+                  on:input={(event) =>
+                    onParticipantAliasInput(
+                      participant.npub,
+                      participant.pubkeyHex,
+                      (event.currentTarget as HTMLInputElement).value,
+                    )}
+                />
+                {#if state.magicDnsSuffix}
+                  <span class="alias-suffix">.{state.magicDnsSuffix}</span>
+                {/if}
+              </div>
+              <div class="item-sub" data-testid="participant-status-text">
+                {participant.magicDnsName} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
+              </div>
             </div>
             <span class={`badge ${participant.state === 'online' ? 'ok' : participant.state === 'offline' ? 'bad' : participant.state === 'local' ? 'muted' : 'warn'}`}>
-              {participant.state}
+              <span data-testid="participant-state">{participant.state}</span>
             </span>
             <button
               class="btn ghost icon-btn"
@@ -377,6 +455,7 @@
           </button>
         {/if}
       </div>
+      <div class="config-path" data-testid="magic-dns-status">DNS: {state.magicDnsStatus}</div>
 
       <label class="toggle-row">
         <input
@@ -422,6 +501,18 @@
             data-testid="network-id-input"
             bind:value={networkIdDraft}
             on:input={() => debounce('networkId', () => onUpdateSettings({ networkId: networkIdDraft }))}
+          />
+        </label>
+
+        <label>
+          <span>MagicDNS Suffix (Optional)</span>
+          <input
+            class="text-input"
+            data-testid="magic-dns-suffix-input"
+            bind:value={magicDnsSuffixDraft}
+            on:input={() =>
+              debounce('magicDnsSuffix', () =>
+                onUpdateSettings({ magicDnsSuffix: magicDnsSuffixDraft }))}
           />
         </label>
 

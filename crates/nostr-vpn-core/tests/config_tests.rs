@@ -217,3 +217,83 @@ fn reciprocal_participant_configs_share_effective_network_id() {
         bob_config.node.tunnel_ip
     );
 }
+
+#[test]
+fn magic_dns_aliases_are_generated_and_resolve_to_configured_participant() {
+    let own = Keys::generate();
+    let peer = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let peer_hex = peer.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    config.participants = vec![peer_hex.clone()];
+    config.ensure_defaults();
+
+    let alias = config.peer_alias(&peer_hex).expect("generated alias");
+    let fqdn = config
+        .magic_dns_name_for_participant(&peer_hex)
+        .expect("magic dns fqdn");
+
+    assert_eq!(
+        config.resolve_magic_dns_query(&alias),
+        Some(peer_hex.clone())
+    );
+    assert_eq!(
+        config.resolve_magic_dns_query(&fqdn),
+        Some(peer_hex.clone())
+    );
+}
+
+#[test]
+fn set_peer_alias_normalizes_and_blank_resets_to_default() {
+    let own = Keys::generate();
+    let peer = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let peer_hex = peer.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    config.participants = vec![peer_hex.clone()];
+    config.ensure_defaults();
+
+    let default_alias = config.peer_alias(&peer_hex).expect("default alias");
+    let custom_alias = config
+        .set_peer_alias(&peer_hex, "Home Server !!")
+        .expect("set custom alias");
+    assert_eq!(custom_alias, "home-server");
+    assert_eq!(
+        config
+            .magic_dns_name_for_participant(&peer_hex)
+            .expect("dns name"),
+        "home-server.nvpn"
+    );
+
+    let reset_alias = config
+        .set_peer_alias(&peer_hex, "   ")
+        .expect("reset alias");
+    assert_eq!(reset_alias, default_alias);
+}
+
+#[test]
+fn peer_aliases_use_npub_keys_in_serialized_config() {
+    let own = Keys::generate();
+    let peer = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let peer_hex = peer.public_key().to_hex();
+    let peer_npub = peer.public_key().to_bech32().expect("peer npub");
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    config.participants = vec![peer_hex.clone()];
+    config.ensure_defaults();
+    config
+        .set_peer_alias(&peer_hex, "server-a")
+        .expect("set alias");
+
+    assert!(config.peer_aliases.contains_key(&peer_npub));
+    assert!(!config.peer_aliases.contains_key(&peer_hex));
+}

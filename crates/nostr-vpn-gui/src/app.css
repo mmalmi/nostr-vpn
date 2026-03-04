@@ -364,6 +364,23 @@ body {
   overflow-wrap: anywhere;
 }
 
+.alias-row {
+  margin-top: 6px;
+}
+
+.alias-input {
+  padding: 6px 10px;
+  font-size: 14px;
+  font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
+}
+
+.alias-suffix {
+  color: var(--muted);
+  font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .relay-url {
   word-break: break-all;
 }

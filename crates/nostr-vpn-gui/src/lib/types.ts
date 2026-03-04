@@ -18,6 +18,8 @@ export interface ParticipantView {
   npub: string
   pubkeyHex: string
   tunnelIp: string
+  magicDnsAlias: string
+  magicDnsName: string
   state: PeerState
   statusText: string
   lastSignalText: string
@@ -45,6 +47,8 @@ export interface UiState {
   listenPort: number
   networkId: string
   effectiveNetworkId: string
+  magicDnsSuffix: string
+  magicDnsStatus: string
   autoDisconnectRelaysWhenMeshReady: boolean
   lanDiscoveryEnabled: boolean
   launchOnStartup: boolean
@@ -64,6 +68,7 @@ export interface SettingsPatch {
   tunnelIp?: string
   listenPort?: number
   networkId?: string
+  magicDnsSuffix?: string
   autoDisconnectRelaysWhenMeshReady?: boolean
   lanDiscoveryEnabled?: boolean
   launchOnStartup?: boolean

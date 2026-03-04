@@ -23,6 +23,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 futures = "0.3"
 hex = "0.4"
+hickory-proto = "0.25"
 rand = "0.9"
 rand_core = "0.6"
 serde = { version = "1", features = ["derive"] }

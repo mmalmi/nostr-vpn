@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -6,25 +7,195 @@ import { setTimeout as delay } from 'node:timers/promises'
 const DRIVER_PORT = Number(process.env.TAURI_DRIVER_PORT || '4444')
 const DRIVER_BASE = `http://127.0.0.1:${DRIVER_PORT}`
 const TAURI_DRIVER_BIN = process.env.TAURI_DRIVER_BIN || 'tauri-driver'
-const APP_PATH = process.env.TAURI_APP || '/work/target/release/nostr-vpn-gui'
+const APP_PATH = process.env.TAURI_APP || '/work/target/debug/nostr-vpn-gui'
 const NATIVE_DRIVER = process.env.NATIVE_DRIVER_PATH || '/usr/bin/WebKitWebDriver'
 const SCREENSHOT_PATH =
-  process.env.TAURI_E2E_SCREENSHOT || '/work/artifacts/screenshots/tauri-driver-smoke.png'
+  process.env.TAURI_E2E_SCREENSHOT || '/work/artifacts/screenshots/tauri-driver-e2e.png'
 
-const VALID_NPUB =
-  process.env.TAURI_E2E_PARTICIPANT ||
-  'npub1dqgr6ds2kdauzpqtvpt2ldc5ca4spemj4n4jnjcvn7496x45gnesls5j6g'
+const NVPN_BIN = process.env.NVPN_BIN || '/work/target/debug/nvpn'
+const RELAY_BIN = process.env.NVPN_RELAY_BIN || '/work/target/debug/nostr-vpn-relay'
 
-const RELAY_URL = 'wss://relay.test.invalid'
+const RELAY_BIND = process.env.TAURI_E2E_RELAY_BIND || '127.0.0.1:18080'
+const RELAY_URL = process.env.TAURI_E2E_RELAY_URL || `ws://${RELAY_BIND}`
 
+const GUI_ENDPOINT = process.env.TAURI_E2E_GUI_ENDPOINT || '127.0.0.1:51820'
+const PEER_ENDPOINT = process.env.TAURI_E2E_PEER_ENDPOINT || '127.0.0.1:51821'
+const GUI_TUNNEL_IP = process.env.TAURI_E2E_GUI_TUNNEL_IP || '10.44.0.10/32'
+const PEER_TUNNEL_IP = process.env.TAURI_E2E_PEER_TUNNEL_IP || '10.44.0.11/32'
+const PEER_IFACE = process.env.TAURI_E2E_PEER_IFACE || 'utun101'
+
+const processes = []
 let driver
 
 function log(message) {
   console.log(`[tauri-e2e] ${message}`)
 }
 
-async function http(method, path, body) {
-  const response = await fetch(`${DRIVER_BASE}${path}`, {
+function assertExecutable(filePath) {
+  try {
+    accessSync(filePath, constants.X_OK)
+  } catch (error) {
+    throw new Error(`required executable missing or not executable: ${filePath} (${String(error)})`)
+  }
+}
+
+function assertTunAvailable() {
+  try {
+    accessSync('/dev/net/tun', constants.R_OK | constants.W_OK)
+  } catch (error) {
+    throw new Error(`/dev/net/tun is unavailable; run with NET_ADMIN and tun device (${String(error)})`)
+  }
+}
+
+async function runChecked(cmd, args, options = {}) {
+  const {
+    cwd = process.cwd(),
+    env = process.env,
+    timeoutMs = 20_000,
+  } = options
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+
+    const timeout = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, timeoutMs)
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', (error) => {
+      clearTimeout(timeout)
+      reject(new Error(`failed to spawn ${cmd}: ${error.message}`))
+    })
+    child.on('exit', (code, signal) => {
+      clearTimeout(timeout)
+      if (timedOut) {
+        reject(new Error(`command timed out: ${cmd} ${args.join(' ')}`))
+        return
+      }
+
+      if (code !== 0) {
+        reject(
+          new Error(
+            `command failed (${code ?? signal}): ${cmd} ${args.join(' ')}\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+          ),
+        )
+        return
+      }
+
+      resolve({ stdout, stderr })
+    })
+  })
+}
+
+function spawnManaged(name, cmd, args, options = {}) {
+  const child = spawn(cmd, args, {
+    cwd: options.cwd || process.cwd(),
+    env: options.env || process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+
+  const meta = {
+    name,
+    process: child,
+    stdout: '',
+    stderr: '',
+    exited: false,
+    exitCode: null,
+    exitSignal: null,
+  }
+
+  child.stdout.on('data', (chunk) => {
+    const text = chunk.toString()
+    meta.stdout += text
+    process.stdout.write(`[${name}] ${text}`)
+  })
+
+  child.stderr.on('data', (chunk) => {
+    const text = chunk.toString()
+    meta.stderr += text
+    process.stderr.write(`[${name}] ${text}`)
+  })
+
+  child.on('exit', (code, signal) => {
+    meta.exited = true
+    meta.exitCode = code
+    meta.exitSignal = signal
+  })
+
+  child.on('error', (error) => {
+    meta.stderr += `\nspawn error: ${error.message}`
+  })
+
+  processes.push(meta)
+  return meta
+}
+
+async function stopManaged(meta, signal = 'SIGINT', timeoutMs = 15_000) {
+  if (meta.exited) {
+    return
+  }
+
+  meta.process.kill(signal)
+  const started = Date.now()
+  while (!meta.exited && Date.now() - started < timeoutMs) {
+    await delay(100)
+  }
+
+  if (!meta.exited) {
+    meta.process.kill('SIGKILL')
+    throw new Error(`failed to stop ${meta.name} via ${signal} within ${timeoutMs}ms`)
+  }
+}
+
+async function waitForProcessOutput(meta, matcher, description, timeoutMs = 30_000) {
+  const started = Date.now()
+
+  while (Date.now() - started < timeoutMs) {
+    if (meta.exited) {
+      throw new Error(
+        `${meta.name} exited before ${description} (code=${meta.exitCode}, signal=${meta.exitSignal})\nstdout:\n${meta.stdout}\nstderr:\n${meta.stderr}`,
+      )
+    }
+
+    if (matcher.test(meta.stdout) || matcher.test(meta.stderr)) {
+      return
+    }
+
+    await delay(200)
+  }
+
+  throw new Error(
+    `timed out waiting for ${description} from ${meta.name}\nstdout:\n${meta.stdout}\nstderr:\n${meta.stderr}`,
+  )
+}
+
+function npubFromConfig(configPath) {
+  const content = readFileSync(configPath, 'utf8')
+  const nostrSection = content.split('[node]')[0] || content
+  const match = nostrSection.match(/^public_key\s*=\s*"([^"]+)"/m)
+  if (!match) {
+    throw new Error(`could not parse nostr public_key from ${configPath}`)
+  }
+
+  return match[1]
+}
+
+async function http(method, endpoint, body) {
+  const response = await fetch(`${DRIVER_BASE}${endpoint}`, {
     method,
     headers: { 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
@@ -33,13 +204,13 @@ async function http(method, path, body) {
   const json = await response.json().catch(() => ({}))
   if (!response.ok || json.value?.error) {
     const detail = json.value?.message || JSON.stringify(json)
-    throw new Error(`${method} ${path} failed: ${detail}`)
+    throw new Error(`${method} ${endpoint} failed: ${detail}`)
   }
 
   return json
 }
 
-async function waitForDriverReady(timeoutMs = 15_000) {
+async function waitForDriverReady(timeoutMs = 20_000) {
   const started = Date.now()
 
   while (Date.now() - started < timeoutMs) {
@@ -77,7 +248,7 @@ async function createSession() {
   const response = await http('POST', '/session', payload)
   const sessionId = response.value?.sessionId || response.sessionId
   if (!sessionId) {
-    throw new Error(`Missing session id in response: ${JSON.stringify(response)}`)
+    throw new Error(`missing webdriver session id: ${JSON.stringify(response)}`)
   }
 
   return sessionId
@@ -91,7 +262,7 @@ async function find(sessionId, selector) {
 
   const id = elementId(response.value)
   if (!id) {
-    throw new Error(`No element id for selector ${selector}`)
+    throw new Error(`missing element id for selector ${selector}`)
   }
 
   return id
@@ -106,24 +277,9 @@ async function findAll(sessionId, selector) {
   return (response.value || []).map((entry) => elementId(entry)).filter(Boolean)
 }
 
-async function click(sessionId, id) {
-  await http('POST', `/session/${sessionId}/element/${id}/click`, {})
-}
-
-async function clear(sessionId, id) {
-  await http('POST', `/session/${sessionId}/element/${id}/clear`, {})
-}
-
-async function sendKeys(sessionId, id, text) {
-  await http('POST', `/session/${sessionId}/element/${id}/value`, {
-    text,
-    value: [...text],
-  })
-}
-
-async function getAttribute(sessionId, id, name) {
-  const response = await http('GET', `/session/${sessionId}/element/${id}/attribute/${name}`)
-  return response.value
+async function getText(sessionId, id) {
+  const response = await http('GET', `/session/${sessionId}/element/${id}/text`)
+  return String(response.value || '')
 }
 
 async function screenshot(sessionId) {
@@ -136,7 +292,7 @@ async function source(sessionId) {
   return response.value || ''
 }
 
-async function waitUntil(fn, description, timeoutMs = 10_000) {
+async function waitUntil(fn, description, timeoutMs = 40_000) {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
     const value = await fn()
@@ -144,20 +300,106 @@ async function waitUntil(fn, description, timeoutMs = 10_000) {
       return value
     }
 
-    await delay(200)
+    await delay(250)
   }
 
-  throw new Error(`Timed out waiting for ${description}`)
+  throw new Error(`timed out waiting for ${description}`)
+}
+
+async function pageContains(sessionId, pattern) {
+  const html = (await source(sessionId)).replace(/\s+/g, ' ')
+  return pattern.test(html)
 }
 
 async function main() {
-  log(`starting tauri-driver with ${TAURI_DRIVER_BIN} and native driver ${NATIVE_DRIVER}`)
+  assertExecutable(NVPN_BIN)
+  assertExecutable(RELAY_BIN)
+  assertExecutable(TAURI_DRIVER_BIN)
+  assertTunAvailable()
 
+  const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'nvpn-tauri-e2e-'))
+  const guiConfigHome = path.join(tempRoot, 'gui-config')
+  const guiConfigPath = path.join(guiConfigHome, 'nvpn', 'config.toml')
+  const peerConfigPath = path.join(tempRoot, 'peer.toml')
+  mkdirSync(path.dirname(guiConfigPath), { recursive: true })
+
+  const networkId = `tauri-e2e-${Date.now()}`
+
+  log(`temp root: ${tempRoot}`)
+  log(`using relay ${RELAY_URL}`)
+  log(`using network id ${networkId}`)
+
+  await runChecked(NVPN_BIN, ['init', '--force', '--config', guiConfigPath])
+  await runChecked(NVPN_BIN, ['init', '--force', '--config', peerConfigPath])
+
+  const guiNpub = npubFromConfig(guiConfigPath)
+  const peerNpub = npubFromConfig(peerConfigPath)
+
+  log(`gui npub: ${guiNpub}`)
+  log(`peer npub: ${peerNpub}`)
+
+  await runChecked(NVPN_BIN, [
+    'set',
+    '--config',
+    guiConfigPath,
+    '--network-id',
+    networkId,
+    '--relay',
+    RELAY_URL,
+    '--participant',
+    peerNpub,
+    '--endpoint',
+    GUI_ENDPOINT,
+    '--tunnel-ip',
+    GUI_TUNNEL_IP,
+    '--listen-port',
+    String(Number(GUI_ENDPOINT.split(':').pop() || '51820')),
+    '--auto-disconnect-relays-when-mesh-ready',
+    'false',
+  ])
+
+  await runChecked(NVPN_BIN, [
+    'set',
+    '--config',
+    peerConfigPath,
+    '--network-id',
+    networkId,
+    '--relay',
+    RELAY_URL,
+    '--participant',
+    guiNpub,
+    '--endpoint',
+    PEER_ENDPOINT,
+    '--tunnel-ip',
+    PEER_TUNNEL_IP,
+    '--listen-port',
+    String(Number(PEER_ENDPOINT.split(':').pop() || '51821')),
+    '--auto-disconnect-relays-when-mesh-ready',
+    'false',
+  ])
+
+  const relay = spawnManaged('relay', RELAY_BIN, ['--bind', RELAY_BIND])
+  await waitForProcessOutput(relay, /listening/i, 'relay to start')
+
+  const peer = spawnManaged('peer-connect', NVPN_BIN, [
+    'connect',
+    '--config',
+    peerConfigPath,
+    '--iface',
+    PEER_IFACE,
+    '--announce-interval-secs',
+    '3',
+  ])
+  await waitForProcessOutput(peer, /waiting for 1 configured peer/i, 'peer connect startup')
+
+  log(`starting tauri-driver with ${TAURI_DRIVER_BIN}`)
   driver = spawn(TAURI_DRIVER_BIN, ['--port', `${DRIVER_PORT}`, '--native-driver', NATIVE_DRIVER], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
       TAURI_AUTOMATION: 'true',
+      XDG_CONFIG_HOME: guiConfigHome,
+      HOME: tempRoot,
     },
   })
 
@@ -190,64 +432,50 @@ async function main() {
           return false
         }
       },
-      'pubkey to render',
+      'gui to render pubkey',
     )
-
-    const initialParticipantRows = (await findAll(sessionId, '[data-testid="participant-row"]')).length
-    const participantInput = await find(sessionId, '[data-testid="participant-input"]')
-    const participantAdd = await find(sessionId, '[data-testid="participant-add"]')
-    await clear(sessionId, participantInput)
-    await sendKeys(sessionId, participantInput, VALID_NPUB)
-    await click(sessionId, participantAdd)
 
     await waitUntil(
       async () => {
-        const rows = await findAll(sessionId, '[data-testid="participant-row"]')
-        return rows.length >= initialParticipantRows + 1
+        return await pageContains(sessionId, /mesh\s*1\/1/i)
       },
-      'participant row to be added',
+      'mesh to reach 1/1',
+      70_000,
     )
-
-    const initialRelayRows = (await findAll(sessionId, '[data-testid="relay-row"]')).length
-    const relayInput = await find(sessionId, '[data-testid="relay-input"]')
-    const relayAdd = await find(sessionId, '[data-testid="relay-add"]')
-    await clear(sessionId, relayInput)
-    await sendKeys(sessionId, relayInput, RELAY_URL)
-    await click(sessionId, relayAdd)
 
     await waitUntil(
       async () => {
-        const rows = await findAll(sessionId, '[data-testid="relay-row"]')
-        return rows.length >= initialRelayRows + 1
+        return await pageContains(sessionId, /online/i)
       },
-      'relay row to be added',
+      'participant state online',
+      70_000,
     )
-
-    const removeButtons = await findAll(sessionId, '[data-testid="relay-remove"]')
-    const lastRemoveButton = removeButtons.at(-1)
-    if (!lastRemoveButton) {
-      throw new Error('expected relay remove button to exist')
-    }
-
-    await click(sessionId, lastRemoveButton)
-    await waitUntil(
-      async () => {
-        const rows = await findAll(sessionId, '[data-testid="relay-row"]')
-        return rows.length === initialRelayRows
-      },
-      'relay row removal',
-    )
-
-    const nodeNameInput = await find(sessionId, '[data-testid="node-name-input"]')
-    await clear(sessionId, nodeNameInput)
-    await sendKeys(sessionId, nodeNameInput, 'tauri-driver-e2e-node')
 
     await waitUntil(
       async () => {
-        const value = await getAttribute(sessionId, nodeNameInput, 'value')
-        return value === 'tauri-driver-e2e-node'
+        return await pageContains(sessionId, /presence\s+\d+s\s+ago/i)
       },
-      'node name input update',
+      'participant presence text',
+      30_000,
+    )
+
+    await waitForProcessOutput(peer, /mesh: 1\/1 peers with presence/i, 'peer connect mesh 1/1', 70_000)
+
+    // Drop the peer process and verify GUI transitions to offline/mesh degraded.
+    await stopManaged(peer, 'SIGINT')
+    await waitUntil(
+      async () => {
+        return await pageContains(sessionId, /mesh\s*0\/1/i)
+      },
+      'mesh to drop to 0/1 after peer disconnect',
+      40_000,
+    )
+    await waitUntil(
+      async () => {
+        return await pageContains(sessionId, /offline/i)
+      },
+      'participant state offline after peer disconnect',
+      40_000,
     )
 
     const screenshotBase64 = await screenshot(sessionId)
@@ -255,9 +483,10 @@ async function main() {
     writeFileSync(SCREENSHOT_PATH, Buffer.from(screenshotBase64, 'base64'))
     log(`screenshot written: ${SCREENSHOT_PATH}`)
 
-    log('tauri-driver smoke test passed')
+    log('tauri-driver e2e passed: GUI reached mesh 1/1 with real peer connect + wireguard handshake')
   } catch (error) {
     const failureScreenshotPath = SCREENSHOT_PATH.replace(/\.png$/i, '-failure.png')
+
     try {
       const screenshotBase64 = await screenshot(sessionId)
       mkdirSync(path.dirname(failureScreenshotPath), { recursive: true })
@@ -269,7 +498,7 @@ async function main() {
 
     try {
       const html = await source(sessionId)
-      log(`page source snippet: ${html.slice(0, 600)}`)
+      log(`page source snippet: ${html.slice(0, 1200)}`)
     } catch (sourceError) {
       log(`failed to capture page source: ${String(sourceError)}`)
     }
@@ -286,6 +515,20 @@ main()
     process.exitCode = 1
   })
   .finally(async () => {
+    for (const meta of processes) {
+      if (!meta.exited) {
+        meta.process.kill('SIGTERM')
+      }
+    }
+
+    await delay(500)
+
+    for (const meta of processes) {
+      if (!meta.exited) {
+        meta.process.kill('SIGKILL')
+      }
+    }
+
     if (driver && !driver.killed) {
       driver.kill('SIGTERM')
       await delay(500)

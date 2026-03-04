@@ -36,6 +36,10 @@ importers:
       vite:
         specifier: ^6.0.0
         version: 6.4.1
+    optionalDependencies:
+      '@rollup/rollup-darwin-arm64':
+        specifier: 4.59.0
+        version: 4.59.0
 
 packages:
 

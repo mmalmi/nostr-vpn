@@ -4,6 +4,9 @@ import type { SettingsPatch, UiState } from './types'
 const isTauriRuntime = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
+const composeMagicDnsName = (alias: string, suffix: string) =>
+  suffix.trim().length > 0 ? `${alias}.${suffix}` : alias
+
 const mockState: UiState = {
   sessionActive: false,
   relayConnected: false,
@@ -18,6 +21,8 @@ const mockState: UiState = {
   listenPort: 51820,
   networkId: 'nostr-vpn',
   effectiveNetworkId: 'nostr-vpn',
+  magicDnsSuffix: 'nvpn',
+  magicDnsStatus: 'System DNS active for .nvpn via 127.0.0.1:1053',
   autoDisconnectRelaysWhenMeshReady: true,
   lanDiscoveryEnabled: true,
   launchOnStartup: true,
@@ -94,6 +99,11 @@ export const addParticipant = (npub: string) =>
             npub,
             pubkeyHex: 'a'.repeat(64),
             tunnelIp: '10.44.0.2/32',
+            magicDnsAlias: `peer-${'a'.repeat(12)}`,
+            magicDnsName: composeMagicDnsName(
+              `peer-${'a'.repeat(12)}`,
+              mockState.magicDnsSuffix,
+            ),
             state: 'unknown',
             statusText: 'not checked',
             lastSignalText: 'no signal yet',
@@ -111,6 +121,25 @@ export const removeParticipant = (npub: string) =>
           (participant) => participant.npub !== npub,
         )
         mockState.expectedPeerCount = mockState.participants.length
+        return asResult()
+      })()
+
+export const setParticipantAlias = (npub: string, alias: string) =>
+  isTauriRuntime()
+    ? invoke<UiState>('set_participant_alias', { npub, alias })
+    : (() => {
+        mockState.participants = mockState.participants.map((participant) => {
+          if (participant.npub !== npub) {
+            return participant
+          }
+
+          const normalized = alias.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || participant.magicDnsAlias
+          return {
+            ...participant,
+            magicDnsAlias: normalized,
+            magicDnsName: composeMagicDnsName(normalized, mockState.magicDnsSuffix),
+          }
+        })
         return asResult()
       })()
 
@@ -152,6 +181,20 @@ export const updateSettings = (patch: SettingsPatch) =>
         if (patch.networkId !== undefined) {
           mockState.networkId = patch.networkId
           mockState.effectiveNetworkId = patch.networkId
+        }
+        if (patch.magicDnsSuffix !== undefined) {
+          mockState.magicDnsSuffix = patch.magicDnsSuffix
+          mockState.magicDnsStatus =
+            patch.magicDnsSuffix.trim().length > 0
+              ? `System DNS active for .${patch.magicDnsSuffix} via 127.0.0.1:1053`
+              : 'Local DNS only on 127.0.0.1:1053 (set suffix for system split-dns)'
+          mockState.participants = mockState.participants.map((participant) => ({
+            ...participant,
+            magicDnsName: composeMagicDnsName(
+              participant.magicDnsAlias,
+              mockState.magicDnsSuffix,
+            ),
+          }))
         }
         if (patch.listenPort !== undefined) {
           mockState.listenPort = patch.listenPort

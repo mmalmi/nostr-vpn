@@ -16,6 +16,9 @@
     "@tauri-apps/api": "^2.5.0",
     "lucide-svelte": "^0.576.0"
   },
+  "optionalDependencies": {
+    "@rollup/rollup-darwin-arm64": "4.59.0"
+  },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tauri-apps/cli": "^2.6.0",

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -20,6 +20,10 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::crypto::generate_keypair;
+use nostr_vpn_core::magic_dns::{
+    MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
+    uninstall_system_resolver,
+};
 use nostr_vpn_core::nat::{discover_public_udp_endpoint, hole_punch_udp};
 use nostr_vpn_core::signaling::{NostrSignalingClient, SignalPayload};
 use nostr_vpn_core::wireguard::{InterfaceConfig, PeerConfig, render_wireguard_config};
@@ -222,6 +226,8 @@ struct SetArgs {
     config: Option<PathBuf>,
     #[arg(long)]
     network_id: Option<String>,
+    #[arg(long)]
+    magic_dns_suffix: Option<String>,
     #[arg(long)]
     node_name: Option<String>,
     #[arg(long)]
@@ -468,6 +474,7 @@ async fn main() -> Result<()> {
                     "{}",
                     serde_json::to_string_pretty(&json!({
                         "network_id": network_id,
+                        "magic_dns_suffix": app.magic_dns_suffix,
                         "node_id": app.node.id,
                         "tunnel_ip": app.node.tunnel_ip,
                         "endpoint": app.node.endpoint,
@@ -481,6 +488,7 @@ async fn main() -> Result<()> {
                 );
             } else {
                 println!("network: {network_id}");
+                println!("magic_dns_suffix: {}", app.magic_dns_suffix);
                 println!("node: {}", app.node.id);
                 println!("tunnel_ip: {}", app.node.tunnel_ip);
                 println!("endpoint: {}", app.node.endpoint);
@@ -509,6 +517,9 @@ async fn main() -> Result<()> {
 
             if let Some(value) = args.network_id {
                 app.network_id = value;
+            }
+            if let Some(value) = args.magic_dns_suffix {
+                app.magic_dns_suffix = value;
             }
             if let Some(value) = args.node_name {
                 app.node_name = value;
@@ -964,6 +975,121 @@ struct TunnelPeer {
     allowed_ip: String,
 }
 
+const MAGIC_DNS_PORT: u16 = 1053;
+
+struct ConnectMagicDnsRuntime {
+    suffix: String,
+    resolver_installed: bool,
+    server: MagicDnsServer,
+}
+
+impl ConnectMagicDnsRuntime {
+    fn start(app: &AppConfig) -> Option<Self> {
+        let records = build_magic_dns_records(app);
+        if records.is_empty() {
+            println!("magicdns: skipped (no configured alias records)");
+            return None;
+        }
+
+        let server = match MagicDnsServer::start(
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MAGIC_DNS_PORT)),
+            records.clone(),
+        ) {
+            Ok(server) => server,
+            Err(error) => {
+                eprintln!(
+                    "magicdns: preferred port {MAGIC_DNS_PORT} unavailable ({error}); trying random local port"
+                );
+                match MagicDnsServer::start(
+                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)),
+                    records,
+                ) {
+                    Ok(server) => server,
+                    Err(error) => {
+                        eprintln!("magicdns: failed to start local dns server: {error}");
+                        return None;
+                    }
+                }
+            }
+        };
+        let local_addr = server.local_addr();
+
+        let suffix = app
+            .magic_dns_suffix
+            .trim()
+            .trim_matches('.')
+            .to_ascii_lowercase();
+        if suffix.is_empty() {
+            println!(
+                "magicdns: local dns running on {local_addr} (system split-dns disabled; empty suffix)"
+            );
+            return Some(Self {
+                suffix,
+                resolver_installed: false,
+                server,
+            });
+        }
+
+        let nameserver = match local_addr {
+            SocketAddr::V4(v4) => *v4.ip(),
+            SocketAddr::V6(_) => {
+                eprintln!("magicdns: local dns unexpectedly bound to IPv6; split-dns disabled");
+                return Some(Self {
+                    suffix,
+                    resolver_installed: false,
+                    server,
+                });
+            }
+        };
+
+        let resolver_config = MagicDnsResolverConfig {
+            suffix: suffix.clone(),
+            nameserver,
+            port: local_addr.port(),
+        };
+
+        match install_system_resolver(&resolver_config) {
+            Ok(()) => {
+                println!(
+                    "magicdns: active for .{} via {}:{}",
+                    suffix, resolver_config.nameserver, resolver_config.port
+                );
+                Some(Self {
+                    suffix,
+                    resolver_installed: true,
+                    server,
+                })
+            }
+            Err(error) => {
+                eprintln!(
+                    "magicdns: system resolver install failed ({error}); local dns remains on {local_addr}"
+                );
+                Some(Self {
+                    suffix,
+                    resolver_installed: false,
+                    server,
+                })
+            }
+        }
+    }
+}
+
+impl Drop for ConnectMagicDnsRuntime {
+    fn drop(&mut self) {
+        if self.resolver_installed
+            && !self.suffix.is_empty()
+            && let Err(error) = uninstall_system_resolver(&self.suffix)
+        {
+            eprintln!(
+                "magicdns: failed to remove system resolver for .{}: {error}",
+                self.suffix
+            );
+        }
+
+        self.server.stop();
+    }
+}
+
 struct CliTunnelRuntime {
     iface: String,
     handle: Option<DeviceHandle>,
@@ -1139,6 +1265,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let expected_peers = expected_peer_count(&app);
     let mut peer_announcements = HashMap::<String, PeerAnnouncement>::new();
     let mut tunnel_runtime = CliTunnelRuntime::new(args.iface);
+    let _magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
 
     let client = NostrSignalingClient::from_secret_key(
         network_id.clone(),
