@@ -37,7 +37,14 @@ const DAEMON_CONTROL_STOP_REQUEST: &str = "stop";
 const DAEMON_CONTROL_RELOAD_REQUEST: &str = "reload";
 const DAEMON_CONTROL_PAUSE_REQUEST: &str = "pause";
 const DAEMON_CONTROL_RESUME_REQUEST: &str = "resume";
+#[cfg(target_os = "macos")]
 const MACOS_SERVICE_LABEL: &str = "to.nostrvpn.nvpn";
+#[cfg(target_os = "linux")]
+const LINUX_SERVICE_UNIT_NAME: &str = "nvpn.service";
+#[cfg(target_os = "windows")]
+const WINDOWS_SERVICE_NAME: &str = "NvpnService";
+#[cfg(target_os = "windows")]
+const WINDOWS_SERVICE_DISPLAY_NAME: &str = "Nostr VPN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DaemonControlRequest {
@@ -3147,111 +3154,103 @@ fn run_service_command(args: ServiceArgs) -> Result<()> {
 }
 
 fn service_install(args: ServiceInstallArgs) -> Result<()> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = args;
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    let mut config = load_or_default_config(&config_path)?;
+    config.ensure_defaults();
+    maybe_autoconfigure_node(&mut config);
+    config.save(&config_path)?;
+
+    if config.all_participant_pubkeys_hex().is_empty() {
         return Err(anyhow!(
-            "system service install is currently supported on macOS only"
+            "configure at least one participant before installing the system service"
         ));
+    }
+
+    let executable = std::env::current_exe().context("failed to resolve current executable")?;
+    let executable = fs::canonicalize(&executable)
+        .with_context(|| format!("failed to canonicalize {}", executable.display()))?;
+    let config_path = fs::canonicalize(&config_path)
+        .with_context(|| format!("failed to canonicalize {}", config_path.display()))?;
+    let log_path = daemon_log_file_path(&config_path);
+    if let Some(parent) = log_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
     #[cfg(target_os = "macos")]
     {
-        let config_path = args.config.unwrap_or_else(default_config_path);
-        let mut config = load_or_default_config(&config_path)?;
-        config.ensure_defaults();
-        maybe_autoconfigure_node(&mut config);
-        config.save(&config_path)?;
-
-        if config.all_participant_pubkeys_hex().is_empty() {
-            return Err(anyhow!(
-                "configure at least one participant before installing the system service"
-            ));
-        }
-
-        let executable = std::env::current_exe().context("failed to resolve current executable")?;
-        let executable = fs::canonicalize(&executable)
-            .with_context(|| format!("failed to canonicalize {}", executable.display()))?;
-        let config_path = fs::canonicalize(&config_path)
-            .with_context(|| format!("failed to canonicalize {}", config_path.display()))?;
-        let log_path = daemon_log_file_path(&config_path);
-        if let Some(parent) = log_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
-
-        let plist_path = macos_service_plist_path();
-        if plist_path.exists() && !args.force {
-            println!(
-                "service already installed at {} (pass --force to reinstall)",
-                plist_path.display()
-            );
-            return Ok(());
-        }
-
-        macos_service_bootout(true)?;
-
-        let plist = macos_service_plist_content(
+        return macos_install_service(
             &executable,
             &config_path,
             &args.iface,
             args.announce_interval_secs.max(1),
             &log_path,
+            args.force,
         );
+    }
 
-        if let Some(parent) = plist_path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create {}", parent.display()))?;
-        }
+    #[cfg(target_os = "linux")]
+    {
+        return linux_install_service(
+            &executable,
+            &config_path,
+            &args.iface,
+            args.announce_interval_secs.max(1),
+            &log_path,
+            args.force,
+        );
+    }
 
-        let temp = plist_path.with_extension(format!("tmp-{}", std::process::id()));
-        fs::write(&temp, plist).with_context(|| format!("failed to write {}", temp.display()))?;
-        #[cfg(unix)]
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o644))
-            .with_context(|| format!("failed to chmod {}", temp.display()))?;
-        fs::rename(&temp, &plist_path).with_context(|| {
-            format!(
-                "failed to move {} into {}",
-                temp.display(),
-                plist_path.display()
-            )
-        })?;
+    #[cfg(target_os = "windows")]
+    {
+        return windows_install_service(
+            &executable,
+            &config_path,
+            &args.iface,
+            args.announce_interval_secs.max(1),
+            args.force,
+        );
+    }
 
-        macos_service_bootstrap(&plist_path)?;
-        macos_service_enable()?;
-        macos_service_kickstart()?;
-
-        println!("installed system service: {}", plist_path.display());
-        println!("label: {}", MACOS_SERVICE_LABEL);
-        Ok(())
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = (
+            executable,
+            config_path,
+            log_path,
+            args.iface,
+            args.announce_interval_secs,
+            args.force,
+        );
+        Err(anyhow!(
+            "system service install is not implemented on this platform"
+        ))
     }
 }
 
 fn service_uninstall(args: ServiceUninstallArgs) -> Result<()> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = args;
-        return Err(anyhow!(
-            "system service uninstall is currently supported on macOS only"
-        ));
-    }
+    let _ = args.config.unwrap_or_else(default_config_path);
 
     #[cfg(target_os = "macos")]
     {
-        let _ = args.config;
-        macos_service_bootout(true)?;
-        macos_service_disable(true)?;
+        return macos_uninstall_service();
+    }
 
-        let plist_path = macos_service_plist_path();
-        if plist_path.exists() {
-            fs::remove_file(&plist_path)
-                .with_context(|| format!("failed to remove {}", plist_path.display()))?;
-            println!("removed system service plist: {}", plist_path.display());
-        } else {
-            println!("system service plist not found: {}", plist_path.display());
-        }
+    #[cfg(target_os = "linux")]
+    {
+        return linux_uninstall_service();
+    }
 
-        Ok(())
+    #[cfg(target_os = "windows")]
+    {
+        return windows_uninstall_service();
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        Err(anyhow!(
+            "system service uninstall is not implemented on this platform"
+        ))
     }
 }
 
@@ -3282,19 +3281,6 @@ fn service_status(args: ServiceStatusArgs) -> Result<()> {
 }
 
 fn query_service_status() -> Result<ServiceStatusView> {
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Ok(ServiceStatusView {
-            supported: false,
-            installed: false,
-            loaded: false,
-            running: false,
-            pid: None,
-            label: MACOS_SERVICE_LABEL.to_string(),
-            plist_path: String::new(),
-        });
-    }
-
     #[cfg(target_os = "macos")]
     {
         let plist_path = macos_service_plist_path();
@@ -3331,6 +3317,29 @@ fn query_service_status() -> Result<ServiceStatusView> {
             plist_path: plist_path.display().to_string(),
         })
     }
+
+    #[cfg(target_os = "linux")]
+    {
+        return linux_query_service_status();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        return windows_query_service_status();
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        Ok(ServiceStatusView {
+            supported: false,
+            installed: false,
+            loaded: false,
+            running: false,
+            pid: None,
+            label: "nvpn".to_string(),
+            plist_path: String::new(),
+        })
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -3343,6 +3352,74 @@ fn macos_service_plist_path() -> PathBuf {
 #[cfg(target_os = "macos")]
 fn macos_service_target() -> String {
     format!("system/{MACOS_SERVICE_LABEL}")
+}
+
+#[cfg(target_os = "macos")]
+fn macos_install_service(
+    executable: &Path,
+    config_path: &Path,
+    iface: &str,
+    announce_interval_secs: u64,
+    log_path: &Path,
+    force: bool,
+) -> Result<()> {
+    let plist_path = macos_service_plist_path();
+    if plist_path.exists() && !force {
+        println!(
+            "service already installed at {} (pass --force to reinstall)",
+            plist_path.display()
+        );
+        return Ok(());
+    }
+
+    macos_service_bootout(true)?;
+    let plist = macos_service_plist_content(
+        executable,
+        config_path,
+        iface,
+        announce_interval_secs,
+        log_path,
+    );
+
+    if let Some(parent) = plist_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+
+    let temp = plist_path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&temp, plist).with_context(|| format!("failed to write {}", temp.display()))?;
+    #[cfg(unix)]
+    fs::set_permissions(&temp, fs::Permissions::from_mode(0o644))
+        .with_context(|| format!("failed to chmod {}", temp.display()))?;
+    fs::rename(&temp, &plist_path).with_context(|| {
+        format!(
+            "failed to move {} into {}",
+            temp.display(),
+            plist_path.display()
+        )
+    })?;
+
+    macos_service_bootstrap(&plist_path)?;
+    macos_service_enable()?;
+    macos_service_kickstart()?;
+    println!("installed system service: {}", plist_path.display());
+    println!("label: {}", MACOS_SERVICE_LABEL);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_uninstall_service() -> Result<()> {
+    macos_service_bootout(true)?;
+    macos_service_disable(true)?;
+    let plist_path = macos_service_plist_path();
+    if plist_path.exists() {
+        fs::remove_file(&plist_path)
+            .with_context(|| format!("failed to remove {}", plist_path.display()))?;
+        println!("removed system service plist: {}", plist_path.display());
+    } else {
+        println!("system service plist not found: {}", plist_path.display());
+    }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -3516,6 +3593,473 @@ fn launchctl_missing_service_message(details: &str) -> bool {
         || lowered.contains("domain does not support specified action")
 }
 
+#[cfg(target_os = "linux")]
+fn linux_service_unit_path() -> PathBuf {
+    PathBuf::from(format!("/etc/systemd/system/{LINUX_SERVICE_UNIT_NAME}"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_install_service(
+    executable: &Path,
+    config_path: &Path,
+    iface: &str,
+    announce_interval_secs: u64,
+    log_path: &Path,
+    force: bool,
+) -> Result<()> {
+    if !linux_systemctl_available() {
+        return Err(anyhow!("systemd (systemctl) is not available on this host"));
+    }
+
+    let unit_path = linux_service_unit_path();
+    if unit_path.exists() && !force {
+        println!(
+            "service already installed at {} (pass --force to reinstall)",
+            unit_path.display()
+        );
+        return Ok(());
+    }
+
+    let unit = linux_service_unit_content(
+        executable,
+        config_path,
+        iface,
+        announce_interval_secs,
+        log_path,
+    );
+    let temp = unit_path.with_extension(format!("tmp-{}", std::process::id()));
+    fs::write(&temp, unit).with_context(|| format!("failed to write {}", temp.display()))?;
+    #[cfg(unix)]
+    fs::set_permissions(&temp, fs::Permissions::from_mode(0o644))
+        .with_context(|| format!("failed to chmod {}", temp.display()))?;
+    fs::rename(&temp, &unit_path).with_context(|| {
+        format!(
+            "failed to move {} into {}",
+            temp.display(),
+            unit_path.display()
+        )
+    })?;
+
+    run_systemctl_checked(&["daemon-reload"], "reload systemd")?;
+    run_systemctl_checked(
+        &["enable", "--now", LINUX_SERVICE_UNIT_NAME],
+        "enable/start service",
+    )?;
+    println!("installed system service: {}", unit_path.display());
+    println!("label: {LINUX_SERVICE_UNIT_NAME}");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_uninstall_service() -> Result<()> {
+    if !linux_systemctl_available() {
+        return Err(anyhow!("systemd (systemctl) is not available on this host"));
+    }
+
+    run_systemctl_allow_missing(
+        &["disable", "--now", LINUX_SERVICE_UNIT_NAME],
+        "disable/stop service",
+        true,
+    )?;
+
+    let unit_path = linux_service_unit_path();
+    if unit_path.exists() {
+        fs::remove_file(&unit_path)
+            .with_context(|| format!("failed to remove {}", unit_path.display()))?;
+        println!("removed system service unit: {}", unit_path.display());
+    } else {
+        println!("system service unit not found: {}", unit_path.display());
+    }
+
+    run_systemctl_checked(&["daemon-reload"], "reload systemd")?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_query_service_status() -> Result<ServiceStatusView> {
+    let unit_path = linux_service_unit_path();
+    let installed = unit_path.exists();
+    if !linux_systemctl_available() {
+        return Ok(ServiceStatusView {
+            supported: false,
+            installed,
+            loaded: false,
+            running: false,
+            pid: None,
+            label: LINUX_SERVICE_UNIT_NAME.to_string(),
+            plist_path: unit_path.display().to_string(),
+        });
+    }
+
+    let output = run_systemctl_raw(
+        &[
+            "show",
+            LINUX_SERVICE_UNIT_NAME,
+            "--property=LoadState,ActiveState,SubState,MainPID",
+            "--no-pager",
+        ],
+        "query service",
+    )?;
+
+    if !output.status.success() {
+        return Ok(ServiceStatusView {
+            supported: true,
+            installed,
+            loaded: false,
+            running: false,
+            pid: None,
+            label: LINUX_SERVICE_UNIT_NAME.to_string(),
+            plist_path: unit_path.display().to_string(),
+        });
+    }
+
+    let show = String::from_utf8_lossy(&output.stdout);
+    let (loaded, running, pid) = linux_service_status_from_show_output(&show);
+
+    Ok(ServiceStatusView {
+        supported: true,
+        installed,
+        loaded,
+        running,
+        pid,
+        label: LINUX_SERVICE_UNIT_NAME.to_string(),
+        plist_path: unit_path.display().to_string(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_service_unit_content(
+    executable: &Path,
+    config_path: &Path,
+    iface: &str,
+    announce_interval_secs: u64,
+    log_path: &Path,
+) -> String {
+    let exec = systemd_quote(&executable.display().to_string());
+    let config = systemd_quote(&config_path.display().to_string());
+    let iface = systemd_quote(iface);
+    let log = systemd_quote(&log_path.display().to_string());
+    format!(
+        "[Unit]\nDescription=Nostr VPN daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart={exec} daemon --config {config} --iface {iface} --announce-interval-secs {announce_interval_secs}\nRestart=always\nRestartSec=3\nStandardOutput=append:{log}\nStandardError=append:{log}\n\n[Install]\nWantedBy=multi-user.target\n"
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_systemctl_available() -> bool {
+    ProcessCommand::new("systemctl")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn run_systemctl_checked(args: &[&str], context: &str) -> Result<()> {
+    let output = run_systemctl_raw(args, context)?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(anyhow!(
+        "systemctl {context} failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn run_systemctl_allow_missing(args: &[&str], context: &str, ignore_missing: bool) -> Result<()> {
+    let output = run_systemctl_raw(args, context)?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
+    if ignore_missing && systemctl_missing_service_message(&details) {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "systemctl {context} failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn run_systemctl_raw(args: &[&str], context: &str) -> Result<std::process::Output> {
+    ProcessCommand::new("systemctl")
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to systemctl {context}"))
+}
+
+#[cfg(target_os = "linux")]
+fn systemctl_missing_service_message(details: &str) -> bool {
+    let lowered = details.to_ascii_lowercase();
+    lowered.contains("could not be found")
+        || lowered.contains("not loaded")
+        || lowered.contains("no such file")
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_service_status_from_show_output(show: &str) -> (bool, bool, Option<u32>) {
+    let mut load_state = None;
+    let mut active_state = None;
+    let mut sub_state = None;
+    let mut pid = None;
+
+    for line in show.lines() {
+        if let Some(value) = line.strip_prefix("LoadState=") {
+            load_state = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("ActiveState=") {
+            active_state = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("SubState=") {
+            sub_state = Some(value.trim().to_string());
+        } else if let Some(value) = line.strip_prefix("MainPID=") {
+            pid = parse_nonzero_pid(value);
+        }
+    }
+
+    let loaded = load_state.as_deref() == Some("loaded");
+    let running =
+        active_state.as_deref() == Some("active") && sub_state.as_deref() == Some("running");
+    (loaded, running, pid)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_install_service(
+    executable: &Path,
+    config_path: &Path,
+    iface: &str,
+    announce_interval_secs: u64,
+    force: bool,
+) -> Result<()> {
+    let existing = windows_service_query()?.is_some();
+    if existing && !force {
+        println!(
+            "service already installed (pass --force to reinstall): {}",
+            WINDOWS_SERVICE_NAME
+        );
+        return Ok(());
+    }
+
+    if existing && force {
+        let _ = windows_stop_service(true);
+        let _ = windows_delete_service(true);
+    }
+
+    let exec = executable.display().to_string();
+    let config = config_path.display().to_string();
+    let bin_path = format!(
+        "\"{exec}\" daemon --config \"{config}\" --iface {iface} --announce-interval-secs {announce_interval_secs}"
+    );
+    run_sc_checked(
+        &[
+            "create",
+            WINDOWS_SERVICE_NAME,
+            "binPath=",
+            bin_path.as_str(),
+            "start=",
+            "auto",
+            "DisplayName=",
+            WINDOWS_SERVICE_DISPLAY_NAME,
+        ],
+        "create service",
+    )?;
+    windows_start_service(true)?;
+
+    println!("installed system service: {}", WINDOWS_SERVICE_NAME);
+    println!("label: {}", WINDOWS_SERVICE_NAME);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_uninstall_service() -> Result<()> {
+    windows_stop_service(true)?;
+    windows_delete_service(true)?;
+    println!("removed system service: {}", WINDOWS_SERVICE_NAME);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_query_service_status() -> Result<ServiceStatusView> {
+    let output = windows_service_query()?;
+    let Some(output) = output else {
+        return Ok(ServiceStatusView {
+            supported: true,
+            installed: false,
+            loaded: false,
+            running: false,
+            pid: None,
+            label: WINDOWS_SERVICE_NAME.to_string(),
+            plist_path: WINDOWS_SERVICE_NAME.to_string(),
+        });
+    };
+
+    let text = String::from_utf8_lossy(&output.stdout);
+    let (running, pid) = windows_service_status_from_query_output(&text);
+    Ok(ServiceStatusView {
+        supported: true,
+        installed: true,
+        loaded: true,
+        running,
+        pid,
+        label: WINDOWS_SERVICE_NAME.to_string(),
+        plist_path: WINDOWS_SERVICE_NAME.to_string(),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_query() -> Result<Option<std::process::Output>> {
+    let output = run_sc_raw(&["queryex", WINDOWS_SERVICE_NAME], "query service")?;
+    if output.status.success() {
+        return Ok(Some(output));
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
+    if windows_service_missing_message(&details) {
+        return Ok(None);
+    }
+
+    Err(anyhow!(
+        "sc query failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_start_service(ignore_already_running: bool) -> Result<()> {
+    let output = run_sc_raw(&["start", WINDOWS_SERVICE_NAME], "start service")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
+    if ignore_already_running && windows_service_already_running_message(&details) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "sc start failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_stop_service(ignore_missing: bool) -> Result<()> {
+    let output = run_sc_raw(&["stop", WINDOWS_SERVICE_NAME], "stop service")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
+    if ignore_missing && windows_service_missing_message(&details) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "sc stop failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_delete_service(ignore_missing: bool) -> Result<()> {
+    let output = run_sc_raw(&["delete", WINDOWS_SERVICE_NAME], "delete service")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
+    if ignore_missing && windows_service_missing_message(&details) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "sc delete failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn run_sc_checked(args: &[&str], context: &str) -> Result<()> {
+    let output = run_sc_raw(args, context)?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(anyhow!(
+        "sc {context} failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn run_sc_raw(args: &[&str], context: &str) -> Result<std::process::Output> {
+    ProcessCommand::new("sc.exe")
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to sc.exe {context}"))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_missing_message(details: &str) -> bool {
+    let lowered = details.to_ascii_lowercase();
+    lowered.contains("failed 1060") || lowered.contains("does not exist as an installed service")
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_already_running_message(details: &str) -> bool {
+    details
+        .to_ascii_lowercase()
+        .contains("service has already been started")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_service_status_from_query_output(output: &str) -> (bool, Option<u32>) {
+    let mut running = false;
+    let mut pid = None;
+
+    for line in output.lines().map(str::trim) {
+        if line.contains("STATE") && line.to_ascii_uppercase().contains("RUNNING") {
+            running = true;
+        } else if let Some((key, value)) = line.split_once(':')
+            && key.trim().eq_ignore_ascii_case("PID")
+        {
+            pid = parse_nonzero_pid(value);
+        }
+    }
+
+    (running, pid)
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn parse_nonzero_pid(value: &str) -> Option<u32> {
+    value.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
+}
+
+#[cfg(target_os = "macos")]
 fn xml_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -4077,8 +4621,9 @@ mod tests {
         build_runtime_magic_dns_records, daemon_control_file_path, daemon_pids_from_ps_output,
         daemon_reconnect_backoff_delay, default_cli_install_path, endpoint_with_listen_port,
         install_cli, is_uapi_addr_in_use_error, kill_error_requires_control_fallback,
-        publish_error_requires_reconnect, request_daemon_reload, request_daemon_stop,
-        take_daemon_control_request, uninstall_cli, utun_interface_candidates,
+        linux_service_status_from_show_output, parse_nonzero_pid, publish_error_requires_reconnect,
+        request_daemon_reload, request_daemon_stop, take_daemon_control_request, uninstall_cli,
+        utun_interface_candidates, windows_service_status_from_query_output,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -4153,6 +4698,30 @@ mod tests {
                 "missing service subcommand {name}"
             );
         }
+    }
+
+    #[test]
+    fn linux_service_show_parser_extracts_running_state() {
+        let show = "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=4242\n";
+        let (loaded, running, pid) = linux_service_status_from_show_output(show);
+        assert!(loaded);
+        assert!(running);
+        assert_eq!(pid, Some(4242));
+    }
+
+    #[test]
+    fn windows_service_query_parser_extracts_running_state() {
+        let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        STATE              : 4  RUNNING\n                                (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)\n        WIN32_EXIT_CODE    : 0  (0x0)\n        SERVICE_EXIT_CODE  : 0  (0x0)\n        CHECKPOINT         : 0x0\n        WAIT_HINT          : 0x0\n        PID                : 1234\n        FLAGS              :\n";
+        let (running, pid) = windows_service_status_from_query_output(query);
+        assert!(running);
+        assert_eq!(pid, Some(1234));
+    }
+
+    #[test]
+    fn parse_nonzero_pid_rejects_zero_and_invalid_values() {
+        assert_eq!(parse_nonzero_pid("4242"), Some(4242));
+        assert_eq!(parse_nonzero_pid("0"), None);
+        assert_eq!(parse_nonzero_pid("not-a-number"), None);
     }
 
     #[test]

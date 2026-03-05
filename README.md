@@ -101,9 +101,9 @@ Stop daemon:
 nvpn stop
 ```
 
-### 5b. macOS one-time system service (recommended)
+### 5b. One-time system service (recommended)
 
-To avoid repeated password prompts on every daemon start, install the launchd service once:
+To avoid repeated password prompts on every daemon start, install the system service once:
 
 ```bash
 sudo nvpn service install --config ~/.config/nvpn/config.toml
@@ -120,6 +120,12 @@ Remove later:
 ```bash
 sudo nvpn service uninstall --config ~/.config/nvpn/config.toml
 ```
+
+Platform behavior:
+
+- macOS: `launchd` daemon (`/Library/LaunchDaemons/...`)
+- Linux: `systemd` unit (`/etc/systemd/system/nvpn.service`)
+- Windows: SCM service (`NvpnService`)
 
 ### 6. Check status
 

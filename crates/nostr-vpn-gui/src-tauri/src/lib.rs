@@ -312,7 +312,11 @@ impl NvpnBackend {
             daemon_running: false,
             session_active: false,
             relay_connected: false,
-            service_supported: cfg!(target_os = "macos"),
+            service_supported: cfg!(any(
+                target_os = "macos",
+                target_os = "linux",
+                target_os = "windows"
+            )),
             service_installed: false,
             service_running: false,
             daemon_state: None,
@@ -795,7 +799,7 @@ impl NvpnBackend {
             stderr.trim()
         );
 
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         if requires_admin_privileges(&message) {
             self.run_nvpn_command_with_admin_privileges(args)?;
             return Ok(());
@@ -820,7 +824,7 @@ impl NvpnBackend {
             stderr.trim()
         );
 
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         if requires_admin_privileges(&message) {
             self.run_nvpn_command_with_admin_privileges(args)?;
             return Ok(());
@@ -852,7 +856,7 @@ impl NvpnBackend {
             stderr.trim()
         );
 
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         if requires_admin_privileges(&message) {
             self.run_nvpn_command_with_admin_privileges(args)?;
             return Ok(());
@@ -884,7 +888,7 @@ impl NvpnBackend {
             stderr.trim()
         );
 
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
         if requires_admin_privileges(&message) {
             self.run_nvpn_command_with_admin_privileges(args)?;
             return Ok(());
@@ -978,7 +982,7 @@ impl NvpnBackend {
             })
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     fn run_nvpn_command_with_admin_privileges<const N: usize>(
         &self,
         args: [&str; N],
@@ -1053,6 +1057,21 @@ impl NvpnBackend {
             }
             return Err(anyhow!(
                 "elevated nvpn command failed via pkexec: {details}"
+            ));
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            let status = runas::Command::new(nvpn_bin)
+                .args(&args)
+                .status()
+                .context("failed to execute elevated nvpn command via Windows UAC prompt")?;
+
+            if status.success() {
+                return Ok(());
+            }
+            return Err(anyhow!(
+                "elevated nvpn command failed via Windows UAC authorization: {status}"
             ));
         }
 
@@ -1150,10 +1169,14 @@ impl NvpnBackend {
             Ok(status) => {
                 self.service_supported = status.supported;
                 self.service_installed = status.installed;
-                self.service_running = status.running || status.loaded;
+                self.service_running = status.running;
             }
             Err(_) => {
-                self.service_supported = cfg!(target_os = "macos");
+                self.service_supported = cfg!(any(
+                    target_os = "macos",
+                    target_os = "linux",
+                    target_os = "windows"
+                ));
                 self.service_installed = false;
                 self.service_running = false;
             }
