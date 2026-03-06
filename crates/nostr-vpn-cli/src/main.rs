@@ -2589,6 +2589,15 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
 
     write_daemon_control_request(&config_path, request)?;
     wait_for_daemon_control_ack(&config_path, Duration::from_secs(3))?;
+    match request {
+        DaemonControlRequest::Pause => {
+            wait_for_daemon_session_active(&config_path, false, Duration::from_secs(2))?;
+        }
+        DaemonControlRequest::Resume => {
+            wait_for_daemon_session_active(&config_path, true, Duration::from_secs(2))?;
+        }
+        DaemonControlRequest::Reload | DaemonControlRequest::Stop => {}
+    }
 
     match request {
         DaemonControlRequest::Pause => println!("daemon pause requested"),
@@ -2711,6 +2720,32 @@ fn wait_for_daemon_control_ack(config_path: &Path, timeout: Duration) -> Result<
     Err(anyhow!(
         "daemon did not acknowledge control request within {}s; restart the daemon with a newer nvpn binary",
         timeout.as_secs()
+    ))
+}
+
+fn wait_for_daemon_session_active(
+    config_path: &Path,
+    expected_active: bool,
+    timeout: Duration,
+) -> Result<()> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if let Ok(status) = daemon_status(config_path) {
+            let current_active = status
+                .state
+                .as_ref()
+                .map(|state| state.session_active)
+                .unwrap_or(status.running);
+            if current_active == expected_active {
+                return Ok(());
+            }
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let verb = if expected_active { "resume" } else { "pause" };
+    Err(anyhow!(
+        "daemon acknowledged control request but did not {verb}; likely an older nvpn daemon binary is still running. restart or reinstall the app/service so the daemon matches the current CLI"
     ))
 }
 

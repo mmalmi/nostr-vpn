@@ -837,6 +837,7 @@ impl NvpnBackend {
         let args = [
             "service",
             "install",
+            "--force",
             "--config",
             self.config_path
                 .to_str()
