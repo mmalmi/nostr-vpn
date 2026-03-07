@@ -49,6 +49,7 @@ export interface UiState {
   cliInstalled: boolean
   serviceSupported: boolean
   serviceInstalled: boolean
+  serviceDisabled: boolean
   serviceRunning: boolean
   serviceStatusDetail: string
   sessionStatus: string

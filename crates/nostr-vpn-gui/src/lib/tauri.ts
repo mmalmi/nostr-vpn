@@ -39,6 +39,7 @@ const mockState: UiState = {
   cliInstalled: false,
   serviceSupported: true,
   serviceInstalled: false,
+  serviceDisabled: false,
   serviceRunning: false,
   serviceStatusDetail: 'Background service is not installed',
   sessionStatus: 'Install background service to turn VPN on from the app',
@@ -152,6 +153,7 @@ export const connectSession = () =>
         }
         mockState.sessionActive = true
         mockState.daemonRunning = true
+        mockState.serviceDisabled = false
         mockState.serviceRunning = mockState.serviceInstalled
         mockState.relayConnected = true
         mockState.sessionStatus = 'Daemon running'
@@ -183,6 +185,7 @@ export const disconnectSession = () =>
     : (() => {
         mockState.sessionActive = false
         mockState.daemonRunning = true
+        mockState.serviceDisabled = false
         mockState.serviceRunning = mockState.serviceInstalled
         mockState.relayConnected = false
         mockState.sessionStatus = 'Paused'
@@ -220,6 +223,7 @@ export const installSystemService = () =>
     ? invoke<UiState>('install_system_service')
     : (() => {
         mockState.serviceInstalled = true
+        mockState.serviceDisabled = false
         mockState.serviceRunning = true
         mockState.daemonRunning = true
         mockState.serviceStatusDetail = 'Background service running (mock)'
@@ -232,6 +236,7 @@ export const uninstallSystemService = () =>
     ? invoke<UiState>('uninstall_system_service')
     : (() => {
         mockState.serviceInstalled = false
+        mockState.serviceDisabled = false
         mockState.serviceRunning = false
         mockState.sessionActive = false
         mockState.daemonRunning = false

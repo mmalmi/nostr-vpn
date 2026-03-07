@@ -59,6 +59,33 @@
   $: serviceInstallRecommended = !!state?.serviceSupported && !state.serviceInstalled
   $: serviceSetupRequired = serviceInstallRecommended && !state?.daemonRunning
 
+  const serviceMetaText = (state: UiState) => {
+    if (!state.serviceInstalled) {
+      return 'Not installed'
+    }
+    if (state.serviceDisabled) {
+      return 'Installed but disabled'
+    }
+    if (state.serviceRunning) {
+      return 'Installed and running'
+    }
+    return 'Installed'
+  }
+
+  const serviceLifecycleBadgeText = (state: UiState) => {
+    if (state.serviceDisabled) {
+      return 'Disabled'
+    }
+    return state.serviceRunning ? 'Running' : 'Not running'
+  }
+
+  const serviceLifecycleBadgeClass = (state: UiState) => {
+    if (state.serviceDisabled) {
+      return 'warn'
+    }
+    return state.serviceRunning ? 'ok' : 'muted'
+  }
+
   const short = (value: string, head = 12, tail = 10) => {
     if (value.length <= head + tail + 3) {
       return value
@@ -622,21 +649,15 @@
       >
         <div class="section-title-row">
           <h2>Background Service</h2>
-          <div class="section-meta">
-            {state.serviceInstalled
-              ? state.serviceRunning
-                ? 'Installed and running'
-                : 'Installed'
-              : 'Not installed'}
-          </div>
+          <div class="section-meta">{serviceMetaText(state)}</div>
         </div>
 
         <div class="row status-row">
           <span class={`badge ${state.serviceInstalled ? 'ok' : 'warn'}`}>
             {state.serviceInstalled ? 'Installed' : 'Setup required'}
           </span>
-          <span class={`badge ${state.serviceRunning ? 'ok' : 'muted'}`}>
-            {state.serviceRunning ? 'Running' : 'Not running'}
+          <span class={`badge ${serviceLifecycleBadgeClass(state)}`}>
+            {serviceLifecycleBadgeText(state)}
           </span>
           <span class="badge muted">Daemon {state.daemonRunning ? 'reachable' : 'idle'}</span>
         </div>
@@ -664,7 +685,7 @@
           <button
             class={`btn ${serviceSetupRequired ? 'service-primary-btn' : ''}`}
             data-testid="install-service-btn"
-            on:click={onInstallSystemService}
+            on:click={() => onInstallSystemService(serviceSetupRequired)}
           >
             {state.serviceInstalled ? 'Reinstall service' : 'Install service'}
           </button>
@@ -684,15 +705,13 @@
       <section class="panel service-panel" data-testid="service-panel">
         <div class="section-title-row">
           <h2>Background Service</h2>
-          <div class="section-meta">
-            {state.serviceRunning ? 'Installed and running' : 'Installed'}
-          </div>
+          <div class="section-meta">{serviceMetaText(state)}</div>
         </div>
 
         <div class="row status-row">
           <span class="badge ok">Installed</span>
-          <span class={`badge ${state.serviceRunning ? 'ok' : 'muted'}`}>
-            {state.serviceRunning ? 'Running' : 'Not running'}
+          <span class={`badge ${serviceLifecycleBadgeClass(state)}`}>
+            {serviceLifecycleBadgeText(state)}
           </span>
           <span class={`badge ${state.daemonRunning ? 'ok' : 'muted'}`}>
             Daemon {state.daemonRunning ? 'reachable' : 'idle'}

@@ -107,6 +107,8 @@ struct CliStatusResponse {
 struct CliServiceStatusResponse {
     supported: bool,
     installed: bool,
+    #[serde(default)]
+    disabled: bool,
     loaded: bool,
     running: bool,
     pid: Option<u32>,
@@ -199,6 +201,7 @@ struct UiState {
     cli_installed: bool,
     service_supported: bool,
     service_installed: bool,
+    service_disabled: bool,
     service_running: bool,
     service_status_detail: String,
     session_status: String,
@@ -253,6 +256,7 @@ struct NvpnBackend {
     relay_connected: bool,
     service_supported: bool,
     service_installed: bool,
+    service_disabled: bool,
     service_running: bool,
     service_status_detail: String,
     daemon_state: Option<DaemonRuntimeState>,
@@ -324,6 +328,7 @@ impl NvpnBackend {
                 target_os = "windows"
             )),
             service_installed: false,
+            service_disabled: false,
             service_running: false,
             service_status_detail: String::new(),
             daemon_state: None,
@@ -1163,6 +1168,8 @@ impl NvpnBackend {
             if self.gui_requires_service_install() {
                 self.session_status =
                     gui_service_setup_status_text(self.config.autoconnect).to_string();
+            } else if self.service_installed && self.service_disabled {
+                self.session_status = "Background service is disabled in launchd".to_string();
             } else if !self.session_status.starts_with("Daemon start failed:") {
                 self.session_status = "Daemon not running".to_string();
             }
@@ -1193,11 +1200,14 @@ impl NvpnBackend {
             Ok(status) => {
                 self.service_supported = status.supported;
                 self.service_installed = status.installed;
+                self.service_disabled = status.disabled;
                 self.service_running = status.running;
                 self.service_status_detail = if !status.supported {
                     "Background service unsupported on this platform".to_string()
                 } else if !status.installed {
                     "Background service is not installed".to_string()
+                } else if status.disabled {
+                    "Background service is installed but disabled in launchd".to_string()
                 } else if status.running {
                     match status.pid {
                         Some(pid) => format!("Background service running (pid {pid})"),
@@ -1209,9 +1219,10 @@ impl NvpnBackend {
                     "Background service installed but launch status is unavailable".to_string()
                 };
                 eprintln!(
-                    "gui: service status synced supported={} installed={} loaded={} running={} pid={:?} label={} path={}",
+                    "gui: service status synced supported={} installed={} disabled={} loaded={} running={} pid={:?} label={} path={}",
                     status.supported,
                     status.installed,
+                    status.disabled,
                     status.loaded,
                     status.running,
                     status.pid,
@@ -1226,6 +1237,7 @@ impl NvpnBackend {
                     target_os = "windows"
                 ));
                 self.service_installed = false;
+                self.service_disabled = false;
                 self.service_running = false;
                 self.service_status_detail = format!("Service status unavailable: {error}");
                 eprintln!("gui: failed to sync service status: {error}");
@@ -1750,6 +1762,7 @@ impl NvpnBackend {
             cli_installed: cli_binary_installed(),
             service_supported: self.service_supported,
             service_installed: self.service_installed,
+            service_disabled: self.service_disabled,
             service_running: self.service_running,
             service_status_detail: self.service_status_detail.clone(),
             session_status: self.session_status.clone(),
@@ -2699,6 +2712,7 @@ mod tests {
         let raw = r#"{
           "supported": true,
           "installed": true,
+          "disabled": false,
           "loaded": true,
           "running": true,
           "pid": 123,
@@ -2709,6 +2723,7 @@ mod tests {
             serde_json::from_str(raw).expect("service status JSON should parse");
         assert!(parsed.supported);
         assert!(parsed.installed);
+        assert!(!parsed.disabled);
         assert!(parsed.loaded);
         assert!(parsed.running);
         assert_eq!(parsed.pid, Some(123));

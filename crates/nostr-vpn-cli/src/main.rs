@@ -1136,6 +1136,7 @@ struct DaemonStatus {
 struct ServiceStatusView {
     supported: bool,
     installed: bool,
+    disabled: bool,
     loaded: bool,
     running: bool,
     pid: Option<u32>,
@@ -3726,6 +3727,7 @@ fn service_status(args: ServiceStatusArgs) -> Result<()> {
     println!("service_label: {}", status.label);
     println!("service_plist: {}", status.plist_path);
     println!("service_installed: {}", status.installed);
+    println!("service_disabled: {}", status.disabled);
     println!("service_loaded: {}", status.loaded);
     println!("service_running: {}", status.running);
     if let Some(pid) = status.pid {
@@ -3744,6 +3746,7 @@ fn query_service_status() -> Result<ServiceStatusView> {
             return Ok(ServiceStatusView {
                 supported: true,
                 installed: false,
+                disabled: false,
                 loaded: false,
                 running: false,
                 pid: None,
@@ -3752,19 +3755,24 @@ fn query_service_status() -> Result<ServiceStatusView> {
             });
         }
 
-        let print = macos_service_print();
-        let (loaded, running, pid) = match print {
-            Ok(output) => (
-                true,
-                macos_service_print_is_running(&output),
-                macos_service_print_pid(&output),
-            ),
-            Err(_) => (false, false, None),
+        let disabled = macos_service_disabled().unwrap_or(false);
+        let (loaded, running, pid) = if disabled {
+            (false, false, None)
+        } else {
+            match macos_service_print() {
+                Ok(output) => (
+                    true,
+                    macos_service_print_is_running(&output),
+                    macos_service_print_pid(&output),
+                ),
+                Err(_) => (false, false, None),
+            }
         };
 
         Ok(ServiceStatusView {
             supported: true,
             installed: true,
+            disabled,
             loaded,
             running,
             pid,
@@ -3788,6 +3796,7 @@ fn query_service_status() -> Result<ServiceStatusView> {
         Ok(ServiceStatusView {
             supported: false,
             installed: false,
+            disabled: false,
             loaded: false,
             running: false,
             pid: None,
@@ -3995,6 +4004,41 @@ fn macos_service_print_pid(print_output: &str) -> Option<u32> {
 }
 
 #[cfg(target_os = "macos")]
+fn macos_service_disabled() -> Result<bool> {
+    let output = run_launchctl_raw(&["print-disabled", "system"], "print disabled services")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        return Err(anyhow!(
+            "launchctl print disabled services failed\nstdout: {}\nstderr: {}",
+            stdout.trim(),
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(macos_service_disabled_from_print_disabled_output(
+        &stdout,
+        MACOS_SERVICE_LABEL,
+    ))
+}
+
+fn macos_service_disabled_from_print_disabled_output(output: &str, label: &str) -> bool {
+    for line in output.lines().map(str::trim) {
+        let Some((entry_label, state)) = line.split_once("=>") else {
+            continue;
+        };
+        if entry_label.trim().trim_matches('"') != label {
+            continue;
+        }
+
+        return state.trim().trim_end_matches(',') == "disabled";
+    }
+
+    false
+}
+
+#[cfg(target_os = "macos")]
 fn run_launchctl_checked(args: &[&str], context: &str) -> Result<()> {
     let output = run_launchctl_raw(args, context)?;
     if output.status.success() {
@@ -4145,6 +4189,7 @@ fn linux_query_service_status() -> Result<ServiceStatusView> {
         return Ok(ServiceStatusView {
             supported: false,
             installed,
+            disabled: false,
             loaded: false,
             running: false,
             pid: None,
@@ -4167,6 +4212,7 @@ fn linux_query_service_status() -> Result<ServiceStatusView> {
         return Ok(ServiceStatusView {
             supported: true,
             installed,
+            disabled: false,
             loaded: false,
             running: false,
             pid: None,
@@ -4181,6 +4227,7 @@ fn linux_query_service_status() -> Result<ServiceStatusView> {
     Ok(ServiceStatusView {
         supported: true,
         installed,
+        disabled: false,
         loaded,
         running,
         pid,
@@ -4358,6 +4405,7 @@ fn windows_query_service_status() -> Result<ServiceStatusView> {
         return Ok(ServiceStatusView {
             supported: true,
             installed: false,
+            disabled: false,
             loaded: false,
             running: false,
             pid: None,
@@ -4371,6 +4419,7 @@ fn windows_query_service_status() -> Result<ServiceStatusView> {
     Ok(ServiceStatusView {
         supported: true,
         installed: true,
+        disabled: false,
         loaded: true,
         running,
         pid,
@@ -5085,9 +5134,10 @@ mod tests {
         daemon_reconnect_backoff_delay, default_cli_install_path, endpoint_with_listen_port,
         install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
         kill_error_requires_control_fallback, linux_service_status_from_show_output,
-        parse_nonzero_pid, pending_tunnel_heartbeat_ips, publish_error_requires_reconnect,
-        request_daemon_reload, request_daemon_stop, take_daemon_control_request, uninstall_cli,
-        utun_interface_candidates, windows_service_status_from_query_output,
+        macos_service_disabled_from_print_disabled_output, parse_nonzero_pid,
+        pending_tunnel_heartbeat_ips, publish_error_requires_reconnect, request_daemon_reload,
+        request_daemon_stop, take_daemon_control_request, uninstall_cli, utun_interface_candidates,
+        windows_service_status_from_query_output,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -5174,6 +5224,29 @@ mod tests {
         assert!(loaded);
         assert!(running);
         assert_eq!(pid, Some(4242));
+    }
+
+    #[test]
+    fn macos_service_disabled_parser_extracts_disabled_state() {
+        let output = r#"
+            disabled services = {
+                "to.nostrvpn.nvpn" => disabled
+                "com.example.other" => enabled
+            }
+        "#;
+
+        assert!(macos_service_disabled_from_print_disabled_output(
+            output,
+            "to.nostrvpn.nvpn"
+        ));
+        assert!(!macos_service_disabled_from_print_disabled_output(
+            output,
+            "com.example.other"
+        ));
+        assert!(!macos_service_disabled_from_print_disabled_output(
+            output,
+            "missing.service"
+        ));
     }
 
     #[test]
