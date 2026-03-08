@@ -2198,6 +2198,7 @@ async fn run_lan_discovery_loop(
 
 struct AppState {
     backend: Mutex<NvpnBackend>,
+    last_tray_runtime_state: Mutex<TrayRuntimeState>,
 }
 
 fn with_backend<T>(
@@ -2264,7 +2265,7 @@ fn tray_vpn_toggle_label(session_active: bool, service_setup_required: bool) -> 
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct TrayRuntimeState {
     session_active: bool,
     service_setup_required: bool,
@@ -2320,9 +2321,23 @@ fn refresh_tray_menu<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     };
 
     let runtime_state = current_tray_runtime_state(app);
-    if let Ok(menu) = build_tray_menu(app, runtime_state) {
-        let _ = tray.set_menu(Some(menu));
+    let Some(state) = app.try_state::<AppState>() else {
+        if let Ok(menu) = build_tray_menu(app, runtime_state) {
+            let _ = tray.set_menu(Some(menu));
+        }
+        return;
+    };
+    let Ok(mut last_tray_runtime_state) = state.last_tray_runtime_state.lock() else {
+        return;
+    };
+
+    if *last_tray_runtime_state == runtime_state {
+        return;
     }
+
+    if let Ok(menu) = build_tray_menu(app, runtime_state) {
+        if tray.set_menu(Some(menu)).is_ok() {
+            *last_tray_runtime_state = runtime_state;
 }
 
 fn run_tray_backend_action<R: tauri::Runtime>(
@@ -2633,6 +2648,7 @@ pub fn run() {
         })
         .manage(AppState {
             backend: Mutex::new(backend),
+            last_tray_runtime_state: Mutex::new(initial_tray_state),
         })
         .invoke_handler(tauri::generate_handler![
             tick,
