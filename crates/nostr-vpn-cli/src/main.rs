@@ -40,6 +40,8 @@ const DAEMON_CONTROL_RELOAD_REQUEST: &str = "reload";
 const DAEMON_CONTROL_PAUSE_REQUEST: &str = "pause";
 const DAEMON_CONTROL_RESUME_REQUEST: &str = "resume";
 const TUNNEL_HEARTBEAT_PORT: u16 = 9;
+const PRIMARY_LISTEN_PORT_RETRY_ATTEMPTS: usize = 10;
+const PRIMARY_LISTEN_PORT_RETRY_DELAY_MS: u64 = 50;
 #[cfg(target_os = "macos")]
 const MACOS_SERVICE_LABEL: &str = "to.nostrvpn.nvpn";
 #[cfg(target_os = "linux")]
@@ -1581,8 +1583,7 @@ impl CliTunnelRuntime {
         let private_key_hex = key_b64_to_hex(&app.node.private_key)?;
         let primary_listen_port = self.active_listen_port.unwrap_or(configured_listen_port);
         let mut attempted_ports = HashSet::new();
-        let mut candidate_ports = Vec::with_capacity(17);
-        candidate_ports.push(primary_listen_port);
+        let mut candidate_ports = Vec::with_capacity(16);
         for _ in 0..16 {
             if let Ok(fallback_port) = pick_available_udp_port() {
                 candidate_ports.push(fallback_port);
@@ -1591,31 +1592,50 @@ impl CliTunnelRuntime {
 
         let mut selected_listen_port = None;
         let mut last_bind_conflict = None;
-        for listen_port in candidate_ports {
-            if !attempted_ports.insert(listen_port) {
-                continue;
-            }
-
-            match wg_set(
-                socket,
-                &format!("private_key={private_key_hex}\nlisten_port={listen_port}"),
-            ) {
-                Ok(()) => {
-                    if listen_port != primary_listen_port {
-                        eprintln!(
-                            "tunnel: listen_port {} busy, using fallback {}",
-                            primary_listen_port, listen_port
-                        );
+        let mut try_listen_port =
+            |listen_port: u16, warn_on_fallback: bool| -> Result<Option<u16>> {
+                match wg_set(
+                    socket,
+                    &format!("private_key={private_key_hex}\nlisten_port={listen_port}"),
+                ) {
+                    Ok(()) => {
+                        if warn_on_fallback {
+                            eprintln!(
+                                "tunnel: listen_port {} busy, using fallback {}",
+                                primary_listen_port, listen_port
+                            );
+                        }
+                        Ok(Some(listen_port))
                     }
+                    Err(error) => {
+                        let error_text = error.to_string();
+                        if !is_uapi_addr_in_use_error(&error_text) {
+                            return Err(error);
+                        }
+                        last_bind_conflict = Some(error);
+                        Ok(None)
+                    }
+                }
+            };
+
+        for attempt in 0..PRIMARY_LISTEN_PORT_RETRY_ATTEMPTS {
+            if let Some(listen_port) = try_listen_port(primary_listen_port, false)? {
+                selected_listen_port = Some(listen_port);
+                break;
+            }
+            if attempt + 1 < PRIMARY_LISTEN_PORT_RETRY_ATTEMPTS {
+                thread::sleep(Duration::from_millis(PRIMARY_LISTEN_PORT_RETRY_DELAY_MS));
+            }
+        }
+
+        if selected_listen_port.is_none() {
+            for listen_port in candidate_ports {
+                if !attempted_ports.insert(listen_port) || listen_port == primary_listen_port {
+                    continue;
+                }
+                if let Some(listen_port) = try_listen_port(listen_port, true)? {
                     selected_listen_port = Some(listen_port);
                     break;
-                }
-                Err(error) => {
-                    let error_text = error.to_string();
-                    if !is_uapi_addr_in_use_error(&error_text) {
-                        return Err(error);
-                    }
-                    last_bind_conflict = Some(error);
                 }
             }
         }
@@ -1722,8 +1742,59 @@ fn endpoint_with_listen_port(endpoint: &str, listen_port: u16) -> String {
         .unwrap_or_else(|_| endpoint.to_string())
 }
 
+fn detect_runtime_primary_ipv4() -> Option<Ipv4Addr> {
+    let socket = std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect("1.1.1.1:80").ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(_) => None,
+    }
+}
+
+fn endpoint_prefers_runtime_local_ipv4(endpoint: &str) -> bool {
+    let value = endpoint.trim();
+    if value.is_empty() {
+        return true;
+    }
+
+    let host = value
+        .rsplit_once(':')
+        .map_or(value, |(host, _port)| host)
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        Err(_) => false,
+    }
+}
+
+fn runtime_local_signal_endpoint(
+    endpoint: &str,
+    listen_port: u16,
+    detected_ipv4: Option<Ipv4Addr>,
+) -> String {
+    if endpoint_prefers_runtime_local_ipv4(endpoint)
+        && let Some(ip) = detected_ipv4
+    {
+        return SocketAddrV4::new(ip, listen_port).to_string();
+    }
+
+    endpoint_with_listen_port(endpoint, listen_port)
+}
+
 fn local_signal_endpoint(app: &AppConfig, listen_port: u16) -> String {
-    endpoint_with_listen_port(&app.node.endpoint, listen_port)
+    runtime_local_signal_endpoint(
+        &app.node.endpoint,
+        listen_port,
+        detect_runtime_primary_ipv4(),
+    )
 }
 
 fn discover_public_signal_endpoint(app: &AppConfig, listen_port: u16) -> Option<String> {
@@ -5216,8 +5287,8 @@ mod tests {
         kill_error_requires_control_fallback, linux_service_status_from_show_output,
         macos_service_disabled_from_print_disabled_output, parse_nonzero_pid,
         pending_tunnel_heartbeat_ips, publish_error_requires_reconnect, request_daemon_reload,
-        request_daemon_stop, take_daemon_control_request, uninstall_cli, utun_interface_candidates,
-        windows_service_status_from_query_output,
+        request_daemon_stop, runtime_local_signal_endpoint, take_daemon_control_request,
+        uninstall_cli, utun_interface_candidates, windows_service_status_from_query_output,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -5414,6 +5485,38 @@ mod tests {
         assert_eq!(
             endpoint_with_listen_port("not-a-socket", 52000),
             "not-a-socket"
+        );
+    }
+
+    #[test]
+    fn runtime_local_signal_endpoint_prefers_detected_ipv4_for_private_configured_endpoint() {
+        assert_eq!(
+            runtime_local_signal_endpoint(
+                "192.168.178.55:51820",
+                52000,
+                Some(Ipv4Addr::new(172, 20, 10, 2)),
+            ),
+            "172.20.10.2:52000"
+        );
+        assert_eq!(
+            runtime_local_signal_endpoint(
+                "127.0.0.1:51820",
+                52000,
+                Some(Ipv4Addr::new(172, 20, 10, 2)),
+            ),
+            "172.20.10.2:52000"
+        );
+    }
+
+    #[test]
+    fn runtime_local_signal_endpoint_keeps_public_configured_endpoint() {
+        assert_eq!(
+            runtime_local_signal_endpoint(
+                "93.184.216.34:51820",
+                52000,
+                Some(Ipv4Addr::new(172, 20, 10, 2)),
+            ),
+            "93.184.216.34:52000"
         );
     }
 
