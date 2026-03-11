@@ -11,10 +11,15 @@ use crate::config::normalize_nostr_pubkey;
 use crate::control::PeerAnnouncement;
 
 pub const NOSTR_KIND_NOSTR_VPN: u16 = 31990;
+const SIGNAL_HELLO_TAG: &str = "hello";
+const SIGNAL_EXPIRATION_SECS: u64 = 300;
+const SIGNAL_HELLO_LOOKBACK_SECS: u64 = 60;
+const SIGNAL_PRIVATE_LOOKBACK_SECS: u64 = 120;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum SignalPayload {
+    Hello,
     Announce(PeerAnnouncement),
     Disconnect { node_id: String },
 }
@@ -93,16 +98,35 @@ impl NostrSignalingClient {
 
         self.client.connect().await;
 
-        let filter = Filter::new()
+        let private_filter = Filter::new()
             .kind(Kind::Custom(NOSTR_KIND_NOSTR_VPN))
             .custom_tag(
                 SingleLetterTag::lowercase(Alphabet::P),
                 vec![self.own_pubkey.clone()],
             )
-            .since(Timestamp::now() - Duration::from_secs(120));
+            .since(Timestamp::now() - Duration::from_secs(SIGNAL_PRIVATE_LOOKBACK_SECS));
+
+        let mut filters = vec![private_filter];
+        let hello_authors = self
+            .participant_pubkeys
+            .iter()
+            .filter(|participant| participant.as_str() != self.own_pubkey)
+            .filter_map(|participant| PublicKey::from_hex(participant).ok())
+            .collect::<Vec<_>>();
+        if !hello_authors.is_empty() {
+            let hello_filter = Filter::new()
+                .kind(Kind::Custom(NOSTR_KIND_NOSTR_VPN))
+                .authors(hello_authors)
+                .custom_tag(
+                    SingleLetterTag::lowercase(Alphabet::L),
+                    vec![SIGNAL_HELLO_TAG],
+                )
+                .since(Timestamp::now() - Duration::from_secs(SIGNAL_HELLO_LOOKBACK_SECS));
+            filters.push(hello_filter);
+        }
 
         self.client
-            .subscribe(vec![filter], None)
+            .subscribe(filters, None)
             .await
             .context("failed to subscribe to nostr-vpn events")?;
 
@@ -118,6 +142,10 @@ impl NostrSignalingClient {
     }
 
     pub async fn publish(&self, payload: SignalPayload) -> Result<()> {
+        if matches!(&payload, SignalPayload::Hello) {
+            return self.publish_hello().await;
+        }
+
         if !self.connected.load(Ordering::Relaxed) {
             return Err(anyhow!("client not connected"));
         }
@@ -126,6 +154,66 @@ impl NostrSignalingClient {
             .participant_pubkeys
             .iter()
             .filter(|participant| participant.as_str() != self.own_pubkey)
+            .cloned()
+            .collect();
+        if recipients.is_empty() {
+            return Err(anyhow!(
+                "no configured participants to send private signaling message to"
+            ));
+        }
+
+        self.publish_private_to(payload, &recipients).await
+    }
+
+    pub async fn publish_to(&self, payload: SignalPayload, recipients: &[String]) -> Result<()> {
+        if matches!(&payload, SignalPayload::Hello) {
+            return self.publish_hello().await;
+        }
+
+        if !self.connected.load(Ordering::Relaxed) {
+            return Err(anyhow!("client not connected"));
+        }
+
+        self.publish_private_to(payload, recipients).await
+    }
+
+    async fn publish_hello(&self) -> Result<()> {
+        if !self.connected.load(Ordering::Relaxed) {
+            return Err(anyhow!("client not connected"));
+        }
+
+        let expiration = Timestamp::now() + Duration::from_secs(SIGNAL_EXPIRATION_SECS);
+        let tags = vec![
+            Tag::custom(
+                TagKind::SingleLetter(SingleLetterTag::lowercase(Alphabet::L)),
+                vec![SIGNAL_HELLO_TAG.to_string()],
+            ),
+            Tag::expiration(expiration),
+        ];
+        let event = EventBuilder::new(Kind::Custom(NOSTR_KIND_NOSTR_VPN), "", tags)
+            .to_event(&self.keys)
+            .context("failed to sign public hello event")?;
+        let output = self
+            .client
+            .send_event(event)
+            .await
+            .context("failed to publish public hello event")?;
+        if output.success.is_empty() {
+            return Err(anyhow!("public hello event rejected by all relays"));
+        }
+
+        Ok(())
+    }
+
+    async fn publish_private_to(
+        &self,
+        payload: SignalPayload,
+        recipients: &[String],
+    ) -> Result<()> {
+        let recipients: Vec<String> = recipients
+            .iter()
+            .filter(|participant| participant.as_str() != self.own_pubkey)
+            .filter(|participant| self.participant_pubkeys.contains(participant.as_str()))
             .cloned()
             .collect();
         if recipients.is_empty() {
@@ -143,7 +231,7 @@ impl NostrSignalingClient {
         let content = serde_json::to_string(&envelope).context("failed to serialize envelope")?;
 
         let mut accepted = 0usize;
-        let expiration = Timestamp::now() + Duration::from_secs(300);
+        let expiration = Timestamp::now() + Duration::from_secs(SIGNAL_EXPIRATION_SECS);
         for recipient in recipients {
             let recipient_pubkey = PublicKey::from_hex(&recipient)
                 .with_context(|| format!("invalid recipient pubkey {recipient}"))?;
@@ -213,6 +301,26 @@ impl NostrSignalingClient {
 
                 if let RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind != Kind::Custom(NOSTR_KIND_NOSTR_VPN) {
+                        continue;
+                    }
+
+                    if first_tag_value(&event, "l").as_deref() == Some(SIGNAL_HELLO_TAG) {
+                        let sender_pubkey = event.pubkey.to_hex();
+                        if sender_pubkey == own_pubkey {
+                            continue;
+                        }
+
+                        if !participant_pubkeys.is_empty()
+                            && !participant_pubkeys.contains(&sender_pubkey)
+                        {
+                            continue;
+                        }
+
+                        let _ = recv_tx.send(SignalEnvelope {
+                            network_id: network_id.clone(),
+                            sender_pubkey,
+                            payload: SignalPayload::Hello,
+                        });
                         continue;
                     }
 

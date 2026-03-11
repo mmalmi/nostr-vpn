@@ -20,6 +20,7 @@ impl PeerPresenceBook {
         self.last_seen_at.insert(sender_pubkey.clone(), seen_at);
 
         match payload {
+            SignalPayload::Hello => false,
             SignalPayload::Announce(announcement) => {
                 let should_update = self
                     .active

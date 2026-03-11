@@ -1270,6 +1270,7 @@ async fn discover_peers(
         app.participant_pubkeys_hex(),
     )?;
     client.connect(relays).await?;
+    let _ = client.publish(SignalPayload::Hello).await;
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(discover_secs);
     let mut peers: std::collections::HashMap<String, PeerAnnouncement> =
@@ -1288,6 +1289,7 @@ async fn discover_peers(
 
         match tokio::time::timeout(wait_for, client.recv()).await {
             Ok(Some(message)) => match message.payload {
+                SignalPayload::Hello => {}
                 SignalPayload::Announce(announcement) => {
                     let should_insert = peers
                         .get(&announcement.node_id)
@@ -1324,6 +1326,35 @@ struct PlannedTunnelPeer {
     participant: String,
     endpoint: String,
     peer: TunnelPeer,
+}
+
+#[derive(Debug, Clone, Default)]
+struct OutboundAnnounceBook {
+    fingerprints: HashMap<String, String>,
+}
+
+impl OutboundAnnounceBook {
+    fn needs_send(&self, participant: &str, fingerprint: &str) -> bool {
+        self.fingerprints.get(participant).map(String::as_str) != Some(fingerprint)
+    }
+
+    fn mark_sent(&mut self, participant: &str, fingerprint: &str) {
+        self.fingerprints
+            .insert(participant.to_string(), fingerprint.to_string());
+    }
+
+    fn forget(&mut self, participant: &str) {
+        self.fingerprints.remove(participant);
+    }
+
+    fn clear(&mut self) {
+        self.fingerprints.clear();
+    }
+
+    fn retain_participants(&mut self, participants: &HashSet<String>) {
+        self.fingerprints
+            .retain(|participant, _| participants.contains(participant));
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1924,6 +1955,18 @@ fn build_peer_announcement(
     }
 }
 
+fn announcement_fingerprint(announcement: &PeerAnnouncement) -> String {
+    [
+        announcement.node_id.as_str(),
+        announcement.public_key.as_str(),
+        announcement.endpoint.as_str(),
+        announcement.local_endpoint.as_deref().unwrap_or(""),
+        announcement.public_endpoint.as_deref().unwrap_or(""),
+        announcement.tunnel_ip.as_str(),
+    ]
+    .join("|")
+}
+
 fn public_endpoint_for_listen_port(
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
     actual_listen_port: u16,
@@ -1980,6 +2023,93 @@ fn record_successful_runtime_paths(
     }
 
     changed
+}
+
+async fn publish_private_announce_to_participants(
+    client: &NostrSignalingClient,
+    app: &AppConfig,
+    tunnel_runtime: &CliTunnelRuntime,
+    public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
+    outbound_announces: &mut OutboundAnnounceBook,
+    participants: &[String],
+) -> Result<usize> {
+    if participants.is_empty() {
+        return Ok(0);
+    }
+
+    let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
+    let public_endpoint =
+        public_endpoint_for_listen_port(public_signal_endpoint, actual_listen_port);
+    let announcement = build_peer_announcement(app, actual_listen_port, public_endpoint.as_deref());
+    let fingerprint = announcement_fingerprint(&announcement);
+
+    let mut recipients = participants.to_vec();
+    recipients.sort();
+    recipients.dedup();
+
+    let mut sent = 0usize;
+    for participant in recipients {
+        if !outbound_announces.needs_send(&participant, &fingerprint) {
+            continue;
+        }
+
+        client
+            .publish_to(
+                SignalPayload::Announce(announcement.clone()),
+                std::slice::from_ref(&participant),
+            )
+            .await
+            .with_context(|| format!("failed to publish private announce to {participant}"))?;
+        outbound_announces.mark_sent(&participant, &fingerprint);
+        sent += 1;
+    }
+
+    Ok(sent)
+}
+
+async fn publish_private_announce_to_active_peers(
+    client: &NostrSignalingClient,
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+    tunnel_runtime: &CliTunnelRuntime,
+    public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
+    outbound_announces: &mut OutboundAnnounceBook,
+) -> Result<usize> {
+    let participants = app
+        .participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .filter(|participant| presence.active().contains_key(participant))
+        .collect::<Vec<_>>();
+
+    publish_private_announce_to_participants(
+        client,
+        app,
+        tunnel_runtime,
+        public_signal_endpoint,
+        outbound_announces,
+        &participants,
+    )
+    .await
+}
+
+fn recently_seen_participants(
+    presence: &PeerPresenceBook,
+    now: u64,
+    stale_after_secs: u64,
+) -> HashSet<String> {
+    if stale_after_secs == 0 {
+        return HashSet::new();
+    }
+
+    let cutoff = now.saturating_sub(stale_after_secs);
+    presence
+        .last_seen()
+        .iter()
+        .filter(|(_, last_seen)| **last_seen > cutoff)
+        .map(|(participant, _)| participant.clone())
+        .collect()
 }
 
 fn planned_tunnel_peers(
@@ -2384,6 +2514,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let expected_peers = expected_peer_count(&app);
     let mut presence = PeerPresenceBook::default();
     let mut path_book = PeerPathBook::default();
+    let mut outbound_announces = OutboundAnnounceBook::default();
     let mut tunnel_runtime = CliTunnelRuntime::new(args.iface);
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
     let mut public_signal_endpoint = None;
@@ -2405,16 +2536,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
         magic_dns_runtime.as_ref(),
     )
     .context("failed to initialize tunnel runtime")?;
-    let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-    let public_endpoint =
-        public_endpoint_for_listen_port(public_signal_endpoint.as_ref(), actual_listen_port);
-    let _ = client
-        .publish(SignalPayload::Announce(build_peer_announcement(
-            &app,
-            actual_listen_port,
-            public_endpoint.as_deref(),
-        )))
-        .await;
+    let _ = client.publish(SignalPayload::Hello).await;
 
     println!(
         "connect: network {} on {} relays; waiting for {expected_peers} configured peer(s)",
@@ -2451,8 +2573,17 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     now,
                     peer_signal_timeout_secs(args.announce_interval_secs),
                 );
+                for participant in &removed {
+                    outbound_announces.forget(participant);
+                }
                 let paths_pruned =
                     path_book.prune_stale(now, peer_path_cache_timeout_secs(args.announce_interval_secs));
+                let recent = recently_seen_participants(
+                    &presence,
+                    now,
+                    peer_signal_timeout_secs(args.announce_interval_secs),
+                );
+                outbound_announces.retain_participants(&recent);
                 if !removed.is_empty() || paths_pruned {
                     last_nat_punch_attempt = None;
                     apply_presence_runtime_update(
@@ -2481,27 +2612,50 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &mut tunnel_runtime,
                     &mut public_signal_endpoint,
                     &mut last_nat_punch_attempt,
-                ) {
+                    ) {
                     eprintln!("nat: periodic hole-punch failed: {error}");
                 }
-                let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-                let public_endpoint =
-                    public_endpoint_for_listen_port(public_signal_endpoint.as_ref(), actual_listen_port);
-                let refreshed = build_peer_announcement(
+                if let Err(error) = publish_private_announce_to_active_peers(
+                    &client,
                     &app,
-                    actual_listen_port,
-                    public_endpoint.as_deref(),
-                );
-                let _ = client.publish(SignalPayload::Announce(refreshed)).await;
+                    own_pubkey.as_deref(),
+                    &presence,
+                    &tunnel_runtime,
+                    public_signal_endpoint.as_ref(),
+                    &mut outbound_announces,
+                )
+                .await
+                {
+                    eprintln!("signal: active peer announce refresh failed: {error}");
+                }
+                let _ = client.publish(SignalPayload::Hello).await;
             }
             message = client.recv() => {
                 let Some(message) = message else {
                     break;
                 };
 
+                let sender_pubkey = message.sender_pubkey;
+                let payload = message.payload.clone();
                 let changed =
-                    presence.apply_signal(message.sender_pubkey, message.payload, unix_timestamp());
+                    presence.apply_signal(sender_pubkey.clone(), message.payload, unix_timestamp());
+                if matches!(&payload, SignalPayload::Disconnect { .. }) {
+                    outbound_announces.forget(&sender_pubkey);
+                }
                 if !changed {
+                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
+                        && let Err(error) = publish_private_announce_to_participants(
+                            &client,
+                            &app,
+                            &tunnel_runtime,
+                            public_signal_endpoint.as_ref(),
+                            &mut outbound_announces,
+                            std::slice::from_ref(&sender_pubkey),
+                        )
+                        .await
+                    {
+                        eprintln!("signal: targeted private announce failed: {error}");
+                    }
                     continue;
                 }
 
@@ -2533,6 +2687,19 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed after peer signal: {error}");
+                }
+                if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
+                    && let Err(error) = publish_private_announce_to_participants(
+                        &client,
+                        &app,
+                        &tunnel_runtime,
+                        public_signal_endpoint.as_ref(),
+                        &mut outbound_announces,
+                        std::slice::from_ref(&sender_pubkey),
+                    )
+                    .await
+                {
+                    eprintln!("signal: targeted private announce failed: {error}");
                 }
 
                 maybe_log_presence_mesh_count(
@@ -2586,6 +2753,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     let mut presence = PeerPresenceBook::default();
     let mut path_book = PeerPathBook::default();
+    let mut outbound_announces = OutboundAnnounceBook::default();
     let mut tunnel_runtime = CliTunnelRuntime::new(args.iface);
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
     let mut public_signal_endpoint = None;
@@ -2673,21 +2841,28 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         relay_connected = true;
                         reconnect_attempt = 0;
                         session_status = "Connected".to_string();
-                        let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-                        let public_endpoint = public_endpoint_for_listen_port(
-                            public_signal_endpoint.as_ref(),
-                            actual_listen_port,
-                        );
-                        let refreshed = build_peer_announcement(
+                        outbound_announces.clear();
+                        if let Err(error) = publish_private_announce_to_active_peers(
+                            &client,
                             &app,
-                            actual_listen_port,
-                            public_endpoint.as_deref(),
-                        );
-                        if let Err(error) = client.publish(SignalPayload::Announce(refreshed)).await {
+                            own_pubkey.as_deref(),
+                            &presence,
+                            &tunnel_runtime,
+                            public_signal_endpoint.as_ref(),
+                            &mut outbound_announces,
+                        )
+                        .await
+                        {
                             let error_text = error.to_string();
                             session_status =
-                                format!("Connected; presence publish failed ({error_text})");
-                            eprintln!("daemon: initial presence publish failed after reconnect: {error_text}");
+                                format!("Connected; private announce failed ({error_text})");
+                            eprintln!("daemon: private announce failed after reconnect: {error_text}");
+                        }
+                        if let Err(error) = client.publish(SignalPayload::Hello).await {
+                            let error_text = error.to_string();
+                            session_status =
+                                format!("Connected; hello publish failed ({error_text})");
+                            eprintln!("daemon: initial hello publish failed after reconnect: {error_text}");
                         }
                     }
                     Err(error) => {
@@ -2719,17 +2894,21 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 ) {
                     eprintln!("nat: periodic hole-punch failed: {error}");
                 }
-                let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-                let public_endpoint = public_endpoint_for_listen_port(
-                    public_signal_endpoint.as_ref(),
-                    actual_listen_port,
-                );
-                let refreshed = build_peer_announcement(
+                if let Err(error) = publish_private_announce_to_active_peers(
+                    &client,
                     &app,
-                    actual_listen_port,
-                    public_endpoint.as_deref(),
-                );
-                if let Err(error) = client.publish(SignalPayload::Announce(refreshed)).await {
+                    own_pubkey.as_deref(),
+                    &presence,
+                    &tunnel_runtime,
+                    public_signal_endpoint.as_ref(),
+                    &mut outbound_announces,
+                )
+                .await
+                {
+                    let error_text = error.to_string();
+                    session_status = format!("Private announce failed ({error_text})");
+                }
+                if let Err(error) = client.publish(SignalPayload::Hello).await {
                     let error_text = error.to_string();
                     if publish_error_requires_reconnect(&error_text) {
                         relay_connected = false;
@@ -2740,9 +2919,9 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             "Relay disconnected; retry in {}s ({error_text})",
                             delay.as_secs(),
                         );
-                        eprintln!("daemon: publish indicates disconnected relays (retry in {}s): {error_text}", delay.as_secs());
+                        eprintln!("daemon: hello publish indicates disconnected relays (retry in {}s): {error_text}", delay.as_secs());
                     } else {
-                        session_status = format!("Presence publish failed ({error_text})");
+                        session_status = format!("Hello publish failed ({error_text})");
                     }
                 }
             }
@@ -2778,6 +2957,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             reconnect_attempt = 0;
                             reconnect_due = Instant::now();
                             presence = PeerPresenceBook::default();
+                            outbound_announces.clear();
                             last_nat_punch_attempt = None;
                             if let Err(error) = apply_presence_runtime_update(
                                 &app,
@@ -2825,6 +3005,8 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                             .collect::<HashSet<_>>();
                                         presence.retain_participants(&configured_set);
                                         path_book.retain_participants(&configured_set);
+                                        outbound_announces.retain_participants(&configured_set);
+                                        outbound_announces.clear();
                                         last_nat_punch_attempt = None;
                                         client.disconnect().await;
                                         match NostrSignalingClient::from_secret_key(
@@ -2841,19 +3023,23 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                             reconnect_attempt = 0;
                                                             reconnect_due = Instant::now();
                                                             session_status = "Config reloaded".to_string();
-                                                            let actual_listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-                                                            let public_endpoint = public_endpoint_for_listen_port(
-                                                                public_signal_endpoint.as_ref(),
-                                                                actual_listen_port,
-                                                            );
-                                                            let refreshed = build_peer_announcement(
+                                                            if let Err(error) = publish_private_announce_to_active_peers(
+                                                                &client,
                                                                 &app,
-                                                                actual_listen_port,
-                                                                public_endpoint.as_deref(),
-                                                            );
-                                                            if let Err(error) = client.publish(SignalPayload::Announce(refreshed)).await {
+                                                                own_pubkey.as_deref(),
+                                                                &presence,
+                                                                &tunnel_runtime,
+                                                                public_signal_endpoint.as_ref(),
+                                                                &mut outbound_announces,
+                                                            ).await {
                                                                 session_status = format!(
-                                                                    "Config reloaded; presence publish failed ({})",
+                                                                    "Config reloaded; private announce failed ({})",
+                                                                    error
+                                                                );
+                                                            }
+                                                            if let Err(error) = client.publish(SignalPayload::Hello).await {
+                                                                session_status = format!(
+                                                                    "Config reloaded; hello publish failed ({})",
                                                                     error
                                                                 );
                                                             }
@@ -2914,8 +3100,17 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         now,
                         peer_signal_timeout_secs(args.announce_interval_secs),
                     );
+                    for participant in &removed {
+                        outbound_announces.forget(participant);
+                    }
                     let paths_pruned =
                         path_book.prune_stale(now, peer_path_cache_timeout_secs(args.announce_interval_secs));
+                    let recent = recently_seen_participants(
+                        &presence,
+                        now,
+                        peer_signal_timeout_secs(args.announce_interval_secs),
+                    );
+                    outbound_announces.retain_participants(&recent);
                     if !removed.is_empty() || paths_pruned {
                         last_nat_punch_attempt = None;
                         if let Err(error) = apply_presence_runtime_update(
@@ -2969,9 +3164,27 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     continue;
                 };
 
+                let sender_pubkey = message.sender_pubkey;
+                let payload = message.payload.clone();
                 let changed =
-                    presence.apply_signal(message.sender_pubkey, message.payload, unix_timestamp());
+                    presence.apply_signal(sender_pubkey.clone(), message.payload, unix_timestamp());
+                if matches!(&payload, SignalPayload::Disconnect { .. }) {
+                    outbound_announces.forget(&sender_pubkey);
+                }
                 if !changed {
+                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
+                        && let Err(error) = publish_private_announce_to_participants(
+                            &client,
+                            &app,
+                            &tunnel_runtime,
+                            public_signal_endpoint.as_ref(),
+                            &mut outbound_announces,
+                            std::slice::from_ref(&sender_pubkey),
+                        )
+                        .await
+                    {
+                        eprintln!("signal: targeted private announce failed: {error}");
+                    }
                     continue;
                 }
 
@@ -3005,6 +3218,19 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         &tunnel_runtime,
                     ) {
                         eprintln!("tunnel: peer heartbeat failed after peer signal: {error}");
+                    }
+                    if matches!(&payload, SignalPayload::Hello | SignalPayload::Announce(_))
+                        && let Err(error) = publish_private_announce_to_participants(
+                            &client,
+                            &app,
+                            &tunnel_runtime,
+                            public_signal_endpoint.as_ref(),
+                            &mut outbound_announces,
+                            std::slice::from_ref(&sender_pubkey),
+                        )
+                        .await
+                    {
+                        eprintln!("signal: targeted private announce failed: {error}");
                     }
                     session_status = if session_enabled {
                         "Connected".to_string()
@@ -5569,8 +5795,8 @@ mod tests {
     use clap::CommandFactory;
 
     use super::{
-        AppConfig, Cli, DiscoveredPublicSignalEndpoint, InstallCliArgs, PeerAnnouncement,
-        UninstallCliArgs, WireGuardPeerStatus, build_runtime_magic_dns_records,
+        AppConfig, Cli, DiscoveredPublicSignalEndpoint, InstallCliArgs, OutboundAnnounceBook,
+        PeerAnnouncement, UninstallCliArgs, WireGuardPeerStatus, build_runtime_magic_dns_records,
         can_reuse_active_listen_port, daemon_control_file_path, daemon_pids_from_ps_output,
         daemon_reconnect_backoff_delay, default_cli_install_path, endpoint_with_listen_port,
         install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
@@ -5755,6 +5981,18 @@ mod tests {
         assert_eq!(peer_path_cache_timeout_secs(1), 60);
         assert_eq!(peer_path_cache_timeout_secs(5), 60);
         assert_eq!(peer_path_cache_timeout_secs(10), 90);
+    }
+
+    #[test]
+    fn outbound_announce_book_republishes_after_peer_forget() {
+        let mut book = OutboundAnnounceBook::default();
+        assert!(book.needs_send("peer-a", "fp1"));
+        book.mark_sent("peer-a", "fp1");
+        assert!(!book.needs_send("peer-a", "fp1"));
+        assert!(book.needs_send("peer-a", "fp2"));
+
+        book.forget("peer-a");
+        assert!(book.needs_send("peer-a", "fp1"));
     }
 
     #[test]

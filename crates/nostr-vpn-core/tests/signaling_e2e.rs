@@ -75,6 +75,60 @@ async fn announces_over_local_nostr_relay() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn hello_presence_is_received_over_local_nostr_relay() {
+    let mut relay = WsRelay::new();
+    relay.start().await.expect("relay should start");
+    let relay_url = relay.url().expect("relay url");
+
+    let network_id = "nostr-vpn-test-hello".to_string();
+
+    let sender_keys = Keys::generate();
+    let receiver_keys = Keys::generate();
+    let sender_pubkey = sender_keys.public_key().to_hex();
+    let receiver_pubkey = receiver_keys.public_key().to_hex();
+
+    let sender = NostrSignalingClient::new_with_keys(
+        network_id.clone(),
+        sender_keys,
+        vec![sender_pubkey.clone(), receiver_pubkey.clone()],
+    )
+    .expect("sender client");
+    let receiver = NostrSignalingClient::new_with_keys(
+        network_id,
+        receiver_keys,
+        vec![sender_pubkey.clone(), receiver_pubkey],
+    )
+    .expect("receiver client");
+
+    sender
+        .connect(std::slice::from_ref(&relay_url))
+        .await
+        .expect("sender connect");
+    receiver
+        .connect(&[relay_url])
+        .await
+        .expect("receiver connect");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    sender
+        .publish(SignalPayload::Hello)
+        .await
+        .expect("hello publish should succeed");
+
+    let received = timeout(Duration::from_secs(5), receiver.recv())
+        .await
+        .expect("timed out waiting for hello")
+        .expect("message expected");
+
+    assert_eq!(received.payload, SignalPayload::Hello);
+
+    sender.disconnect().await;
+    receiver.disconnect().await;
+    relay.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn publish_requires_configured_participants_for_private_signaling() {
     let mut relay = WsRelay::new();
     relay.start().await.expect("relay should start");
@@ -221,5 +275,87 @@ async fn relay_event_does_not_leak_plaintext_sensitive_fields() {
 
     sender.disconnect().await;
     receiver.disconnect().await;
+    relay.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn targeted_private_publish_only_reaches_requested_recipient() {
+    let mut relay = WsRelay::new();
+    relay.start().await.expect("relay should start");
+    let relay_url = relay.url().expect("relay url");
+
+    let network_id = "nostr-vpn-targeted-private".to_string();
+    let sender_keys = Keys::generate();
+    let receiver_a_keys = Keys::generate();
+    let receiver_b_keys = Keys::generate();
+    let sender_pubkey = sender_keys.public_key().to_hex();
+    let receiver_a_pubkey = receiver_a_keys.public_key().to_hex();
+    let receiver_b_pubkey = receiver_b_keys.public_key().to_hex();
+
+    let participants = vec![
+        sender_pubkey.clone(),
+        receiver_a_pubkey.clone(),
+        receiver_b_pubkey.clone(),
+    ];
+    let sender =
+        NostrSignalingClient::new_with_keys(network_id.clone(), sender_keys, participants.clone())
+            .expect("sender client");
+    let receiver_a = NostrSignalingClient::new_with_keys(
+        network_id.clone(),
+        receiver_a_keys,
+        participants.clone(),
+    )
+    .expect("receiver a client");
+    let receiver_b = NostrSignalingClient::new_with_keys(network_id, receiver_b_keys, participants)
+        .expect("receiver b client");
+
+    sender
+        .connect(std::slice::from_ref(&relay_url))
+        .await
+        .expect("sender connect");
+    receiver_a
+        .connect(std::slice::from_ref(&relay_url))
+        .await
+        .expect("receiver a connect");
+    receiver_b
+        .connect(&[relay_url])
+        .await
+        .expect("receiver b connect");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let announcement = PeerAnnouncement {
+        node_id: "sender-node".to_string(),
+        public_key: "sender-public".to_string(),
+        endpoint: "127.0.0.1:51820".to_string(),
+        local_endpoint: None,
+        public_endpoint: None,
+        tunnel_ip: "10.44.0.5/32".to_string(),
+        timestamp: 42,
+    };
+
+    sender
+        .publish_to(
+            SignalPayload::Announce(announcement.clone()),
+            std::slice::from_ref(&receiver_a_pubkey),
+        )
+        .await
+        .expect("targeted private publish should succeed");
+
+    let received = timeout(Duration::from_secs(5), receiver_a.recv())
+        .await
+        .expect("timed out waiting for targeted message")
+        .expect("message expected");
+    assert_eq!(received.payload, SignalPayload::Announce(announcement));
+
+    let missing = timeout(Duration::from_millis(500), receiver_b.recv()).await;
+    assert!(
+        missing.is_err(),
+        "non-targeted participant should not receive private announce"
+    );
+
+    sender.disconnect().await;
+    receiver_a.disconnect().await;
+    receiver_b.disconnect().await;
     relay.stop().await;
 }

@@ -78,6 +78,23 @@ fn disconnect_removes_active_peer_but_preserves_last_seen() {
 }
 
 #[test]
+fn hello_refreshes_liveness_without_replacing_active_peer_state() {
+    let mut presence = PeerPresenceBook::default();
+
+    assert!(presence.apply_signal(
+        "peer-a",
+        SignalPayload::Announce(announcement("node-a", "9.9.9.9:51820", 3)),
+        10,
+    ));
+    assert!(!presence.apply_signal("peer-a", SignalPayload::Hello, 25));
+
+    let active = presence.active();
+    let peer = active.get("peer-a").expect("peer should remain active");
+    assert_eq!(peer.endpoint, "9.9.9.9:51820");
+    assert_eq!(presence.last_seen_at("peer-a"), Some(25));
+}
+
+#[test]
 fn stale_peers_are_pruned_from_active_presence() {
     let mut presence = PeerPresenceBook::default();
 
