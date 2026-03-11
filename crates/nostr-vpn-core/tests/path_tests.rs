@@ -14,6 +14,7 @@ fn announcement(
         local_endpoint: local_endpoint.map(str::to_string),
         public_endpoint: public_endpoint.map(str::to_string),
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp,
     }
 }

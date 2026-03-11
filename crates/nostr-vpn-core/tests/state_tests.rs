@@ -11,6 +11,7 @@ fn newest_peer_announcement_wins() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 1,
     });
 
@@ -21,6 +22,7 @@ fn newest_peer_announcement_wins() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 3,
     });
 
@@ -31,6 +33,7 @@ fn newest_peer_announcement_wins() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 2,
     });
 
@@ -49,6 +52,7 @@ fn peer_can_be_removed() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 1,
     });
 
@@ -66,6 +70,7 @@ fn peer_endpoint_prefers_public_for_remote_peers() {
         local_endpoint: Some("192.168.1.20:51820".to_string()),
         public_endpoint: Some("203.0.113.20:51820".to_string()),
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 1,
     };
 
@@ -84,6 +89,7 @@ fn peer_endpoint_prefers_local_for_same_lan_peers() {
         local_endpoint: Some("192.168.1.20:51820".to_string()),
         public_endpoint: Some("203.0.113.20:51820".to_string()),
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 1,
     };
 

@@ -51,6 +51,36 @@ fn generated_config_auto_populates_keys() {
     assert!(config.close_to_tray_on_close);
     assert!(config.nat.enabled);
     assert!(!config.nat.stun_servers.is_empty());
+    assert!(!config.node.advertise_exit_node);
+    assert!(config.node.advertised_routes.is_empty());
+    assert!(config.effective_advertised_routes().is_empty());
+}
+
+#[test]
+fn default_routes_promote_to_exit_node_toggle() {
+    let mut config = AppConfig::generated();
+    config.node.advertised_routes = vec![
+        "10.0.0.0/24".to_string(),
+        "0.0.0.0/0".to_string(),
+        "::/0".to_string(),
+        "10.0.0.0/24".to_string(),
+    ];
+
+    config.ensure_defaults();
+
+    assert!(config.node.advertise_exit_node);
+    assert_eq!(
+        config.node.advertised_routes,
+        vec!["10.0.0.0/24".to_string()]
+    );
+    assert_eq!(
+        config.effective_advertised_routes(),
+        vec![
+            "10.0.0.0/24".to_string(),
+            "0.0.0.0/0".to_string(),
+            "::/0".to_string(),
+        ]
+    );
 }
 
 #[test]

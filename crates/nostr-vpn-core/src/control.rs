@@ -13,6 +13,8 @@ pub struct PeerAnnouncement {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_endpoint: Option<String>,
     pub tunnel_ip: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advertised_routes: Vec<String>,
     pub timestamp: u64,
 }
 

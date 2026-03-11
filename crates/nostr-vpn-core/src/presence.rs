@@ -6,6 +6,7 @@ use crate::signaling::SignalPayload;
 #[derive(Debug, Clone, Default)]
 pub struct PeerPresenceBook {
     active: HashMap<String, PeerAnnouncement>,
+    known: HashMap<String, PeerAnnouncement>,
     last_seen_at: HashMap<String, u64>,
 }
 
@@ -22,23 +23,46 @@ impl PeerPresenceBook {
         match payload {
             SignalPayload::Hello => false,
             SignalPayload::Announce(announcement) => {
-                let should_update = self
+                let should_update_known = self
+                    .known
+                    .get(&sender_pubkey)
+                    .is_none_or(|existing| existing.timestamp <= announcement.timestamp);
+                if should_update_known {
+                    self.known
+                        .insert(sender_pubkey.clone(), announcement.clone());
+                }
+
+                let should_update_active = self
                     .active
                     .get(&sender_pubkey)
                     .is_none_or(|existing| existing.timestamp <= announcement.timestamp);
-                if should_update {
+                if should_update_active {
                     self.active.insert(sender_pubkey, announcement);
                     true
                 } else {
                     false
                 }
             }
-            SignalPayload::Disconnect { .. } => self.active.remove(&sender_pubkey).is_some(),
+            SignalPayload::Disconnect { .. } => {
+                let active_removed = self.active.remove(&sender_pubkey).is_some();
+                let known_removed = self.known.remove(&sender_pubkey).is_some();
+                active_removed || known_removed
+            }
         }
     }
 
     pub fn active(&self) -> &HashMap<String, PeerAnnouncement> {
         &self.active
+    }
+
+    pub fn known(&self) -> &HashMap<String, PeerAnnouncement> {
+        &self.known
+    }
+
+    pub fn announcement_for(&self, sender_pubkey: &str) -> Option<&PeerAnnouncement> {
+        self.active
+            .get(sender_pubkey)
+            .or_else(|| self.known.get(sender_pubkey))
     }
 
     pub fn last_seen(&self) -> &HashMap<String, u64> {
@@ -73,6 +97,8 @@ impl PeerPresenceBook {
 
     pub fn retain_participants(&mut self, participants: &HashSet<String>) {
         self.active
+            .retain(|participant, _| participants.contains(participant));
+        self.known
             .retain(|participant, _| participants.contains(participant));
         self.last_seen_at
             .retain(|participant, _| participants.contains(participant));

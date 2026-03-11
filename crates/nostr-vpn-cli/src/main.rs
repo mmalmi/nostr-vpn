@@ -19,7 +19,7 @@ use clap::{Args, Parser, Subcommand};
 use hex::encode as encode_hex;
 use nostr_vpn_core::config::{
     AppConfig, DEFAULT_RELAYS, derive_network_id_from_participants, maybe_autoconfigure_node,
-    normalize_nostr_pubkey,
+    normalize_advertised_route, normalize_nostr_pubkey,
 };
 use nostr_vpn_core::control::{PeerAnnouncement, select_peer_endpoint};
 use nostr_vpn_core::crypto::generate_keypair;
@@ -50,6 +50,7 @@ const PEER_SIGNAL_TIMEOUT_MULTIPLIER: u64 = 3;
 const MIN_PEER_PATH_CACHE_TIMEOUT_SECS: u64 = 60;
 const PEER_PATH_CACHE_TIMEOUT_MULTIPLIER: u64 = 3;
 const PEER_PATH_RETRY_AFTER_SECS: u64 = 5;
+const PEER_ONLINE_GRACE_SECS: u64 = 20;
 #[cfg(target_os = "macos")]
 const MACOS_SERVICE_LABEL: &str = "to.nostrvpn.nvpn";
 #[cfg(target_os = "linux")]
@@ -450,6 +451,10 @@ struct SetArgs {
     #[arg(long = "participant")]
     participants: Vec<String>,
     #[arg(long)]
+    advertise_routes: Option<String>,
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    advertise_exit_node: Option<bool>,
+    #[arg(long)]
     auto_disconnect_relays_when_mesh_ready: Option<bool>,
     #[arg(long)]
     autoconnect: Option<bool>,
@@ -715,6 +720,7 @@ async fn main() -> Result<()> {
                             local_endpoint: None,
                             public_endpoint: None,
                             tunnel_ip: peer.tunnel_ip.clone(),
+                            advertised_routes: peer.advertised_routes.clone(),
                             timestamp: peer.presence_timestamp,
                         })
                         .collect::<Vec<_>>();
@@ -750,6 +756,9 @@ async fn main() -> Result<()> {
                         "node_id": app.node.id,
                         "tunnel_ip": app.node.tunnel_ip,
                         "endpoint": app.node.endpoint,
+                        "advertise_exit_node": app.node.advertise_exit_node,
+                        "advertised_routes": app.node.advertised_routes,
+                        "effective_advertised_routes": app.effective_advertised_routes(),
                         "relays": relays,
                         "auto_disconnect_relays_when_mesh_ready": app.auto_disconnect_relays_when_mesh_ready,
                         "daemon": daemon_status_json(&config_path)?,
@@ -766,6 +775,13 @@ async fn main() -> Result<()> {
                 println!("node: {}", app.node.id);
                 println!("tunnel_ip: {}", app.node.tunnel_ip);
                 println!("endpoint: {}", app.node.endpoint);
+                println!("advertise_exit_node: {}", app.node.advertise_exit_node);
+                let effective_routes = app.effective_advertised_routes();
+                if effective_routes.is_empty() {
+                    println!("advertised_routes: none");
+                } else {
+                    println!("advertised_routes: {}", effective_routes.join(", "));
+                }
                 println!("relays: {}", relays.len());
                 if daemon.running {
                     println!("daemon: running (pid {})", daemon.pid.unwrap_or_default());
@@ -790,7 +806,17 @@ async fn main() -> Result<()> {
                 }
                 println!("peers: {}", peers.len());
                 for peer in peers {
-                    println!("  {} {} {}", peer.node_id, peer.tunnel_ip, peer.endpoint);
+                    if peer.advertised_routes.is_empty() {
+                        println!("  {} {} {}", peer.node_id, peer.tunnel_ip, peer.endpoint);
+                    } else {
+                        println!(
+                            "  {} {} {} routes={}",
+                            peer.node_id,
+                            peer.tunnel_ip,
+                            peer.endpoint,
+                            peer.advertised_routes.join(",")
+                        );
+                    }
                 }
             }
         }
@@ -818,6 +844,12 @@ async fn main() -> Result<()> {
             }
             if let Some(value) = args.listen_port {
                 app.node.listen_port = value;
+            }
+            if let Some(value) = args.advertise_routes {
+                app.node.advertised_routes = parse_advertised_routes_arg(&value)?;
+            }
+            if let Some(value) = args.advertise_exit_node {
+                app.node.advertise_exit_node = value;
             }
             if let Some(value) = args.auto_disconnect_relays_when_mesh_ready {
                 app.auto_disconnect_relays_when_mesh_ready = value;
@@ -1183,6 +1215,7 @@ struct DaemonPeerState {
     tunnel_ip: String,
     endpoint: String,
     public_key: String,
+    advertised_routes: Vec<String>,
     presence_timestamp: u64,
     last_signal_seen_at: Option<u64>,
     reachable: bool,
@@ -1236,6 +1269,7 @@ async fn publish_announcement(request: AnnounceRequest) -> Result<PublishedAnnou
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip,
+        advertised_routes: app.effective_advertised_routes(),
         timestamp: unix_timestamp(),
     };
 
@@ -1951,6 +1985,7 @@ fn build_peer_announcement(
         local_endpoint: Some(local_endpoint),
         public_endpoint,
         tunnel_ip: app.node.tunnel_ip.clone(),
+        advertised_routes: app.effective_advertised_routes(),
         timestamp: unix_timestamp(),
     }
 }
@@ -1963,6 +1998,7 @@ fn announcement_fingerprint(announcement: &PeerAnnouncement) -> String {
         announcement.local_endpoint.as_deref().unwrap_or(""),
         announcement.public_endpoint.as_deref().unwrap_or(""),
         announcement.tunnel_ip.as_str(),
+        &announcement.advertised_routes.join(","),
     ]
     .join("|")
 }
@@ -2023,6 +2059,57 @@ fn record_successful_runtime_paths(
     }
 
     changed
+}
+
+fn peer_runtime_lookup<'a>(
+    announcement: &PeerAnnouncement,
+    runtime_peers: Option<&'a HashMap<String, WireGuardPeerStatus>>,
+) -> Option<&'a WireGuardPeerStatus> {
+    let peer_pubkey_hex = key_b64_to_hex(&announcement.public_key)
+        .map(|value| value.to_lowercase())
+        .ok()?;
+    runtime_peers.and_then(|peers| peers.get(&peer_pubkey_hex))
+}
+
+fn peer_has_recent_handshake(runtime_peer: &WireGuardPeerStatus, now: u64) -> bool {
+    runtime_peer
+        .last_handshake_epoch()
+        .is_some_and(|last_handshake| now.saturating_sub(last_handshake) <= PEER_ONLINE_GRACE_SECS)
+}
+
+fn connected_peer_count_for_runtime(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+    runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
+    now: u64,
+) -> usize {
+    app.participant_pubkeys_hex()
+        .iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .filter_map(|participant| presence.announcement_for(participant))
+        .filter(|announcement| {
+            peer_runtime_lookup(announcement, runtime_peers)
+                .is_some_and(|runtime_peer| peer_has_recent_handshake(runtime_peer, now))
+        })
+        .count()
+}
+
+fn mesh_ready_for_tunnel_runtime(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    expected_peers: usize,
+    presence: &PeerPresenceBook,
+    tunnel_runtime: &CliTunnelRuntime,
+    now: u64,
+) -> bool {
+    if expected_peers == 0 {
+        return false;
+    }
+
+    let runtime_peers = tunnel_runtime.peer_status().ok();
+    connected_peer_count_for_runtime(app, own_pubkey, presence, runtime_peers.as_ref(), now)
+        >= expected_peers
 }
 
 async fn publish_private_announce_to_participants(
@@ -2443,9 +2530,9 @@ fn apply_presence_runtime_update(
     tunnel_runtime: &mut CliTunnelRuntime,
     magic_dns_runtime: Option<&ConnectMagicDnsRuntime>,
 ) -> Result<()> {
-    tunnel_runtime.apply(app, own_pubkey, presence.active(), path_book, now)?;
+    tunnel_runtime.apply(app, own_pubkey, presence.known(), path_book, now)?;
     if let Some(runtime) = magic_dns_runtime {
-        runtime.refresh_records(app, presence.active());
+        runtime.refresh_records(app, presence.known());
     }
     Ok(())
 }
@@ -2829,6 +2916,22 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     continue;
                 }
 
+                if app.auto_disconnect_relays_when_mesh_ready
+                    && mesh_ready_for_tunnel_runtime(
+                        &app,
+                        own_pubkey.as_deref(),
+                        expected_peers,
+                        &presence,
+                        &tunnel_runtime,
+                        unix_timestamp(),
+                    )
+                {
+                    reconnect_attempt = 0;
+                    reconnect_due = Instant::now();
+                    session_status = "Mesh ready (relays paused)".to_string();
+                    continue;
+                }
+
                 client.disconnect().await;
                 client = NostrSignalingClient::from_secret_key(
                     network_id.clone(),
@@ -3134,6 +3237,24 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
+                if session_enabled
+                    && relay_connected
+                    && app.auto_disconnect_relays_when_mesh_ready
+                    && mesh_ready_for_tunnel_runtime(
+                        &app,
+                        own_pubkey.as_deref(),
+                        expected_peers,
+                        &presence,
+                        &tunnel_runtime,
+                        unix_timestamp(),
+                    )
+                {
+                    client.disconnect().await;
+                    relay_connected = false;
+                    reconnect_attempt = 0;
+                    reconnect_due = Instant::now();
+                    session_status = "Mesh ready (relays paused)".to_string();
+                }
                 let _ = write_daemon_state(
                     &state_file,
                     &build_daemon_runtime_state(
@@ -3308,21 +3429,22 @@ fn build_daemon_runtime_state(
 ) -> DaemonRuntimeState {
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let runtime_peers = tunnel_runtime.peer_status().ok();
+    let now = unix_timestamp();
     let mut peers = Vec::new();
-    let mut connected_peer_count = 0usize;
 
     for participant in &app.participant_pubkeys_hex() {
         if Some(participant.as_str()) == own_pubkey.as_deref() {
             continue;
         }
 
-        let Some(announcement) = presence.active().get(participant) else {
+        let Some(announcement) = presence.announcement_for(participant) else {
             peers.push(DaemonPeerState {
                 participant_pubkey: participant.clone(),
                 node_id: String::new(),
                 tunnel_ip: String::new(),
                 endpoint: String::new(),
                 public_key: String::new(),
+                advertised_routes: Vec::new(),
                 presence_timestamp: 0,
                 last_signal_seen_at: None,
                 reachable: false,
@@ -3332,20 +3454,14 @@ fn build_daemon_runtime_state(
             continue;
         };
 
-        let peer_pubkey_hex = key_b64_to_hex(&announcement.public_key)
-            .map(|value| value.to_lowercase())
-            .ok();
-        let runtime_peer = peer_pubkey_hex
-            .as_ref()
-            .and_then(|pubkey| runtime_peers.as_ref().and_then(|map| map.get(pubkey)));
-
-        let reachable = runtime_peer.is_some_and(WireGuardPeerStatus::has_handshake);
-        if reachable {
-            connected_peer_count += 1;
-        }
-
+        let signal_active = presence.active().contains_key(participant);
+        let peer_pubkey_hex = key_b64_to_hex(&announcement.public_key).ok();
+        let runtime_peer = peer_runtime_lookup(announcement, runtime_peers.as_ref());
+        let reachable = runtime_peer.is_some_and(|peer| peer_has_recent_handshake(peer, now));
         let error = if peer_pubkey_hex.is_none() {
             Some("invalid peer key".to_string())
+        } else if !signal_active && !reachable {
+            Some("signal stale".to_string())
         } else if runtime_peer.is_none() {
             Some("peer not in tunnel runtime".to_string())
         } else if !reachable {
@@ -3360,6 +3476,7 @@ fn build_daemon_runtime_state(
             tunnel_ip: announcement.tunnel_ip.clone(),
             endpoint: announcement.endpoint.clone(),
             public_key: announcement.public_key.clone(),
+            advertised_routes: announcement.advertised_routes.clone(),
             presence_timestamp: announcement.timestamp,
             last_signal_seen_at: presence.last_seen_at(participant),
             reachable,
@@ -3368,9 +3485,16 @@ fn build_daemon_runtime_state(
         });
     }
 
+    let connected_peer_count = connected_peer_count_for_runtime(
+        app,
+        own_pubkey.as_deref(),
+        presence,
+        runtime_peers.as_ref(),
+        now,
+    );
     let mesh_ready = expected_peers > 0 && connected_peer_count >= expected_peers;
     DaemonRuntimeState {
-        updated_at: unix_timestamp(),
+        updated_at: now,
         session_active,
         relay_connected,
         session_status: session_status.to_string(),
@@ -5553,6 +5677,29 @@ fn key_b64_to_hex(value: &str) -> Result<String> {
     Ok(encode_hex(bytes))
 }
 
+fn parse_advertised_routes_arg(value: &str) -> Result<Vec<String>> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut routes = Vec::new();
+    for raw in value.split(',') {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+
+        let normalized = normalize_advertised_route(raw)
+            .ok_or_else(|| anyhow!("invalid advertised route '{raw}'"))?;
+        if !routes.iter().any(|existing| existing == &normalized) {
+            routes.push(normalized);
+        }
+    }
+
+    Ok(routes)
+}
+
 fn apply_local_interface_network(
     iface: &str,
     address: &str,
@@ -5796,14 +5943,16 @@ mod tests {
 
     use super::{
         AppConfig, Cli, DiscoveredPublicSignalEndpoint, InstallCliArgs, OutboundAnnounceBook,
-        PeerAnnouncement, UninstallCliArgs, WireGuardPeerStatus, build_runtime_magic_dns_records,
-        can_reuse_active_listen_port, daemon_control_file_path, daemon_pids_from_ps_output,
+        PeerAnnouncement, UninstallCliArgs, WireGuardPeerStatus, announcement_fingerprint,
+        build_peer_announcement, build_runtime_magic_dns_records, can_reuse_active_listen_port,
+        connected_peer_count_for_runtime, daemon_control_file_path, daemon_pids_from_ps_output,
         daemon_reconnect_backoff_delay, default_cli_install_path, endpoint_with_listen_port,
         install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
         kill_error_requires_control_fallback, linux_service_status_from_show_output,
         macos_service_disabled_from_print_disabled_output, parse_nonzero_pid,
-        peer_path_cache_timeout_secs, peer_signal_timeout_secs, pending_tunnel_heartbeat_ips,
-        planned_tunnel_peers, public_endpoint_for_listen_port, publish_error_requires_reconnect,
+        peer_has_recent_handshake, peer_path_cache_timeout_secs, peer_runtime_lookup,
+        peer_signal_timeout_secs, pending_tunnel_heartbeat_ips, planned_tunnel_peers,
+        public_endpoint_for_listen_port, publish_error_requires_reconnect,
         record_successful_runtime_paths, request_daemon_reload, request_daemon_stop,
         runtime_local_signal_endpoint, take_daemon_control_request, uninstall_cli,
         utun_interface_candidates, windows_service_status_from_query_output,
@@ -5816,6 +5965,8 @@ mod tests {
 
     use nostr_vpn_core::crypto::generate_keypair;
     use nostr_vpn_core::paths::PeerPathBook;
+    use nostr_vpn_core::presence::PeerPresenceBook;
+    use nostr_vpn_core::signaling::SignalPayload;
 
     #[test]
     fn clap_binary_name_is_nvpn() {
@@ -5867,6 +6018,25 @@ mod tests {
             set.get_arguments()
                 .any(|argument| argument.get_long() == Some("autoconnect")),
             "missing --autoconnect on set command"
+        );
+    }
+
+    #[test]
+    fn clap_set_supports_route_advertisement_flags() {
+        let command = Cli::command();
+        let set = command
+            .get_subcommands()
+            .find(|subcommand| subcommand.get_name() == "set")
+            .expect("set subcommand exists");
+        assert!(
+            set.get_arguments()
+                .any(|argument| argument.get_long() == Some("advertise-routes")),
+            "missing --advertise-routes on set command"
+        );
+        assert!(
+            set.get_arguments()
+                .any(|argument| argument.get_long() == Some("advertise-exit-node")),
+            "missing --advertise-exit-node on set command"
         );
     }
 
@@ -5996,6 +6166,66 @@ mod tests {
     }
 
     #[test]
+    fn cached_peerbook_keeps_connected_peer_count_after_presence_expires() {
+        let mut config = AppConfig::generated();
+        let participant = "11".repeat(32);
+        config.networks[0].participants = vec![participant.clone()];
+
+        let peer_keys = generate_keypair();
+        let announcement = PeerAnnouncement {
+            node_id: "peer-a".to_string(),
+            public_key: peer_keys.public_key.clone(),
+            endpoint: "203.0.113.20:51820".to_string(),
+            local_endpoint: None,
+            public_endpoint: Some("203.0.113.20:51820".to_string()),
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
+            timestamp: 1,
+        };
+
+        let mut presence = PeerPresenceBook::default();
+        assert!(presence.apply_signal(
+            participant.clone(),
+            SignalPayload::Announce(announcement.clone()),
+            100,
+        ));
+        assert_eq!(presence.prune_stale(200, 20), vec![participant.clone()]);
+        assert!(presence.active().is_empty());
+        assert!(presence.announcement_for(&participant).is_some());
+
+        let now = 1_700_000_000;
+        let runtime_peers = HashMap::from([(
+            key_b64_to_hex(&peer_keys.public_key).expect("peer pubkey hex"),
+            WireGuardPeerStatus {
+                endpoint: Some("203.0.113.20:51820".to_string()),
+                last_handshake_sec: Some(now - 5),
+                last_handshake_nsec: Some(0),
+            },
+        )]);
+
+        assert_eq!(
+            connected_peer_count_for_runtime(&config, None, &presence, Some(&runtime_peers), now),
+            1
+        );
+
+        let runtime_peer = peer_runtime_lookup(&announcement, Some(&runtime_peers))
+            .expect("runtime peer should resolve from cached announcement");
+        assert!(peer_has_recent_handshake(runtime_peer, now));
+    }
+
+    #[test]
+    fn stale_handshake_does_not_count_mesh_as_ready() {
+        let now = 1_700_000_000;
+        let runtime_peer = WireGuardPeerStatus {
+            endpoint: Some("203.0.113.20:51820".to_string()),
+            last_handshake_sec: Some(now - 30),
+            last_handshake_nsec: Some(0),
+        };
+
+        assert!(!peer_has_recent_handshake(&runtime_peer, now));
+    }
+
+    #[test]
     fn utun_candidates_expand_for_default_style_names() {
         let candidates = utun_interface_candidates("utun100");
         assert_eq!(candidates.len(), 16);
@@ -6083,6 +6313,37 @@ mod tests {
     }
 
     #[test]
+    fn peer_announcement_includes_effective_advertised_routes() {
+        let mut config = AppConfig::generated();
+        config.node.advertise_exit_node = true;
+        config.node.advertised_routes = vec!["10.0.0.0/24".to_string()];
+        config.ensure_defaults();
+
+        let announcement = build_peer_announcement(&config, 51820, None);
+
+        assert_eq!(
+            announcement.advertised_routes,
+            vec![
+                "10.0.0.0/24".to_string(),
+                "0.0.0.0/0".to_string(),
+                "::/0".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn announcement_fingerprint_changes_when_routes_change() {
+        let mut config = AppConfig::generated();
+        let initial = build_peer_announcement(&config, 51820, None);
+        let initial_fingerprint = announcement_fingerprint(&initial);
+
+        config.node.advertise_exit_node = true;
+        let updated = build_peer_announcement(&config, 51820, None);
+
+        assert_ne!(initial_fingerprint, announcement_fingerprint(&updated));
+    }
+
+    #[test]
     fn reuses_running_listen_port_without_rebind() {
         assert!(can_reuse_active_listen_port(true, true, Some(51820), 51820));
         assert!(!can_reuse_active_listen_port(
@@ -6120,6 +6381,7 @@ mod tests {
             local_endpoint: None,
             public_endpoint: Some("203.0.113.20:51820".to_string()),
             tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
             timestamp: 1,
         };
         let announcements = HashMap::from([(participant.clone(), announcement)]);
@@ -6154,6 +6416,7 @@ mod tests {
             local_endpoint: Some("192.168.1.20:51820".to_string()),
             public_endpoint: Some("203.0.113.20:51820".to_string()),
             tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
             timestamp: 10,
         };
         let announcements = HashMap::from([(participant.clone(), announcement.clone())]);
@@ -6212,6 +6475,7 @@ mod tests {
             local_endpoint: Some("192.168.1.20:51820".to_string()),
             public_endpoint: Some("203.0.113.20:51820".to_string()),
             tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
             timestamp: 10,
         };
         let flapped = PeerAnnouncement {
@@ -6289,6 +6553,7 @@ mod tests {
                 local_endpoint: None,
                 public_endpoint: None,
                 tunnel_ip: "10.44.0.113/32".to_string(),
+                advertised_routes: Vec::new(),
                 timestamp: 1,
             },
         );
@@ -6328,6 +6593,7 @@ mod tests {
                 local_endpoint: None,
                 public_endpoint: None,
                 tunnel_ip: "10.44.0.113/32".to_string(),
+                advertised_routes: Vec::new(),
                 timestamp: 1,
             },
         );
@@ -6346,6 +6612,7 @@ mod tests {
                 local_endpoint: None,
                 public_endpoint: None,
                 tunnel_ip: "10.44.0.114/32".to_string(),
+                advertised_routes: Vec::new(),
                 timestamp: 2,
             },
         );

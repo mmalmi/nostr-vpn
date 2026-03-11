@@ -53,6 +53,7 @@ async fn announces_over_local_nostr_relay() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.5/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 42,
     };
 
@@ -145,6 +146,7 @@ async fn publish_requires_configured_participants_for_private_signaling() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.9/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 1,
     };
 
@@ -205,6 +207,7 @@ async fn relay_event_does_not_leak_plaintext_sensitive_fields() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.66.7/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 123456,
     };
 
@@ -331,6 +334,7 @@ async fn targeted_private_publish_only_reaches_requested_recipient() {
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.5/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp: 42,
     };
 

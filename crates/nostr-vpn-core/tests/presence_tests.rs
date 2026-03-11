@@ -10,6 +10,7 @@ fn announcement(node_id: &str, endpoint: &str, timestamp: u64) -> PeerAnnounceme
         local_endpoint: None,
         public_endpoint: None,
         tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
         timestamp,
     }
 }
@@ -74,6 +75,7 @@ fn disconnect_removes_active_peer_but_preserves_last_seen() {
     ));
 
     assert!(presence.active().get("peer-a").is_none());
+    assert!(presence.known().get("peer-a").is_none());
     assert_eq!(presence.last_seen_at("peer-a"), Some(15));
 }
 
@@ -113,6 +115,11 @@ fn stale_peers_are_pruned_from_active_presence() {
     assert_eq!(removed, vec!["peer-a".to_string()]);
     assert!(presence.active().get("peer-a").is_none());
     assert!(presence.active().get("peer-b").is_some());
+    let stale_peer = presence
+        .known()
+        .get("peer-a")
+        .expect("stale peer should remain in cached peerbook");
+    assert_eq!(stale_peer.endpoint, "9.9.9.9:51820");
     assert_eq!(presence.last_seen_at("peer-a"), Some(10));
     assert_eq!(presence.last_seen_at("peer-b"), Some(30));
 }

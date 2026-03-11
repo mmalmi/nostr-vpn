@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::net::{IpAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -172,6 +172,10 @@ pub struct NodeConfig {
     pub tunnel_ip: String,
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
+    #[serde(default)]
+    pub advertised_routes: Vec<String>,
+    #[serde(default)]
+    pub advertise_exit_node: bool,
 }
 
 impl Default for NodeConfig {
@@ -184,6 +188,8 @@ impl Default for NodeConfig {
             endpoint: default_endpoint(),
             tunnel_ip: default_tunnel_ip(),
             listen_port: default_listen_port(),
+            advertised_routes: Vec::new(),
+            advertise_exit_node: false,
         }
     }
 }
@@ -245,6 +251,19 @@ impl AppConfig {
         if self.node.listen_port == 0 {
             self.node.listen_port = default_listen_port();
         }
+
+        let mut advertise_exit_node = self.node.advertise_exit_node;
+        let mut advertised_routes = normalize_advertised_routes(&self.node.advertised_routes);
+        advertised_routes.retain(|route| {
+            if is_exit_node_route(route) {
+                advertise_exit_node = true;
+                false
+            } else {
+                true
+            }
+        });
+        self.node.advertised_routes = advertised_routes;
+        self.node.advertise_exit_node = advertise_exit_node;
 
         if self.node.private_key.trim().is_empty() || self.node.public_key.trim().is_empty() {
             let key_pair = generate_keypair();
@@ -457,6 +476,10 @@ impl AppConfig {
         members
     }
 
+    pub fn effective_advertised_routes(&self) -> Vec<String> {
+        effective_advertised_routes(&self.node.advertised_routes, self.node.advertise_exit_node)
+    }
+
     pub fn nostr_keys(&self) -> Result<Keys> {
         Keys::parse(&self.nostr.secret_key).context("invalid nostr secret key")
     }
@@ -641,6 +664,85 @@ pub fn derive_mesh_tunnel_ip(participants: &[String], own_pubkey_hex: &str) -> O
     };
 
     Some(format!("10.44.0.{host_octet}/32"))
+}
+
+pub fn normalize_advertised_route(value: &str) -> Option<String> {
+    let value = value.trim();
+    let (addr, bits) = value.split_once('/')?;
+    let addr: IpAddr = addr.trim().parse().ok()?;
+    let bits: u8 = bits.trim().parse().ok()?;
+
+    let max_bits = match addr {
+        IpAddr::V4(_) => 32,
+        IpAddr::V6(_) => 128,
+    };
+    if bits > max_bits {
+        return None;
+    }
+
+    let network = match addr {
+        IpAddr::V4(ip) => IpAddr::V4(mask_ipv4(ip, bits)),
+        IpAddr::V6(ip) => IpAddr::V6(mask_ipv6(ip, bits)),
+    };
+
+    Some(format!("{network}/{bits}"))
+}
+
+pub fn normalize_advertised_routes(routes: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    let mut seen = HashSet::new();
+
+    for route in routes {
+        let Some(route) = normalize_advertised_route(route) else {
+            continue;
+        };
+        if seen.insert(route.clone()) {
+            normalized.push(route);
+        }
+    }
+
+    normalized
+}
+
+pub fn effective_advertised_routes(routes: &[String], advertise_exit_node: bool) -> Vec<String> {
+    let mut effective = normalize_advertised_routes(routes);
+    let mut seen = effective.iter().cloned().collect::<HashSet<_>>();
+
+    if advertise_exit_node {
+        for route in exit_node_default_routes() {
+            if seen.insert(route.clone()) {
+                effective.push(route);
+            }
+        }
+    }
+
+    effective
+}
+
+pub fn exit_node_default_routes() -> Vec<String> {
+    vec!["0.0.0.0/0".to_string(), "::/0".to_string()]
+}
+
+fn is_exit_node_route(route: &str) -> bool {
+    matches!(route, "0.0.0.0/0" | "::/0")
+}
+
+fn mask_ipv4(ip: Ipv4Addr, bits: u8) -> Ipv4Addr {
+    let mask = if bits == 0 {
+        0
+    } else {
+        u32::MAX << (32 - bits)
+    };
+    Ipv4Addr::from(u32::from(ip) & mask)
+}
+
+fn mask_ipv6(ip: Ipv6Addr, bits: u8) -> Ipv6Addr {
+    let mask = if bits == 0 {
+        0
+    } else {
+        u128::MAX << (128 - bits)
+    };
+    Ipv6Addr::from(u128::from_be_bytes(ip.octets()) & mask)
 }
 
 pub fn needs_endpoint_autoconfig(endpoint: &str) -> bool {
