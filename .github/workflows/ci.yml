@@ -20,15 +20,18 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: crates/nostr-vpn-gui/pnpm-lock.yaml
-
-      - name: Enable corepack
-        run: corepack enable
 
       - name: Build frontend
         run: |
@@ -80,6 +83,13 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Setup pnpm
+        if: matrix.gui
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
       - name: Setup Node
         if: matrix.gui
         uses: actions/setup-node@v4
@@ -87,10 +97,6 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: crates/nostr-vpn-gui/pnpm-lock.yaml
-
-      - name: Enable corepack
-        if: matrix.gui
-        run: corepack enable
 
       - name: Build GUI frontend assets
         if: matrix.gui
