@@ -937,17 +937,14 @@ pub fn default_magic_dns_label_for_pubkey(
     pubkey_hex: &str,
     used_aliases: &HashSet<String>,
 ) -> String {
-    if !HASHTREE_ANIMAL_ALIASES.is_empty() {
-        let digest = Sha256::digest(pubkey_hex.as_bytes());
-        let mut index =
-            ((digest[0] as usize) << 8 | digest[1] as usize) % HASHTREE_ANIMAL_ALIASES.len();
-        for _ in 0..HASHTREE_ANIMAL_ALIASES.len() {
-            let candidate = HASHTREE_ANIMAL_ALIASES[index];
-            if !used_aliases.contains(candidate) {
-                return candidate.to_string();
-            }
-            index = (index + 1) % HASHTREE_ANIMAL_ALIASES.len();
+    let digest = Sha256::digest(pubkey_hex.as_bytes());
+    let mut index = ((digest[0] as usize) << 8 | digest[1] as usize) % HASHTREE_ANIMAL_ALIASES.len();
+    for _ in 0..HASHTREE_ANIMAL_ALIASES.len() {
+        let candidate = HASHTREE_ANIMAL_ALIASES[index];
+        if !used_aliases.contains(candidate) {
+            return candidate.to_string();
         }
+        index = (index + 1) % HASHTREE_ANIMAL_ALIASES.len();
     }
 
     let short = pubkey_hex.chars().take(12).collect::<String>();
