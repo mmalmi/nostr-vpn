@@ -2498,6 +2498,14 @@ fn started_from_autostart() -> bool {
     started_from_autostart_args(env::args())
 }
 
+fn should_surface_existing_instance_args<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    !started_from_autostart_args(args)
+}
+
 fn hide_main_window_to_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let Some(window) = app.get_webview_window("main") else {
         return;
@@ -2847,7 +2855,16 @@ pub fn run() {
         service_enable_required: backend.gui_requires_service_enable(),
     };
     let launched_from_autostart = started_from_autostart();
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if should_surface_existing_instance_args(args.iter()) {
+                let _ = show_main_window(app);
+            }
+        }));
+    }
+    let app = builder
         .setup(move |app| {
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             app.handle().plugin(tauri_plugin_autostart::init(
@@ -2997,8 +3014,9 @@ mod tests {
         extract_json_document, gui_requires_service_enable, gui_requires_service_install,
         is_already_running_message, is_mesh_complete, is_not_running_message,
         parse_advertised_routes_input, peer_offers_exit_node, peer_presence_state_label,
-        peer_state_label, should_start_gui_daemon_on_launch, started_from_autostart_args, to_npub,
-        validate_nvpn_binary, within_peer_online_grace, within_peer_presence_grace,
+        peer_state_label, should_start_gui_daemon_on_launch, should_surface_existing_instance_args,
+        started_from_autostart_args, to_npub, validate_nvpn_binary, within_peer_online_grace,
+        within_peer_presence_grace,
     };
     use nostr_vpn_core::config::AppConfig;
     use std::time::{Duration, SystemTime};
@@ -3141,6 +3159,18 @@ mod tests {
         assert!(!started_from_autostart_args([
             "/Applications/Nostr VPN.app/Contents/MacOS/nostr-vpn",
             "--autostarted",
+        ]));
+    }
+
+    #[test]
+    fn existing_instance_surface_skips_autostart_relaunches() {
+        assert!(should_surface_existing_instance_args([
+            "/Applications/Nostr VPN.app/Contents/MacOS/nostr-vpn",
+            "--launched-from-cli",
+        ]));
+        assert!(!should_surface_existing_instance_args([
+            "/Applications/Nostr VPN.app/Contents/MacOS/nostr-vpn",
+            "--autostart",
         ]));
     }
 

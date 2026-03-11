@@ -26,6 +26,7 @@ nostr-vpn-core = { path = "../../nostr-vpn-core" }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 runas = "1.2"
