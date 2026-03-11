@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(target_os = "linux")]
 use std::net::ToSocketAddrs;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -58,6 +58,7 @@ const MIN_PERSISTED_PEER_CACHE_TIMEOUT_SECS: u64 = 600;
 const PERSISTED_PEER_CACHE_TIMEOUT_MULTIPLIER: u64 = 30;
 const MIN_PERSISTED_PATH_CACHE_TIMEOUT_SECS: u64 = 1_800;
 const PERSISTED_PATH_CACHE_TIMEOUT_MULTIPLIER: u64 = 90;
+const MESH_READY_RELAYS_PAUSED_STATUS: &str = "Mesh ready (relays paused)";
 #[cfg(target_os = "macos")]
 const MACOS_SERVICE_LABEL: &str = "to.nostrvpn.nvpn";
 #[cfg(target_os = "linux")]
@@ -73,6 +74,14 @@ enum DaemonControlRequest {
     Reload,
     Pause,
     Resume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayConnectionAction {
+    KeepConnected,
+    PauseForMesh,
+    StayPausedForMesh,
+    ReconnectWhenDue,
 }
 
 impl DaemonControlRequest {
@@ -1870,10 +1879,7 @@ impl CliTunnelRuntime {
                 body.push_str(&format!("\nallowed_ip={allowed_ip}"));
             }
             body.push_str("\npersistent_keepalive_interval=5");
-            wg_set(
-                socket,
-                &body,
-            )?;
+            wg_set(socket, &body)?;
         }
 
         apply_local_interface_network(&self.iface, &local_address, &route_targets)?;
@@ -1987,7 +1993,7 @@ impl CliTunnelRuntime {
 
     #[cfg(target_os = "linux")]
     fn reconcile_linux_exit_node_forwarding(&mut self, app: &AppConfig) {
-        let route_families =
+        let mut route_families =
             linux_exit_node_default_route_families(&app.effective_advertised_routes());
         if !route_families.ipv4 && !route_families.ipv6 {
             self.reconcile_linux_exit_node_forwarding_cleanup();
@@ -2025,14 +2031,21 @@ impl CliTunnelRuntime {
             match linux_default_ipv6_route() {
                 Ok(route) => Some(route.dev),
                 Err(error) => {
-                    eprintln!("exit-node: failed to resolve default IPv6 route device: {error}");
-                    self.reconcile_linux_exit_node_forwarding_cleanup();
-                    return;
+                    eprintln!(
+                        "exit-node: skipping IPv6 forwarding (default route unavailable): {error}"
+                    );
+                    route_families.ipv6 = false;
+                    None
                 }
             }
         } else {
             None
         };
+
+        if !route_families.ipv4 && !route_families.ipv6 {
+            self.reconcile_linux_exit_node_forwarding_cleanup();
+            return;
+        }
 
         let already_configured = self.exit_node_runtime.ipv4_outbound_iface == ipv4_outbound_iface
             && self.exit_node_runtime.ipv6_outbound_iface == ipv6_outbound_iface
@@ -2074,15 +2087,17 @@ impl CliTunnelRuntime {
                     if !previous
                         && let Err(error) = write_linux_ip_forward(LinuxExitNodeIpFamily::V6, true)
                     {
-                        eprintln!("exit-node: failed to enable IPv6 forwarding: {error}");
-                        self.reconcile_linux_exit_node_forwarding_cleanup();
-                        return;
+                        eprintln!("exit-node: skipping IPv6 forwarding setup: {error}");
+                        self.exit_node_runtime.ipv6_forward_was_enabled = None;
+                        self.exit_node_runtime.ipv6_outbound_iface = None;
+                        route_families.ipv6 = false;
                     }
                 }
                 Err(error) => {
-                    eprintln!("exit-node: failed to read IPv6 forwarding state: {error}");
-                    self.reconcile_linux_exit_node_forwarding_cleanup();
-                    return;
+                    eprintln!("exit-node: skipping IPv6 forwarding state check: {error}");
+                    self.exit_node_runtime.ipv6_forward_was_enabled = None;
+                    self.exit_node_runtime.ipv6_outbound_iface = None;
+                    route_families.ipv6 = false;
                 }
             }
         }
@@ -2128,9 +2143,9 @@ impl CliTunnelRuntime {
                     |()| linux_iptables_ensure_rule(LinuxExitNodeIpFamily::V6, None, &forward_out),
                 )
             {
-                eprintln!("exit-node: failed to install IPv6 firewall rules: {error}");
-                self.reconcile_linux_exit_node_forwarding_cleanup();
-                return;
+                eprintln!("exit-node: skipping IPv6 firewall rules: {error}");
+                self.exit_node_runtime.ipv6_outbound_iface = None;
+                self.exit_node_runtime.ipv6_forward_was_enabled = None;
             }
         }
     }
@@ -2439,7 +2454,9 @@ fn route_is_host_route(route: &str) -> bool {
 
 #[cfg(any(target_os = "linux", test))]
 fn route_targets_require_endpoint_bypass(route_targets: &[String]) -> bool {
-    route_targets.iter().any(|route| !route_is_host_route(route))
+    route_targets
+        .iter()
+        .any(|route| !route_is_host_route(route))
 }
 
 fn normalized_peer_ipv4_routes(announcement: &PeerAnnouncement) -> Vec<String> {
@@ -2500,7 +2517,9 @@ fn advertised_route_assignments(
             {
                 continue;
             }
-            route_owner.entry(route).or_insert_with(|| participant.clone());
+            route_owner
+                .entry(route)
+                .or_insert_with(|| participant.clone());
         }
     }
 
@@ -2609,8 +2628,7 @@ fn connected_peer_count_for_runtime(
         .filter(|participant| Some(participant.as_str()) != own_pubkey)
         .filter_map(|participant| presence.announcement_for(participant))
         .filter(|announcement| {
-            peer_runtime_lookup(announcement, runtime_peers)
-                .is_some_and(peer_has_recent_handshake)
+            peer_runtime_lookup(announcement, runtime_peers).is_some_and(peer_has_recent_handshake)
         })
         .count()
 }
@@ -2623,6 +2641,24 @@ fn direct_peer_announcements(
         presence.active()
     } else {
         presence.known()
+    }
+}
+
+fn relay_connection_action(
+    auto_disconnect_relays_when_mesh_ready: bool,
+    relay_connected: bool,
+    mesh_ready: bool,
+) -> RelayConnectionAction {
+    if relay_connected {
+        if auto_disconnect_relays_when_mesh_ready && mesh_ready {
+            RelayConnectionAction::PauseForMesh
+        } else {
+            RelayConnectionAction::KeepConnected
+        }
+    } else if auto_disconnect_relays_when_mesh_ready && mesh_ready {
+        RelayConnectionAction::StayPausedForMesh
+    } else {
+        RelayConnectionAction::ReconnectWhenDue
     }
 }
 
@@ -2641,6 +2677,25 @@ fn mesh_ready_for_tunnel_runtime(
     let runtime_peers = tunnel_runtime.peer_status().ok();
     connected_peer_count_for_runtime(app, own_pubkey, presence, runtime_peers.as_ref(), now)
         >= expected_peers
+}
+
+fn should_pause_relays_for_mesh(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    expected_peers: usize,
+    presence: &PeerPresenceBook,
+    tunnel_runtime: &CliTunnelRuntime,
+    now: u64,
+) -> bool {
+    app.auto_disconnect_relays_when_mesh_ready
+        && mesh_ready_for_tunnel_runtime(
+            app,
+            own_pubkey,
+            expected_peers,
+            presence,
+            tunnel_runtime,
+            now,
+        )
 }
 
 fn build_daemon_peer_cache_state(
@@ -3380,12 +3435,13 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
     let mut public_signal_endpoint = None;
 
-    let client = NostrSignalingClient::from_secret_key(
+    let mut client = NostrSignalingClient::from_secret_key(
         network_id.clone(),
         &app.nostr.secret_key,
         configured_participants.clone(),
     )?;
     client.connect(&relays).await?;
+    let mut relay_connected = true;
 
     apply_presence_runtime_update(
         &app,
@@ -3408,21 +3464,126 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let mut announce_interval =
         tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut reconnect_interval = tokio::time::interval(Duration::from_secs(1));
+    reconnect_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut last_mesh_count = 0_usize;
     let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
+    let mut reconnect_attempt = 0u32;
+    let mut reconnect_due = Instant::now();
+    let mut relays_paused_for_mesh = false;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 break;
             }
+            _ = reconnect_interval.tick() => {
+                if relay_connected || Instant::now() < reconnect_due {
+                    continue;
+                }
+
+                let mesh_ready = should_pause_relays_for_mesh(
+                    &app,
+                    own_pubkey.as_deref(),
+                    expected_peers,
+                    &presence,
+                    &tunnel_runtime,
+                    unix_timestamp(),
+                );
+                match relay_connection_action(
+                    app.auto_disconnect_relays_when_mesh_ready,
+                    relay_connected,
+                    mesh_ready,
+                ) {
+                    RelayConnectionAction::StayPausedForMesh => {
+                        reconnect_attempt = 0;
+                        reconnect_due = Instant::now();
+                        if !relays_paused_for_mesh {
+                            println!("connect: {MESH_READY_RELAYS_PAUSED_STATUS}");
+                            relays_paused_for_mesh = true;
+                        }
+                        continue;
+                    }
+                    RelayConnectionAction::ReconnectWhenDue => {
+                        if relays_paused_for_mesh {
+                            println!("connect: mesh degraded; reconnecting relays");
+                            relays_paused_for_mesh = false;
+                        }
+                    }
+                    RelayConnectionAction::KeepConnected | RelayConnectionAction::PauseForMesh => {
+                        continue;
+                    }
+                }
+
+                client.disconnect().await;
+                client = NostrSignalingClient::from_secret_key(
+                    network_id.clone(),
+                    &app.nostr.secret_key,
+                    configured_participants.clone(),
+                )?;
+                match client.connect(&relays).await {
+                    Ok(()) => {
+                        relay_connected = true;
+                        reconnect_attempt = 0;
+                        outbound_announces.clear();
+                        if let Err(error) = publish_private_announce_to_active_peers(
+                            &client,
+                            &app,
+                            own_pubkey.as_deref(),
+                            &presence,
+                            &tunnel_runtime,
+                            public_signal_endpoint.as_ref(),
+                            &mut outbound_announces,
+                        )
+                        .await
+                        {
+                            eprintln!("signal: active peer announce refresh failed after reconnect: {error}");
+                        }
+                        if let Err(error) = client.publish(SignalPayload::Hello).await {
+                            let error_text = error.to_string();
+                            reconnect_attempt = reconnect_attempt.saturating_add(1);
+                            let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
+                            reconnect_due = Instant::now() + delay;
+                            relay_connected = false;
+                            eprintln!(
+                                "signal: hello publish failed after reconnect (retry in {}s): {error_text}",
+                                delay.as_secs()
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        let error_text = error.to_string();
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
+                        reconnect_due = Instant::now() + delay;
+                        eprintln!(
+                            "signal: relay reconnect failed (retry in {}s): {error_text}",
+                            delay.as_secs()
+                        );
+                    }
+                }
+            }
             _ = tunnel_heartbeat_interval.tick() => {
+                let peer_announcements = direct_peer_announcements(&presence, relay_connected);
+                if !relay_connected
+                    && let Err(error) = maybe_run_nat_punch(
+                        &app,
+                        own_pubkey.as_deref(),
+                        peer_announcements,
+                        &mut path_book,
+                        &mut tunnel_runtime,
+                        &mut public_signal_endpoint,
+                        &mut last_nat_punch_attempt,
+                    )
+                {
+                    eprintln!("nat: cached peer hole-punch failed: {error}");
+                }
                 if let Err(error) = heartbeat_pending_tunnel_peers(
                     &app,
                     own_pubkey.as_deref(),
-                    presence.active(),
+                    peer_announcements,
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed: {error}");
@@ -3465,6 +3626,42 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &mut last_mesh_count,
                     );
                 }
+                let mesh_ready = should_pause_relays_for_mesh(
+                    &app,
+                    own_pubkey.as_deref(),
+                    expected_peers,
+                    &presence,
+                    &tunnel_runtime,
+                    now,
+                );
+                match relay_connection_action(
+                    app.auto_disconnect_relays_when_mesh_ready,
+                    relay_connected,
+                    mesh_ready,
+                ) {
+                    RelayConnectionAction::PauseForMesh => {
+                        client.disconnect().await;
+                        relay_connected = false;
+                        reconnect_attempt = 0;
+                        reconnect_due = Instant::now();
+                        if !relays_paused_for_mesh {
+                            println!("connect: {MESH_READY_RELAYS_PAUSED_STATUS}");
+                            relays_paused_for_mesh = true;
+                        }
+                    }
+                    RelayConnectionAction::ReconnectWhenDue => {
+                        if relays_paused_for_mesh {
+                            println!("connect: mesh degraded; reconnecting relays");
+                            relays_paused_for_mesh = false;
+                            reconnect_due = Instant::now();
+                        }
+                    }
+                    RelayConnectionAction::KeepConnected | RelayConnectionAction::StayPausedForMesh => {}
+                }
+                if !relay_connected {
+                    continue;
+                }
+
                 if let Err(error) = maybe_run_nat_punch(
                     &app,
                     own_pubkey.as_deref(),
@@ -3473,7 +3670,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &mut tunnel_runtime,
                     &mut public_signal_endpoint,
                     &mut last_nat_punch_attempt,
-                    ) {
+                ) {
                     eprintln!("nat: periodic hole-punch failed: {error}");
                 }
                 if let Err(error) = publish_private_announce_to_active_peers(
@@ -3489,11 +3686,36 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                 {
                     eprintln!("signal: active peer announce refresh failed: {error}");
                 }
-                let _ = client.publish(SignalPayload::Hello).await;
+                if let Err(error) = client.publish(SignalPayload::Hello).await {
+                    let error_text = error.to_string();
+                    if publish_error_requires_reconnect(&error_text) {
+                        relay_connected = false;
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
+                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
+                        reconnect_due = Instant::now() + delay;
+                        eprintln!(
+                            "signal: hello publish indicates disconnected relays (retry in {}s): {error_text}",
+                            delay.as_secs()
+                        );
+                    } else {
+                        eprintln!("signal: hello publish failed: {error_text}");
+                    }
+                }
             }
-            message = client.recv() => {
+            message = async {
+                if relay_connected {
+                    client.recv().await
+                } else {
+                    std::future::pending::<Option<SignalEnvelope>>().await
+                }
+            } => {
                 let Some(message) = message else {
-                    break;
+                    relay_connected = false;
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
+                    reconnect_due = Instant::now() + delay;
+                    eprintln!("signal: relay stream closed (retry in {}s)", delay.as_secs());
+                    continue;
                 };
 
                 let sender_pubkey = message.sender_pubkey;
@@ -3574,11 +3796,13 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
         }
     }
 
-    let _ = client
-        .publish(SignalPayload::Disconnect {
-            node_id: app.node.id.clone(),
-        })
-        .await;
+    if relay_connected {
+        let _ = client
+            .publish(SignalPayload::Disconnect {
+                node_id: app.node.id.clone(),
+            })
+            .await;
+    }
     client.disconnect().await;
     tunnel_runtime.stop();
     println!("connect: disconnected");
@@ -3742,20 +3966,29 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     continue;
                 }
 
-                if app.auto_disconnect_relays_when_mesh_ready
-                    && mesh_ready_for_tunnel_runtime(
-                        &app,
-                        own_pubkey.as_deref(),
-                        expected_peers,
-                        &presence,
-                        &tunnel_runtime,
-                        unix_timestamp(),
-                    )
-                {
-                    reconnect_attempt = 0;
-                    reconnect_due = Instant::now();
-                    session_status = "Mesh ready (relays paused)".to_string();
-                    continue;
+                let mesh_ready = should_pause_relays_for_mesh(
+                    &app,
+                    own_pubkey.as_deref(),
+                    expected_peers,
+                    &presence,
+                    &tunnel_runtime,
+                    unix_timestamp(),
+                );
+                match relay_connection_action(
+                    app.auto_disconnect_relays_when_mesh_ready,
+                    relay_connected,
+                    mesh_ready,
+                ) {
+                    RelayConnectionAction::StayPausedForMesh => {
+                        reconnect_attempt = 0;
+                        reconnect_due = Instant::now();
+                        session_status = MESH_READY_RELAYS_PAUSED_STATUS.to_string();
+                        continue;
+                    }
+                    RelayConnectionAction::ReconnectWhenDue => {}
+                    RelayConnectionAction::KeepConnected | RelayConnectionAction::PauseForMesh => {
+                        continue;
+                    }
                 }
 
                 client.disconnect().await;
@@ -4112,23 +4345,29 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
+                let mesh_ready = should_pause_relays_for_mesh(
+                    &app,
+                    own_pubkey.as_deref(),
+                    expected_peers,
+                    &presence,
+                    &tunnel_runtime,
+                    unix_timestamp(),
+                );
                 if session_enabled
-                    && relay_connected
-                    && app.auto_disconnect_relays_when_mesh_ready
-                    && mesh_ready_for_tunnel_runtime(
-                        &app,
-                        own_pubkey.as_deref(),
-                        expected_peers,
-                        &presence,
-                        &tunnel_runtime,
-                        unix_timestamp(),
+                    && matches!(
+                        relay_connection_action(
+                            app.auto_disconnect_relays_when_mesh_ready,
+                            relay_connected,
+                            mesh_ready,
+                        ),
+                        RelayConnectionAction::PauseForMesh
                     )
                 {
                     client.disconnect().await;
                     relay_connected = false;
                     reconnect_attempt = 0;
                     reconnect_due = Instant::now();
-                    session_status = "Mesh ready (relays paused)".to_string();
+                    session_status = MESH_READY_RELAYS_PAUSED_STATUS.to_string();
                 }
                 if let Err(error) = write_daemon_peer_cache_if_changed(
                     DaemonPeerCacheWrite {
@@ -7403,10 +7642,11 @@ mod tests {
         pending_tunnel_heartbeat_ips, persisted_path_cache_timeout_secs,
         persisted_peer_cache_timeout_secs, planned_tunnel_peers, public_endpoint_for_listen_port,
         publish_error_requires_reconnect, read_daemon_peer_cache, record_successful_runtime_paths,
-        request_daemon_reload, request_daemon_stop, restore_daemon_peer_cache,
-        route_targets_for_tunnel_peers, route_targets_require_endpoint_bypass,
-        runtime_local_signal_endpoint, take_daemon_control_request, uninstall_cli,
-        utun_interface_candidates, windows_service_status_from_query_output, write_daemon_peer_cache,
+        relay_connection_action, request_daemon_reload, request_daemon_stop,
+        restore_daemon_peer_cache, route_targets_for_tunnel_peers,
+        route_targets_require_endpoint_bypass, runtime_local_signal_endpoint,
+        take_daemon_control_request, uninstall_cli, utun_interface_candidates,
+        windows_service_status_from_query_output, write_daemon_peer_cache,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -7414,11 +7654,11 @@ mod tests {
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use nostr_sdk::prelude::Keys;
     use nostr_vpn_core::crypto::generate_keypair;
     use nostr_vpn_core::paths::PeerPathBook;
     use nostr_vpn_core::presence::PeerPresenceBook;
     use nostr_vpn_core::signaling::SignalPayload;
-    use nostr_sdk::prelude::Keys;
 
     #[test]
     fn clap_binary_name_is_nvpn() {
@@ -7689,7 +7929,10 @@ mod tests {
             last_handshake_nsec: Some(0),
         };
 
-        assert_eq!(runtime_peer.last_handshake_at(1_700_000_000), Some(1_699_999_995));
+        assert_eq!(
+            runtime_peer.last_handshake_at(1_700_000_000),
+            Some(1_699_999_995)
+        );
     }
 
     #[test]
@@ -7924,9 +8167,15 @@ mod tests {
 
     #[test]
     fn route_targets_detect_when_endpoint_bypass_is_required() {
-        assert!(!route_targets_require_endpoint_bypass(&["10.44.0.2/32".to_string()]));
-        assert!(route_targets_require_endpoint_bypass(&["10.55.0.0/24".to_string()]));
-        assert!(route_targets_require_endpoint_bypass(&["0.0.0.0/0".to_string()]));
+        assert!(!route_targets_require_endpoint_bypass(&[
+            "10.44.0.2/32".to_string()
+        ]));
+        assert!(route_targets_require_endpoint_bypass(&[
+            "10.55.0.0/24".to_string()
+        ]));
+        assert!(route_targets_require_endpoint_bypass(&[
+            "0.0.0.0/0".to_string()
+        ]));
     }
 
     #[test]
@@ -8104,7 +8353,8 @@ mod tests {
         let mut config = AppConfig::generated();
         let exit_participant = Keys::generate().public_key().to_hex();
         let routed_participant = Keys::generate().public_key().to_hex();
-        config.networks[0].participants = vec![exit_participant.clone(), routed_participant.clone()];
+        config.networks[0].participants =
+            vec![exit_participant.clone(), routed_participant.clone()];
         config.exit_node = exit_participant.clone();
         config.ensure_defaults();
 
@@ -8290,6 +8540,26 @@ mod tests {
         let pending =
             pending_tunnel_heartbeat_ips(&config, None, &announcements, Some(&runtime_peers));
         assert!(pending.is_empty(), "handshaken peer should not be probed");
+    }
+
+    #[test]
+    fn relay_connection_action_pauses_when_mesh_is_ready() {
+        assert_eq!(
+            relay_connection_action(true, true, true),
+            super::RelayConnectionAction::PauseForMesh
+        );
+        assert_eq!(
+            relay_connection_action(true, false, true),
+            super::RelayConnectionAction::StayPausedForMesh
+        );
+        assert_eq!(
+            relay_connection_action(true, false, false),
+            super::RelayConnectionAction::ReconnectWhenDue
+        );
+        assert_eq!(
+            relay_connection_action(false, true, true),
+            super::RelayConnectionAction::KeepConnected
+        );
     }
 
     #[test]
@@ -8488,9 +8758,11 @@ mod tests {
         assert_eq!(selected[0].endpoint, "198.19.241.11:51820");
         assert_eq!(
             nat_punch_targets(&config, None, &announcements, 51820),
-            vec!["198.19.241.11:51820"
-                .parse()
-                .expect("same-subnet punch target")]
+            vec![
+                "198.19.241.11:51820"
+                    .parse()
+                    .expect("same-subnet punch target")
+            ]
         );
     }
 
