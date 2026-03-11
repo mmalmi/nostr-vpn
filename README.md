@@ -148,8 +148,8 @@ nvpn set --exit-node npub1...peer
 This publishes route capability in peer announcements, `status --json`, and the GUI.
 
 On Linux, selecting an exit node installs `0.0.0.0/0` through that peer, preserves direct
-host routes for relays and the peer endpoint, and enables forwarding/NAT on the advertising
-peer so internet egress works through the mesh.
+host routes for relays and the peer endpoint, and enables IPv4 forwarding/NAT plus IPv6
+forwarding on the advertising peer so internet egress works through the mesh.
 
 Clear the selection with:
 

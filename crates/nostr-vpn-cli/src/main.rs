@@ -1620,9 +1620,11 @@ struct CliTunnelRuntime {
 #[cfg(target_os = "linux")]
 #[derive(Debug, Clone, Default)]
 struct LinuxExitNodeRuntime {
-    outbound_iface: Option<String>,
-    tunnel_source_cidr: Option<String>,
-    ip_forward_was_enabled: Option<bool>,
+    ipv4_outbound_iface: Option<String>,
+    ipv6_outbound_iface: Option<String>,
+    ipv4_tunnel_source_cidr: Option<String>,
+    ipv4_forward_was_enabled: Option<bool>,
+    ipv6_forward_was_enabled: Option<bool>,
 }
 
 impl CliTunnelRuntime {
@@ -1985,169 +1987,211 @@ impl CliTunnelRuntime {
 
     #[cfg(target_os = "linux")]
     fn reconcile_linux_exit_node_forwarding(&mut self, app: &AppConfig) {
-        if !app
-            .effective_advertised_routes()
-            .iter()
-            .any(|route| route == "0.0.0.0/0")
-        {
+        let route_families =
+            linux_exit_node_default_route_families(&app.effective_advertised_routes());
+        if !route_families.ipv4 && !route_families.ipv6 {
             self.reconcile_linux_exit_node_forwarding_cleanup();
             return;
         }
 
-        let Some(tunnel_source_cidr) = linux_exit_node_source_cidr(&app.node.tunnel_ip) else {
-            eprintln!("exit-node: invalid IPv4 tunnel address '{}'", app.node.tunnel_ip);
-            self.reconcile_linux_exit_node_forwarding_cleanup();
-            return;
-        };
-
-        let outbound_iface = match linux_default_route() {
-            Ok(route) => route.dev,
-            Err(error) => {
-                eprintln!("exit-node: failed to resolve default IPv4 route device: {error}");
+        let ipv4_tunnel_source_cidr = if route_families.ipv4 {
+            let Some(tunnel_source_cidr) = linux_exit_node_source_cidr(&app.node.tunnel_ip) else {
+                eprintln!(
+                    "exit-node: invalid IPv4 tunnel address '{}'",
+                    app.node.tunnel_ip
+                );
                 self.reconcile_linux_exit_node_forwarding_cleanup();
                 return;
-            }
+            };
+            Some(tunnel_source_cidr)
+        } else {
+            None
         };
 
-        let already_configured = self.exit_node_runtime.outbound_iface.as_deref()
-            == Some(outbound_iface.as_str())
-            && self.exit_node_runtime.tunnel_source_cidr.as_deref()
-                == Some(tunnel_source_cidr.as_str());
+        let ipv4_outbound_iface = if route_families.ipv4 {
+            match linux_default_route() {
+                Ok(route) => Some(route.dev),
+                Err(error) => {
+                    eprintln!("exit-node: failed to resolve default IPv4 route device: {error}");
+                    self.reconcile_linux_exit_node_forwarding_cleanup();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        let ipv6_outbound_iface = if route_families.ipv6 {
+            match linux_default_ipv6_route() {
+                Ok(route) => Some(route.dev),
+                Err(error) => {
+                    eprintln!("exit-node: failed to resolve default IPv6 route device: {error}");
+                    self.reconcile_linux_exit_node_forwarding_cleanup();
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+
+        let already_configured = self.exit_node_runtime.ipv4_outbound_iface == ipv4_outbound_iface
+            && self.exit_node_runtime.ipv6_outbound_iface == ipv6_outbound_iface
+            && self.exit_node_runtime.ipv4_tunnel_source_cidr == ipv4_tunnel_source_cidr;
         if already_configured {
             return;
         }
 
         self.reconcile_linux_exit_node_forwarding_cleanup();
 
-        match read_linux_ip_forward() {
-            Ok(previous) => {
-                self.exit_node_runtime.ip_forward_was_enabled = Some(previous);
-                if !previous && let Err(error) = write_linux_ip_forward(true) {
-                    eprintln!("exit-node: failed to enable IPv4 forwarding: {error}");
+        self.exit_node_runtime.ipv4_outbound_iface = ipv4_outbound_iface.clone();
+        self.exit_node_runtime.ipv6_outbound_iface = ipv6_outbound_iface.clone();
+        self.exit_node_runtime.ipv4_tunnel_source_cidr = ipv4_tunnel_source_cidr.clone();
+
+        if route_families.ipv4 {
+            match read_linux_ip_forward(LinuxExitNodeIpFamily::V4) {
+                Ok(previous) => {
+                    self.exit_node_runtime.ipv4_forward_was_enabled = Some(previous);
+                    if !previous
+                        && let Err(error) = write_linux_ip_forward(LinuxExitNodeIpFamily::V4, true)
+                    {
+                        eprintln!("exit-node: failed to enable IPv4 forwarding: {error}");
+                        self.reconcile_linux_exit_node_forwarding_cleanup();
+                        return;
+                    }
+                }
+                Err(error) => {
+                    eprintln!("exit-node: failed to read IPv4 forwarding state: {error}");
                     self.reconcile_linux_exit_node_forwarding_cleanup();
                     return;
                 }
             }
-            Err(error) => {
-                eprintln!("exit-node: failed to read IPv4 forwarding state: {error}");
+        }
+
+        if route_families.ipv6 {
+            match read_linux_ip_forward(LinuxExitNodeIpFamily::V6) {
+                Ok(previous) => {
+                    self.exit_node_runtime.ipv6_forward_was_enabled = Some(previous);
+                    if !previous
+                        && let Err(error) = write_linux_ip_forward(LinuxExitNodeIpFamily::V6, true)
+                    {
+                        eprintln!("exit-node: failed to enable IPv6 forwarding: {error}");
+                        self.reconcile_linux_exit_node_forwarding_cleanup();
+                        return;
+                    }
+                }
+                Err(error) => {
+                    eprintln!("exit-node: failed to read IPv6 forwarding state: {error}");
+                    self.reconcile_linux_exit_node_forwarding_cleanup();
+                    return;
+                }
+            }
+        }
+
+        if let (Some(outbound_iface), Some(tunnel_source_cidr)) = (
+            ipv4_outbound_iface.as_deref(),
+            ipv4_tunnel_source_cidr.as_deref(),
+        ) {
+            let forward_in =
+                linux_exit_node_forward_in_rule(&self.iface, LinuxExitNodeIpFamily::V4);
+            let forward_out =
+                linux_exit_node_forward_out_rule(&self.iface, LinuxExitNodeIpFamily::V4);
+            let masquerade =
+                linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
+
+            if let Err(error) =
+                linux_iptables_ensure_rule(LinuxExitNodeIpFamily::V4, None, &forward_in)
+                    .and_then(|()| {
+                        linux_iptables_ensure_rule(LinuxExitNodeIpFamily::V4, None, &forward_out)
+                    })
+                    .and_then(|()| {
+                        linux_iptables_ensure_rule(
+                            LinuxExitNodeIpFamily::V4,
+                            Some("nat"),
+                            &masquerade,
+                        )
+                    })
+            {
+                eprintln!("exit-node: failed to install IPv4 firewall rules: {error}");
+                self.reconcile_linux_exit_node_forwarding_cleanup();
                 return;
             }
         }
 
-        let forward_in = [
-            "FORWARD",
-            "-i",
-            self.iface.as_str(),
-            "-m",
-            "comment",
-            "--comment",
-            "nvpn-exit-forward-in",
-            "-j",
-            "ACCEPT",
-        ];
-        let forward_out = [
-            "FORWARD",
-            "-o",
-            self.iface.as_str(),
-            "-m",
-            "conntrack",
-            "--ctstate",
-            "RELATED,ESTABLISHED",
-            "-m",
-            "comment",
-            "--comment",
-            "nvpn-exit-forward-out",
-            "-j",
-            "ACCEPT",
-        ];
-        let masquerade = [
-            "POSTROUTING",
-            "-o",
-            outbound_iface.as_str(),
-            "-s",
-            tunnel_source_cidr.as_str(),
-            "-m",
-            "comment",
-            "--comment",
-            "nvpn-exit-masq",
-            "-j",
-            "MASQUERADE",
-        ];
+        if route_families.ipv6 {
+            let forward_in =
+                linux_exit_node_forward_in_rule(&self.iface, LinuxExitNodeIpFamily::V6);
+            let forward_out =
+                linux_exit_node_forward_out_rule(&self.iface, LinuxExitNodeIpFamily::V6);
 
-        if let Err(error) = linux_iptables_ensure_rule(None, &forward_in)
-            .and_then(|()| linux_iptables_ensure_rule(None, &forward_out))
-            .and_then(|()| linux_iptables_ensure_rule(Some("nat"), &masquerade))
-        {
-            eprintln!("exit-node: failed to install iptables rules: {error}");
-            self.reconcile_linux_exit_node_forwarding_cleanup();
-            return;
+            if let Err(error) =
+                linux_iptables_ensure_rule(LinuxExitNodeIpFamily::V6, None, &forward_in).and_then(
+                    |()| linux_iptables_ensure_rule(LinuxExitNodeIpFamily::V6, None, &forward_out),
+                )
+            {
+                eprintln!("exit-node: failed to install IPv6 firewall rules: {error}");
+                self.reconcile_linux_exit_node_forwarding_cleanup();
+                return;
+            }
         }
-
-        self.exit_node_runtime.outbound_iface = Some(outbound_iface);
-        self.exit_node_runtime.tunnel_source_cidr = Some(tunnel_source_cidr);
     }
 
     #[cfg(target_os = "linux")]
     fn reconcile_linux_exit_node_forwarding_cleanup(&mut self) {
         if let (Some(outbound_iface), Some(tunnel_source_cidr)) = (
-            self.exit_node_runtime.outbound_iface.as_deref(),
-            self.exit_node_runtime.tunnel_source_cidr.as_deref(),
+            self.exit_node_runtime.ipv4_outbound_iface.as_deref(),
+            self.exit_node_runtime.ipv4_tunnel_source_cidr.as_deref(),
         ) {
-            let forward_in = [
-                "FORWARD",
-                "-i",
-                self.iface.as_str(),
-                "-m",
-                "comment",
-                "--comment",
-                "nvpn-exit-forward-in",
-                "-j",
-                "ACCEPT",
-            ];
-            let forward_out = [
-                "FORWARD",
-                "-o",
-                self.iface.as_str(),
-                "-m",
-                "conntrack",
-                "--ctstate",
-                "RELATED,ESTABLISHED",
-                "-m",
-                "comment",
-                "--comment",
-                "nvpn-exit-forward-out",
-                "-j",
-                "ACCEPT",
-            ];
-            let masquerade = [
-                "POSTROUTING",
-                "-o",
-                outbound_iface,
-                "-s",
-                tunnel_source_cidr,
-                "-m",
-                "comment",
-                "--comment",
-                "nvpn-exit-masq",
-                "-j",
-                "MASQUERADE",
-            ];
+            let forward_in =
+                linux_exit_node_forward_in_rule(&self.iface, LinuxExitNodeIpFamily::V4);
+            let forward_out =
+                linux_exit_node_forward_out_rule(&self.iface, LinuxExitNodeIpFamily::V4);
+            let masquerade =
+                linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
 
-            if let Err(error) = linux_iptables_delete_rule(Some("nat"), &masquerade) {
+            if let Err(error) =
+                linux_iptables_delete_rule(LinuxExitNodeIpFamily::V4, Some("nat"), &masquerade)
+            {
                 eprintln!("exit-node: failed to remove masquerade rule: {error}");
             }
-            if let Err(error) = linux_iptables_delete_rule(None, &forward_out) {
+            if let Err(error) =
+                linux_iptables_delete_rule(LinuxExitNodeIpFamily::V4, None, &forward_out)
+            {
                 eprintln!("exit-node: failed to remove forward-out rule: {error}");
             }
-            if let Err(error) = linux_iptables_delete_rule(None, &forward_in) {
+            if let Err(error) =
+                linux_iptables_delete_rule(LinuxExitNodeIpFamily::V4, None, &forward_in)
+            {
                 eprintln!("exit-node: failed to remove forward-in rule: {error}");
             }
         }
 
-        if self.exit_node_runtime.ip_forward_was_enabled == Some(false)
-            && let Err(error) = write_linux_ip_forward(false)
+        if self.exit_node_runtime.ipv6_outbound_iface.is_some() {
+            let forward_in =
+                linux_exit_node_forward_in_rule(&self.iface, LinuxExitNodeIpFamily::V6);
+            let forward_out =
+                linux_exit_node_forward_out_rule(&self.iface, LinuxExitNodeIpFamily::V6);
+
+            if let Err(error) =
+                linux_iptables_delete_rule(LinuxExitNodeIpFamily::V6, None, &forward_out)
+            {
+                eprintln!("exit-node: failed to remove IPv6 forward-out rule: {error}");
+            }
+            if let Err(error) =
+                linux_iptables_delete_rule(LinuxExitNodeIpFamily::V6, None, &forward_in)
+            {
+                eprintln!("exit-node: failed to remove IPv6 forward-in rule: {error}");
+            }
+        }
+
+        if self.exit_node_runtime.ipv4_forward_was_enabled == Some(false)
+            && let Err(error) = write_linux_ip_forward(LinuxExitNodeIpFamily::V4, false)
         {
             eprintln!("exit-node: failed to restore IPv4 forwarding state: {error}");
+        }
+        if self.exit_node_runtime.ipv6_forward_was_enabled == Some(false)
+            && let Err(error) = write_linux_ip_forward(LinuxExitNodeIpFamily::V6, false)
+        {
+            eprintln!("exit-node: failed to restore IPv6 forwarding state: {error}");
         }
 
         self.exit_node_runtime = LinuxExitNodeRuntime::default();
@@ -6696,15 +6740,28 @@ fn command_stdout_checked(command: &mut ProcessCommand) -> Result<String> {
 
 #[cfg(target_os = "linux")]
 fn linux_default_route() -> Result<LinuxDefaultRouteSpec> {
+    linux_default_route_for_family("-4", "IPv4")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_default_ipv6_route() -> Result<LinuxDefaultRouteSpec> {
+    linux_default_route_for_family("-6", "IPv6")
+}
+
+#[cfg(target_os = "linux")]
+fn linux_default_route_for_family(
+    family_flag: &str,
+    family_label: &str,
+) -> Result<LinuxDefaultRouteSpec> {
     let output = command_stdout_checked(
         ProcessCommand::new("ip")
-            .arg("-4")
+            .arg(family_flag)
             .arg("route")
             .arg("show")
             .arg("default"),
     )?;
     linux_default_route_from_output(&output)
-        .ok_or_else(|| anyhow!("failed to resolve default IPv4 route"))
+        .ok_or_else(|| anyhow!("failed to resolve default {family_label} route"))
 }
 
 #[cfg(target_os = "linux")]
@@ -6884,20 +6941,27 @@ fn delete_linux_endpoint_bypass_route(target: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn read_linux_ip_forward() -> Result<bool> {
-    Ok(fs::read_to_string("/proc/sys/net/ipv4/ip_forward")
-        .context("failed to read /proc/sys/net/ipv4/ip_forward")?
+fn read_linux_ip_forward(family: LinuxExitNodeIpFamily) -> Result<bool> {
+    let path = linux_ip_forward_path(family);
+    Ok(fs::read_to_string(path)
+        .with_context(|| format!("failed to read {path}"))?
         .trim()
         == "1")
 }
 
 #[cfg(target_os = "linux")]
-fn write_linux_ip_forward(enabled: bool) -> Result<()> {
-    fs::write(
-        "/proc/sys/net/ipv4/ip_forward",
-        if enabled { "1" } else { "0" },
-    )
-    .context("failed to write /proc/sys/net/ipv4/ip_forward")
+fn write_linux_ip_forward(family: LinuxExitNodeIpFamily, enabled: bool) -> Result<()> {
+    let path = linux_ip_forward_path(family);
+    fs::write(path, if enabled { "1" } else { "0" })
+        .with_context(|| format!("failed to write {path}"))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_ip_forward_path(family: LinuxExitNodeIpFamily) -> &'static str {
+    match family {
+        LinuxExitNodeIpFamily::V4 => "/proc/sys/net/ipv4/ip_forward",
+        LinuxExitNodeIpFamily::V6 => "/proc/sys/net/ipv6/conf/all/forwarding",
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -6907,9 +6971,105 @@ fn linux_exit_node_source_cidr(tunnel_ip: &str) -> Option<String> {
     Some(format!("{}.{}.{}.0/24", octets[0], octets[1], octets[2]))
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinuxExitNodeIpFamily {
+    V4,
+    V6,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LinuxExitNodeDefaultRouteFamilies {
+    ipv4: bool,
+    ipv6: bool,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_exit_node_default_route_families(routes: &[String]) -> LinuxExitNodeDefaultRouteFamilies {
+    LinuxExitNodeDefaultRouteFamilies {
+        ipv4: routes.iter().any(|route| route == "0.0.0.0/0"),
+        ipv6: routes.iter().any(|route| route == "::/0"),
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_exit_node_firewall_binary(family: LinuxExitNodeIpFamily) -> &'static str {
+    match family {
+        LinuxExitNodeIpFamily::V4 => "iptables",
+        LinuxExitNodeIpFamily::V6 => "ip6tables",
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_exit_node_forward_in_rule(iface: &str, family: LinuxExitNodeIpFamily) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-i".to_string(),
+        iface.to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        match family {
+            LinuxExitNodeIpFamily::V4 => "nvpn-exit-forward-in",
+            LinuxExitNodeIpFamily::V6 => "nvpn-exit6-forward-in",
+        }
+        .to_string(),
+        "-j".to_string(),
+        "ACCEPT".to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_exit_node_forward_out_rule(iface: &str, family: LinuxExitNodeIpFamily) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-o".to_string(),
+        iface.to_string(),
+        "-m".to_string(),
+        "conntrack".to_string(),
+        "--ctstate".to_string(),
+        "RELATED,ESTABLISHED".to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        match family {
+            LinuxExitNodeIpFamily::V4 => "nvpn-exit-forward-out",
+            LinuxExitNodeIpFamily::V6 => "nvpn-exit6-forward-out",
+        }
+        .to_string(),
+        "-j".to_string(),
+        "ACCEPT".to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_exit_node_ipv4_masquerade_rule(
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Vec<String> {
+    vec![
+        "POSTROUTING".to_string(),
+        "-o".to_string(),
+        outbound_iface.to_string(),
+        "-s".to_string(),
+        tunnel_source_cidr.to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        "nvpn-exit-masq".to_string(),
+        "-j".to_string(),
+        "MASQUERADE".to_string(),
+    ]
+}
+
 #[cfg(target_os = "linux")]
-fn linux_iptables_rule_exists(table: Option<&str>, rule: &[&str]) -> Result<bool> {
-    let mut command = ProcessCommand::new("iptables");
+fn linux_iptables_rule_exists(
+    family: LinuxExitNodeIpFamily,
+    table: Option<&str>,
+    rule: &[String],
+) -> Result<bool> {
+    let mut command = ProcessCommand::new(linux_exit_node_firewall_binary(family));
     if let Some(table) = table {
         command.arg("-t").arg(table);
     }
@@ -6939,12 +7099,16 @@ fn linux_iptables_rule_exists(table: Option<&str>, rule: &[&str]) -> Result<bool
 }
 
 #[cfg(target_os = "linux")]
-fn linux_iptables_ensure_rule(table: Option<&str>, rule: &[&str]) -> Result<()> {
-    if linux_iptables_rule_exists(table, rule)? {
+fn linux_iptables_ensure_rule(
+    family: LinuxExitNodeIpFamily,
+    table: Option<&str>,
+    rule: &[String],
+) -> Result<()> {
+    if linux_iptables_rule_exists(family, table, rule)? {
         return Ok(());
     }
 
-    let mut command = ProcessCommand::new("iptables");
+    let mut command = ProcessCommand::new(linux_exit_node_firewall_binary(family));
     if let Some(table) = table {
         command.arg("-t").arg(table);
     }
@@ -6956,12 +7120,16 @@ fn linux_iptables_ensure_rule(table: Option<&str>, rule: &[&str]) -> Result<()> 
 }
 
 #[cfg(target_os = "linux")]
-fn linux_iptables_delete_rule(table: Option<&str>, rule: &[&str]) -> Result<()> {
-    if !linux_iptables_rule_exists(table, rule)? {
+fn linux_iptables_delete_rule(
+    family: LinuxExitNodeIpFamily,
+    table: Option<&str>,
+    rule: &[String],
+) -> Result<()> {
+    if !linux_iptables_rule_exists(family, table, rule)? {
         return Ok(());
     }
 
-    let mut command = ProcessCommand::new("iptables");
+    let mut command = ProcessCommand::new(linux_exit_node_firewall_binary(family));
     if let Some(table) = table {
         command.arg("-t").arg(table);
     }
@@ -7218,26 +7386,27 @@ mod tests {
 
     use super::{
         AppConfig, Cli, DaemonPeerCacheEntry, DaemonPeerCacheRestore, DaemonPeerCacheState,
-        DiscoveredPublicSignalEndpoint, InstallCliArgs, OutboundAnnounceBook, PeerAnnouncement,
-        UninstallCliArgs, WireGuardPeerStatus, announcement_fingerprint, build_peer_announcement,
-        build_runtime_magic_dns_records, can_reuse_active_listen_port,
-        connected_peer_count_for_runtime, daemon_control_file_path, daemon_peer_cache_file_path,
-        daemon_pids_from_ps_output, daemon_reconnect_backoff_delay, default_cli_install_path,
-        endpoint_with_listen_port, install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
-        kill_error_requires_control_fallback, linux_default_route_device_from_output,
+        DiscoveredPublicSignalEndpoint, InstallCliArgs, LinuxExitNodeIpFamily,
+        OutboundAnnounceBook, PeerAnnouncement, TunnelPeer, UninstallCliArgs, WireGuardPeerStatus,
+        announcement_fingerprint, build_peer_announcement, build_runtime_magic_dns_records,
+        can_reuse_active_listen_port, connected_peer_count_for_runtime, daemon_control_file_path,
+        daemon_peer_cache_file_path, daemon_pids_from_ps_output, daemon_reconnect_backoff_delay,
+        default_cli_install_path, endpoint_with_listen_port, install_cli,
+        is_uapi_addr_in_use_error, key_b64_to_hex, kill_error_requires_control_fallback,
+        linux_default_route_device_from_output, linux_exit_node_default_route_families,
+        linux_exit_node_firewall_binary, linux_exit_node_forward_in_rule,
+        linux_exit_node_forward_out_rule, linux_exit_node_ipv4_masquerade_rule,
         linux_route_get_spec_from_output, linux_service_status_from_show_output,
         local_interface_address_for_tunnel, macos_service_disabled_from_print_disabled_output,
         nat_punch_targets, parse_exit_node_arg, parse_nonzero_pid, peer_has_recent_handshake,
         peer_path_cache_timeout_secs, peer_runtime_lookup, peer_signal_timeout_secs,
         pending_tunnel_heartbeat_ips, persisted_path_cache_timeout_secs,
-        persisted_peer_cache_timeout_secs, planned_tunnel_peers,
-        public_endpoint_for_listen_port, publish_error_requires_reconnect,
-        read_daemon_peer_cache, record_successful_runtime_paths, request_daemon_reload,
-        request_daemon_stop, restore_daemon_peer_cache, route_targets_for_tunnel_peers,
-        route_targets_require_endpoint_bypass,
+        persisted_peer_cache_timeout_secs, planned_tunnel_peers, public_endpoint_for_listen_port,
+        publish_error_requires_reconnect, read_daemon_peer_cache, record_successful_runtime_paths,
+        request_daemon_reload, request_daemon_stop, restore_daemon_peer_cache,
+        route_targets_for_tunnel_peers, route_targets_require_endpoint_bypass,
         runtime_local_signal_endpoint, take_daemon_control_request, uninstall_cli,
-        utun_interface_candidates, windows_service_status_from_query_output,
-        write_daemon_peer_cache, TunnelPeer,
+        utun_interface_candidates, windows_service_status_from_query_output, write_daemon_peer_cache,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -7758,6 +7927,81 @@ mod tests {
         assert!(!route_targets_require_endpoint_bypass(&["10.44.0.2/32".to_string()]));
         assert!(route_targets_require_endpoint_bypass(&["10.55.0.0/24".to_string()]));
         assert!(route_targets_require_endpoint_bypass(&["0.0.0.0/0".to_string()]));
+    }
+
+    #[test]
+    fn linux_exit_node_default_route_families_detect_ipv4_and_ipv6_defaults() {
+        let ipv6_only = linux_exit_node_default_route_families(&["::/0".to_string()]);
+        assert!(!ipv6_only.ipv4);
+        assert!(ipv6_only.ipv6);
+
+        let dual_stack = linux_exit_node_default_route_families(&[
+            "10.55.0.0/24".to_string(),
+            "0.0.0.0/0".to_string(),
+            "::/0".to_string(),
+        ]);
+        assert!(dual_stack.ipv4);
+        assert!(dual_stack.ipv6);
+    }
+
+    #[test]
+    fn linux_exit_node_ipv6_forward_rules_use_ip6tables_shape() {
+        assert_eq!(
+            linux_exit_node_firewall_binary(LinuxExitNodeIpFamily::V4),
+            "iptables"
+        );
+        assert_eq!(
+            linux_exit_node_firewall_binary(LinuxExitNodeIpFamily::V6),
+            "ip6tables"
+        );
+        assert_eq!(
+            linux_exit_node_ipv4_masquerade_rule("eth0", "10.44.0.0/24"),
+            vec![
+                "POSTROUTING".to_string(),
+                "-o".to_string(),
+                "eth0".to_string(),
+                "-s".to_string(),
+                "10.44.0.0/24".to_string(),
+                "-m".to_string(),
+                "comment".to_string(),
+                "--comment".to_string(),
+                "nvpn-exit-masq".to_string(),
+                "-j".to_string(),
+                "MASQUERADE".to_string(),
+            ]
+        );
+        assert_eq!(
+            linux_exit_node_forward_in_rule("utun100", LinuxExitNodeIpFamily::V6),
+            vec![
+                "FORWARD".to_string(),
+                "-i".to_string(),
+                "utun100".to_string(),
+                "-m".to_string(),
+                "comment".to_string(),
+                "--comment".to_string(),
+                "nvpn-exit6-forward-in".to_string(),
+                "-j".to_string(),
+                "ACCEPT".to_string(),
+            ]
+        );
+        assert_eq!(
+            linux_exit_node_forward_out_rule("utun100", LinuxExitNodeIpFamily::V6),
+            vec![
+                "FORWARD".to_string(),
+                "-o".to_string(),
+                "utun100".to_string(),
+                "-m".to_string(),
+                "conntrack".to_string(),
+                "--ctstate".to_string(),
+                "RELATED,ESTABLISHED".to_string(),
+                "-m".to_string(),
+                "comment".to_string(),
+                "--comment".to_string(),
+                "nvpn-exit6-forward-out".to_string(),
+                "-j".to_string(),
+                "ACCEPT".to_string(),
+            ]
+        );
     }
 
     #[test]
