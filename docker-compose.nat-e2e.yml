@@ -32,10 +32,18 @@ services:
       - -lc
       - |
         set -e
+        public_iface=""
+        private_iface=""
+        for iface in eth0 eth1 eth2; do
+          ip -o -4 addr show dev "$$iface" | grep -q '10.254.241.10/24' && public_iface="$$iface"
+          ip -o -4 addr show dev "$$iface" | grep -q '198.19.241.2/24' && private_iface="$$iface"
+        done
+        test -n "$$public_iface"
+        test -n "$$private_iface"
         iptables -P FORWARD ACCEPT
-        iptables -t nat -A PREROUTING -i eth0 -p udp --dport 51820 -j DNAT --to-destination 198.19.241.3:51820
-        iptables -t nat -A POSTROUTING -s 198.19.241.0/24 -p udp --sport 51820 -j SNAT --to-source 10.254.241.10:51820
-        iptables -t nat -A POSTROUTING -s 198.19.241.0/24 -j MASQUERADE
+        iptables -t nat -A PREROUTING -i "$$public_iface" -p udp --dport 51820 -j DNAT --to-destination 198.19.241.3:51820
+        iptables -t nat -A POSTROUTING -o "$$public_iface" -s 198.19.241.0/24 -p udp --sport 51820 -j SNAT --to-source 10.254.241.10:51820
+        iptables -t nat -A POSTROUTING -o "$$public_iface" -s 198.19.241.0/24 -j MASQUERADE
         sleep infinity
     networks:
       private-a:
@@ -58,10 +66,18 @@ services:
       - -lc
       - |
         set -e
+        public_iface=""
+        private_iface=""
+        for iface in eth0 eth1 eth2; do
+          ip -o -4 addr show dev "$$iface" | grep -q '10.254.241.11/24' && public_iface="$$iface"
+          ip -o -4 addr show dev "$$iface" | grep -q '198.19.242.2/24' && private_iface="$$iface"
+        done
+        test -n "$$public_iface"
+        test -n "$$private_iface"
         iptables -P FORWARD ACCEPT
-        iptables -t nat -A PREROUTING -i eth0 -p udp --dport 51820 -j DNAT --to-destination 198.19.242.3:51820
-        iptables -t nat -A POSTROUTING -s 198.19.242.0/24 -p udp --sport 51820 -j SNAT --to-source 10.254.241.11:51820
-        iptables -t nat -A POSTROUTING -s 198.19.242.0/24 -j MASQUERADE
+        iptables -t nat -A PREROUTING -i "$$public_iface" -p udp --dport 51820 -j DNAT --to-destination 198.19.242.3:51820
+        iptables -t nat -A POSTROUTING -o "$$public_iface" -s 198.19.242.0/24 -p udp --sport 51820 -j SNAT --to-source 10.254.241.11:51820
+        iptables -t nat -A POSTROUTING -o "$$public_iface" -s 198.19.242.0/24 -j MASQUERADE
         sleep infinity
     networks:
       private-b:

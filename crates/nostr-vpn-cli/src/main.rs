@@ -1445,12 +1445,20 @@ impl WireGuardPeerStatus {
         self.last_handshake_sec.unwrap_or(0) > 0 || self.last_handshake_nsec.unwrap_or(0) > 0
     }
 
-    fn last_handshake_epoch(&self) -> Option<u64> {
-        let sec = self.last_handshake_sec?;
-        if sec < 946_684_800 {
+    fn last_handshake_age(&self) -> Option<Duration> {
+        if !self.has_handshake() {
             return None;
         }
-        Some(sec)
+
+        Some(Duration::new(
+            self.last_handshake_sec.unwrap_or(0),
+            self.last_handshake_nsec.unwrap_or(0).min(u32::MAX as u64) as u32,
+        ))
+    }
+
+    fn last_handshake_at(&self, now: u64) -> Option<u64> {
+        self.last_handshake_age()
+            .map(|age| now.saturating_sub(age.as_secs()))
     }
 }
 
@@ -1617,6 +1625,9 @@ impl CliTunnelRuntime {
                 &candidate,
                 DeviceConfig {
                     n_threads: 2,
+                    #[cfg(target_os = "linux")]
+                    use_connected_socket: false,
+                    #[cfg(not(target_os = "linux"))]
                     use_connected_socket: true,
                     #[cfg(target_os = "linux")]
                     use_multi_queue: false,
@@ -1693,6 +1704,10 @@ impl CliTunnelRuntime {
             .iter()
             .map(|planned| planned.peer.clone())
             .collect::<Vec<_>>();
+        if peers.is_empty() {
+            self.stop();
+            return Ok(());
+        }
 
         let local_address = local_interface_address_for_tunnel(&app.node.tunnel_ip);
         let fingerprint = tunnel_fingerprint(
@@ -1799,11 +1814,8 @@ impl CliTunnelRuntime {
             )?;
         }
 
-        apply_local_interface_network(
-            &self.iface,
-            &local_address,
-            &[String::from("10.44.0.0/24")],
-        )?;
+        let route_targets = route_targets_for_tunnel_peers(&peers);
+        apply_local_interface_network(&self.iface, &local_address, &route_targets)?;
 
         let applied_fingerprint = tunnel_fingerprint(
             &self.iface,
@@ -2096,7 +2108,7 @@ fn record_successful_runtime_paths(
             continue;
         };
 
-        let success_at = runtime_peer.last_handshake_epoch().unwrap_or(now);
+        let success_at = runtime_peer.last_handshake_at(now).unwrap_or(now);
         changed |= path_book.note_success(participant.clone(), endpoint, success_at);
     }
 
@@ -2113,10 +2125,10 @@ fn peer_runtime_lookup<'a>(
     runtime_peers.and_then(|peers| peers.get(&peer_pubkey_hex))
 }
 
-fn peer_has_recent_handshake(runtime_peer: &WireGuardPeerStatus, now: u64) -> bool {
+fn peer_has_recent_handshake(runtime_peer: &WireGuardPeerStatus) -> bool {
     runtime_peer
-        .last_handshake_epoch()
-        .is_some_and(|last_handshake| now.saturating_sub(last_handshake) <= PEER_ONLINE_GRACE_SECS)
+        .last_handshake_age()
+        .is_some_and(|age| age <= Duration::from_secs(PEER_ONLINE_GRACE_SECS))
 }
 
 fn connected_peer_count_for_runtime(
@@ -2124,7 +2136,7 @@ fn connected_peer_count_for_runtime(
     own_pubkey: Option<&str>,
     presence: &PeerPresenceBook,
     runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
-    now: u64,
+    _now: u64,
 ) -> usize {
     app.participant_pubkeys_hex()
         .iter()
@@ -2132,7 +2144,7 @@ fn connected_peer_count_for_runtime(
         .filter_map(|participant| presence.announcement_for(participant))
         .filter(|announcement| {
             peer_runtime_lookup(announcement, runtime_peers)
-                .is_some_and(|runtime_peer| peer_has_recent_handshake(runtime_peer, now))
+                .is_some_and(peer_has_recent_handshake)
         })
         .count()
 }
@@ -2179,7 +2191,7 @@ fn build_daemon_peer_cache_state(
         .iter()
         .map(|(participant, announcement)| {
             let handshake_at = peer_runtime_lookup(announcement, runtime_peers.as_ref())
-                .and_then(WireGuardPeerStatus::last_handshake_epoch);
+                .and_then(|peer| peer.last_handshake_at(now));
             let cached_at = presence
                 .last_seen_at(participant)
                 .unwrap_or(announcement.timestamp)
@@ -2412,6 +2424,14 @@ fn planned_tunnel_peers(
                 PEER_PATH_RETRY_AFTER_SECS,
             )
             .unwrap_or_else(|| select_peer_endpoint(announcement, own_local_endpoint));
+        if peer_endpoint_requires_public_signal(
+            app,
+            announcement,
+            &selected_endpoint,
+            own_local_endpoint,
+        ) {
+            continue;
+        }
 
         peers.push(PlannedTunnelPeer {
             participant: participant.clone(),
@@ -2431,6 +2451,83 @@ fn runtime_has_handshake(tunnel_runtime: &CliTunnelRuntime) -> bool {
         .is_some_and(|peers| peers.values().any(WireGuardPeerStatus::has_handshake))
 }
 
+fn ipv4_is_local_only(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    ip.is_private()
+        || ip.is_link_local()
+        || ip.is_loopback()
+        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        || (octets[0] == 198 && matches!(octets[1], 18 | 19))
+}
+
+fn endpoint_host_ip(endpoint: &str) -> Option<IpAddr> {
+    let host = endpoint
+        .rsplit_once(':')
+        .map_or(endpoint, |(host, _)| host)
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    host.parse::<IpAddr>().ok()
+}
+
+fn endpoint_is_local_only(endpoint: &str) -> bool {
+    match endpoint_host_ip(endpoint) {
+        Some(IpAddr::V4(ip)) => ipv4_is_local_only(ip),
+        Some(IpAddr::V6(ip)) => {
+            ip.is_loopback() || ip.is_unicast_link_local() || ip.is_unique_local()
+        }
+        None => endpoint.eq_ignore_ascii_case("localhost"),
+    }
+}
+
+fn endpoints_share_local_only_ipv4_subnet(left: &str, right: &str) -> bool {
+    let Ok(left_addr) = left.parse::<SocketAddr>() else {
+        return false;
+    };
+    let Ok(right_addr) = right.parse::<SocketAddr>() else {
+        return false;
+    };
+
+    let (SocketAddr::V4(left_v4), SocketAddr::V4(right_v4)) = (left_addr, right_addr) else {
+        return false;
+    };
+    let left_ip = *left_v4.ip();
+    let right_ip = *right_v4.ip();
+
+    ipv4_is_local_only(left_ip)
+        && ipv4_is_local_only(right_ip)
+        && left_ip.octets()[0..3] == right_ip.octets()[0..3]
+}
+
+fn peer_endpoint_requires_public_signal(
+    app: &AppConfig,
+    announcement: &PeerAnnouncement,
+    selected_endpoint: &str,
+    own_local_endpoint: Option<&str>,
+) -> bool {
+    if !app.nat.enabled {
+        return false;
+    }
+
+    if announcement
+        .public_endpoint
+        .as_deref()
+        .is_some_and(|endpoint| !endpoint.trim().is_empty())
+    {
+        return false;
+    }
+
+    if announcement.local_endpoint.as_deref().is_some_and(|local| {
+        local == selected_endpoint
+            && own_local_endpoint
+                .is_some_and(|own| endpoints_share_local_only_ipv4_subnet(local, own))
+    }) {
+        return false;
+    }
+
+    endpoint_is_local_only(selected_endpoint)
+}
+
 fn nat_punch_targets(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -2444,9 +2541,17 @@ fn nat_punch_targets(
         .filter(|participant| Some(participant.as_str()) != own_pubkey)
         .filter_map(|participant| peer_announcements.get(participant))
         .filter_map(|announcement| {
-            select_peer_endpoint(announcement, Some(&own_local_endpoint))
-                .parse::<SocketAddr>()
-                .ok()
+            let selected_endpoint = select_peer_endpoint(announcement, Some(&own_local_endpoint));
+            if peer_endpoint_requires_public_signal(
+                app,
+                announcement,
+                &selected_endpoint,
+                Some(&own_local_endpoint),
+            ) {
+                return None;
+            }
+
+            selected_endpoint.parse::<SocketAddr>().ok()
         })
         .collect::<Vec<_>>();
     targets.sort_unstable();
@@ -2516,9 +2621,9 @@ fn maybe_run_nat_punch(
     }
 
     let listen_port = tunnel_runtime.listen_port(app.node.listen_port);
-
-    // Keep punching selected endpoints until the tunnel actually handshakes.
-    // Advertising public endpoints alone is not enough for double-NAT cases.
+    if public_endpoint_for_listen_port(public_signal_endpoint.as_ref(), listen_port).is_none() {
+        refresh_public_signal_endpoint(app, listen_port, public_signal_endpoint);
+    }
     let targets = nat_punch_targets(app, own_pubkey, peer_announcements, listen_port);
     let Some(fingerprint) = nat_punch_fingerprint(&targets, listen_port) else {
         *last_attempt = None;
@@ -2661,8 +2766,25 @@ fn build_runtime_magic_dns_records(
     records
 }
 
+fn route_targets_for_tunnel_peers(peers: &[TunnelPeer]) -> Vec<String> {
+    let mut route_targets = peers
+        .iter()
+        .map(|peer| peer.allowed_ip.clone())
+        .collect::<Vec<_>>();
+    route_targets.sort();
+    route_targets.dedup();
+    route_targets
+}
+
 fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {
-    format!("{}/24", strip_cidr(tunnel_ip))
+    let tunnel_ip = tunnel_ip.trim();
+    if tunnel_ip.is_empty() {
+        return String::new();
+    }
+    if tunnel_ip.contains('/') {
+        return tunnel_ip.to_string();
+    }
+    format!("{}/32", strip_cidr(tunnel_ip))
 }
 
 fn peer_signal_timeout_secs(announce_interval_secs: u64) -> u64 {
@@ -3743,7 +3865,7 @@ fn build_daemon_runtime_state(
         let signal_active = presence.active().contains_key(participant);
         let peer_pubkey_hex = key_b64_to_hex(&announcement.public_key).ok();
         let runtime_peer = peer_runtime_lookup(announcement, runtime_peers.as_ref());
-        let reachable = runtime_peer.is_some_and(|peer| peer_has_recent_handshake(peer, now));
+        let reachable = runtime_peer.is_some_and(peer_has_recent_handshake);
         let error = if peer_pubkey_hex.is_none() {
             Some("invalid peer key".to_string())
         } else if !signal_active && !reachable {
@@ -3766,7 +3888,7 @@ fn build_daemon_runtime_state(
             presence_timestamp: announcement.timestamp,
             last_signal_seen_at: presence.last_seen_at(participant),
             reachable,
-            last_handshake_at: runtime_peer.and_then(WireGuardPeerStatus::last_handshake_epoch),
+            last_handshake_at: runtime_peer.and_then(|peer| peer.last_handshake_at(now)),
             error,
         });
     }
@@ -5144,6 +5266,7 @@ fn macos_service_disabled() -> Result<bool> {
     ))
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn macos_service_disabled_from_print_disabled_output(output: &str, label: &str) -> bool {
     for line in output.lines().map(str::trim) {
         let Some((entry_label, state)) = line.split_once("=>") else {
@@ -5955,6 +6078,9 @@ fn tunnel_up(args: &TunnelUpArgs) -> Result<()> {
         &args.iface,
         DeviceConfig {
             n_threads: 2,
+            #[cfg(target_os = "linux")]
+            use_connected_socket: false,
+            #[cfg(not(target_os = "linux"))]
             use_connected_socket: true,
             #[cfg(target_os = "linux")]
             use_multi_queue: false,
@@ -6283,15 +6409,17 @@ mod tests {
         daemon_pids_from_ps_output, daemon_reconnect_backoff_delay, default_cli_install_path,
         endpoint_with_listen_port, install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
         kill_error_requires_control_fallback, linux_service_status_from_show_output,
-        macos_service_disabled_from_print_disabled_output, parse_nonzero_pid,
-        peer_has_recent_handshake, peer_path_cache_timeout_secs, peer_runtime_lookup,
-        peer_signal_timeout_secs, pending_tunnel_heartbeat_ips, persisted_path_cache_timeout_secs,
-        persisted_peer_cache_timeout_secs, planned_tunnel_peers, public_endpoint_for_listen_port,
-        publish_error_requires_reconnect, read_daemon_peer_cache, record_successful_runtime_paths,
-        request_daemon_reload, request_daemon_stop, restore_daemon_peer_cache,
+        local_interface_address_for_tunnel, macos_service_disabled_from_print_disabled_output,
+        nat_punch_targets, parse_nonzero_pid, peer_has_recent_handshake,
+        peer_path_cache_timeout_secs, peer_runtime_lookup, peer_signal_timeout_secs,
+        pending_tunnel_heartbeat_ips, persisted_path_cache_timeout_secs,
+        persisted_peer_cache_timeout_secs, planned_tunnel_peers,
+        public_endpoint_for_listen_port, publish_error_requires_reconnect,
+        read_daemon_peer_cache, record_successful_runtime_paths, request_daemon_reload,
+        request_daemon_stop, restore_daemon_peer_cache, route_targets_for_tunnel_peers,
         runtime_local_signal_endpoint, take_daemon_control_request, uninstall_cli,
         utun_interface_candidates, windows_service_status_from_query_output,
-        write_daemon_peer_cache,
+        write_daemon_peer_cache, TunnelPeer,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -6534,7 +6662,7 @@ mod tests {
             key_b64_to_hex(&peer_keys.public_key).expect("peer pubkey hex"),
             WireGuardPeerStatus {
                 endpoint: Some("203.0.113.20:51820".to_string()),
-                last_handshake_sec: Some(now - 5),
+                last_handshake_sec: Some(5),
                 last_handshake_nsec: Some(0),
             },
         )]);
@@ -6546,19 +6674,29 @@ mod tests {
 
         let runtime_peer = peer_runtime_lookup(&announcement, Some(&runtime_peers))
             .expect("runtime peer should resolve from cached announcement");
-        assert!(peer_has_recent_handshake(runtime_peer, now));
+        assert!(peer_has_recent_handshake(runtime_peer));
     }
 
     #[test]
     fn stale_handshake_does_not_count_mesh_as_ready() {
-        let now = 1_700_000_000;
         let runtime_peer = WireGuardPeerStatus {
             endpoint: Some("203.0.113.20:51820".to_string()),
-            last_handshake_sec: Some(now - 30),
+            last_handshake_sec: Some(30),
             last_handshake_nsec: Some(0),
         };
 
-        assert!(!peer_has_recent_handshake(&runtime_peer, now));
+        assert!(!peer_has_recent_handshake(&runtime_peer));
+    }
+
+    #[test]
+    fn handshake_age_converts_to_observed_epoch() {
+        let runtime_peer = WireGuardPeerStatus {
+            endpoint: Some("203.0.113.20:51820".to_string()),
+            last_handshake_sec: Some(5),
+            last_handshake_nsec: Some(0),
+        };
+
+        assert_eq!(runtime_peer.last_handshake_at(1_700_000_000), Some(1_699_999_995));
     }
 
     #[test]
@@ -6750,6 +6888,44 @@ mod tests {
     }
 
     #[test]
+    fn local_interface_address_for_tunnel_preserves_host_prefix() {
+        assert_eq!(
+            local_interface_address_for_tunnel("10.44.0.1/32"),
+            "10.44.0.1/32"
+        );
+        assert_eq!(
+            local_interface_address_for_tunnel("10.44.0.1"),
+            "10.44.0.1/32"
+        );
+    }
+
+    #[test]
+    fn route_targets_for_tunnel_peers_use_peer_allowed_ips() {
+        let routes = route_targets_for_tunnel_peers(&[
+            TunnelPeer {
+                pubkey_hex: "a".repeat(64),
+                endpoint: "203.0.113.10:51820".to_string(),
+                allowed_ip: "10.44.0.3/32".to_string(),
+            },
+            TunnelPeer {
+                pubkey_hex: "b".repeat(64),
+                endpoint: "203.0.113.11:51820".to_string(),
+                allowed_ip: "10.44.0.2/32".to_string(),
+            },
+            TunnelPeer {
+                pubkey_hex: "c".repeat(64),
+                endpoint: "203.0.113.12:51820".to_string(),
+                allowed_ip: "10.44.0.2/32".to_string(),
+            },
+        ]);
+
+        assert_eq!(
+            routes,
+            vec!["10.44.0.2/32".to_string(), "10.44.0.3/32".to_string()]
+        );
+    }
+
+    #[test]
     fn runtime_local_signal_endpoint_prefers_detected_ipv4_for_private_configured_endpoint() {
         assert_eq!(
             runtime_local_signal_endpoint(
@@ -6924,7 +7100,7 @@ mod tests {
             key_b64_to_hex(&peer_keys.public_key).expect("peer pubkey hex"),
             WireGuardPeerStatus {
                 endpoint: Some("203.0.113.20:51820".to_string()),
-                last_handshake_sec: Some(12),
+                last_handshake_sec: Some(1),
                 last_handshake_nsec: Some(0),
             },
         )]);
@@ -6951,6 +7127,7 @@ mod tests {
     fn cached_successful_endpoint_survives_announcement_flap_until_path_cache_expires() {
         let mut config = AppConfig::generated();
         let participant = "11".repeat(32);
+        config.nat.enabled = false;
         config.networks[0].participants = vec![participant.clone()];
 
         let peer_keys = generate_keypair();
@@ -6978,7 +7155,7 @@ mod tests {
             key_b64_to_hex(&peer_keys.public_key).expect("peer pubkey hex"),
             WireGuardPeerStatus {
                 endpoint: Some("203.0.113.20:51820".to_string()),
-                last_handshake_sec: Some(12),
+                last_handshake_sec: Some(1),
                 last_handshake_nsec: Some(0),
             },
         )]);
@@ -7013,6 +7190,80 @@ mod tests {
         )
         .expect("fallback tunnel peers");
         assert_eq!(selected[0].endpoint, "192.168.1.20:51820");
+    }
+
+    #[test]
+    fn nat_remote_peer_waits_for_public_endpoint_before_runtime_apply() {
+        let mut config = AppConfig::generated();
+        let participant = "11".repeat(32);
+        config.nat.enabled = true;
+        config.node.endpoint = "198.19.241.3:51820".to_string();
+        config.networks[0].participants = vec![participant.clone()];
+
+        let peer_keys = generate_keypair();
+        let announcement = PeerAnnouncement {
+            node_id: "peer-a".to_string(),
+            public_key: peer_keys.public_key.clone(),
+            endpoint: "198.19.242.3:51820".to_string(),
+            local_endpoint: Some("198.19.242.3:51820".to_string()),
+            public_endpoint: None,
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
+            timestamp: 10,
+        };
+        let announcements = HashMap::from([(participant.clone(), announcement)]);
+
+        let selected = planned_tunnel_peers(
+            &config,
+            None,
+            &announcements,
+            &mut PeerPathBook::default(),
+            Some("198.19.241.3:51820"),
+            10,
+        )
+        .expect("planned tunnel peers");
+        assert!(selected.is_empty());
+        assert!(nat_punch_targets(&config, None, &announcements, 51820).is_empty());
+    }
+
+    #[test]
+    fn nat_same_subnet_peer_can_use_local_endpoint_without_public_signal() {
+        let mut config = AppConfig::generated();
+        let participant = "11".repeat(32);
+        config.nat.enabled = true;
+        config.node.endpoint = "198.19.241.3:51820".to_string();
+        config.networks[0].participants = vec![participant.clone()];
+
+        let peer_keys = generate_keypair();
+        let announcement = PeerAnnouncement {
+            node_id: "peer-a".to_string(),
+            public_key: peer_keys.public_key.clone(),
+            endpoint: "198.19.241.11:51820".to_string(),
+            local_endpoint: Some("198.19.241.11:51820".to_string()),
+            public_endpoint: None,
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
+            timestamp: 10,
+        };
+        let announcements = HashMap::from([(participant.clone(), announcement)]);
+
+        let selected = planned_tunnel_peers(
+            &config,
+            None,
+            &announcements,
+            &mut PeerPathBook::default(),
+            Some("198.19.241.3:51820"),
+            10,
+        )
+        .expect("planned tunnel peers");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].endpoint, "198.19.241.11:51820");
+        assert_eq!(
+            nat_punch_targets(&config, None, &announcements, 51820),
+            vec!["198.19.241.11:51820"
+                .parse()
+                .expect("same-subnet punch target")]
+        );
     }
 
     #[test]

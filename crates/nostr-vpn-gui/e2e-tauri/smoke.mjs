@@ -291,6 +291,11 @@ async function getText(sessionId, id) {
   return String(response.value || '')
 }
 
+async function textForSelector(sessionId, selector) {
+  const id = await find(sessionId, selector)
+  return await getText(sessionId, id)
+}
+
 async function screenshot(sessionId) {
   const response = await http('GET', `/session/${sessionId}/screenshot`)
   return response.value
@@ -318,6 +323,21 @@ async function waitUntil(fn, description, timeoutMs = 40_000) {
 async function pageContains(sessionId, pattern) {
   const html = (await source(sessionId)).replace(/\s+/g, ' ')
   return pattern.test(html)
+}
+
+async function waitForSelectorText(sessionId, selector, pattern, description, timeoutMs = 40_000) {
+  return await waitUntil(
+    async () => {
+      try {
+        const text = await textForSelector(sessionId, selector)
+        return pattern.test(text) ? text : false
+      } catch {
+        return false
+      }
+    },
+    description,
+    timeoutMs,
+  )
 }
 
 async function main() {
@@ -444,26 +464,26 @@ async function main() {
       'gui to render pubkey',
     )
 
-    await waitUntil(
-      async () => {
-        return await pageContains(sessionId, /mesh\s*1\/1/i)
-      },
+    await waitForSelectorText(
+      sessionId,
+      '[data-testid="mesh-badge"]',
+      /mesh\s*1\/1/i,
       'mesh to reach 1/1',
       70_000,
     )
 
-    await waitUntil(
-      async () => {
-        return await pageContains(sessionId, /online/i)
-      },
+    await waitForSelectorText(
+      sessionId,
+      '[data-testid="participant-state"]',
+      /online/i,
       'participant state online',
       70_000,
     )
 
-    await waitUntil(
-      async () => {
-        return await pageContains(sessionId, /presence\s+\d+s\s+ago/i)
-      },
+    await waitForSelectorText(
+      sessionId,
+      '[data-testid="participant-status-text"]',
+      /nostr seen \d+s ago/i,
       'participant presence text',
       30_000,
     )
@@ -493,17 +513,17 @@ async function main() {
 
     // Drop the peer process and verify GUI transitions to offline/mesh degraded.
     await stopManaged(peer, 'SIGINT')
-    await waitUntil(
-      async () => {
-        return await pageContains(sessionId, /mesh\s*0\/1/i)
-      },
+    await waitForSelectorText(
+      sessionId,
+      '[data-testid="mesh-badge"]',
+      /mesh\s*0\/1/i,
       'mesh to drop to 0/1 after peer disconnect',
       40_000,
     )
-    await waitUntil(
-      async () => {
-        return await pageContains(sessionId, /offline/i)
-      },
+    await waitForSelectorText(
+      sessionId,
+      '[data-testid="participant-state"]',
+      /offline/i,
       'participant state offline after peer disconnect',
       40_000,
     )

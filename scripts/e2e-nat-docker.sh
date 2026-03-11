@@ -54,15 +54,54 @@ peer_tunnel_ip_from_status() {
   grep -o '"tunnel_ip":"10\.44\.0\.[0-9]\+/32"' | tail -n1 | cut -d '"' -f4 | cut -d/ -f1
 }
 
-peer_endpoint_from_status() {
+peer_announced_endpoint_from_status() {
   grep -o '"endpoint":"[^"]*"' | tail -n1 | cut -d '"' -f4
 }
 
 cleanup
 
+wait_for_service() {
+  local service="$1"
+  local container_id=""
+  for _ in $(seq 1 30); do
+    container_id="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
+    if [[ -n "$container_id" ]] \
+      && [[ "$(docker inspect -f '{{.State.Running}}' "$container_id" 2>/dev/null || true)" == "true" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "nat docker e2e failed: service '$service' did not reach running state" >&2
+  exit 1
+}
+
+ping_until_success() {
+  local node="$1"
+  local target="$2"
+  local log_path="$3"
+  for _ in $(seq 1 5); do
+    if "${COMPOSE[@]}" exec -T "$node" ping -c 3 -W 2 "$target" >"$log_path"; then
+      return 0
+    fi
+    sleep 2
+  done
+
+  return 1
+}
+
 "${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d relay reflector nat-a nat-b node-a node-b >/dev/null
-sleep 3
+"${COMPOSE[@]}" up -d relay reflector nat-a nat-b >/dev/null
+
+for service in relay reflector nat-a nat-b; do
+  wait_for_service "$service"
+done
+
+"${COMPOSE[@]}" up -d node-a node-b >/dev/null
+
+for service in node-a node-b; do
+  wait_for_service "$service"
+done
 
 "${COMPOSE[@]}" exec -T node-a sh -lc \
   "ip route del default >/dev/null 2>&1 || true; ip route add default via 198.19.241.2 dev eth0"
@@ -103,13 +142,21 @@ for _ in $(seq 1 60); do
   BOB_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn status --json --discover-secs 0 | tr -d '\r')"
   ALICE_COMPACT="$(printf '%s' "$ALICE_STATUS" | compact_json)"
   BOB_COMPACT="$(printf '%s' "$BOB_STATUS" | compact_json)"
+  ALICE_ANNOUNCED_ENDPOINT="$(printf '%s' "$ALICE_COMPACT" | peer_announced_endpoint_from_status)"
+  BOB_ANNOUNCED_ENDPOINT="$(printf '%s' "$BOB_COMPACT" | peer_announced_endpoint_from_status)"
+  BOB_TUNNEL_IP="$(printf '%s' "$ALICE_COMPACT" | peer_tunnel_ip_from_status)"
+  ALICE_TUNNEL_IP="$(printf '%s' "$BOB_COMPACT" | peer_tunnel_ip_from_status)"
 
   if grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT" \
     && grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT" \
     && grep -q '"running":true' <<<"$ALICE_COMPACT" \
     && grep -q '"running":true' <<<"$BOB_COMPACT" \
-    && grep -q '"reachable":true' <<<"$ALICE_COMPACT" \
-    && grep -q '"reachable":true' <<<"$BOB_COMPACT"; then
+    && [[ "$ALICE_ANNOUNCED_ENDPOINT" == "10.254.241.11:51820" ]] \
+    && [[ "$BOB_ANNOUNCED_ENDPOINT" == "10.254.241.10:51820" ]] \
+    && [[ -n "$ALICE_ANNOUNCED_ENDPOINT" ]] \
+    && [[ -n "$BOB_ANNOUNCED_ENDPOINT" ]] \
+    && [[ -n "$ALICE_TUNNEL_IP" ]] \
+    && [[ -n "$BOB_TUNNEL_IP" ]]; then
     break
   fi
   sleep 1
@@ -125,18 +172,15 @@ grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT"
 grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT"
 grep -q '"running":true' <<<"$ALICE_COMPACT"
 grep -q '"running":true' <<<"$BOB_COMPACT"
-grep -q '"reachable":true' <<<"$ALICE_COMPACT"
-grep -q '"reachable":true' <<<"$BOB_COMPACT"
+ALICE_ANNOUNCED_ENDPOINT="$(printf '%s' "$ALICE_COMPACT" | peer_announced_endpoint_from_status)"
+BOB_ANNOUNCED_ENDPOINT="$(printf '%s' "$BOB_COMPACT" | peer_announced_endpoint_from_status)"
 
-ALICE_SELECTED_ENDPOINT="$(printf '%s' "$ALICE_COMPACT" | peer_endpoint_from_status)"
-BOB_SELECTED_ENDPOINT="$(printf '%s' "$BOB_COMPACT" | peer_endpoint_from_status)"
-
-if [[ "$ALICE_SELECTED_ENDPOINT" != "10.254.241.11:51820" ]]; then
-  echo "nat docker e2e failed: alice selected unexpected peer endpoint '$ALICE_SELECTED_ENDPOINT'" >&2
+if [[ "$ALICE_ANNOUNCED_ENDPOINT" != "10.254.241.11:51820" ]]; then
+  echo "nat docker e2e failed: alice did not observe bob's public endpoint announcement ('$ALICE_ANNOUNCED_ENDPOINT')" >&2
   exit 1
 fi
-if [[ "$BOB_SELECTED_ENDPOINT" != "10.254.241.10:51820" ]]; then
-  echo "nat docker e2e failed: bob selected unexpected peer endpoint '$BOB_SELECTED_ENDPOINT'" >&2
+if [[ "$BOB_ANNOUNCED_ENDPOINT" != "10.254.241.10:51820" ]]; then
+  echo "nat docker e2e failed: bob did not observe alice's public endpoint announcement ('$BOB_ANNOUNCED_ENDPOINT')" >&2
   exit 1
 fi
 
@@ -148,8 +192,18 @@ if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
   exit 1
 fi
 
-"${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$BOB_TUNNEL_IP" >/tmp/nvpn-nat-ping-a.log
-"${COMPOSE[@]}" exec -T node-b ping -c 3 -W 2 "$ALICE_TUNNEL_IP" >/tmp/nvpn-nat-ping-b.log
+sleep 5
+
+ping_until_success node-a "$BOB_TUNNEL_IP" /tmp/nvpn-nat-ping-a.log
+ping_until_success node-b "$ALICE_TUNNEL_IP" /tmp/nvpn-nat-ping-b.log
+
+ALICE_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn status --json --discover-secs 0 | tr -d '\r')"
+BOB_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn status --json --discover-secs 0 | tr -d '\r')"
+ALICE_COMPACT="$(printf '%s' "$ALICE_STATUS" | compact_json)"
+BOB_COMPACT="$(printf '%s' "$BOB_STATUS" | compact_json)"
+
+grep -q '"reachable":true' <<<"$ALICE_COMPACT"
+grep -q '"reachable":true' <<<"$BOB_COMPACT"
 
 echo "--- Ping A -> B ---"
 cat /tmp/nvpn-nat-ping-a.log

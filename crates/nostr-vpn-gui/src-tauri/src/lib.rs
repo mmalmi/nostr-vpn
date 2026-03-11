@@ -2890,7 +2890,7 @@ pub fn run() {
 
             let tray_menu = build_tray_menu(app.handle(), initial_tray_state)?;
 
-            let mut tray_builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
+            let tray_builder = TrayIconBuilder::with_id(TRAY_ICON_ID)
                 .tooltip("Nostr VPN")
                 .menu(&tray_menu)
                 .on_menu_event(|app, event| match event.id().as_ref() {
@@ -2952,13 +2952,13 @@ pub fn run() {
                 });
 
             #[cfg(target_os = "macos")]
-            {
+            let tray_builder =
                 if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/tray-template.png")) {
-                    tray_builder = tray_builder.icon(icon).icon_as_template(true);
+                    tray_builder.icon(icon).icon_as_template(true)
                 } else {
                     eprintln!("tray: failed to load bundled template icon");
-                }
-            }
+                    tray_builder
+                };
 
             tray_builder.build(app)?;
 
