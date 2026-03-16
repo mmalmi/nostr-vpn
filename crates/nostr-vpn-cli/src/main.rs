@@ -1351,6 +1351,15 @@ struct DaemonPeerCacheWrite<'a> {
     now: u64,
 }
 
+struct DaemonReloadConfig {
+    app: AppConfig,
+    network_id: String,
+    configured_participants: Vec<String>,
+    expected_peers: usize,
+    own_pubkey: Option<String>,
+    relays: Vec<String>,
+}
+
 fn load_config_with_overrides(
     path: &Path,
     network_id: Option<String>,
@@ -1365,6 +1374,26 @@ fn load_config_with_overrides(
 
     let network_id = app.effective_network_id();
     Ok((app, network_id))
+}
+
+fn build_daemon_reload_config(
+    app: AppConfig,
+    network_id: String,
+    relay_args: &[String],
+) -> DaemonReloadConfig {
+    let configured_participants = app.participant_pubkeys_hex();
+    let expected_peers = expected_peer_count(&app);
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let relays = resolve_relays(relay_args, &app);
+
+    DaemonReloadConfig {
+        app,
+        network_id,
+        configured_participants,
+        expected_peers,
+        own_pubkey,
+        relays,
+    }
 }
 
 async fn publish_announcement(request: AnnounceRequest) -> Result<PublishedAnnouncement> {
@@ -2454,15 +2483,29 @@ fn sync_public_signal_endpoint_from_mapping_or_stun(
         return;
     }
 
-    if let Some(endpoint) = port_mapping_runtime.advertised_endpoint() {
-        *public_signal_endpoint = Some(DiscoveredPublicSignalEndpoint {
-            listen_port,
-            endpoint,
-        });
+    if let Some(endpoint) = port_mapping_runtime
+        .advertised_endpoint()
+        .and_then(|endpoint| public_signal_endpoint_from_mapping(listen_port, endpoint))
+    {
+        *public_signal_endpoint = Some(endpoint);
         return;
     }
 
     refresh_public_signal_endpoint(app, listen_port, public_signal_endpoint);
+}
+
+fn public_signal_endpoint_from_mapping(
+    listen_port: u16,
+    endpoint: String,
+) -> Option<DiscoveredPublicSignalEndpoint> {
+    if endpoint_is_local_only(&endpoint) {
+        return None;
+    }
+
+    Some(DiscoveredPublicSignalEndpoint {
+        listen_port,
+        endpoint,
+    })
 }
 
 async fn refresh_public_signal_endpoint_with_port_mapping(
@@ -4067,7 +4110,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     ensure_no_other_daemon_processes_for_config(&config_path, std::process::id())?;
     let network_override = args.network_id.clone();
     let participants_override = args.participants.clone();
-    let (mut app, network_id) = load_config_with_overrides(
+    let (mut app, mut network_id) = load_config_with_overrides(
         &config_path,
         network_override.clone(),
         participants_override.clone(),
@@ -4631,13 +4674,18 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                 network_override.clone(),
                                 participants_override.clone(),
                             ) {
-                                Ok((reloaded_app, _)) => {
-                                    let reloaded_participants = reloaded_app.participant_pubkeys_hex();
-                                    app = reloaded_app;
-                                    configured_participants = reloaded_participants;
-                                    expected_peers = expected_peer_count(&app);
-                                    own_pubkey = app.own_nostr_pubkey_hex().ok();
-                                    relays = resolve_relays(&args.relay, &app);
+                                Ok((reloaded_app, reloaded_network_id)) => {
+                                    let reload = build_daemon_reload_config(
+                                        reloaded_app,
+                                        reloaded_network_id,
+                                        &args.relay,
+                                    );
+                                    app = reload.app;
+                                    network_id = reload.network_id;
+                                    configured_participants = reload.configured_participants;
+                                    expected_peers = reload.expected_peers;
+                                    own_pubkey = reload.own_pubkey;
+                                    relays = reload.relays;
 
                                     let configured_set = configured_participants
                                         .iter()
@@ -8220,11 +8268,12 @@ mod tests {
         AppConfig, Cli, DaemonPeerCacheEntry, DaemonPeerCacheRestore, DaemonPeerCacheState,
         DaemonRuntimeState, DiscoveredPublicSignalEndpoint, InstallCliArgs, LinuxExitNodeIpFamily,
         OutboundAnnounceBook, PeerAnnouncement, TunnelPeer, UninstallCliArgs, WireGuardPeerStatus,
-        announcement_fingerprint, build_peer_announcement, build_runtime_magic_dns_records,
-        can_reuse_active_listen_port, connected_peer_count_for_runtime, daemon_control_file_path,
-        daemon_peer_cache_file_path, daemon_pids_from_ps_output, daemon_reconnect_backoff_delay,
-        daemon_session_active, daemon_session_idle_status, default_cli_install_path,
-        endpoint_with_listen_port, install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
+        announcement_fingerprint, build_daemon_reload_config, build_peer_announcement,
+        build_runtime_magic_dns_records, can_reuse_active_listen_port,
+        connected_peer_count_for_runtime, daemon_control_file_path, daemon_peer_cache_file_path,
+        daemon_pids_from_ps_output, daemon_reconnect_backoff_delay, daemon_session_active,
+        daemon_session_idle_status, default_cli_install_path, endpoint_with_listen_port,
+        install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
         kill_error_requires_control_fallback, linux_default_route_device_from_output,
         linux_exit_node_default_route_families, linux_exit_node_firewall_binary,
         linux_exit_node_forward_in_rule, linux_exit_node_forward_out_rule,
@@ -8234,9 +8283,10 @@ mod tests {
         parse_nonzero_pid, peer_has_recent_handshake, peer_path_cache_timeout_secs,
         peer_runtime_lookup, peer_signal_timeout_secs, pending_tunnel_heartbeat_ips,
         persisted_path_cache_timeout_secs, persisted_peer_cache_timeout_secs, planned_tunnel_peers,
-        public_endpoint_for_listen_port, publish_error_requires_reconnect, read_daemon_peer_cache,
-        record_successful_runtime_paths, relay_connection_action, request_daemon_reload,
-        request_daemon_stop, restore_daemon_peer_cache, route_targets_for_tunnel_peers,
+        public_endpoint_for_listen_port, public_signal_endpoint_from_mapping,
+        publish_error_requires_reconnect, read_daemon_peer_cache, record_successful_runtime_paths,
+        relay_connection_action, request_daemon_reload, request_daemon_stop,
+        restore_daemon_peer_cache, route_targets_for_tunnel_peers,
         route_targets_require_endpoint_bypass, runtime_local_signal_endpoint,
         take_daemon_control_request, uninstall_cli, utun_interface_candidates,
         windows_service_status_from_query_output, write_daemon_peer_cache,
@@ -8929,6 +8979,25 @@ mod tests {
     }
 
     #[test]
+    fn mapped_public_signal_endpoint_rejects_cgnat_address() {
+        assert_eq!(
+            public_signal_endpoint_from_mapping(51820, "100.99.218.131:51821".to_string()),
+            None
+        );
+    }
+
+    #[test]
+    fn mapped_public_signal_endpoint_accepts_public_address() {
+        assert_eq!(
+            public_signal_endpoint_from_mapping(51820, "198.51.100.20:51821".to_string()),
+            Some(DiscoveredPublicSignalEndpoint {
+                listen_port: 51820,
+                endpoint: "198.51.100.20:51821".to_string(),
+            })
+        );
+    }
+
+    #[test]
     fn peer_announcement_includes_effective_advertised_routes() {
         let mut config = AppConfig::generated();
         config.node.advertise_exit_node = true;
@@ -9512,6 +9581,27 @@ mod tests {
                   55555 /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /tmp/other.toml --iface utun100\n";
         let pids = daemon_pids_from_ps_output(ps, config_path);
         assert_eq!(pids, vec![42063, 97597]);
+    }
+
+    #[test]
+    fn daemon_reload_config_uses_reloaded_network_id() {
+        let mut app = AppConfig::generated();
+        app.networks[0].participants = vec!["11".repeat(32)];
+        let initial_network_id = app.effective_network_id();
+
+        app.networks[0].participants = vec!["22".repeat(32)];
+        let reloaded_network_id = app.effective_network_id();
+        assert_ne!(initial_network_id, reloaded_network_id);
+
+        let reload = build_daemon_reload_config(
+            app,
+            reloaded_network_id.clone(),
+            &["wss://relay.example.com".to_string()],
+        );
+
+        assert_eq!(reload.network_id, reloaded_network_id);
+        assert_eq!(reload.configured_participants, vec!["22".repeat(32)]);
+        assert_eq!(reload.relays, vec!["wss://relay.example.com".to_string()]);
     }
 
     #[test]

@@ -188,9 +188,49 @@ fn resolve_stun_server_addr(server: &str) -> Result<SocketAddr> {
         .or_else(|| raw.strip_prefix("stun:"))
         .unwrap_or(raw);
 
-    stripped
+    let addrs = stripped
         .to_socket_addrs()
-        .with_context(|| format!("failed to resolve stun server '{raw}'"))?
-        .find(|addr| addr.is_ipv4() || addr.is_ipv6())
-        .ok_or_else(|| anyhow!("stun server '{raw}' did not resolve to a socket address"))
+        .with_context(|| format!("failed to resolve stun server '{raw}'"))?;
+
+    select_ipv4_socket_addr(addrs)
+        .ok_or_else(|| anyhow!("stun server '{raw}' did not resolve to an IPv4 socket address"))
+}
+
+fn select_ipv4_socket_addr(addrs: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAddr> {
+    addrs.into_iter().find(SocketAddr::is_ipv4)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::select_ipv4_socket_addr;
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+
+    #[test]
+    fn selects_ipv4_address_for_ipv4_socket() {
+        let addrs = [
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 3478, 0, 0)),
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3478)),
+        ];
+
+        let selected = select_ipv4_socket_addr(addrs);
+
+        assert_eq!(
+            selected,
+            Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 3478)))
+        );
+    }
+
+    #[test]
+    fn returns_none_when_no_address_matches_socket_family() {
+        let addrs = [SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::LOCALHOST,
+            3478,
+            0,
+            0,
+        ))];
+
+        let selected = select_ipv4_socket_addr(addrs);
+
+        assert_eq!(selected, None);
+    }
 }
