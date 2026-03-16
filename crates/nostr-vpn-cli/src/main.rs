@@ -39,7 +39,9 @@ use nostr_vpn_core::nat::{
 };
 use nostr_vpn_core::paths::PeerPathBook;
 use nostr_vpn_core::presence::PeerPresenceBook;
-use nostr_vpn_core::signaling::{NostrSignalingClient, SignalEnvelope, SignalPayload};
+use nostr_vpn_core::signaling::{
+    NostrSignalingClient, SignalEnvelope, SignalPayload, SignalingNetwork,
+};
 use nostr_vpn_core::wireguard::{InterfaceConfig, PeerConfig, render_wireguard_config};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -717,10 +719,9 @@ async fn main() -> Result<()> {
             let node_id = args.node_id.unwrap_or_else(|| app.node.id.clone());
             let relays = resolve_relays(&args.relay, &app);
 
-            let client = NostrSignalingClient::from_secret_key(
-                network_id.clone(),
+            let client = NostrSignalingClient::from_secret_key_with_networks(
                 &app.nostr.secret_key,
-                app.participant_pubkeys_hex(),
+                signaling_networks_for_app(&app),
             )?;
             client.connect(&relays).await?;
             client
@@ -1104,13 +1105,11 @@ async fn main() -> Result<()> {
                 app.network_id = network_id;
             }
 
-            let network_id = app.effective_network_id();
             let relays = resolve_relays(&relay, &app);
 
-            let client = NostrSignalingClient::from_secret_key(
-                network_id.clone(),
+            let client = NostrSignalingClient::from_secret_key_with_networks(
                 &app.nostr.secret_key,
-                app.participant_pubkeys_hex(),
+                signaling_networks_for_app(&app),
             )?;
             client.connect(&relays).await?;
 
@@ -1376,6 +1375,26 @@ fn load_config_with_overrides(
     Ok((app, network_id))
 }
 
+fn signaling_networks_for_app(app: &AppConfig) -> Vec<SignalingNetwork> {
+    let networks = app
+        .enabled_network_meshes()
+        .into_iter()
+        .map(|network| SignalingNetwork {
+            network_id: network.network_id,
+            participants: network.participants,
+        })
+        .collect::<Vec<_>>();
+
+    if networks.is_empty() {
+        return vec![SignalingNetwork {
+            network_id: app.network_id.clone(),
+            participants: app.participant_pubkeys_hex(),
+        }];
+    }
+
+    networks
+}
+
 fn build_daemon_reload_config(
     app: AppConfig,
     network_id: String,
@@ -1412,10 +1431,9 @@ async fn publish_announcement(request: AnnounceRequest) -> Result<PublishedAnnou
         .unwrap_or_else(|| app.node.public_key.clone());
     let relays = resolve_relays(&request.relay, &app);
 
-    let client = NostrSignalingClient::from_secret_key(
-        network_id.clone(),
+    let client = NostrSignalingClient::from_secret_key_with_networks(
         &app.nostr.secret_key,
-        app.participant_pubkeys_hex(),
+        signaling_networks_for_app(&app),
     )?;
     client.connect(&relays).await?;
 
@@ -1447,7 +1465,7 @@ async fn publish_announcement(request: AnnounceRequest) -> Result<PublishedAnnou
 
 async fn discover_peers(
     app: &AppConfig,
-    network_id: &str,
+    _network_id: &str,
     relays: &[String],
     discover_secs: u64,
 ) -> Result<Vec<PeerAnnouncement>> {
@@ -1455,10 +1473,9 @@ async fn discover_peers(
         return Ok(Vec::new());
     }
 
-    let client = NostrSignalingClient::from_secret_key(
-        network_id.to_string(),
+    let client = NostrSignalingClient::from_secret_key_with_networks(
         &app.nostr.secret_key,
-        app.participant_pubkeys_hex(),
+        signaling_networks_for_app(app),
     )?;
     client.connect(relays).await?;
     let _ = client.publish(SignalPayload::Hello).await;
@@ -3611,10 +3628,9 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let mut port_mapping_runtime = PortMappingRuntime::default();
     let mut public_signal_endpoint = None;
 
-    let mut client = NostrSignalingClient::from_secret_key(
-        network_id.clone(),
+    let mut client = NostrSignalingClient::from_secret_key_with_networks(
         &app.nostr.secret_key,
-        configured_participants.clone(),
+        signaling_networks_for_app(&app),
     )?;
     client.connect(&relays).await?;
     let mut relay_connected = true;
@@ -3707,10 +3723,9 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                 }
 
                 client.disconnect().await;
-                client = NostrSignalingClient::from_secret_key(
-                    network_id.clone(),
+                client = NostrSignalingClient::from_secret_key_with_networks(
                     &app.nostr.secret_key,
-                    configured_participants.clone(),
+                    signaling_networks_for_app(&app),
                 )?;
                 match client.connect(&relays).await {
                     Ok(()) => {
@@ -4115,7 +4130,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
         network_override.clone(),
         participants_override.clone(),
     )?;
-    let mut configured_participants = app.participant_pubkeys_hex();
     let mut relays = resolve_relays(&args.relay, &app);
     let mut own_pubkey = app.own_nostr_pubkey_hex().ok();
     let mut expected_peers = expected_peer_count(&app);
@@ -4135,10 +4149,9 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let mut public_signal_endpoint = None;
     let mut last_written_peer_cache = None;
 
-    let mut client = NostrSignalingClient::from_secret_key(
-        network_id.clone(),
+    let mut client = NostrSignalingClient::from_secret_key_with_networks(
         &app.nostr.secret_key,
-        configured_participants.clone(),
+        signaling_networks_for_app(&app),
     )?;
 
     let restored_peer_cache = if daemon_session_active(true, expected_peers) {
@@ -4308,10 +4321,9 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 }
 
                 client.disconnect().await;
-                client = NostrSignalingClient::from_secret_key(
-                    network_id.clone(),
+                client = NostrSignalingClient::from_secret_key_with_networks(
                     &app.nostr.secret_key,
-                    configured_participants.clone(),
+                    signaling_networks_for_app(&app),
                 )?;
 
                 match client.connect(&relays).await {
@@ -4680,27 +4692,26 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                         reloaded_network_id,
                                         &args.relay,
                                     );
+                                    let configured_set = reload
+                                        .configured_participants
+                                        .iter()
+                                        .cloned()
+                                        .collect::<HashSet<_>>();
                                     app = reload.app;
                                     network_id = reload.network_id;
-                                    configured_participants = reload.configured_participants;
                                     expected_peers = reload.expected_peers;
                                     own_pubkey = reload.own_pubkey;
                                     relays = reload.relays;
 
-                                    let configured_set = configured_participants
-                                        .iter()
-                                        .cloned()
-                                        .collect::<HashSet<_>>();
                                     presence.retain_participants(&configured_set);
                                     path_book.retain_participants(&configured_set);
                                     outbound_announces.retain_participants(&configured_set);
                                     outbound_announces.clear();
                                     last_nat_punch_attempt = None;
                                     client.disconnect().await;
-                                    match NostrSignalingClient::from_secret_key(
-                                        network_id.clone(),
+                                    match NostrSignalingClient::from_secret_key_with_networks(
                                         &app.nostr.secret_key,
-                                        configured_participants.clone(),
+                                        signaling_networks_for_app(&app),
                                     ) {
                                         Ok(new_client) => {
                                             client = new_client;

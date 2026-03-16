@@ -318,6 +318,48 @@ fn reciprocal_participant_configs_share_effective_network_id() {
 }
 
 #[test]
+fn enabled_network_meshes_keep_participant_sets_separate() {
+    let own_keys = Keys::generate();
+    let own_hex = own_keys.public_key().to_hex();
+    let peer_a = Keys::generate().public_key().to_hex();
+    let peer_b = Keys::generate().public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own_keys.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks = vec![
+        nostr_vpn_core::config::NetworkConfig {
+            id: "network-1".to_string(),
+            name: "oma".to_string(),
+            enabled: true,
+            participants: vec![peer_a.clone()],
+        },
+        nostr_vpn_core::config::NetworkConfig {
+            id: "network-2".to_string(),
+            name: "lauri".to_string(),
+            enabled: true,
+            participants: vec![peer_b.clone()],
+        },
+    ];
+    config.ensure_defaults();
+
+    let meshes = config.enabled_network_meshes();
+
+    assert_eq!(meshes.len(), 2);
+    assert_eq!(meshes[0].participants, vec![peer_a.clone()]);
+    assert_eq!(meshes[1].participants, vec![peer_b.clone()]);
+    assert_ne!(meshes[0].network_id, meshes[1].network_id);
+    assert_eq!(
+        meshes[0].network_id,
+        derive_network_id_from_participants(&[own_hex.clone(), peer_a])
+    );
+    assert_eq!(
+        meshes[1].network_id,
+        derive_network_id_from_participants(&[own_hex, peer_b])
+    );
+}
+
+#[test]
 fn magic_dns_aliases_are_generated_and_resolve_to_configured_participant() {
     let own = Keys::generate();
     let peer = Keys::generate();

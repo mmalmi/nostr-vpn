@@ -121,6 +121,14 @@ pub struct NetworkConfig {
     pub participants: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnabledNetworkMesh {
+    pub id: String,
+    pub name: String,
+    pub network_id: String,
+    pub participants: Vec<String>,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         let mut config = Self {
@@ -333,6 +341,35 @@ impl AppConfig {
         }
 
         derive_network_id_from_participants(&mesh_members)
+    }
+
+    pub fn enabled_network_meshes(&self) -> Vec<EnabledNetworkMesh> {
+        let own_pubkey = self.own_nostr_pubkey_hex().ok();
+        let enabled_count = self.enabled_network_count();
+
+        self.networks
+            .iter()
+            .filter(|network| network.enabled)
+            .map(|network| {
+                let mut participants = network.participants.clone();
+                participants.sort();
+                participants.dedup();
+
+                let network_id = effective_network_id_for_enabled_network(
+                    &self.network_id,
+                    enabled_count,
+                    own_pubkey.as_deref(),
+                    network,
+                );
+
+                EnabledNetworkMesh {
+                    id: network.id.clone(),
+                    name: network.name.clone(),
+                    network_id,
+                    participants,
+                }
+            })
+            .collect()
     }
 
     pub fn participant_pubkeys_hex(&self) -> Vec<String> {
@@ -617,6 +654,30 @@ impl AppConfig {
 
         None
     }
+}
+
+fn effective_network_id_for_enabled_network(
+    default_network_id: &str,
+    enabled_network_count: usize,
+    own_pubkey: Option<&str>,
+    network: &NetworkConfig,
+) -> String {
+    let mut mesh_members = network.participants.clone();
+    if let Some(own_pubkey) = own_pubkey {
+        mesh_members.push(own_pubkey.to_string());
+    }
+    mesh_members.sort();
+    mesh_members.dedup();
+
+    if mesh_members.len() > usize::from(own_pubkey.is_some()) {
+        return derive_network_id_from_participants(&mesh_members);
+    }
+
+    if enabled_network_count <= 1 {
+        return default_network_id.to_string();
+    }
+
+    format!("{}:{}", default_network_id, network.id)
 }
 
 pub fn derive_network_id_from_participants(participants: &[String]) -> String {

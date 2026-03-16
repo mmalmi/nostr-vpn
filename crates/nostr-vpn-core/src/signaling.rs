@@ -31,11 +31,25 @@ pub struct SignalEnvelope {
     pub payload: SignalPayload,
 }
 
-pub struct NostrSignalingClient {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignalingNetwork {
+    pub network_id: String,
+    pub participants: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ConfiguredSignalingNetwork {
     network_id: String,
+    participants: HashSet<String>,
+}
+
+pub struct NostrSignalingClient {
+    default_network_id: String,
+    network_ids: HashSet<String>,
     own_pubkey: String,
     keys: Keys,
     client: Client,
+    networks: Vec<ConfiguredSignalingNetwork>,
     participant_pubkeys: HashSet<String>,
     connected: AtomicBool,
     recv_rx: Mutex<broadcast::Receiver<SignalEnvelope>>,
@@ -56,31 +70,58 @@ impl NostrSignalingClient {
         Self::new_with_keys(network_id, keys, participants)
     }
 
+    pub fn from_secret_key_with_networks(
+        secret_key: &str,
+        networks: Vec<SignalingNetwork>,
+    ) -> Result<Self> {
+        let keys = Keys::parse(secret_key).context("invalid nostr secret key")?;
+        Self::new_with_keys_and_networks(keys, networks)
+    }
+
     pub fn new_with_keys(
         network_id: String,
         keys: Keys,
         participants: Vec<String>,
     ) -> Result<Self> {
-        if network_id.trim().is_empty() {
-            return Err(anyhow!("network_id must not be empty"));
-        }
+        Self::new_with_keys_and_networks(
+            keys,
+            vec![SignalingNetwork {
+                network_id,
+                participants,
+            }],
+        )
+    }
 
+    pub fn new_with_keys_and_networks(keys: Keys, networks: Vec<SignalingNetwork>) -> Result<Self> {
         let own_pubkey = keys.public_key().to_hex();
+        let networks = normalize_signaling_networks(networks)?;
+        let default_network_id = networks
+            .first()
+            .map(|network| network.network_id.clone())
+            .ok_or_else(|| anyhow!("at least one signaling network is required"))?;
+        let network_ids = networks
+            .iter()
+            .map(|network| network.network_id.clone())
+            .collect::<HashSet<_>>();
+        let participant_pubkeys = networks
+            .iter()
+            .flat_map(|network| network.participants.iter().cloned())
+            .collect::<HashSet<_>>();
 
         let client = ClientBuilder::new()
             .signer(keys.clone())
             .database(nostr_sdk::database::MemoryDatabase::new())
             .build();
 
-        let participant_pubkeys = normalize_participants(participants)?;
-
         let (recv_tx, recv_rx) = broadcast::channel(2048);
 
         Ok(Self {
-            network_id,
+            default_network_id,
+            network_ids,
             own_pubkey,
             keys,
             client,
+            networks,
             participant_pubkeys,
             connected: AtomicBool::new(false),
             recv_rx: Mutex::new(recv_rx),
@@ -210,7 +251,7 @@ impl NostrSignalingClient {
         payload: SignalPayload,
         recipients: &[String],
     ) -> Result<()> {
-        let recipients: Vec<String> = recipients
+        let recipients: HashSet<String> = recipients
             .iter()
             .filter(|participant| participant.as_str() != self.own_pubkey)
             .filter(|participant| self.participant_pubkeys.contains(participant.as_str()))
@@ -222,18 +263,65 @@ impl NostrSignalingClient {
             ));
         }
 
+        let mut delivered = HashSet::new();
+        let mut first_error = None;
+
+        for network in &self.networks {
+            let network_recipients = recipients
+                .iter()
+                .filter(|participant| network.participants.contains(participant.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if network_recipients.is_empty() {
+                continue;
+            }
+
+            match self
+                .publish_private_to_network(
+                    payload.clone(),
+                    &network.network_id,
+                    &network_recipients,
+                )
+                .await
+            {
+                Ok(sent) => delivered.extend(sent),
+                Err(error) => {
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                }
+            }
+        }
+
+        if delivered == recipients {
+            return Ok(());
+        }
+
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+
+        Err(anyhow!("private signaling event rejected by all relays"))
+    }
+
+    async fn publish_private_to_network(
+        &self,
+        payload: SignalPayload,
+        network_id: &str,
+        recipients: &[String],
+    ) -> Result<HashSet<String>> {
         let envelope = SignalEnvelope {
-            network_id: self.network_id.clone(),
+            network_id: network_id.to_string(),
             sender_pubkey: self.own_pubkey.clone(),
             payload,
         };
 
         let content = serde_json::to_string(&envelope).context("failed to serialize envelope")?;
 
-        let mut accepted = 0usize;
+        let mut delivered = HashSet::new();
         let expiration = Timestamp::now() + Duration::from_secs(SIGNAL_EXPIRATION_SECS);
         for recipient in recipients {
-            let recipient_pubkey = PublicKey::from_hex(&recipient)
+            let recipient_pubkey = PublicKey::from_hex(recipient)
                 .with_context(|| format!("invalid recipient pubkey {recipient}"))?;
 
             let encrypted_content = nip44::encrypt(
@@ -261,15 +349,15 @@ impl NostrSignalingClient {
                 .context("failed to publish private nostr event")?;
 
             if !output.success.is_empty() {
-                accepted += 1;
+                delivered.insert(recipient.clone());
             }
         }
 
-        if accepted == 0 {
+        if delivered.is_empty() {
             return Err(anyhow!("private signaling event rejected by all relays"));
         }
 
-        Ok(())
+        Ok(delivered)
     }
 
     pub async fn recv(&self) -> Option<SignalEnvelope> {
@@ -286,7 +374,9 @@ impl NostrSignalingClient {
     fn start_event_forwarder(&self) {
         let mut notifications = self.client.notifications();
         let own_pubkey = self.own_pubkey.clone();
-        let network_id = self.network_id.clone();
+        let default_network_id = self.default_network_id.clone();
+        let network_ids = self.network_ids.clone();
+        let networks = self.networks.clone();
         let participant_pubkeys = self.participant_pubkeys.clone();
         let keys = self.keys.clone();
         let recv_tx = self.recv_tx.clone();
@@ -316,11 +406,31 @@ impl NostrSignalingClient {
                             continue;
                         }
 
-                        let _ = recv_tx.send(SignalEnvelope {
-                            network_id: network_id.clone(),
-                            sender_pubkey,
-                            payload: SignalPayload::Hello,
-                        });
+                        let matched_network_ids = networks
+                            .iter()
+                            .filter(|network| {
+                                network.participants.is_empty()
+                                    || network.participants.contains(&sender_pubkey)
+                            })
+                            .map(|network| network.network_id.clone())
+                            .collect::<Vec<_>>();
+
+                        if matched_network_ids.is_empty() {
+                            let _ = recv_tx.send(SignalEnvelope {
+                                network_id: default_network_id.clone(),
+                                sender_pubkey,
+                                payload: SignalPayload::Hello,
+                            });
+                            continue;
+                        }
+
+                        for network_id in matched_network_ids {
+                            let _ = recv_tx.send(SignalEnvelope {
+                                network_id,
+                                sender_pubkey: sender_pubkey.clone(),
+                                payload: SignalPayload::Hello,
+                            });
+                        }
                         continue;
                     }
 
@@ -345,15 +455,28 @@ impl NostrSignalingClient {
                         continue;
                     };
 
-                    if envelope.network_id != network_id {
+                    if !network_ids.contains(&envelope.network_id) {
                         continue;
                     }
+
+                    let Some(network) = networks
+                        .iter()
+                        .find(|network| network.network_id == envelope.network_id)
+                    else {
+                        continue;
+                    };
 
                     if envelope.sender_pubkey == own_pubkey {
                         continue;
                     }
 
                     if envelope.sender_pubkey != event.pubkey.to_hex() {
+                        continue;
+                    }
+
+                    if !network.participants.is_empty()
+                        && !network.participants.contains(&envelope.sender_pubkey)
+                    {
                         continue;
                     }
 
@@ -375,6 +498,38 @@ fn normalize_participants(participants: Vec<String>) -> Result<HashSet<String>> 
     for participant in participants {
         normalized.insert(normalize_nostr_pubkey(&participant)?);
     }
+    Ok(normalized)
+}
+
+fn normalize_signaling_networks(
+    networks: Vec<SignalingNetwork>,
+) -> Result<Vec<ConfiguredSignalingNetwork>> {
+    let mut normalized = Vec::<ConfiguredSignalingNetwork>::new();
+    for network in networks {
+        let network_id = network.network_id.trim();
+        if network_id.is_empty() {
+            return Err(anyhow!("network_id must not be empty"));
+        }
+
+        let participants = normalize_participants(network.participants)?;
+        if let Some(existing) = normalized
+            .iter_mut()
+            .find(|existing| existing.network_id == network_id)
+        {
+            existing.participants.extend(participants);
+            continue;
+        }
+
+        normalized.push(ConfiguredSignalingNetwork {
+            network_id: network_id.to_string(),
+            participants,
+        });
+    }
+
+    if normalized.is_empty() {
+        return Err(anyhow!("at least one signaling network is required"));
+    }
+
     Ok(normalized)
 }
 
