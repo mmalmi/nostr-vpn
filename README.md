@@ -87,19 +87,27 @@ cargo build -p nostr-vpn-cli -p nostr-vpn-relay
 
 ## Install `nvpn`
 
+Quick install for servers, VPSes, and other headless macOS/Linux hosts:
+
+```bash
+curl -fsSL https://github.com/mmalmi/nostr-vpn/releases/latest/download/nvpn-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/apple-darwin/' | sed 's/linux/unknown-linux-musl/').tar.gz | tar -xz && cd nvpn && ./install.sh
+```
+
 From source:
 
 ```bash
 cargo install --path crates/nostr-vpn-cli --bin nvpn
 ```
 
-If you already have a packaged Unix release artifact produced by the release workflow, extract it and run:
+If you already have a packaged CLI release artifact, extract it and run:
 
 ```bash
 ./install.sh
 ```
 
-That installer places whichever packaged binaries are present into `/usr/local/bin` by default.
+That installer places `nvpn` into `/usr/local/bin` by default.
+
+If you want the desktop app instead of the headless CLI flow, download the signed macOS GUI zip from GitHub Releases.
 
 ## CLI quickstart
 

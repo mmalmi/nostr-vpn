@@ -58,9 +58,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --exclude nostr-vpn-gui
 
-  build-linux:
-    name: Build Linux release artifacts (${{ matrix.label }})
-    runs-on: ubuntu-latest
+  build-cli:
+    name: Build CLI release artifacts (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
     needs: verify
     permissions:
       contents: read
@@ -68,12 +68,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: x86_64
+          - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-          - label: arm64
+            cross: true
+          - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-    env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+            cross: true
+          - os: macos-14
+            target: x86_64-apple-darwin
+            cross: false
+          - os: macos-14
+            target: aarch64-apple-darwin
+            cross: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -86,12 +92,21 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross
+        if: ${{ matrix.cross }}
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build Linux CLI
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build CLI (cross)
+        if: ${{ matrix.cross }}
         run: cross build --release --target ${{ matrix.target }} -p nostr-vpn-cli
 
-      - name: Package Linux artifacts
+      - name: Build CLI (native)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} -p nostr-vpn-cli
+
+      - name: Package CLI artifacts
         shell: bash
         run: |
           BIN_DIR="target/${{ matrix.target }}/release"
@@ -131,6 +146,9 @@ jobs:
             ./install.sh              # installs to /usr/local/bin (may need sudo)
             ./install.sh ~/.local/bin # installs to custom directory
 
+          Manual install:
+            cp nvpn /usr/local/bin/
+
           Quick start:
             nvpn init --participant npub1...alice --participant npub1...bob
             nvpn up
@@ -141,22 +159,27 @@ jobs:
 
           cd dist
           tar -czvf "nvpn-${{ matrix.target }}.tar.gz" nvpn
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "nvpn-${{ matrix.target }}.tar.gz" > "nvpn-${{ matrix.target }}.sha256"
+          else
+            shasum -a 256 "nvpn-${{ matrix.target }}.tar.gz" > "nvpn-${{ matrix.target }}.sha256"
+          fi
+          rm -rf nvpn
 
-      - name: Upload Linux artifacts
+      - name: Upload CLI artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.target }}
-          path: dist/nvpn-${{ matrix.target }}.tar.gz
+          name: cli-${{ matrix.target }}
+          path: dist/nvpn-${{ matrix.target }}*
           retention-days: 7
 
-  build-macos:
-    name: Build macOS release artifacts
+  build-macos-app:
+    name: Build macOS desktop app
     runs-on: macos-14
     needs: verify
     permissions:
       contents: read
     env:
-      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
       MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
       MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -354,8 +377,8 @@ jobs:
   release:
     name: Create GitHub Release
     needs:
-      - build-linux
-      - build-macos
+      - build-cli
+      - build-macos-app
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -376,5 +399,37 @@ jobs:
           name: ${{ github.event.inputs.tag || github.ref_name }}
           draft: false
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
-          generate_release_notes: true
           files: artifacts/*
+          body: |
+            ## Installation
+
+            ### CLI (macOS/Linux, auto-detect)
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/apple-darwin/' | sed 's/linux/unknown-linux-musl/').tar.gz | tar -xz && cd nvpn && ./install.sh
+            ```
+
+            ### CLI (manual)
+            ```bash
+            # macOS Apple Silicon
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz
+
+            # macOS Intel
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-apple-darwin.tar.gz
+
+            # Linux x86_64
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz
+
+            # Linux ARM64
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz
+
+            tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh
+            ```
+
+            ### Desktop app
+            Download `nostr-vpn-macos-arm64.zip` from this release for the signed macOS GUI app.
+
+            ### Verify
+            ```bash
+            nvpn --help
+            nvpn init --participant npub1...alice --participant npub1...bob
+            ```

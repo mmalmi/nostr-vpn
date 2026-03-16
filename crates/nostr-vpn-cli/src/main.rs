@@ -1294,6 +1294,7 @@ struct DaemonRuntimeState {
     network: NetworkSummary,
     #[serde(default)]
     port_mapping: PortMappingStatus,
+    #[serde(default)]
     peers: Vec<DaemonPeerState>,
 }
 
@@ -1304,6 +1305,7 @@ struct DaemonPeerState {
     tunnel_ip: String,
     endpoint: String,
     public_key: String,
+    #[serde(default)]
     advertised_routes: Vec<String>,
     presence_timestamp: u64,
     last_signal_seen_at: Option<u64>,
@@ -8216,7 +8218,7 @@ mod tests {
 
     use super::{
         AppConfig, Cli, DaemonPeerCacheEntry, DaemonPeerCacheRestore, DaemonPeerCacheState,
-        DiscoveredPublicSignalEndpoint, InstallCliArgs, LinuxExitNodeIpFamily,
+        DaemonRuntimeState, DiscoveredPublicSignalEndpoint, InstallCliArgs, LinuxExitNodeIpFamily,
         OutboundAnnounceBook, PeerAnnouncement, TunnelPeer, UninstallCliArgs, WireGuardPeerStatus,
         announcement_fingerprint, build_peer_announcement, build_runtime_magic_dns_records,
         can_reuse_active_listen_port, connected_peer_count_for_runtime, daemon_control_file_path,
@@ -9469,6 +9471,38 @@ mod tests {
         );
     }
 
+    #[test]
+    fn daemon_runtime_state_parses_legacy_peer_without_advertised_routes() {
+        let raw = r#"{
+  "updated_at": 1773650797,
+  "session_active": true,
+  "relay_connected": true,
+  "session_status": "Connected",
+  "expected_peer_count": 1,
+  "connected_peer_count": 1,
+  "mesh_ready": true,
+  "peers": [
+    {
+      "participant_pubkey": "ed91c2fcdf6857157e72497d67be9dad91d865db6407bb0440ca53129e10cb1f",
+      "node_id": "6bea57f5-e06b-49d1-83b5-484ab0a3df12",
+      "tunnel_ip": "10.44.0.239/32",
+      "endpoint": "192.168.178.80:51820",
+      "public_key": "+fi3YvMFH0JQFNuQPiPy5xBXNKvpaCKIbbbgrlXT5yw=",
+      "presence_timestamp": 1773650779,
+      "last_signal_seen_at": 1773650779,
+      "reachable": true,
+      "last_handshake_at": null,
+      "error": null
+    }
+  ]
+}"#;
+
+        let parsed =
+            serde_json::from_str::<DaemonRuntimeState>(raw).expect("legacy daemon state parses");
+
+        assert_eq!(parsed.peers.len(), 1);
+        assert!(parsed.peers[0].advertised_routes.is_empty());
+    }
 
     #[test]
     fn daemon_pid_scan_matches_processes_for_config() {

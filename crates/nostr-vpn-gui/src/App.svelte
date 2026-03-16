@@ -52,6 +52,7 @@
   let magicDnsSuffixDraft = ''
   let exitNodeSearch = ''
   let draftsInitialized = false
+  let showAdvancedRoutes = false
 
   let networkNameDrafts: Record<string, string> = {}
   let participantInputDrafts: Record<string, string> = {}
@@ -230,7 +231,7 @@
     const base = participant.magicDnsName || short(participant.npub, 18, 12)
     return participant.offersExitNode
       ? `${base} (offers exit node)`
-      : `${base} (no exit routes advertised)`
+      : `${base} (not offering exit node)`
   }
 
   const filteredExitNodeCandidates = (state: UiState, query: string) => {
@@ -266,7 +267,7 @@
 
   const exitNodeAvailabilityText = (participant: ParticipantView) => {
     if (!participant.offersExitNode) {
-      return 'No exit routes'
+      return 'Not offered'
     }
     switch (participant.state) {
       case 'online':
@@ -280,9 +281,30 @@
     }
   }
 
+  const offerExitNodeStatusText = (state: UiState) => {
+    const defaultRoutes = state.effectiveAdvertisedRoutes.filter(
+      (route) => route === '0.0.0.0/0' || route === '::/0',
+    )
+    const advertised = defaultRoutes.length > 0 ? defaultRoutes.join(', ') : '0.0.0.0/0, ::/0'
+
+    if (state.advertiseExitNode) {
+      return `Will advertise default routes: ${advertised}`
+    }
+
+    return 'Turn this on to offer this device as an exit node.'
+  }
+
+  const additionalRoutesStatusText = (state: UiState) => {
+    if (state.advertisedRoutes.length === 0) {
+      return 'Optional extra LAN or subnet routes. Not needed for exit-node traffic.'
+    }
+
+    return `Currently advertising extra routes: ${state.advertisedRoutes.join(', ')}`
+  }
+
   const selectedExitNodeStatusText = (state: UiState) => {
     if (!state.exitNode) {
-      return 'Default-route traffic stays direct across the mesh.'
+      return 'Internet-bound traffic stays local; only mesh routes are used.'
     }
 
     const selected = exitNodeCandidates(state).find((participant) => participant.npub === state.exitNode)
@@ -292,12 +314,12 @@
 
     const label = selected.magicDnsName || short(selected.npub, 18, 12)
     if (!selected.offersExitNode) {
-      return `${label} is selected, but it is not advertising default routes right now.`
+      return `${label} is selected, but it is not offering exit-node traffic right now.`
     }
 
     switch (selected.state) {
       case 'online':
-        return `${label} is selected and ready to carry default-route traffic.`
+        return `${label} is selected and ready to carry internet-bound traffic.`
       case 'pending':
         return `${label} is selected, but WireGuard is still waiting for a handshake.`
       case 'offline':
@@ -377,6 +399,9 @@
       magicDnsSuffixDraft = state.magicDnsSuffix
     }
     exitNodeDraft = state.exitNode
+    if (state.advertisedRoutes.length > 0) {
+      showAdvancedRoutes = true
+    }
     if (!debouncers.has('advertisedRoutes')) {
       advertisedRoutesDraft = state.advertisedRoutes.join(', ')
     }
@@ -1225,8 +1250,9 @@
               advertiseExitNode: (event.currentTarget as HTMLInputElement).checked,
             })}
         />
-        <span>Advertise exit node (default routes)</span>
+        <span>Offer this device as exit node</span>
       </label>
+      <div class="config-path settings-note">{offerExitNodeStatusText(state)}</div>
 
       <label class="toggle-row">
         <input
@@ -1254,7 +1280,7 @@
 
       <div class="field-grid">
         <div class="field-span field-panel">
-          <span>Use Exit Node</span>
+          <span>Use Another Device as Exit Node</span>
           <input
             class="text-input"
             placeholder="Search peers by alias, npub, or tunnel IP"
@@ -1271,7 +1297,7 @@
                 <div class="item-title">No exit node</div>
                 <span class="badge muted">Direct mesh</span>
               </div>
-              <div class="item-sub">Keep default-route traffic off peer relays and use mesh routing only.</div>
+              <div class="item-sub">Keep internet-bound traffic local and only use mesh-specific routes.</div>
             </button>
 
             {#each filteredExitNodeCandidates(state, exitNodeSearch) as participant}
@@ -1302,17 +1328,32 @@
           <div class="config-path">{selectedExitNodeStatusText(state)}</div>
         </div>
 
-        <label>
-          <span>Advertised Routes</span>
-          <input
-            class="text-input"
-            placeholder="10.0.0.0/24, 192.168.0.0/24"
-            bind:value={advertisedRoutesDraft}
-            on:input={() =>
-              debounce('advertisedRoutes', () =>
-                onUpdateSettings({ advertisedRoutes: advertisedRoutesDraft }))}
-          />
-        </label>
+        <div class="field-span field-panel advanced-panel">
+          <button
+            class="advanced-toggle"
+            type="button"
+            on:click={() => {
+              showAdvancedRoutes = !showAdvancedRoutes
+            }}
+          >
+            {showAdvancedRoutes ? 'Hide advanced route advertising' : 'Advanced: advertise extra routes'}
+          </button>
+          <div class="config-path">{additionalRoutesStatusText(state)}</div>
+
+          {#if showAdvancedRoutes}
+            <label class="advanced-routes-field">
+              <span>Additional Advertised Routes</span>
+              <input
+                class="text-input"
+                placeholder="10.0.0.0/24, 192.168.0.0/24"
+                bind:value={advertisedRoutesDraft}
+                on:input={() =>
+                  debounce('advertisedRoutes', () =>
+                    onUpdateSettings({ advertisedRoutes: advertisedRoutesDraft }))}
+              />
+            </label>
+          {/if}
+        </div>
 
         <label>
           <span>MagicDNS Suffix (Optional)</span>
