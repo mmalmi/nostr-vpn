@@ -208,6 +208,7 @@ struct NetworkView {
     id: String,
     name: String,
     enabled: bool,
+    network_id: String,
     online_count: usize,
     expected_count: usize,
     participants: Vec<ParticipantView>,
@@ -1657,7 +1658,6 @@ impl NvpnBackend {
 
     fn network_rows(&self) -> Vec<NetworkView> {
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().ok();
-        let network_id = self.config.effective_network_id();
         let mut rows = Vec::with_capacity(self.config.networks.len());
 
         for network in &self.config.networks {
@@ -1668,7 +1668,11 @@ impl NvpnBackend {
             let participant_rows = participants
                 .iter()
                 .map(|participant| {
-                    self.participant_view(participant, &network_id, own_pubkey_hex.as_deref())
+                    self.participant_view(
+                        participant,
+                        &network.network_id,
+                        own_pubkey_hex.as_deref(),
+                    )
                 })
                 .collect::<Vec<_>>();
 
@@ -1700,6 +1704,7 @@ impl NvpnBackend {
                 id: network.id.clone(),
                 name: network.name.clone(),
                 enabled: network.enabled,
+                network_id: network.network_id.clone(),
                 online_count,
                 expected_count,
                 participants: participant_rows,
@@ -3840,6 +3845,7 @@ mod tests {
                 id: "home".to_string(),
                 name: "Home".to_string(),
                 enabled: true,
+                network_id: "mesh-home".to_string(),
                 online_count: 1,
                 expected_count: 2,
                 participants: vec![
@@ -3875,6 +3881,7 @@ mod tests {
                 id: "lab".to_string(),
                 name: "Lab".to_string(),
                 enabled: false,
+                network_id: "mesh-lab".to_string(),
                 online_count: 0,
                 expected_count: 1,
                 participants: vec![ParticipantView {
@@ -3906,6 +3913,7 @@ mod tests {
                     id: "home".to_string(),
                     name: "Home".to_string(),
                     enabled: true,
+                    network_id: "mesh-home".to_string(),
                     online_count: 1,
                     expected_count: 1,
                     participants: vec![ParticipantView {
@@ -3926,6 +3934,7 @@ mod tests {
                     id: "work".to_string(),
                     name: "Work".to_string(),
                     enabled: true,
+                    network_id: "mesh-work".to_string(),
                     online_count: 1,
                     expected_count: 1,
                     participants: vec![
@@ -3982,6 +3991,7 @@ mod tests {
                 id: "home".to_string(),
                 name: "Home".to_string(),
                 enabled: true,
+                network_id: "mesh-home".to_string(),
                 online_count: 1,
                 expected_count: 1,
                 participants: vec![ParticipantView {

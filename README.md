@@ -19,7 +19,7 @@ This repo is not just one binary. It currently ships:
 ## What the project does today
 
 - Generates both Nostr identity keys and WireGuard keys automatically
-- Stores a single app config with one or more named networks, participant allowlists, and a stable mesh ID
+- Stores a single app config with one or more named networks, each with participant allowlists and its own stable mesh ID
 - Publishes and consumes private peer announcements over Nostr relays
 - Brings up userspace WireGuard tunnels via `boringtun`
 - Tracks peer endpoints, including NAT-discovered public endpoints and hole-punch attempts
@@ -53,11 +53,11 @@ The config contains:
 - Nostr settings including relay URLs and identity keys
 - NAT settings including STUN servers, reflectors, and discovery timeout
 - node settings including endpoint, tunnel IP, listen port, and advertised routes
-- a `[[networks]]` list of named participant sets
+- a `[[networks]]` list of named participant sets with one active network at a time
 
-`network_id` is the mesh identity used for private signaling and auto-derived tunnel addressing. Once a config has participants, `nostr-vpn` promotes the legacy default into a stable mesh ID instead of recomputing it on every participant change.
+Each `[[networks]]` entry carries its own `network_id`, which is the mesh identity used for private signaling and auto-derived tunnel addressing. If an older config still only has the legacy top-level default, `nostr-vpn` promotes it into per-network stable IDs and then stops recomputing them on participant changes.
 
-Nodes that should talk to each other must share the same `network_id` and list each other as participants. Enabled `[[networks]]` entries are still merged into one runtime participant set today.
+Nodes that should talk to each other must share the same `network_id` and list each other as participants. Only the active network participates in the live runtime; inactive networks stay saved for later activation.
 
 ## Build and validate
 
@@ -258,6 +258,8 @@ The repo includes several real integration paths under [`scripts/`](scripts):
   Verifies relay connectivity, `announce`/`listen`, manual `tunnel-up`, and ping across two containers.
 - `./scripts/e2e-connect-docker.sh`
   Verifies config-driven `nvpn connect`, mesh formation, relay pause-on-mesh-ready behavior, and tunnel ping.
+- `./scripts/e2e-active-network-docker.sh`
+  Verifies that inactive saved networks do not change the active mesh identity, expected peer count, or auto-derived tunnel IP.
 - `./scripts/e2e-divergent-roster-docker.sh`
   Verifies that peers with a shared mesh ID can still connect when one node has extra configured participants.
 - `./scripts/e2e-nat-docker.sh`
@@ -265,7 +267,7 @@ The repo includes several real integration paths under [`scripts/`](scripts):
 - `./scripts/e2e-exit-node-docker.sh`
   Verifies exit-node advertisement, selection, routing, and NAT discovery egress through the advertised exit node.
 - `./scripts/e2e-tauri-driver-docker.sh`
-  Builds the GUI in a Linux container, runs a Tauri-driver smoke test, and writes a screenshot to `artifacts/screenshots/tauri-driver-smoke.png`.
+  Builds the GUI in a Linux container, runs a Tauri-driver smoke test, and writes a screenshot to `artifacts/screenshots/tauri-driver-e2e.png`.
 
 The Docker e2e flows are Linux-oriented because they require real tunnel devices and container networking privileges.
 

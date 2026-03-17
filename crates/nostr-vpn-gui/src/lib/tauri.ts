@@ -84,6 +84,7 @@ const mockState: UiState = {
       id: 'network-1',
       name: 'Network 1',
       enabled: true,
+      networkId: 'nostr-vpn:mockmesh',
       onlineCount: 0,
       expectedCount: 0,
       participants: [],
@@ -108,6 +109,16 @@ const mockState: UiState = {
 
 const cloneMockState = () => structuredClone(mockState)
 
+const mockActiveNetwork = () =>
+  mockState.networks.find((network) => network.enabled) ?? mockState.networks[0]
+
+const activateMockNetwork = (networkId: string) => {
+  mockState.networks = mockState.networks.map((network) => ({
+    ...network,
+    enabled: network.id === networkId,
+  }))
+}
+
 const mockRequiresServiceSetup = () =>
   mockState.serviceSupported && !mockState.serviceInstalled && !mockState.daemonRunning
 
@@ -127,14 +138,10 @@ const recomputeMockConnectivity = () => {
     expectedCount: countExpected(network),
   }))
 
-  mockState.connectedPeerCount = mockState.networks.reduce(
-    (sum, network) => sum + network.onlineCount,
-    0,
-  )
-  mockState.expectedPeerCount = mockState.networks.reduce(
-    (sum, network) => sum + network.expectedCount,
-    0,
-  )
+  const activeNetwork = mockActiveNetwork()
+  mockState.networkId = activeNetwork?.networkId || mockState.networkId
+  mockState.connectedPeerCount = activeNetwork?.onlineCount || 0
+  mockState.expectedPeerCount = activeNetwork?.expectedCount || 0
   mockState.meshReady =
     mockState.expectedPeerCount > 0 &&
     mockState.connectedPeerCount >= mockState.expectedPeerCount
@@ -309,7 +316,8 @@ export const addNetwork = (name: string) =>
         mockState.networks.push({
           id,
           name: normalized,
-          enabled: true,
+          enabled: false,
+          networkId: `nostr-vpn:${id}`,
           onlineCount: 0,
           expectedCount: 0,
           participants: [],
@@ -339,6 +347,9 @@ export const removeNetwork = (networkId: string) =>
         mockState.networks = mockState.networks.filter(
           (network) => network.id !== networkId,
         )
+        if (!mockState.networks.some((network) => network.enabled) && mockState.networks[0]) {
+          activateMockNetwork(mockState.networks[0].id)
+        }
         return asResult()
       })()
 
@@ -346,9 +357,9 @@ export const setNetworkEnabled = (networkId: string, enabled: boolean) =>
   isTauriRuntime()
     ? invoke<UiState>('set_network_enabled', { networkId, enabled })
     : (() => {
-        mockState.networks = mockState.networks.map((network) =>
-          network.id === networkId ? { ...network, enabled } : network,
-        )
+        if (enabled) {
+          activateMockNetwork(networkId)
+        }
         return asResult()
       })()
 

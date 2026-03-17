@@ -1,8 +1,8 @@
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, DEFAULT_RELAYS, derive_mesh_tunnel_ip, derive_network_id_from_participants,
-    maybe_autoconfigure_node, needs_endpoint_autoconfig, needs_tunnel_ip_autoconfig,
-    normalize_nostr_pubkey,
+    AppConfig, DEFAULT_RELAYS, NetworkConfig, derive_mesh_tunnel_ip,
+    derive_network_id_from_participants, maybe_autoconfigure_node, needs_endpoint_autoconfig,
+    needs_tunnel_ip_autoconfig, normalize_nostr_pubkey,
 };
 
 fn set_default_network_participants(config: &mut AppConfig, participants: Vec<String>) {
@@ -155,7 +155,7 @@ fn maybe_autoconfigure_node_assigns_tunnel_ip_from_participants() {
 }
 
 #[test]
-fn explicit_network_id_takes_precedence_over_participant_hash() {
+fn active_network_network_id_takes_precedence_over_participant_hash() {
     let keys = Keys::generate();
     let peer = Keys::generate();
     let own_hex = keys.public_key().to_hex();
@@ -386,7 +386,7 @@ fn reciprocal_participant_configs_share_effective_network_id() {
 }
 
 #[test]
-fn enabled_network_meshes_keep_participant_sets_separate() {
+fn active_network_helpers_ignore_inactive_networks() {
     let own_keys = Keys::generate();
     let own_hex = own_keys.public_key().to_hex();
     let peer_a = Keys::generate().public_key().to_hex();
@@ -396,35 +396,124 @@ fn enabled_network_meshes_keep_participant_sets_separate() {
     config.nostr.secret_key = own_keys.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex.clone();
     config.networks = vec![
-        nostr_vpn_core::config::NetworkConfig {
+        NetworkConfig {
             id: "network-1".to_string(),
             name: "oma".to_string(),
             enabled: true,
+            network_id: "mesh-home".to_string(),
             participants: vec![peer_a.clone()],
         },
-        nostr_vpn_core::config::NetworkConfig {
+        NetworkConfig {
             id: "network-2".to_string(),
             name: "lauri".to_string(),
-            enabled: true,
+            enabled: false,
+            network_id: "mesh-work".to_string(),
             participants: vec![peer_b.clone()],
         },
     ];
     config.ensure_defaults();
 
-    let meshes = config.enabled_network_meshes();
+    assert_eq!(config.effective_network_id(), "mesh-home");
+    assert_eq!(config.participant_pubkeys_hex(), vec![peer_a.clone()]);
 
-    assert_eq!(meshes.len(), 2);
-    assert_eq!(meshes[0].participants, vec![peer_a.clone()]);
-    assert_eq!(meshes[1].participants, vec![peer_b.clone()]);
-    assert_ne!(meshes[0].network_id, meshes[1].network_id);
-    assert_eq!(
-        meshes[0].network_id,
-        derive_network_id_from_participants(&[own_hex.clone(), peer_a])
+    let mut expected_all = vec![peer_a.clone(), peer_b];
+    expected_all.sort();
+    assert_eq!(config.all_participant_pubkeys_hex(), expected_all);
+
+    let mut expected_members = vec![peer_a, own_hex];
+    expected_members.sort();
+    assert_eq!(config.mesh_members_pubkeys(), expected_members);
+
+    let meshes = config.enabled_network_meshes();
+    assert_eq!(meshes.len(), 1);
+    assert_eq!(meshes[0].network_id, "mesh-home");
+}
+
+#[test]
+fn activating_one_network_disables_the_others() {
+    let mut config = AppConfig::generated();
+    let first_id = config.networks[0].id.clone();
+    config.networks[0].network_id = "mesh-home".to_string();
+    let second_id = config.add_network("Work");
+    config
+        .network_by_id_mut(&second_id)
+        .expect("second network")
+        .network_id = "mesh-work".to_string();
+
+    config
+        .set_network_enabled(&second_id, true)
+        .expect("activate second network");
+
+    assert_eq!(config.enabled_network_count(), 1);
+    assert!(
+        !config
+            .network_by_id(&first_id)
+            .expect("first network")
+            .enabled
     );
-    assert_eq!(
-        meshes[1].network_id,
-        derive_network_id_from_participants(&[own_hex, peer_b])
+    assert!(
+        config
+            .network_by_id(&second_id)
+            .expect("second network")
+            .enabled
     );
+    assert_eq!(config.effective_network_id(), "mesh-work");
+}
+
+#[test]
+fn cannot_disable_the_last_active_network() {
+    let mut config = AppConfig::generated();
+    let active_id = config.networks[0].id.clone();
+
+    let error = config
+        .set_network_enabled(&active_id, false)
+        .expect_err("last active network should stay active");
+
+    assert!(error.to_string().contains("active network"));
+    assert_eq!(config.enabled_network_count(), 1);
+    assert!(
+        config
+            .network_by_id(&active_id)
+            .expect("active network")
+            .enabled
+    );
+}
+
+#[test]
+fn added_networks_start_inactive_with_their_own_mesh_slot() {
+    let mut config = AppConfig::generated();
+    let original_active_id = config.networks[0].id.clone();
+
+    let added_id = config.add_network("Work");
+
+    assert_eq!(config.enabled_network_count(), 1);
+    assert!(
+        config
+            .network_by_id(&original_active_id)
+            .expect("original active network")
+            .enabled
+    );
+
+    let added = config.network_by_id(&added_id).expect("added network");
+    assert!(!added.enabled);
+    assert_eq!(added.network_id, "nostr-vpn");
+}
+
+#[test]
+fn explicit_network_id_takes_precedence_over_participant_hash() {
+    let keys = Keys::generate();
+    let peer = Keys::generate();
+    let own_hex = keys.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.networks[0].network_id = "mesh-fixed".to_string();
+    config.nostr.secret_key = keys.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    set_default_network_participants(&mut config, vec![peer.public_key().to_hex()]);
+
+    config.ensure_defaults();
+
+    assert_eq!(config.effective_network_id(), "mesh-fixed");
 }
 
 #[test]

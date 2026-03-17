@@ -69,7 +69,7 @@ const fn default_nat_discovery_timeout_secs() -> u64 {
 pub struct AppConfig {
     #[serde(default)]
     pub networks: Vec<NetworkConfig>,
-    #[serde(default = "default_network_id")]
+    #[serde(default = "default_network_id", skip_serializing)]
     pub network_id: String,
     #[serde(default = "default_node_name")]
     pub node_name: String,
@@ -118,6 +118,8 @@ pub struct NetworkConfig {
     #[serde(default = "default_network_enabled")]
     pub enabled: bool,
     #[serde(default)]
+    pub network_id: String,
+    #[serde(default)]
     pub participants: Vec<String>,
 }
 
@@ -136,6 +138,7 @@ impl Default for AppConfig {
                 id: default_network_entry_id(1),
                 name: default_network_name(1),
                 enabled: default_network_enabled(),
+                network_id: default_network_id(),
                 participants: Vec::new(),
             }],
             network_id: default_network_id(),
@@ -295,6 +298,7 @@ impl AppConfig {
                 id: default_network_entry_id(1),
                 name: default_network_name(1),
                 enabled: true,
+                network_id: default_network_id(),
                 participants: Vec::new(),
             });
         }
@@ -318,6 +322,10 @@ impl AppConfig {
                 network.id = uniquify_network_entry_id(network.id.clone(), &mut used_ids);
             }
 
+            if network.network_id.trim().is_empty() {
+                network.network_id = default_network_id();
+            }
+
             network.participants = network
                 .participants
                 .iter()
@@ -327,50 +335,32 @@ impl AppConfig {
             network.participants.dedup();
         }
 
-        self.promote_legacy_network_id();
+        self.ensure_single_active_network();
+        self.promote_legacy_network_ids();
+        self.sync_legacy_network_id();
         self.normalize_peer_aliases();
     }
 
     pub fn effective_network_id(&self) -> String {
-        self.network_id.clone()
+        self.active_network().network_id.clone()
     }
 
     pub fn enabled_network_meshes(&self) -> Vec<EnabledNetworkMesh> {
-        let own_pubkey = self.own_nostr_pubkey_hex().ok();
-        let enabled_count = self.enabled_network_count();
+        let network = self.active_network();
+        let mut participants = network.participants.clone();
+        participants.sort();
+        participants.dedup();
 
-        self.networks
-            .iter()
-            .filter(|network| network.enabled)
-            .map(|network| {
-                let mut participants = network.participants.clone();
-                participants.sort();
-                participants.dedup();
-
-                let network_id = effective_network_id_for_enabled_network(
-                    &self.network_id,
-                    enabled_count,
-                    own_pubkey.as_deref(),
-                    network,
-                );
-
-                EnabledNetworkMesh {
-                    id: network.id.clone(),
-                    name: network.name.clone(),
-                    network_id,
-                    participants,
-                }
-            })
-            .collect()
+        vec![EnabledNetworkMesh {
+            id: network.id.clone(),
+            name: network.name.clone(),
+            network_id: network.network_id.clone(),
+            participants,
+        }]
     }
 
     pub fn participant_pubkeys_hex(&self) -> Vec<String> {
-        let mut participants = self
-            .networks
-            .iter()
-            .filter(|network| network.enabled)
-            .flat_map(|network| network.participants.iter().cloned())
-            .collect::<Vec<_>>();
+        let mut participants = self.active_network().participants.clone();
         participants.sort();
         participants.dedup();
         participants
@@ -392,6 +382,24 @@ impl AppConfig {
             .iter()
             .filter(|network| network.enabled)
             .count()
+    }
+
+    pub fn active_network(&self) -> &NetworkConfig {
+        let index = self
+            .networks
+            .iter()
+            .position(|network| network.enabled)
+            .unwrap_or(0);
+        &self.networks[index]
+    }
+
+    pub fn active_network_mut(&mut self) -> &mut NetworkConfig {
+        let index = self
+            .networks
+            .iter()
+            .position(|network| network.enabled)
+            .unwrap_or(0);
+        &mut self.networks[index]
     }
 
     pub fn network_by_id(&self, network_id: &str) -> Option<&NetworkConfig> {
@@ -423,7 +431,8 @@ impl AppConfig {
         self.networks.push(NetworkConfig {
             id: id.clone(),
             name,
-            enabled: true,
+            enabled: false,
+            network_id: default_network_id(),
             participants: Vec::new(),
         });
         id
@@ -452,15 +461,50 @@ impl AppConfig {
             return Err(anyhow::anyhow!("network not found"));
         }
 
+        if !self.networks.iter().any(|network| network.enabled)
+            && let Some(first_network) = self.networks.first_mut()
+        {
+            first_network.enabled = true;
+        }
+
+        self.sync_legacy_network_id();
         self.normalize_peer_aliases();
         Ok(())
     }
 
     pub fn set_network_enabled(&mut self, network_id: &str, enabled: bool) -> Result<()> {
-        let network = self
-            .network_by_id_mut(network_id)
+        let index = self
+            .networks
+            .iter()
+            .position(|network| network.id == network_id)
             .ok_or_else(|| anyhow::anyhow!("network not found"))?;
-        network.enabled = enabled;
+
+        if enabled {
+            for (candidate_index, network) in self.networks.iter_mut().enumerate() {
+                network.enabled = candidate_index == index;
+            }
+            self.sync_legacy_network_id();
+            return Ok(());
+        }
+
+        if self.networks[index].enabled {
+            return Err(anyhow::anyhow!(
+                "at least one active network is required; activate another network first"
+            ));
+        }
+
+        self.networks[index].enabled = false;
+        Ok(())
+    }
+
+    pub fn set_active_network_id(&mut self, network_id: &str) -> Result<()> {
+        let network_id = network_id.trim();
+        if network_id.is_empty() {
+            return Err(anyhow::anyhow!("network id cannot be empty"));
+        }
+
+        self.active_network_mut().network_id = network_id.to_string();
+        self.sync_legacy_network_id();
         Ok(())
     }
 
@@ -514,21 +558,65 @@ impl AppConfig {
         members
     }
 
-    fn promote_legacy_network_id(&mut self) {
-        if !uses_legacy_network_id(&self.network_id) {
-            return;
+    fn ensure_single_active_network(&mut self) {
+        let mut first_active_index = None;
+        for (index, network) in self.networks.iter_mut().enumerate() {
+            if !network.enabled {
+                continue;
+            }
+
+            if first_active_index.is_none() {
+                first_active_index = Some(index);
+            } else {
+                network.enabled = false;
+            }
         }
 
-        if self.participant_pubkeys_hex().is_empty() {
-            return;
+        if first_active_index.is_none()
+            && let Some(first_network) = self.networks.first_mut()
+        {
+            first_network.enabled = true;
         }
+    }
 
-        let mesh_members = self.mesh_members_pubkeys();
-        if mesh_members.is_empty() {
-            return;
+    fn promote_legacy_network_ids(&mut self) {
+        let own_pubkey = self.own_nostr_pubkey_hex().ok();
+        let legacy_app_network_id = self.network_id.clone();
+        let active_network_id = self.active_network().id.clone();
+
+        for network in &mut self.networks {
+            if network.id == active_network_id
+                && uses_legacy_network_id(&network.network_id)
+                && !uses_legacy_network_id(&legacy_app_network_id)
+            {
+                network.network_id = legacy_app_network_id.clone();
+                continue;
+            }
+
+            if !uses_legacy_network_id(&network.network_id) {
+                continue;
+            }
+
+            let Some(own_pubkey) = own_pubkey.as_ref() else {
+                network.network_id = default_network_id();
+                continue;
+            };
+
+            if network.participants.is_empty() {
+                network.network_id = default_network_id();
+                continue;
+            }
+
+            let mut mesh_members = network.participants.clone();
+            mesh_members.push(own_pubkey.clone());
+            mesh_members.sort();
+            mesh_members.dedup();
+            network.network_id = derive_network_id_from_participants(&mesh_members);
         }
+    }
 
-        self.network_id = derive_network_id_from_participants(&mesh_members);
+    fn sync_legacy_network_id(&mut self) {
+        self.network_id = self.active_network().network_id.clone();
     }
 
     pub fn effective_advertised_routes(&self) -> Vec<String> {
@@ -663,30 +751,6 @@ impl AppConfig {
 
         None
     }
-}
-
-fn effective_network_id_for_enabled_network(
-    default_network_id: &str,
-    enabled_network_count: usize,
-    own_pubkey: Option<&str>,
-    network: &NetworkConfig,
-) -> String {
-    let mut mesh_members = network.participants.clone();
-    if let Some(own_pubkey) = own_pubkey {
-        mesh_members.push(own_pubkey.to_string());
-    }
-    mesh_members.sort();
-    mesh_members.dedup();
-
-    if mesh_members.len() > usize::from(own_pubkey.is_some()) {
-        return derive_network_id_from_participants(&mesh_members);
-    }
-
-    if enabled_network_count <= 1 {
-        return default_network_id.to_string();
-    }
-
-    format!("{}:{}", default_network_id, network.id)
 }
 
 pub fn derive_network_id_from_participants(participants: &[String]) -> String {

@@ -885,7 +885,7 @@ async fn main() -> Result<()> {
             let mut app = load_or_default_config(&config_path)?;
 
             if let Some(value) = args.network_id {
-                app.network_id = value;
+                app.set_active_network_id(&value)?;
             }
             if let Some(value) = args.magic_dns_suffix {
                 app.magic_dns_suffix = value;
@@ -1102,7 +1102,7 @@ async fn main() -> Result<()> {
 
             apply_participants_override(&mut app, participants)?;
             if let Some(network_id) = network_id {
-                app.network_id = network_id;
+                app.set_active_network_id(&network_id)?;
             }
 
             let relays = resolve_relays(&relay, &app);
@@ -1367,7 +1367,7 @@ fn load_config_with_overrides(
     let mut app = load_or_default_config(path)?;
     apply_participants_override(&mut app, participants)?;
     if let Some(network_id) = network_id {
-        app.network_id = network_id;
+        app.set_active_network_id(&network_id)?;
     }
     maybe_autoconfigure_node(&mut app);
 
@@ -1387,7 +1387,7 @@ fn signaling_networks_for_app(app: &AppConfig) -> Vec<SignalingNetwork> {
 
     if networks.is_empty() {
         return vec![SignalingNetwork {
-            network_id: app.network_id.clone(),
+            network_id: app.effective_network_id(),
             participants: app.participant_pubkeys_hex(),
         }];
     }
@@ -4468,31 +4468,29 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         public_signal_endpoint = None;
                         false
                     }
-                } else {
-                    if session_active {
-                        match port_mapping_runtime
-                            .renew_if_due(&network_snapshot, runtime_listen_port, timeout)
-                            .await
-                        {
-                            Ok(changed) => {
-                                if changed {
-                                    sync_public_signal_endpoint_from_mapping_or_stun(
-                                        &app,
-                                        runtime_listen_port,
-                                        &port_mapping_runtime,
-                                        &mut public_signal_endpoint,
-                                    );
-                                }
-                                changed
+                } else if session_active {
+                    match port_mapping_runtime
+                        .renew_if_due(&network_snapshot, runtime_listen_port, timeout)
+                        .await
+                    {
+                        Ok(changed) => {
+                            if changed {
+                                sync_public_signal_endpoint_from_mapping_or_stun(
+                                    &app,
+                                    runtime_listen_port,
+                                    &port_mapping_runtime,
+                                    &mut public_signal_endpoint,
+                                );
                             }
-                            Err(error) => {
-                                eprintln!("daemon: port mapping renew failed: {error}");
-                                false
-                            }
+                            changed
                         }
-                    } else {
-                        false
+                        Err(error) => {
+                            eprintln!("daemon: port mapping renew failed: {error}");
+                            false
+                        }
                     }
+                } else {
+                    false
                 };
 
                 if !network_changed && !endpoint_changed {
@@ -4648,35 +4646,33 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                     magic_dns_runtime.as_ref(),
                                 ) {
                                     session_status = format!("Resume failed ({error})");
-                                } else {
-                                    if daemon_session_active(session_enabled, expected_peers) {
-                                        let runtime_listen_port = tunnel_runtime
-                                            .active_listen_port
-                                            .unwrap_or(app.node.listen_port);
-                                        refresh_public_signal_endpoint_with_port_mapping(
-                                            &app,
-                                            &network_snapshot,
-                                            runtime_listen_port,
-                                            &mut port_mapping_runtime,
-                                            &mut public_signal_endpoint,
-                                        )
-                                        .await;
-                                        session_status = if restored_peer_cache
-                                            && app.auto_disconnect_relays_when_mesh_ready
-                                        {
-                                            reconnect_due = Instant::now()
-                                                + Duration::from_secs(
-                                                    DIRECT_MESH_BOOTSTRAP_RELAY_DELAY_SECS,
-                                                );
-                                            "Resuming with cached mesh".to_string()
-                                        } else {
-                                            "Resuming".to_string()
-                                        };
+                                } else if daemon_session_active(session_enabled, expected_peers) {
+                                    let runtime_listen_port = tunnel_runtime
+                                        .active_listen_port
+                                        .unwrap_or(app.node.listen_port);
+                                    refresh_public_signal_endpoint_with_port_mapping(
+                                        &app,
+                                        &network_snapshot,
+                                        runtime_listen_port,
+                                        &mut port_mapping_runtime,
+                                        &mut public_signal_endpoint,
+                                    )
+                                    .await;
+                                    session_status = if restored_peer_cache
+                                        && app.auto_disconnect_relays_when_mesh_ready
+                                    {
+                                        reconnect_due = Instant::now()
+                                            + Duration::from_secs(
+                                                DIRECT_MESH_BOOTSTRAP_RELAY_DELAY_SECS,
+                                            );
+                                        "Resuming with cached mesh".to_string()
                                     } else {
-                                        port_mapping_runtime.stop().await;
-                                        public_signal_endpoint = None;
-                                        session_status = WAITING_FOR_PARTICIPANTS_STATUS.to_string();
-                                    }
+                                        "Resuming".to_string()
+                                    };
+                                } else {
+                                    port_mapping_runtime.stop().await;
+                                    public_signal_endpoint = None;
+                                    session_status = WAITING_FOR_PARTICIPANTS_STATUS.to_string();
                                 }
                             }
                         }
@@ -7375,10 +7371,7 @@ fn apply_participants_override(config: &mut AppConfig, participants: Vec<String>
     normalized.sort();
     normalized.dedup();
     config.ensure_defaults();
-    if let Some(network) = config.networks.first_mut() {
-        network.participants = normalized.clone();
-        network.enabled = true;
-    }
+    config.active_network_mut().participants = normalized.clone();
     config.ensure_defaults();
 
     Ok(())
@@ -8269,6 +8262,7 @@ fn run_checked(command: &mut ProcessCommand) -> Result<()> {
 mod tests {
     use clap::CommandFactory;
     use nostr_sdk::prelude::ToBech32;
+    use nostr_vpn_core::config::NetworkConfig;
 
     use crate::unix_timestamp;
 
@@ -8276,8 +8270,8 @@ mod tests {
         AppConfig, Cli, DaemonPeerCacheEntry, DaemonPeerCacheRestore, DaemonPeerCacheState,
         DaemonRuntimeState, DiscoveredPublicSignalEndpoint, InstallCliArgs, LinuxExitNodeIpFamily,
         OutboundAnnounceBook, PeerAnnouncement, TunnelPeer, UninstallCliArgs, WireGuardPeerStatus,
-        announcement_fingerprint, build_daemon_reload_config, build_peer_announcement,
-        build_runtime_magic_dns_records, can_reuse_active_listen_port,
+        announcement_fingerprint, apply_participants_override, build_daemon_reload_config,
+        build_peer_announcement, build_runtime_magic_dns_records, can_reuse_active_listen_port,
         connected_peer_count_for_runtime, daemon_control_file_path, daemon_peer_cache_file_path,
         daemon_pids_from_ps_output, daemon_reconnect_backoff_delay, daemon_session_active,
         daemon_session_idle_status, default_cli_install_path, endpoint_with_listen_port,
@@ -8286,18 +8280,19 @@ mod tests {
         linux_exit_node_default_route_families, linux_exit_node_firewall_binary,
         linux_exit_node_forward_in_rule, linux_exit_node_forward_out_rule,
         linux_exit_node_ipv4_masquerade_rule, linux_route_get_spec_from_output,
-        linux_service_status_from_show_output, local_interface_address_for_tunnel,
-        macos_service_disabled_from_print_disabled_output, nat_punch_targets, parse_exit_node_arg,
-        parse_nonzero_pid, peer_has_recent_handshake, peer_path_cache_timeout_secs,
-        peer_runtime_lookup, peer_signal_timeout_secs, pending_tunnel_heartbeat_ips,
-        persisted_path_cache_timeout_secs, persisted_peer_cache_timeout_secs, planned_tunnel_peers,
-        public_endpoint_for_listen_port, public_signal_endpoint_from_mapping,
-        publish_error_requires_reconnect, read_daemon_peer_cache, record_successful_runtime_paths,
-        relay_connection_action, request_daemon_reload, request_daemon_stop,
-        restore_daemon_peer_cache, route_targets_for_tunnel_peers,
-        route_targets_require_endpoint_bypass, runtime_local_signal_endpoint,
-        take_daemon_control_request, uninstall_cli, utun_interface_candidates,
-        windows_service_status_from_query_output, write_daemon_peer_cache,
+        linux_service_status_from_show_output, load_config_with_overrides,
+        local_interface_address_for_tunnel, macos_service_disabled_from_print_disabled_output,
+        nat_punch_targets, parse_exit_node_arg, parse_nonzero_pid, peer_has_recent_handshake,
+        peer_path_cache_timeout_secs, peer_runtime_lookup, peer_signal_timeout_secs,
+        pending_tunnel_heartbeat_ips, persisted_path_cache_timeout_secs,
+        persisted_peer_cache_timeout_secs, planned_tunnel_peers, public_endpoint_for_listen_port,
+        public_signal_endpoint_from_mapping, publish_error_requires_reconnect,
+        read_daemon_peer_cache, record_successful_runtime_paths, relay_connection_action,
+        request_daemon_reload, request_daemon_stop, restore_daemon_peer_cache,
+        route_targets_for_tunnel_peers, route_targets_require_endpoint_bypass,
+        runtime_local_signal_endpoint, take_daemon_control_request, uninstall_cli,
+        utun_interface_candidates, windows_service_status_from_query_output,
+        write_daemon_peer_cache,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -8602,6 +8597,102 @@ mod tests {
             runtime_peer.last_handshake_at(1_700_000_000),
             Some(1_699_999_995)
         );
+    }
+
+    #[test]
+    fn participants_override_targets_the_active_network() {
+        let alice = Keys::generate().public_key().to_hex();
+        let bob = Keys::generate().public_key().to_hex();
+        let carol = Keys::generate().public_key().to_hex();
+
+        let mut config = AppConfig::generated();
+        config.networks = vec![
+            NetworkConfig {
+                id: "home".to_string(),
+                name: "Home".to_string(),
+                enabled: false,
+                network_id: "mesh-home".to_string(),
+                participants: vec![alice.clone()],
+            },
+            NetworkConfig {
+                id: "work".to_string(),
+                name: "Work".to_string(),
+                enabled: true,
+                network_id: "mesh-work".to_string(),
+                participants: vec![bob],
+            },
+        ];
+        config.ensure_defaults();
+
+        apply_participants_override(&mut config, vec![carol.clone()]).expect("apply override");
+
+        assert_eq!(config.participant_pubkeys_hex(), vec![carol.clone()]);
+        assert_eq!(
+            config
+                .network_by_id("home")
+                .expect("home network")
+                .participants,
+            vec![alice]
+        );
+        assert_eq!(
+            config
+                .network_by_id("work")
+                .expect("work network")
+                .participants,
+            vec![carol]
+        );
+    }
+
+    #[test]
+    fn config_overrides_set_the_active_network_mesh_id() {
+        let nonce = unix_timestamp();
+        let dir = std::env::temp_dir().join(format!("nvpn-load-config-override-{nonce}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let config_path = dir.join("config.toml");
+
+        let mut config = AppConfig::generated();
+        config.networks = vec![
+            NetworkConfig {
+                id: "home".to_string(),
+                name: "Home".to_string(),
+                enabled: false,
+                network_id: "mesh-home".to_string(),
+                participants: vec!["11".repeat(32)],
+            },
+            NetworkConfig {
+                id: "work".to_string(),
+                name: "Work".to_string(),
+                enabled: true,
+                network_id: "mesh-work".to_string(),
+                participants: vec!["22".repeat(32)],
+            },
+        ];
+        config.ensure_defaults();
+        config.save(&config_path).expect("save temp config");
+
+        let (loaded, network_id) =
+            load_config_with_overrides(&config_path, Some("mesh-override".to_string()), Vec::new())
+                .expect("load config with override");
+
+        assert_eq!(network_id, "mesh-override");
+        assert_eq!(loaded.effective_network_id(), "mesh-override");
+        assert_eq!(
+            loaded
+                .network_by_id("home")
+                .expect("home network")
+                .network_id,
+            "mesh-home"
+        );
+        assert_eq!(
+            loaded
+                .network_by_id("work")
+                .expect("work network")
+                .network_id,
+            "mesh-override"
+        );
+
+        let _ = fs::remove_file(&config_path);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -9594,9 +9685,13 @@ mod tests {
     #[test]
     fn daemon_reload_config_uses_reloaded_network_id() {
         let mut app = AppConfig::generated();
+        app.set_active_network_id("mesh-home")
+            .expect("set initial network id");
         app.networks[0].participants = vec!["11".repeat(32)];
         let initial_network_id = app.effective_network_id();
 
+        app.set_active_network_id("mesh-work")
+            .expect("set reloaded network id");
         app.networks[0].participants = vec!["22".repeat(32)];
         let reloaded_network_id = app.effective_network_id();
         assert_ne!(initial_network_id, reloaded_network_id);

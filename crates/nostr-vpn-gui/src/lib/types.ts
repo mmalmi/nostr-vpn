@@ -35,6 +35,7 @@ export interface NetworkView {
   id: string
   name: string
   enabled: boolean
+  networkId: string
   onlineCount: number
   expectedCount: number
   participants: ParticipantView[]
