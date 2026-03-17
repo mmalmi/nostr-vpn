@@ -59,6 +59,7 @@ const mockState: UiState = {
   configPath: '~/.config/nvpn/config.toml',
   ownNpub: 'npub1akgu9lxldpt32lnjf97k005a4kgasewmvsrmkpzqeff39ssev0ssd6t3u',
   ownPubkeyHex: 'f'.repeat(64),
+  networkId: 'nostr-vpn:mockmesh',
   nodeId: 'mock-node',
   nodeName: 'nostr-vpn-node',
   endpoint: '192.168.1.4:51820',

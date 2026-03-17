@@ -826,6 +826,11 @@
         </div>
       </div>
 
+      <div class="config-path" data-testid="mesh-id">Mesh ID: {state.networkId}</div>
+      <div class="config-path">
+        Peers must share this Mesh ID and list each other as participants.
+      </div>
+
       <label class="toggle-row lan-discovery-toggle">
         <input
           type="checkbox"

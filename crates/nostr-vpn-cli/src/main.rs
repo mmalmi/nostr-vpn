@@ -22,8 +22,8 @@ use boringtun::device::{DeviceConfig, DeviceHandle};
 use clap::{Args, Parser, Subcommand};
 use hex::encode as encode_hex;
 use nostr_vpn_core::config::{
-    AppConfig, DEFAULT_RELAYS, derive_network_id_from_participants, maybe_autoconfigure_node,
-    normalize_advertised_route, normalize_nostr_pubkey,
+    AppConfig, DEFAULT_RELAYS, maybe_autoconfigure_node, normalize_advertised_route,
+    normalize_nostr_pubkey,
 };
 use nostr_vpn_core::control::{PeerAnnouncement, select_peer_endpoint};
 use nostr_vpn_core::crypto::generate_keypair;
@@ -7379,10 +7379,7 @@ fn apply_participants_override(config: &mut AppConfig, participants: Vec<String>
         network.participants = normalized.clone();
         network.enabled = true;
     }
-
-    if config.network_id.trim().is_empty() {
-        config.network_id = derive_network_id_from_participants(&normalized);
-    }
+    config.ensure_defaults();
 
     Ok(())
 }

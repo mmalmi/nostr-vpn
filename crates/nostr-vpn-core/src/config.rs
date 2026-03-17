@@ -327,20 +327,12 @@ impl AppConfig {
             network.participants.dedup();
         }
 
+        self.promote_legacy_network_id();
         self.normalize_peer_aliases();
     }
 
     pub fn effective_network_id(&self) -> String {
-        if self.participant_pubkeys_hex().is_empty() {
-            return self.network_id.clone();
-        }
-
-        let mesh_members = self.mesh_members_pubkeys();
-        if mesh_members.is_empty() {
-            return self.network_id.clone();
-        }
-
-        derive_network_id_from_participants(&mesh_members)
+        self.network_id.clone()
     }
 
     pub fn enabled_network_meshes(&self) -> Vec<EnabledNetworkMesh> {
@@ -520,6 +512,23 @@ impl AppConfig {
         members.sort();
         members.dedup();
         members
+    }
+
+    fn promote_legacy_network_id(&mut self) {
+        if !uses_legacy_network_id(&self.network_id) {
+            return;
+        }
+
+        if self.participant_pubkeys_hex().is_empty() {
+            return;
+        }
+
+        let mesh_members = self.mesh_members_pubkeys();
+        if mesh_members.is_empty() {
+            return;
+        }
+
+        self.network_id = derive_network_id_from_participants(&mesh_members);
     }
 
     pub fn effective_advertised_routes(&self) -> Vec<String> {
@@ -702,38 +711,39 @@ pub fn normalize_nostr_pubkey(value: &str) -> Result<String> {
 }
 
 pub fn maybe_autoconfigure_node(config: &mut AppConfig) {
+    config.ensure_defaults();
+
     if needs_endpoint_autoconfig(&config.node.endpoint)
         && let Some(ip) = detect_primary_ipv4()
     {
         config.node.endpoint = format!("{ip}:{}", config.node.listen_port);
     }
 
-    let mesh_members = config.mesh_members_pubkeys();
+    let network_id = config.effective_network_id();
     if needs_tunnel_ip_autoconfig(&config.node.tunnel_ip)
         && let Ok(own_pubkey) = config.own_nostr_pubkey_hex()
-        && let Some(tunnel_ip) = derive_mesh_tunnel_ip(&mesh_members, &own_pubkey)
+        && let Some(tunnel_ip) = derive_mesh_tunnel_ip(&network_id, &own_pubkey)
     {
         config.node.tunnel_ip = tunnel_ip;
     }
 }
 
-pub fn derive_mesh_tunnel_ip(participants: &[String], own_pubkey_hex: &str) -> Option<String> {
-    if participants.is_empty() {
+pub fn derive_mesh_tunnel_ip(network_id: &str, own_pubkey_hex: &str) -> Option<String> {
+    let network_id = network_id.trim();
+    let own_pubkey_hex = own_pubkey_hex.trim();
+    if network_id.is_empty() || own_pubkey_hex.is_empty() {
         return None;
     }
 
-    let mut normalized = participants.to_vec();
-    normalized.sort();
-    normalized.dedup();
+    let mut hasher = Sha256::new();
+    hasher.update(network_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(own_pubkey_hex.as_bytes());
+    let digest = hasher.finalize();
 
-    let host_octet = if let Some(index) = normalized.iter().position(|key| key == own_pubkey_hex) {
-        ((index % 250) + 1) as u8
-    } else {
-        let digest = Sha256::digest(own_pubkey_hex.as_bytes());
-        (digest[0] % 241) + 10
-    };
-
-    Some(format!("10.44.0.{host_octet}/32"))
+    let third_octet = (digest[0] % 254) + 1;
+    let fourth_octet = (digest[1] % 254) + 1;
+    Some(format!("10.44.{third_octet}.{fourth_octet}/32"))
 }
 
 pub fn normalize_advertised_route(value: &str) -> Option<String> {
@@ -861,6 +871,10 @@ fn generate_nostr_identity() -> (String, String) {
 
 fn default_network_id() -> String {
     "nostr-vpn".to_string()
+}
+
+fn uses_legacy_network_id(value: &str) -> bool {
+    value.trim().is_empty() || value.trim() == "nostr-vpn"
 }
 
 const fn default_network_enabled() -> bool {

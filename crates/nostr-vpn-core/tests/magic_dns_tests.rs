@@ -29,8 +29,7 @@ fn build_magic_dns_records_emits_alias_and_suffix_variants() {
         .expect("set alias");
 
     let records = build_magic_dns_records(&config);
-    let mesh_members = config.mesh_members_pubkeys();
-    let expected_ip = derive_mesh_tunnel_ip(&mesh_members, &peer_hex)
+    let expected_ip = derive_mesh_tunnel_ip(&config.effective_network_id(), &peer_hex)
         .expect("derived peer ip")
         .split('/')
         .next()

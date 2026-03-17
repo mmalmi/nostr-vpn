@@ -240,6 +240,7 @@ struct UiState {
     config_path: String,
     own_npub: String,
     own_pubkey_hex: String,
+    network_id: String,
     node_id: String,
     node_name: String,
     endpoint: String,
@@ -1607,11 +1608,11 @@ impl NvpnBackend {
     fn participant_view(
         &self,
         participant: &str,
-        mesh_members: &[String],
+        network_id: &str,
         own_pubkey_hex: Option<&str>,
     ) -> ParticipantView {
         let tunnel_ip =
-            derive_mesh_tunnel_ip(mesh_members, participant).unwrap_or_else(|| "-".to_string());
+            derive_mesh_tunnel_ip(network_id, participant).unwrap_or_else(|| "-".to_string());
         let transport_state = self.peer_state_for(participant, own_pubkey_hex);
         let presence_state = self.peer_presence_state_for(participant, own_pubkey_hex);
         let status_text = self.peer_status_line(participant, transport_state);
@@ -1656,7 +1657,7 @@ impl NvpnBackend {
 
     fn network_rows(&self) -> Vec<NetworkView> {
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().ok();
-        let mesh_members = self.config.mesh_members_pubkeys();
+        let network_id = self.config.effective_network_id();
         let mut rows = Vec::with_capacity(self.config.networks.len());
 
         for network in &self.config.networks {
@@ -1667,7 +1668,7 @@ impl NvpnBackend {
             let participant_rows = participants
                 .iter()
                 .map(|participant| {
-                    self.participant_view(participant, &mesh_members, own_pubkey_hex.as_deref())
+                    self.participant_view(participant, &network_id, own_pubkey_hex.as_deref())
                 })
                 .collect::<Vec<_>>();
 
@@ -2060,6 +2061,7 @@ impl NvpnBackend {
             config_path: self.config_path.display().to_string(),
             own_npub,
             own_pubkey_hex,
+            network_id: self.config.effective_network_id(),
             node_id: self.config.node.id.clone(),
             node_name: self.config.node_name.clone(),
             endpoint: self.config.node.endpoint.clone(),

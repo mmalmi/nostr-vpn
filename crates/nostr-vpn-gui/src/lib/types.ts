@@ -95,6 +95,7 @@ export interface UiState {
   configPath: string
   ownNpub: string
   ownPubkeyHex: string
+  networkId: string
   nodeId: string
   nodeName: string
   endpoint: string

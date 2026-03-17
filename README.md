@@ -19,7 +19,7 @@ This repo is not just one binary. It currently ships:
 ## What the project does today
 
 - Generates both Nostr identity keys and WireGuard keys automatically
-- Stores a single app config with one or more named networks and participant allowlists
+- Stores a single app config with one or more named networks, participant allowlists, and a stable mesh ID
 - Publishes and consumes private peer announcements over Nostr relays
 - Brings up userspace WireGuard tunnels via `boringtun`
 - Tracks peer endpoints, including NAT-discovered public endpoints and hole-punch attempts
@@ -55,7 +55,9 @@ The config contains:
 - node settings including endpoint, tunnel IP, listen port, and advertised routes
 - a `[[networks]]` list of named participant sets
 
-The CLI operates on one network at a time; use `--network-id` when you want a non-default network.
+`network_id` is the mesh identity used for private signaling and auto-derived tunnel addressing. Once a config has participants, `nostr-vpn` promotes the legacy default into a stable mesh ID instead of recomputing it on every participant change.
+
+Nodes that should talk to each other must share the same `network_id` and list each other as participants. Enabled `[[networks]]` entries are still merged into one runtime participant set today.
 
 ## Build and validate
 
@@ -256,6 +258,8 @@ The repo includes several real integration paths under [`scripts/`](scripts):
   Verifies relay connectivity, `announce`/`listen`, manual `tunnel-up`, and ping across two containers.
 - `./scripts/e2e-connect-docker.sh`
   Verifies config-driven `nvpn connect`, mesh formation, relay pause-on-mesh-ready behavior, and tunnel ping.
+- `./scripts/e2e-divergent-roster-docker.sh`
+  Verifies that peers with a shared mesh ID can still connect when one node has extra configured participants.
 - `./scripts/e2e-nat-docker.sh`
   Verifies daemon mode across separate Docker NATs, public endpoint discovery, handshake success, and ping.
 - `./scripts/e2e-exit-node-docker.sh`

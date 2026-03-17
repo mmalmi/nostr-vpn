@@ -170,14 +170,14 @@ pub fn build_magic_dns_records(config: &AppConfig) -> HashMap<String, Ipv4Addr> 
         .trim()
         .trim_matches('.')
         .to_ascii_lowercase();
-    let mesh_members = config.mesh_members_pubkeys();
+    let network_id = config.effective_network_id();
     let mut records = HashMap::new();
 
     for participant in &config.participant_pubkeys_hex() {
         let Some(alias) = config.peer_alias(participant) else {
             continue;
         };
-        let Some(tunnel_ip) = derive_mesh_tunnel_ip(&mesh_members, participant) else {
+        let Some(tunnel_ip) = derive_mesh_tunnel_ip(&network_id, participant) else {
             continue;
         };
         let Ok(ipv4) = strip_cidr(&tunnel_ip).parse::<Ipv4Addr>() else {

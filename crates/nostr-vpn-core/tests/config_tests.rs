@@ -123,9 +123,15 @@ fn normalize_accepts_npub() {
 
 #[test]
 fn derive_mesh_tunnel_ip_is_deterministic_for_participant_member() {
-    let participants = vec!["aa".to_string(), "bb".to_string(), "cc".to_string()];
-    let tunnel_ip = derive_mesh_tunnel_ip(&participants, "bb").expect("tunnel ip");
-    assert_eq!(tunnel_ip, "10.44.0.2/32");
+    let tunnel_ip = derive_mesh_tunnel_ip("mesh-a", "bb").expect("tunnel ip");
+    assert_eq!(
+        tunnel_ip,
+        derive_mesh_tunnel_ip("mesh-a", "bb").expect("tunnel ip")
+    );
+    assert_ne!(
+        tunnel_ip,
+        derive_mesh_tunnel_ip("mesh-b", "bb").expect("different mesh id changes ip")
+    );
 }
 
 #[test]
@@ -136,13 +142,71 @@ fn maybe_autoconfigure_node_assigns_tunnel_ip_from_participants() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = keys.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex.clone();
-    set_default_network_participants(&mut config, vec!["0".repeat(64), own_hex]);
+    set_default_network_participants(&mut config, vec!["0".repeat(64), own_hex.clone()]);
     config.node.tunnel_ip = "10.44.0.1/32".to_string();
     config.node.endpoint = "198.51.100.10:51820".to_string();
 
     maybe_autoconfigure_node(&mut config);
 
-    assert_eq!(config.node.tunnel_ip, "10.44.0.2/32");
+    assert_eq!(
+        config.node.tunnel_ip,
+        derive_mesh_tunnel_ip(&config.effective_network_id(), &own_hex).expect("derived ip")
+    );
+}
+
+#[test]
+fn explicit_network_id_takes_precedence_over_participant_hash() {
+    let keys = Keys::generate();
+    let peer = Keys::generate();
+    let own_hex = keys.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.network_id = "mesh-fixed".to_string();
+    config.nostr.secret_key = keys.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    set_default_network_participants(&mut config, vec![peer.public_key().to_hex()]);
+
+    config.ensure_defaults();
+
+    assert_eq!(config.effective_network_id(), "mesh-fixed");
+}
+
+#[test]
+fn legacy_network_id_is_not_promoted_without_participants() {
+    let mut config = AppConfig::generated();
+
+    maybe_autoconfigure_node(&mut config);
+
+    assert_eq!(config.network_id, "nostr-vpn");
+    assert_eq!(config.effective_network_id(), "nostr-vpn");
+}
+
+#[test]
+fn tunnel_ip_stays_stable_when_roster_changes_if_network_id_is_fixed() {
+    let mut keys = vec![Keys::generate(), Keys::generate(), Keys::generate()];
+    keys.sort_by_key(|entry| entry.public_key().to_hex());
+
+    let own = keys.remove(1);
+    let low = keys.remove(0).public_key().to_hex();
+    let high = keys.remove(0).public_key().to_hex();
+    let own_hex = own.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.network_id = "mesh-fixed".to_string();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    set_default_network_participants(&mut config, vec![high.clone()]);
+    config.node.tunnel_ip = "10.44.0.1/32".to_string();
+
+    maybe_autoconfigure_node(&mut config);
+    let first_ip = config.node.tunnel_ip.clone();
+
+    set_default_network_participants(&mut config, vec![high, low]);
+    config.node.tunnel_ip = "10.44.0.1/32".to_string();
+    maybe_autoconfigure_node(&mut config);
+
+    assert_eq!(config.node.tunnel_ip, first_ip);
+    assert_ne!(config.node.tunnel_ip, "10.44.0.1/32");
 }
 
 #[test]
@@ -300,6 +364,10 @@ fn reciprocal_participant_configs_share_effective_network_id() {
     set_default_network_participants(&mut bob_config, vec![alice_hex.clone()]);
     maybe_autoconfigure_node(&mut bob_config);
 
+    assert_ne!(alice_config.network_id, "nostr-vpn");
+    assert_eq!(alice_config.network_id, alice_config.effective_network_id());
+    assert_ne!(bob_config.network_id, "nostr-vpn");
+    assert_eq!(bob_config.network_id, bob_config.effective_network_id());
     assert_eq!(
         alice_config.effective_network_id(),
         bob_config.effective_network_id()
@@ -307,12 +375,12 @@ fn reciprocal_participant_configs_share_effective_network_id() {
 
     assert_ne!(alice_config.node.tunnel_ip, bob_config.node.tunnel_ip);
     assert_eq!(
-        derive_mesh_tunnel_ip(&alice_config.mesh_members_pubkeys(), &alice_hex)
+        derive_mesh_tunnel_ip(&alice_config.effective_network_id(), &alice_hex)
             .expect("alice tunnel ip"),
         alice_config.node.tunnel_ip
     );
     assert_eq!(
-        derive_mesh_tunnel_ip(&bob_config.mesh_members_pubkeys(), &bob_hex).expect("bob tunnel ip"),
+        derive_mesh_tunnel_ip(&bob_config.effective_network_id(), &bob_hex).expect("bob tunnel ip"),
         bob_config.node.tunnel_ip
     );
 }
