@@ -12,6 +12,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  ANDROID_SDK_API_LEVEL: '36'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+  ANDROID_NDK_VERSION: '28.2.13676358'
 
 jobs:
   verify:
@@ -374,11 +377,145 @@ jobs:
           security delete-keychain "${KEYCHAIN_PATH}" || true
           rm -f "$RUNNER_TEMP/nvpn-signing-cert.p12" "$RUNNER_TEMP/nvpn-notarize.zip"
 
+  build-android-app:
+    name: Build Android app
+    runs-on: ubuntu-latest
+    needs: verify
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/${{ env.ANDROID_NDK_VERSION }}
+      NDK_HOME: ${{ github.workspace }}/android-sdk/ndk/${{ env.ANDROID_NDK_VERSION }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: crates/nostr-vpn-gui/pnpm-lock.yaml
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/android-sdk"
+          sdkmanager \
+            --sdk_root="${GITHUB_WORKSPACE}/android-sdk" \
+            "platform-tools" \
+            "platforms;android-${ANDROID_SDK_API_LEVEL}" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+          {
+            printf 'ANDROID_HOME=%s\n' "${GITHUB_WORKSPACE}/android-sdk"
+            printf 'ANDROID_SDK_ROOT=%s\n' "${GITHUB_WORKSPACE}/android-sdk"
+          } >> "${GITHUB_ENV}"
+
+      - name: Install GUI dependencies
+        run: pnpm --dir crates/nostr-vpn-gui install --frozen-lockfile
+
+      - name: Validate Android signing secret completeness (optional)
+        if: ${{ (env.ANDROID_KEYSTORE_B64 != '' || env.ANDROID_KEYSTORE_PASSWORD != '' || env.ANDROID_KEY_ALIAS != '' || env.ANDROID_KEY_PASSWORD != '') && !(env.ANDROID_KEYSTORE_B64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '') }}
+        run: |
+          echo "Android signing requires all four secrets or none."
+          echo "Required: ANDROID_KEYSTORE_B64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD"
+          exit 1
+
+      - name: Prepare Android signing files (optional)
+        if: ${{ env.ANDROID_KEYSTORE_B64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
+        shell: bash
+        run: |
+          printf '%s' "${ANDROID_KEYSTORE_B64}" | base64 --decode > crates/nostr-vpn-gui/src-tauri/gen/android/upload-keystore.jks 2>/dev/null || \
+            printf '%s' "${ANDROID_KEYSTORE_B64}" | base64 -D > crates/nostr-vpn-gui/src-tauri/gen/android/upload-keystore.jks
+
+          {
+            printf 'storePassword=%s\n' "${ANDROID_KEYSTORE_PASSWORD}"
+            printf 'keyPassword=%s\n' "${ANDROID_KEY_PASSWORD}"
+            printf 'keyAlias=%s\n' "${ANDROID_KEY_ALIAS}"
+            printf 'storeFile=%s\n' "upload-keystore.jks"
+          } > crates/nostr-vpn-gui/src-tauri/gen/android/key.properties
+
+      - name: Build Android artifacts
+        run: pnpm --dir crates/nostr-vpn-gui exec tauri android build --target aarch64 --apk --aab --ci
+
+      - name: Package Android artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+
+          APK_PATH="$(find crates/nostr-vpn-gui/src-tauri/gen/android/app/build/outputs/apk/universal/release -maxdepth 1 -name '*.apk' -print -quit)"
+          AAB_PATH="$(find crates/nostr-vpn-gui/src-tauri/gen/android/app/build/outputs/bundle/universalRelease -maxdepth 1 -name '*.aab' -print -quit)"
+
+          if [ -z "${APK_PATH}" ] || [ -z "${AAB_PATH}" ]; then
+            echo "Expected Android release artifacts were not produced."
+            echo "APK_PATH=${APK_PATH}"
+            echo "AAB_PATH=${AAB_PATH}"
+            exit 1
+          fi
+
+          if [ -f crates/nostr-vpn-gui/src-tauri/gen/android/key.properties ]; then
+            APK_DEST="dist/nostr-vpn-${RELEASE_TAG}-android-arm64.apk"
+            AAB_DEST="dist/nostr-vpn-${RELEASE_TAG}-android-arm64.aab"
+          else
+            APK_DEST="dist/nostr-vpn-${RELEASE_TAG}-android-arm64-unsigned.apk"
+            AAB_DEST="dist/nostr-vpn-${RELEASE_TAG}-android-arm64-unsigned.aab"
+          fi
+
+          cp "${APK_PATH}" "${APK_DEST}"
+          cp "${AAB_PATH}" "${AAB_DEST}"
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-arm64
+          path: dist/nostr-vpn-${{ env.RELEASE_TAG }}-android-arm64*
+          retention-days: 7
+
+      - name: Cleanup Android signing files (optional)
+        if: ${{ always() && env.ANDROID_KEYSTORE_B64 != '' && env.ANDROID_KEYSTORE_PASSWORD != '' && env.ANDROID_KEY_ALIAS != '' && env.ANDROID_KEY_PASSWORD != '' }}
+        run: rm -f crates/nostr-vpn-gui/src-tauri/gen/android/key.properties crates/nostr-vpn-gui/src-tauri/gen/android/upload-keystore.jks
+
   release:
     name: Create GitHub Release
     needs:
       - build-cli
       - build-macos-app
+      - build-android-app
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -427,6 +564,10 @@ jobs:
 
             ### Desktop app
             Download `nostr-vpn-macos-arm64.zip` from this release for the signed macOS GUI app.
+
+            ### Android app
+            Download `nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-android-arm64.apk` from this release for the Android app.
+            If Android signing secrets are not configured in GitHub Actions, the Android assets will be published as `*-unsigned.apk` and `*-unsigned.aab` instead.
 
             ### Verify
             ```bash

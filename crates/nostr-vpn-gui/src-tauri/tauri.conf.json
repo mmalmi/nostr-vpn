@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nostr VPN",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "identifier": "to.iris.nvpn",
   "build": {
     "frontendDist": "../dist",

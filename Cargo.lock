@@ -3313,7 +3313,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3336,7 +3336,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3363,7 +3363,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-gui"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3385,7 +3385,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-relay"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "anyhow",
  "axum",
