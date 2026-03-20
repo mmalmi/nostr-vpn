@@ -93,6 +93,7 @@ export interface UiState {
   serviceRunning: boolean
   serviceStatusDetail: string
   sessionStatus: string
+  appVersion: string
   configPath: string
   ownNpub: string
   ownPubkeyHex: string

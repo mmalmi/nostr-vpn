@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { NetworkView, SettingsPatch, UiState } from './types'
 
+declare const __APP_VERSION__: string
+
 const isTauriRuntime = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
@@ -15,6 +17,7 @@ const normalizeAlias = (value: string) =>
     .replace(/^-+|-+$/g, '')
 
 const NETWORK_INVITE_PREFIX = 'nvpn://invite/'
+const APP_VERSION = __APP_VERSION__
 
 type MockNetworkInvite = {
   v: number
@@ -106,6 +109,7 @@ const mockState: UiState = {
   serviceRunning: false,
   serviceStatusDetail: 'Background service is not installed',
   sessionStatus: 'Install background service to turn VPN on from the app',
+  appVersion: APP_VERSION,
   configPath: '~/.config/nvpn/config.toml',
   ownNpub: 'npub1akgu9lxldpt32lnjf97k005a4kgasewmvsrmkpzqeff39ssev0ssd6t3u',
   ownPubkeyHex: 'f'.repeat(64),

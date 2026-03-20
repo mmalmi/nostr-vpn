@@ -1817,6 +1817,9 @@
 
       <div class="collapsible-body">
         <div class="row settings-action-row">
+          <div class="config-path" data-testid="app-version">Version: {state.appVersion}</div>
+        </div>
+        <div class="row settings-action-row">
           <div class="config-path">Config: {state.configPath}</div>
         </div>
         <div class="row spread settings-action-row">

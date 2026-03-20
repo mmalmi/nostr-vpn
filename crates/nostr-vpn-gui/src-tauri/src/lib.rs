@@ -51,6 +51,7 @@ const GUI_SERVICE_SETUP_REQUIRED_STATUS: &str =
     "Install background service to turn VPN on from the app";
 const GUI_SERVICE_SETUP_REQUIRED_AUTOCONNECT_STATUS: &str =
     "Install background service to enable app auto-connect";
+const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const NETWORK_INVITE_PREFIX: &str = "nvpn://invite/";
 const NETWORK_INVITE_VERSION: u8 = 1;
 
@@ -244,6 +245,7 @@ struct UiState {
     service_running: bool,
     service_status_detail: String,
     session_status: String,
+    app_version: String,
     config_path: String,
     own_npub: String,
     own_pubkey_hex: String,
@@ -2138,6 +2140,7 @@ impl NvpnBackend {
             service_running: self.service_running,
             service_status_detail: self.service_status_detail.clone(),
             session_status: self.session_status.clone(),
+            app_version: PRODUCT_VERSION.to_string(),
             config_path: self.config_path.display().to_string(),
             own_npub,
             own_pubkey_hex,
@@ -4713,6 +4716,14 @@ mod tests {
                 )),
             _ => false,
         }));
+    }
+
+    #[test]
+    fn ui_state_reports_product_version() {
+        let backend = test_backend(&"44".repeat(32));
+        let state = backend.ui_state();
+
+        assert_eq!(state.app_version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]
