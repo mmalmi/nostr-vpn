@@ -109,6 +109,7 @@ jobs:
       - name: Package CLI artifacts
         shell: bash
         run: |
+          RELEASE_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           BIN_DIR="target/${{ matrix.target }}/release"
           mkdir -p dist/nvpn
 
@@ -192,10 +193,13 @@ jobs:
 
           cd dist
           tar -czvf "nvpn-${{ matrix.target }}.tar.gz" nvpn
+          cp "nvpn-${{ matrix.target }}.tar.gz" "nvpn-${RELEASE_VERSION}-${{ matrix.target }}.tar.gz"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "nvpn-${{ matrix.target }}.tar.gz" > "nvpn-${{ matrix.target }}.sha256"
+            sha256sum "nvpn-${RELEASE_VERSION}-${{ matrix.target }}.tar.gz" > "nvpn-${RELEASE_VERSION}-${{ matrix.target }}.sha256"
           else
             shasum -a 256 "nvpn-${{ matrix.target }}.tar.gz" > "nvpn-${{ matrix.target }}.sha256"
+            shasum -a 256 "nvpn-${RELEASE_VERSION}-${{ matrix.target }}.tar.gz" > "nvpn-${RELEASE_VERSION}-${{ matrix.target }}.sha256"
           fi
           rm -rf nvpn
 
@@ -203,7 +207,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.target }}
-          path: dist/nvpn-${{ matrix.target }}*
+          path: |
+            dist/nvpn-${{ matrix.target }}*
+            dist/nvpn-${{ github.event.inputs.tag || github.ref_name }}-${{ matrix.target }}*
           retention-days: 7
 
   build-macos-app:
@@ -365,6 +371,7 @@ jobs:
       - name: Package macOS artifacts
         shell: bash
         run: |
+          RELEASE_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           mkdir -p dist
           APP_PATH="$(find target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
           if [ -z "${APP_PATH}" ]; then
@@ -373,6 +380,7 @@ jobs:
           fi
 
           ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "dist/nostr-vpn-macos-arm64.zip"
+          cp "dist/nostr-vpn-macos-arm64.zip" "dist/nostr-vpn-${RELEASE_VERSION}-macos-arm64.zip"
 
       - name: Verify packaged macOS artifact
         shell: bash
@@ -396,7 +404,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: dist/nostr-vpn-macos-arm64.zip
+          path: |
+            dist/nostr-vpn-macos-arm64.zip
+            dist/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-macos-arm64.zip
           retention-days: 7
 
       - name: Cleanup macOS signing keychain
