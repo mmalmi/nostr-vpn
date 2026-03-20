@@ -90,6 +90,31 @@ fn keeps_current_path_when_it_has_recent_success() {
 }
 
 #[test]
+fn successful_local_path_stops_sticking_after_subnet_change() {
+    let mut paths = PeerPathBook::default();
+    let announcement = announcement(
+        "203.0.113.20:51820",
+        Some("192.168.1.20:51820"),
+        Some("203.0.113.20:51820"),
+        10,
+    );
+
+    paths.refresh_from_announcement("peer-a", &announcement, 10);
+    let selected = paths
+        .select_endpoint("peer-a", &announcement, Some("192.168.1.33:51820"), 10, 5)
+        .expect("initial same-subnet local path");
+    assert_eq!(selected, "192.168.1.20:51820");
+    paths.note_selected("peer-a", &selected, 10);
+    paths.note_success("peer-a", &selected, 11);
+
+    let selected = paths
+        .select_endpoint("peer-a", &announcement, Some("172.20.10.7:51820"), 12, 5)
+        .expect("public path after local subnet change");
+
+    assert_eq!(selected, "203.0.113.20:51820");
+}
+
+#[test]
 fn cached_endpoint_survives_flap_until_pruned() {
     let mut paths = PeerPathBook::default();
     let original = announcement(

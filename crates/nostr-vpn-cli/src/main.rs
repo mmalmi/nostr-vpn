@@ -9611,6 +9611,52 @@ mod tests {
     }
 
     #[test]
+    fn successful_local_path_rotates_to_public_after_network_change() {
+        let mut config = AppConfig::generated();
+        let participant = "11".repeat(32);
+        config.networks[0].participants = vec![participant.clone()];
+
+        let announcement = PeerAnnouncement {
+            node_id: "peer-a".to_string(),
+            public_key: generate_keypair().public_key,
+            endpoint: "203.0.113.20:51820".to_string(),
+            local_endpoint: Some("192.168.1.20:51820".to_string()),
+            public_endpoint: Some("203.0.113.20:51820".to_string()),
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
+            timestamp: 10,
+        };
+        let announcements = HashMap::from([(participant.clone(), announcement)]);
+        let mut paths = PeerPathBook::default();
+
+        let selected = planned_tunnel_peers(
+            &config,
+            None,
+            &announcements,
+            &mut paths,
+            Some("192.168.1.33:51820"),
+            10,
+        )
+        .expect("initial tunnel peers");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].endpoint, "192.168.1.20:51820");
+        paths.note_selected(&participant, &selected[0].endpoint, 10);
+        assert!(paths.note_success(participant.clone(), &selected[0].endpoint, 11));
+
+        let selected = planned_tunnel_peers(
+            &config,
+            None,
+            &announcements,
+            &mut paths,
+            Some("172.20.10.7:51820"),
+            12,
+        )
+        .expect("tunnel peers after network change");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].endpoint, "203.0.113.20:51820");
+    }
+
+    #[test]
     fn cached_successful_endpoint_survives_announcement_flap_until_path_cache_expires() {
         let mut config = AppConfig::generated();
         let participant = "11".repeat(32);

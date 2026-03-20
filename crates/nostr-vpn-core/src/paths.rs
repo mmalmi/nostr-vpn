@@ -220,13 +220,35 @@ impl PeerPathBook {
             .endpoints
             .get(&preferred)
             .expect("preferred endpoint should exist");
+        let current_same_subnet_local = own_local_endpoint
+            .is_some_and(|own| endpoints_share_private_ipv4_subnet(current_endpoint, own));
+        let preferred_same_subnet_local = own_local_endpoint
+            .is_some_and(|own| endpoints_share_private_ipv4_subnet(&preferred, own));
 
         if current_endpoint == &preferred {
             return Some(preferred);
         }
 
-        if let Some(current_success_at) = current.last_success_at {
-            if preferred_state.last_success_at.unwrap_or(0) > current_success_at {
+        if endpoint_is_local_only(current_endpoint) && !current_same_subnet_local {
+            return Some(preferred);
+        }
+
+        let current_success_at =
+            if path_success_still_applies(current_endpoint, current, current_same_subnet_local) {
+                current.last_success_at.unwrap_or(0)
+            } else {
+                0
+            };
+        let preferred_success_at =
+            if path_success_still_applies(&preferred, preferred_state, preferred_same_subnet_local)
+            {
+                preferred_state.last_success_at.unwrap_or(0)
+            } else {
+                0
+            };
+
+        if current_success_at > 0 {
+            if preferred_success_at > current_success_at {
                 return Some(preferred);
             }
             return Some(current_endpoint.clone());
@@ -276,16 +298,53 @@ fn candidate_rank(
     own_local_endpoint: Option<&str>,
     default_endpoint: &str,
 ) -> (u64, u8, u8, u64) {
-    let same_subnet_local = tracked.source == PeerPathSource::Local
-        && own_local_endpoint.is_some_and(|own| endpoints_share_private_ipv4_subnet(endpoint, own));
+    let same_subnet_local =
+        own_local_endpoint.is_some_and(|own| endpoints_share_private_ipv4_subnet(endpoint, own));
     let default_match = endpoint == default_endpoint;
+    let last_success_at = if path_success_still_applies(endpoint, tracked, same_subnet_local) {
+        tracked.last_success_at.unwrap_or(0)
+    } else {
+        0
+    };
 
     (
-        tracked.last_success_at.unwrap_or(0),
+        last_success_at,
         tracked.source.rank(same_subnet_local),
         u8::from(default_match),
         tracked.announced_at,
     )
+}
+
+fn path_success_still_applies(
+    endpoint: &str,
+    tracked: &TrackedPeerPath,
+    same_subnet_local: bool,
+) -> bool {
+    if tracked.last_success_at.is_none() {
+        return false;
+    }
+
+    if !endpoint_is_local_only(endpoint) {
+        return true;
+    }
+
+    same_subnet_local
+}
+
+fn endpoint_is_local_only(endpoint: &str) -> bool {
+    let host = endpoint
+        .rsplit_once(':')
+        .map_or(endpoint, |(host, _)| host)
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_link_local() || ip.is_loopback(),
+        Ok(std::net::IpAddr::V6(ip)) => {
+            ip.is_loopback() || ip.is_unicast_link_local() || ip.is_unique_local()
+        }
+        Err(_) => host.eq_ignore_ascii_case("localhost"),
+    }
 }
 
 fn endpoints_share_private_ipv4_subnet(left: &str, right: &str) -> bool {
