@@ -3,7 +3,7 @@
   import { Check, Copy, Trash2 } from 'lucide-svelte'
   import QRCode from 'qrcode'
 
-  import { heroStateText } from './lib/hero-state.js'
+  import { heroStateText, heroStatusDetailText } from './lib/hero-state.js'
   import {
     addNetwork,
     addParticipant,
@@ -945,7 +945,11 @@
           Mesh {state.connectedPeerCount}/{state.expectedPeerCount}
         </span>
       </div>
-      <div class="identity-status" data-testid="session-status-text">{state.sessionStatus}</div>
+      {#if heroStatusDetailText(state)}
+        <div class="identity-status" data-testid="session-status-text">
+          {heroStatusDetailText(state)}
+        </div>
+      {/if}
     {:else}
       <div class="panel-kicker">Loading</div>
       <div class="row hero-title-row">

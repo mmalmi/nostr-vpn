@@ -22,3 +22,26 @@ export function heroStateText(state, options = {}) {
   }
   return 'Disconnected'
 }
+
+/**
+ * @param {UiState} state
+ * @returns {string}
+ */
+export function heroStatusDetailText(state) {
+  const sessionStatus = state.sessionStatus?.trim() ?? ''
+
+  if (!sessionStatus) {
+    return ''
+  }
+
+  const relaysIntentionallyPaused =
+    state.meshReady &&
+    state.autoDisconnectRelaysWhenMeshReady &&
+    !state.relayConnected
+
+  if (relaysIntentionallyPaused) {
+    return ''
+  }
+
+  return sessionStatus
+}
