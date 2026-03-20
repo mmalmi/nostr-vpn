@@ -1,4 +1,11 @@
-#![cfg_attr(any(target_os = "android", target_os = "ios"), allow(dead_code))]
+#![cfg_attr(any(target_os = "android", target_os = "ios", test), allow(dead_code))]
+
+#[cfg(any(target_os = "android", test))]
+mod android_session;
+#[cfg(any(target_os = "android", test))]
+mod android_vpn;
+#[cfg(any(target_os = "android", test))]
+mod mobile_wg;
 
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -23,6 +30,8 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::diagnostics::{HealthIssue, NetworkSummary, PortMappingStatus};
 use serde::{Deserialize, Serialize};
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+use tauri::WindowEvent;
 #[cfg(target_os = "macos")]
 use tauri::image::Image;
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
@@ -31,8 +40,6 @@ use tauri::menu::{
 };
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-use tauri::WindowEvent;
 use tauri::{Manager, State};
 use tokio::runtime::Runtime;
 
@@ -428,12 +435,11 @@ const fn runtime_capabilities_for_platform(platform: RuntimePlatform) -> Runtime
         RuntimePlatform::Android => RuntimeCapabilities {
             platform: "android",
             mobile: true,
-            vpn_session_control_supported: false,
+            vpn_session_control_supported: true,
             cli_install_supported: false,
             startup_settings_supported: false,
             tray_behavior_supported: false,
-            runtime_status_detail:
-                "Android VPN service integration is not wired up yet. Network editing works, but tunnel control is disabled.",
+            runtime_status_detail: "Android native VPN control is available; desktop service management is unavailable.",
         },
         RuntimePlatform::Ios => RuntimeCapabilities {
             platform: "ios",
@@ -442,8 +448,7 @@ const fn runtime_capabilities_for_platform(platform: RuntimePlatform) -> Runtime
             cli_install_supported: false,
             startup_settings_supported: false,
             tray_behavior_supported: false,
-            runtime_status_detail:
-                "Mobile VPN service integration is not wired up yet. Network editing works, but tunnel control is disabled.",
+            runtime_status_detail: "Mobile VPN service integration is not wired up yet. Network editing works, but tunnel control is disabled.",
         },
     }
 }
@@ -457,6 +462,8 @@ struct NvpnBackend {
     config_path: PathBuf,
     config: AppConfig,
     nvpn_bin: Option<PathBuf>,
+    #[cfg(target_os = "android")]
+    android_session: android_session::AndroidSessionManager,
 
     session_status: String,
     daemon_running: bool,
@@ -482,8 +489,18 @@ struct NvpnBackend {
 }
 
 impl NvpnBackend {
-    fn new(config_path: PathBuf, launched_from_autostart: bool) -> Result<Self> {
+    fn new(
+        app_handle: tauri::AppHandle,
+        config_path: PathBuf,
+        launched_from_autostart: bool,
+    ) -> Result<Self> {
+        #[cfg(not(target_os = "android"))]
+        let _ = &app_handle;
+
         let runtime = Runtime::new().context("failed to create tokio runtime")?;
+        #[cfg(target_os = "android")]
+        let android_session =
+            android_session::AndroidSessionManager::new(app_handle, runtime.handle().clone());
 
         let mut config = if config_path.exists() {
             AppConfig::load(&config_path).context("failed to load config")?
@@ -526,6 +543,8 @@ impl NvpnBackend {
             config_path,
             config,
             nvpn_bin,
+            #[cfg(target_os = "android")]
+            android_session,
             session_status: "Disconnected".to_string(),
             daemon_running: false,
             session_active: false,
@@ -968,8 +987,13 @@ impl NvpnBackend {
         ])
     }
 
+    #[cfg(target_os = "android")]
+    fn start_daemon_process(&mut self) -> Result<()> {
+        self.android_session.start(self.config.clone())
+    }
+
     #[cfg(target_os = "macos")]
-    fn start_daemon_process(&self) -> Result<()> {
+    fn start_daemon_process(&mut self) -> Result<()> {
         let args = self.daemon_start_args()?;
 
         if let Ok(status) = self.fetch_cli_status()
@@ -985,8 +1009,8 @@ impl NvpnBackend {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn start_daemon_process(&self) -> Result<()> {
+    #[cfg(all(not(target_os = "macos"), not(target_os = "android")))]
+    fn start_daemon_process(&mut self) -> Result<()> {
         let args = self.daemon_start_args()?;
         let output = self.run_nvpn_command(args)?;
 
@@ -1019,7 +1043,13 @@ impl NvpnBackend {
         Err(anyhow!(message))
     }
 
-    fn reload_daemon_process(&self) -> Result<()> {
+    #[cfg(target_os = "android")]
+    fn reload_daemon_process(&mut self) -> Result<()> {
+        self.android_session.reload(self.config.clone())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn reload_daemon_process(&mut self) -> Result<()> {
         let args = [
             "reload",
             "--config",
@@ -1048,7 +1078,13 @@ impl NvpnBackend {
         Err(anyhow!(message))
     }
 
-    fn pause_daemon_process(&self) -> Result<()> {
+    #[cfg(target_os = "android")]
+    fn pause_daemon_process(&mut self) -> Result<()> {
+        self.android_session.stop()
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn pause_daemon_process(&mut self) -> Result<()> {
         let args = [
             "pause",
             "--config",
@@ -1076,7 +1112,13 @@ impl NvpnBackend {
         Err(anyhow!(message))
     }
 
-    fn resume_daemon_process(&self) -> Result<()> {
+    #[cfg(target_os = "android")]
+    fn resume_daemon_process(&mut self) -> Result<()> {
+        self.android_session.start(self.config.clone())
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn resume_daemon_process(&mut self) -> Result<()> {
         let args = [
             "resume",
             "--config",
@@ -1167,6 +1209,9 @@ impl NvpnBackend {
         if !runtime.vpn_session_control_supported {
             return Err(anyhow!(runtime.runtime_status_detail));
         }
+        if !self.service_supported {
+            return Err(anyhow!(self.service_status_detail.clone()));
+        }
         let args = [
             "service",
             "install",
@@ -1204,6 +1249,9 @@ impl NvpnBackend {
         if !runtime.vpn_session_control_supported {
             return Err(anyhow!(runtime.runtime_status_detail));
         }
+        if !self.service_supported {
+            return Err(anyhow!(self.service_status_detail.clone()));
+        }
         let args = [
             "service",
             "uninstall",
@@ -1239,6 +1287,9 @@ impl NvpnBackend {
         let runtime = current_runtime_capabilities();
         if !runtime.vpn_session_control_supported {
             return Err(anyhow!(runtime.runtime_status_detail));
+        }
+        if !self.service_supported {
+            return Err(anyhow!(self.service_status_detail.clone()));
         }
         let args = [
             "service",
@@ -1276,6 +1327,9 @@ impl NvpnBackend {
         if !runtime.vpn_session_control_supported {
             return Err(anyhow!(runtime.runtime_status_detail));
         }
+        if !self.service_supported {
+            return Err(anyhow!(self.service_status_detail.clone()));
+        }
         let args = [
             "service",
             "disable",
@@ -1307,7 +1361,7 @@ impl NvpnBackend {
         Err(anyhow!(message))
     }
 
-    fn reload_daemon_if_running(&self) -> Result<()> {
+    fn reload_daemon_if_running(&mut self) -> Result<()> {
         if !self.daemon_running {
             return Ok(());
         }
@@ -1315,6 +1369,15 @@ impl NvpnBackend {
         self.reload_daemon_process()
     }
 
+    #[cfg(target_os = "android")]
+    fn fetch_cli_status(&self) -> Result<CliStatusResponse> {
+        let (running, state) = self.android_session.status();
+        Ok(CliStatusResponse {
+            daemon: CliDaemonStatus { running, state },
+        })
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn fetch_cli_status(&self) -> Result<CliStatusResponse> {
         let output = self.run_nvpn_command([
             "status",
@@ -1344,6 +1407,21 @@ impl NvpnBackend {
         Ok(parsed)
     }
 
+    #[cfg(target_os = "android")]
+    fn fetch_cli_service_status(&self) -> Result<CliServiceStatusResponse> {
+        Ok(CliServiceStatusResponse {
+            supported: false,
+            installed: false,
+            disabled: false,
+            loaded: false,
+            running: false,
+            pid: None,
+            label: "android-vpn".to_string(),
+            plist_path: String::new(),
+        })
+    }
+
+    #[cfg(not(target_os = "android"))]
     fn fetch_cli_service_status(&self) -> Result<CliServiceStatusResponse> {
         let output = self.run_nvpn_command([
             "service",
@@ -1598,21 +1676,33 @@ impl NvpnBackend {
         self.refresh_relay_runtime_status();
         self.refresh_peer_runtime_status();
 
-        self.magic_dns_status = if self.session_active {
-            let suffix = self
-                .config
-                .magic_dns_suffix
-                .trim()
-                .trim_matches('.')
-                .to_ascii_lowercase();
-            if suffix.is_empty() {
-                "MagicDNS active in daemon (suffix disabled)".to_string()
+        #[cfg(target_os = "android")]
+        {
+            self.magic_dns_status = if self.session_active {
+                "Android tunnel is active; MagicDNS is not wired yet".to_string()
             } else {
-                format!("MagicDNS active in daemon for .{suffix}")
-            }
-        } else {
-            "DNS disabled (VPN off)".to_string()
-        };
+                "DNS unchanged (VPN off)".to_string()
+            };
+        }
+
+        #[cfg(not(target_os = "android"))]
+        {
+            self.magic_dns_status = if self.session_active {
+                let suffix = self
+                    .config
+                    .magic_dns_suffix
+                    .trim()
+                    .trim_matches('.')
+                    .to_ascii_lowercase();
+                if suffix.is_empty() {
+                    "MagicDNS active in daemon (suffix disabled)".to_string()
+                } else {
+                    format!("MagicDNS active in daemon for .{suffix}")
+                }
+            } else {
+                "DNS disabled (VPN off)".to_string()
+            };
+        }
     }
 
     fn sync_service_state(&mut self) {
@@ -1623,7 +1713,8 @@ impl NvpnBackend {
             self.service_installed = false;
             self.service_disabled = false;
             self.service_running = false;
-            self.service_status_detail = "Background service unsupported on this platform".to_string();
+            self.service_status_detail =
+                "Background service unsupported on this platform".to_string();
             return;
         }
 
@@ -2615,6 +2706,8 @@ fn gui_service_enable_status_text(autoconnect: bool) -> &'static str {
 
 impl Drop for NvpnBackend {
     fn drop(&mut self) {
+        #[cfg(target_os = "android")]
+        let _ = self.android_session.stop();
         self.stop_lan_discovery();
     }
 }
@@ -4002,14 +4095,15 @@ pub fn run() {
         }
     }
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
-        |app, args, _cwd| {
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if should_surface_existing_instance_args(args.iter()) {
                 let _ = show_main_window(app);
             }
-        },
-    ));
-    #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+        }));
+    #[cfg(target_os = "android")]
+    let builder = tauri::Builder::default().plugin(android_vpn::Builder::new().build());
+    #[cfg(target_os = "ios")]
     let builder = tauri::Builder::default();
     let app = builder
         .setup(move |app| {
@@ -4018,8 +4112,9 @@ pub fn run() {
 
             let config_path = resolve_backend_config_path(app.handle())
                 .context("failed to resolve GUI config path")?;
-            let backend = NvpnBackend::new(config_path, launched_from_autostart)
-                .context("failed to initialize GUI backend state")?;
+            let backend =
+                NvpnBackend::new(app.handle().clone(), config_path, launched_from_autostart)
+                    .context("failed to initialize GUI backend state")?;
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             let launch_on_startup_default = backend.config.launch_on_startup;
             let initial_tray_state = backend.tray_runtime_state();
@@ -4069,7 +4164,8 @@ pub fn run() {
                             }
                             TRAY_IDENTITY_MENU_ID => {
                                 let runtime_state = current_tray_runtime_state(app);
-                                if let Err(error) = copy_text_to_clipboard(&runtime_state.identity_npub)
+                                if let Err(error) =
+                                    copy_text_to_clipboard(&runtime_state.identity_npub)
                                 {
                                     run_tray_backend_action(app, |_backend| Err(error));
                                     refresh_tray_menu(app);
@@ -4171,13 +4267,14 @@ pub fn run() {
                     });
 
                 #[cfg(target_os = "macos")]
-                let tray_builder =
-                    if let Ok(icon) = Image::from_bytes(include_bytes!("../icons/tray-template.png")) {
-                        tray_builder.icon(icon).icon_as_template(true)
-                    } else {
-                        eprintln!("tray: failed to load bundled template icon");
-                        tray_builder
-                    };
+                let tray_builder = if let Ok(icon) =
+                    Image::from_bytes(include_bytes!("../icons/tray-template.png"))
+                {
+                    tray_builder.icon(icon).icon_as_template(true)
+                } else {
+                    eprintln!("tray: failed to load bundled template icon");
+                    tray_builder
+                };
 
                 tray_builder.build(app)?;
 
@@ -4234,19 +4331,20 @@ mod tests {
     use super::{
         ConfiguredPeerStatus, DaemonPeerState, DaemonRuntimeState, GuiLaunchDisposition,
         NETWORK_INVITE_PREFIX, NetworkInvite, NetworkView, NvpnBackend, ParticipantView,
-        PeerPresenceStatus, TRAY_EXIT_NODE_NONE_MENU_ID, TRAY_RUN_EXIT_NODE_MENU_ID,
-        TrayMenuItemSpec, TrayRuntimeState, active_network_invite_code,
-        apply_network_invite_to_active_network, cli_binary_installed_at, expected_peer_count,
-        extract_json_document, config_path_from_roots, gui_launch_disposition, gui_requires_service_enable,
-        gui_requires_service_install, is_already_running_message, is_mesh_complete,
-        is_not_running_message, network_device_count, network_online_device_count,
-        parse_advertised_routes_input, parse_exit_node_input, parse_network_invite,
-        parse_running_gui_instances, peer_offers_exit_node, peer_presence_state_label,
-        peer_state_label, runtime_capabilities_for_platform, should_defer_gui_daemon_start_to_service_on_autostart,
-        should_start_gui_daemon_on_launch, should_surface_existing_instance_args,
-        started_from_autostart_args, to_npub, tray_exit_node_entries, tray_identity_text,
-        tray_menu_spec, tray_network_groups, tray_status_text, validate_nvpn_binary,
-        within_peer_online_grace, within_peer_presence_grace, RuntimePlatform,
+        PeerPresenceStatus, RuntimePlatform, TRAY_EXIT_NODE_NONE_MENU_ID,
+        TRAY_RUN_EXIT_NODE_MENU_ID, TrayMenuItemSpec, TrayRuntimeState, active_network_invite_code,
+        apply_network_invite_to_active_network, cli_binary_installed_at, config_path_from_roots,
+        expected_peer_count, extract_json_document, gui_launch_disposition,
+        gui_requires_service_enable, gui_requires_service_install, is_already_running_message,
+        is_mesh_complete, is_not_running_message, network_device_count,
+        network_online_device_count, parse_advertised_routes_input, parse_exit_node_input,
+        parse_network_invite, parse_running_gui_instances, peer_offers_exit_node,
+        peer_presence_state_label, peer_state_label, runtime_capabilities_for_platform,
+        should_defer_gui_daemon_start_to_service_on_autostart, should_start_gui_daemon_on_launch,
+        should_surface_existing_instance_args, started_from_autostart_args, to_npub,
+        tray_exit_node_entries, tray_identity_text, tray_menu_spec, tray_network_groups,
+        tray_status_text, validate_nvpn_binary, within_peer_online_grace,
+        within_peer_presence_grace,
     };
     use nostr_vpn_core::config::AppConfig;
     use std::collections::HashMap;
@@ -5117,14 +5215,14 @@ mod tests {
 
         assert_eq!(capabilities.platform, "android");
         assert!(capabilities.mobile);
-        assert!(!capabilities.vpn_session_control_supported);
+        assert!(capabilities.vpn_session_control_supported);
         assert!(!capabilities.cli_install_supported);
         assert!(!capabilities.startup_settings_supported);
         assert!(!capabilities.tray_behavior_supported);
         assert!(
             capabilities
                 .runtime_status_detail
-                .contains("Android VPN service integration")
+                .contains("Android native VPN control")
         );
     }
 

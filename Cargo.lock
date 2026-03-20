@@ -3367,7 +3367,9 @@ version = "0.2.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "boringtun",
  "dirs 6.0.0",
+ "libc",
  "nostr-sdk",
  "nostr-vpn-core",
  "runas",
