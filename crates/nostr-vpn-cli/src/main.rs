@@ -3,6 +3,7 @@ mod diagnostics;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::OpenOptions;
+#[cfg(unix)]
 use std::io::{Read, Write};
 #[cfg(target_os = "linux")]
 use std::net::ToSocketAddrs;
@@ -65,6 +66,7 @@ struct DeviceConfig {
 struct DeviceHandle;
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 impl DeviceHandle {
     fn new(_name: &str, config: DeviceConfig) -> Result<Self> {
         let _ = (config.n_threads, config.use_connected_socket);
@@ -5966,6 +5968,9 @@ fn set_daemon_runtime_file_permissions(path: &Path) -> Result<()> {
         })?;
     }
 
+    #[cfg(not(unix))]
+    let _ = path;
+
     Ok(())
 }
 
@@ -5979,6 +5984,9 @@ fn set_private_cache_file_permissions(path: &Path) -> Result<()> {
             )
         })?;
     }
+
+    #[cfg(not(unix))]
+    let _ = path;
 
     Ok(())
 }
@@ -8252,6 +8260,9 @@ fn apply_local_interface_network(
         return Ok(());
     }
 
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = (iface, address, route_targets);
+
     #[allow(unreachable_code)]
     Err(anyhow!(
         "interface setup is not implemented for this platform"
@@ -8450,6 +8461,7 @@ fn parse_wg_peer_status(response: &str) -> HashMap<String, WireGuardPeerStatus> 
     peers
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_checked(command: &mut ProcessCommand) -> Result<()> {
     let display = format!("{command:?}");
     let output = command
@@ -10137,7 +10149,11 @@ mod tests {
         let path = default_cli_install_path();
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),
-            Some("nvpn")
+            Some(if cfg!(target_os = "windows") {
+                "nvpn.exe"
+            } else {
+                "nvpn"
+            })
         );
     }
 
