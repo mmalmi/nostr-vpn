@@ -40,7 +40,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping (Error?) -> Void
     ) {
         do {
-            let request = try loadStoredStartRequest()
+            let request = try loadStartRequest(
+                from: (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration
+            )
+            try? storeStartRequest(request)
+            NSLog("[nvpn-ios] packet tunnel provider startTunnel %@", request.sessionName)
             let initialSettings = PacketTunnelNetworkSettingsPayload(
                 localAddresses: [request.localAddress],
                 routes: [],
@@ -56,6 +60,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
                 if let error {
                     updateRecordedTunnelError(error.localizedDescription)
+                    NSLog("[nvpn-ios] packet tunnel apply settings failed %@", error.localizedDescription)
                     completionHandler(error)
                     return
                 }
@@ -80,6 +85,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                         ]
                     )
                     updateRecordedTunnelError(error.localizedDescription)
+                    NSLog("[nvpn-ios] packet tunnel rust start failed %@", error.localizedDescription)
                     completionHandler(error)
                     return
                 }
@@ -87,10 +93,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 updateRecordedTunnelError(nil)
                 self.packetLoopRunning = true
                 self.readPacketsLoop()
+                NSLog("[nvpn-ios] packet tunnel provider started")
                 completionHandler(nil)
             }
         } catch {
             updateRecordedTunnelError(error.localizedDescription)
+            NSLog("[nvpn-ios] packet tunnel startTunnel threw %@", error.localizedDescription)
             completionHandler(error)
         }
     }

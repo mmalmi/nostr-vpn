@@ -7,6 +7,34 @@ private let vpnBridgeQueue: DispatchQueue = {
     queue.setSpecific(key: vpnBridgeQueueKey, value: ())
     return queue
 }()
+private var cachedTunnelManager: NETunnelProviderManager?
+
+private func waitOnBridgeSemaphore(
+    _ semaphore: DispatchSemaphore,
+    timeout: TimeInterval? = nil
+) -> Bool {
+    if !Thread.isMainThread {
+        if let timeout {
+            return semaphore.wait(timeout: .now() + timeout) == .success
+        }
+
+        semaphore.wait()
+        return true
+    }
+
+    let deadline = timeout.map { Date().addingTimeInterval($0) }
+    while true {
+        if semaphore.wait(timeout: .now()) == .success {
+            return true
+        }
+
+        if let deadline, Date() >= deadline {
+            return false
+        }
+
+        _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
+    }
+}
 
 private func runBridgeTask<T>(_ work: @escaping () throws -> T) throws -> T {
     if DispatchQueue.getSpecific(key: vpnBridgeQueueKey) != nil {
@@ -19,23 +47,33 @@ private func runBridgeTask<T>(_ work: @escaping () throws -> T) throws -> T {
         result = Result { try work() }
         semaphore.signal()
     }
-    semaphore.wait()
+    _ = waitOnBridgeSemaphore(semaphore)
     return try result.get()
 }
 
 private func waitForAsyncResult<T>(
     operation: String,
     timeout: TimeInterval = 10,
-    _ work: (@escaping (Result<T, Error>) -> Void) -> Void
+    executeOnMainQueue: Bool = false,
+    _ work: @escaping (@escaping (Result<T, Error>) -> Void) -> Void
 ) throws -> T {
     let semaphore = DispatchSemaphore(value: 0)
     var result: Result<T, Error>?
-    work { completionResult in
-        result = completionResult
-        semaphore.signal()
+
+    let invoke = {
+        work { completionResult in
+            result = completionResult
+            semaphore.signal()
+        }
     }
 
-    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+    if executeOnMainQueue && !Thread.isMainThread {
+        DispatchQueue.main.async(execute: invoke)
+    } else {
+        invoke()
+    }
+
+    if !waitOnBridgeSemaphore(semaphore, timeout: timeout) {
         throw VpnSharedError.operationTimedOut(operation)
     }
 
@@ -47,7 +85,10 @@ private func waitForAsyncResult<T>(
 }
 
 private func loadAllManagers() throws -> [NETunnelProviderManager] {
-    try waitForAsyncResult(operation: "VPN manager preferences to load") { completion in
+    try waitForAsyncResult(
+        operation: "VPN manager preferences to load",
+        executeOnMainQueue: true
+    ) { completion in
         NETunnelProviderManager.loadAllFromPreferences { managers, error in
             if let error {
                 completion(.failure(error))
@@ -59,7 +100,10 @@ private func loadAllManagers() throws -> [NETunnelProviderManager] {
 }
 
 private func saveManager(_ manager: NETunnelProviderManager) throws {
-    let _: Void = try waitForAsyncResult(operation: "VPN manager preferences to save") { completion in
+    let _: Void = try waitForAsyncResult(
+        operation: "VPN manager preferences to save",
+        executeOnMainQueue: true
+    ) { completion in
         manager.saveToPreferences { error in
             if let error {
                 completion(.failure(error))
@@ -71,7 +115,10 @@ private func saveManager(_ manager: NETunnelProviderManager) throws {
 }
 
 private func reloadManager(_ manager: NETunnelProviderManager) throws {
-    let _: Void = try waitForAsyncResult(operation: "VPN manager preferences to reload") { completion in
+    let _: Void = try waitForAsyncResult(
+        operation: "VPN manager preferences to reload",
+        executeOnMainQueue: true
+    ) { completion in
         manager.loadFromPreferences { error in
             if let error {
                 completion(.failure(error))
@@ -83,10 +130,18 @@ private func reloadManager(_ manager: NETunnelProviderManager) throws {
 }
 
 private func loadOrCreateManager() throws -> NETunnelProviderManager {
+    if let cached = cachedTunnelManager,
+       (cached.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
+        == vpnPacketTunnelBundleIdentifier
+    {
+        return cached
+    }
+
     if let existing = try loadAllManagers().first(where: {
         ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
             == vpnPacketTunnelBundleIdentifier
     }) {
+        cachedTunnelManager = existing
         return existing
     }
 
@@ -97,6 +152,7 @@ private func loadOrCreateManager() throws -> NETunnelProviderManager {
     manager.protocolConfiguration = configuration
     manager.localizedDescription = "Nostr VPN"
     manager.isEnabled = true
+    cachedTunnelManager = manager
     return manager
 }
 
@@ -128,7 +184,7 @@ private func currentBridgeStatus(for manager: NETunnelProviderManager) -> NvpnBr
     var stateJson: String?
     var error = recordedTunnelError()
 
-    if active,
+    if tunnelConnectionSupportsProviderMessages(connectionStatus),
        let session = manager.connection as? NETunnelProviderSession,
        let providerStatus = try? requestProviderStatus(session)
     {
@@ -148,7 +204,8 @@ private func requestProviderStatus(_ session: NETunnelProviderSession) throws
     -> PacketTunnelBridgeStatus
 {
     let responseData: Data = try waitForAsyncResult(
-        operation: "the packet tunnel provider status response"
+        operation: "the packet tunnel provider status response",
+        executeOnMainQueue: true
     ) { completion in
         let command = Data("status".utf8)
         do {
@@ -234,7 +291,9 @@ public func nvpn_ios_start(_ requestPointer: UnsafePointer<CChar>?) -> UnsafeMut
             guard let session = manager.connection as? NETunnelProviderSession else {
                 throw VpnSharedError.managerUnavailable
             }
+            NSLog("[nvpn-ios] starting packet tunnel session %@", request.sessionName)
             try session.startTunnel(options: nil)
+            NSLog("[nvpn-ios] packet tunnel session start returned")
 
             return currentBridgeStatus(for: manager)
         }

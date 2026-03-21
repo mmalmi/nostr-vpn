@@ -428,6 +428,22 @@ const fn current_runtime_platform() -> RuntimePlatform {
     }
 }
 
+const fn ios_runtime_is_simulator() -> bool {
+    cfg!(all(target_os = "ios", target_abi = "sim"))
+}
+
+const fn ios_vpn_session_control_supported(ios_simulator: bool) -> bool {
+    !ios_simulator
+}
+
+const fn ios_runtime_status_detail(ios_simulator: bool) -> &'static str {
+    if ios_simulator {
+        "iOS Simulator does not provide NetworkExtension VPN control; use a physical device for Packet Tunnel testing."
+    } else {
+        "iOS Packet Tunnel integration is available; desktop service management is unavailable."
+    }
+}
+
 const fn runtime_capabilities_for_platform(platform: RuntimePlatform) -> RuntimeCapabilities {
     match platform {
         RuntimePlatform::Desktop => RuntimeCapabilities {
@@ -452,15 +468,18 @@ const fn runtime_capabilities_for_platform(platform: RuntimePlatform) -> Runtime
             tray_behavior_supported: false,
             runtime_status_detail: "Android native VPN control is available; desktop service management is unavailable.",
         },
-        RuntimePlatform::Ios => RuntimeCapabilities {
-            platform: "ios",
-            mobile: true,
-            vpn_session_control_supported: true,
-            cli_install_supported: false,
-            startup_settings_supported: false,
-            tray_behavior_supported: false,
-            runtime_status_detail: "iOS Packet Tunnel integration is available; desktop service management is unavailable.",
-        },
+        RuntimePlatform::Ios => {
+            let ios_simulator = ios_runtime_is_simulator();
+            RuntimeCapabilities {
+                platform: "ios",
+                mobile: true,
+                vpn_session_control_supported: ios_vpn_session_control_supported(ios_simulator),
+                cli_install_supported: false,
+                startup_settings_supported: false,
+                tray_behavior_supported: false,
+                runtime_status_detail: ios_runtime_status_detail(ios_simulator),
+            }
+        }
     }
 }
 
@@ -615,9 +634,11 @@ impl NvpnBackend {
         #[cfg(target_os = "ios")]
         write_ios_probe("backend: daemon sync complete");
 
+        let runtime_capabilities = current_runtime_capabilities();
         let wants_autoconnect =
             backend.config.autoconnect && !backend.config.participant_pubkeys_hex().is_empty();
         let should_start_on_launch = should_start_gui_daemon_on_launch(
+            runtime_capabilities.vpn_session_control_supported,
             backend.config.autoconnect,
             !backend.config.participant_pubkeys_hex().is_empty(),
             backend.gui_requires_service_action(),
@@ -627,6 +648,15 @@ impl NvpnBackend {
             backend.service_installed,
             backend.service_disabled,
         );
+        #[cfg(target_os = "ios")]
+        write_ios_probe(format!(
+            "backend: launch autoconnect wants={} should_start={} defer_to_service={} has_participants={} service_action_required={}",
+            wants_autoconnect,
+            should_start_on_launch,
+            defer_to_installed_service,
+            !backend.config.participant_pubkeys_hex().is_empty(),
+            backend.gui_requires_service_action()
+        ));
         if should_defer_gui_daemon_start_until_first_tick(
             current_runtime_platform(),
             should_start_on_launch,
@@ -1050,8 +1080,16 @@ impl NvpnBackend {
         let mut config = self.config.clone();
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
+        write_ios_probe(format!(
+            "ios-start: prepare network_id={} participants={} endpoint={} listen_port={}",
+            config.effective_network_id(),
+            config.participant_pubkeys_hex().len(),
+            config.node.endpoint,
+            config.node.listen_port
+        ));
         ios_vpn::prepare()?;
-        let _ = ios_vpn::start(&ios_vpn::StartVpnArgs {
+        write_ios_probe("ios-start: prepare complete");
+        let status = ios_vpn::start(&ios_vpn::StartVpnArgs {
             session_name: config.effective_network_id(),
             config_json: serde_json::to_string(&config)
                 .context("failed to serialize iOS VPN config")?,
@@ -1060,6 +1098,13 @@ impl NvpnBackend {
             search_domains: Vec::new(),
             mtu: ios_vpn::IOS_TUN_MTU,
         })?;
+        write_ios_probe(format!(
+            "ios-start: start complete prepared={} active={} state_present={} error={}",
+            status.prepared,
+            status.active,
+            status.state.is_some(),
+            status.error.as_deref().unwrap_or("")
+        ));
         Ok(())
     }
 
@@ -2309,9 +2354,16 @@ impl NvpnBackend {
             return;
         }
 
+        #[cfg(target_os = "ios")]
+        write_ios_probe("backend: starting pending launch daemon");
         self.launch_start_pending = false;
         if let Err(error) = self.start_daemon_process() {
             self.session_status = format!("Daemon start failed: {error}");
+            #[cfg(target_os = "ios")]
+            write_ios_probe(format!("backend: pending launch daemon failed: {error}"));
+        } else {
+            #[cfg(target_os = "ios")]
+            write_ios_probe("backend: pending launch daemon started");
         }
     }
 
@@ -2855,11 +2907,12 @@ fn gui_requires_service_enable(
 }
 
 fn should_start_gui_daemon_on_launch(
+    vpn_session_control_supported: bool,
     autoconnect: bool,
     has_participants: bool,
     service_setup_required: bool,
 ) -> bool {
-    autoconnect && has_participants && !service_setup_required
+    vpn_session_control_supported && autoconnect && has_participants && !service_setup_required
 }
 
 fn should_defer_gui_daemon_start_to_service_on_autostart(
@@ -4650,7 +4703,8 @@ mod tests {
         active_network_invite_code, apply_network_invite_to_active_network,
         cli_binary_installed_at, config_path_from_roots, expected_peer_count,
         extract_json_document, gui_launch_disposition, gui_requires_service_enable,
-        gui_requires_service_install, is_already_running_message, is_mesh_complete,
+        gui_requires_service_install, ios_runtime_status_detail,
+        ios_vpn_session_control_supported, is_already_running_message, is_mesh_complete,
         is_not_running_message, network_device_count, network_online_device_count,
         parse_advertised_routes_input, parse_exit_node_input, parse_network_invite,
         parse_running_gui_instances, peer_offers_exit_node, peer_presence_state_label,
@@ -5501,10 +5555,11 @@ mod tests {
 
     #[test]
     fn gui_launch_autoconnect_skips_direct_start_until_service_exists() {
-        assert!(!should_start_gui_daemon_on_launch(true, true, true));
-        assert!(should_start_gui_daemon_on_launch(true, true, false));
-        assert!(!should_start_gui_daemon_on_launch(true, false, false));
-        assert!(!should_start_gui_daemon_on_launch(false, true, false));
+        assert!(!should_start_gui_daemon_on_launch(true, true, true, true));
+        assert!(should_start_gui_daemon_on_launch(true, true, true, false));
+        assert!(!should_start_gui_daemon_on_launch(true, true, false, false));
+        assert!(!should_start_gui_daemon_on_launch(true, false, true, false));
+        assert!(!should_start_gui_daemon_on_launch(false, true, true, false));
     }
 
     #[test]
@@ -5623,6 +5678,12 @@ mod tests {
                 .runtime_status_detail
                 .contains("iOS Packet Tunnel integration")
         );
+    }
+
+    #[test]
+    fn ios_simulator_runtime_capabilities_disable_mobile_vpn_control() {
+        assert!(!ios_vpn_session_control_supported(true));
+        assert!(ios_runtime_status_detail(true).contains("iOS Simulator"));
     }
 
     #[test]

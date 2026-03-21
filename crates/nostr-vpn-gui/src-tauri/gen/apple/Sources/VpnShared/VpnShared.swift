@@ -89,6 +89,38 @@ func loadStoredStartRequest() throws -> NvpnStartRequest {
     return try JSONDecoder().decode(NvpnStartRequest.self, from: data)
 }
 
+func loadStartRequest(from providerConfiguration: [String: Any]?) throws -> NvpnStartRequest {
+    guard let providerConfiguration else {
+        return try loadStoredStartRequest()
+    }
+
+    guard let sessionName = providerConfiguration["sessionName"] as? String,
+          let configJson = providerConfiguration["configJson"] as? String,
+          let localAddress = providerConfiguration["localAddress"] as? String
+    else {
+        throw VpnSharedError.invalidStoredRequest
+    }
+
+    let dnsServers = providerConfiguration["dnsServers"] as? [String] ?? []
+    let searchDomains = providerConfiguration["searchDomains"] as? [String] ?? []
+    let mtuValue =
+        (providerConfiguration["mtu"] as? NSNumber)?.uint16Value
+        ?? UInt16(providerConfiguration["mtu"] as? Int ?? 0)
+
+    guard mtuValue > 0 else {
+        throw VpnSharedError.invalidStoredRequest
+    }
+
+    return NvpnStartRequest(
+        sessionName: sessionName,
+        configJson: configJson,
+        localAddress: localAddress,
+        dnsServers: dnsServers,
+        searchDomains: searchDomains,
+        mtu: mtuValue
+    )
+}
+
 func updateRecordedTunnelError(_ error: String?) {
     if let error, !error.isEmpty {
         sharedDefaults()?.set(error, forKey: vpnLastErrorKey)
@@ -178,6 +210,17 @@ func tunnelConnectionIsActive(_ status: NEVPNStatus) -> Bool {
         return false
     case .connecting, .connected, .reasserting, .disconnecting:
         return true
+    @unknown default:
+        return false
+    }
+}
+
+func tunnelConnectionSupportsProviderMessages(_ status: NEVPNStatus) -> Bool {
+    switch status {
+    case .connected:
+        return true
+    case .invalid, .disconnected, .connecting, .reasserting, .disconnecting:
+        return false
     @unknown default:
         return false
     }
