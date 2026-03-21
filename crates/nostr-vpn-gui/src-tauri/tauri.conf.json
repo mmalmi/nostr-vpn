@@ -33,6 +33,19 @@
       "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: tauri: asset: https: wss: ws:; connect-src 'self' tauri: https: wss: ws: http://127.0.0.1:* http://localhost:*; img-src 'self' data: blob: https: http://127.0.0.1:* http://localhost:*"
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["nvpn"]
+      },
+      "mobile": [
+        {
+          "scheme": ["nvpn"],
+          "appLink": false
+        }
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",

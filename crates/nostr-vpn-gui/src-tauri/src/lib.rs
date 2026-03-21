@@ -41,6 +41,7 @@ use tauri::menu::{
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, State};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tokio::runtime::Runtime;
 
 const LAN_DISCOVERY_ADDR: [u8; 4] = [239, 255, 73, 73];
@@ -2616,6 +2617,50 @@ fn normalized_invite_relays(relays: &[String]) -> Result<Vec<String>> {
     Ok(normalized)
 }
 
+fn extract_invite_from_deep_link(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let payload = trimmed.strip_prefix(NETWORK_INVITE_PREFIX)?;
+    if payload.is_empty() {
+        return None;
+    }
+    Some(trimmed.to_string())
+}
+
+fn import_network_invite_from_deep_link<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    url: &str,
+) -> Result<bool> {
+    let Some(invite) = extract_invite_from_deep_link(url) else {
+        return Ok(false);
+    };
+    let Some(state) = app.try_state::<AppState>() else {
+        return Err(anyhow!("application state is unavailable"));
+    };
+
+    with_backend(state, |backend| backend.import_network_invite(&invite))
+        .map_err(|error| anyhow!(error))?;
+    refresh_tray_menu(app);
+    let _ = show_main_window(app);
+    Ok(true)
+}
+
+fn import_network_invites_from_deep_links<R: tauri::Runtime, I, S>(
+    app: &tauri::AppHandle<R>,
+    urls: I,
+) -> Result<usize>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut imported = 0;
+    for url in urls {
+        if import_network_invite_from_deep_link(app, url.as_ref())? {
+            imported += 1;
+        }
+    }
+    Ok(imported)
+}
+
 fn is_valid_relay_url(value: &str) -> bool {
     value.starts_with("ws://") || value.starts_with("wss://")
 }
@@ -4105,17 +4150,16 @@ pub fn run() {
             eprintln!("gui: failed to resolve GUI launch conflicts: {error}");
         }
     }
-    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
-    let builder =
-        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            if should_surface_existing_instance_args(args.iter()) {
-                let _ = show_main_window(app);
-            }
-        }));
-    #[cfg(target_os = "android")]
-    let builder = tauri::Builder::default().plugin(android_vpn::Builder::new().build());
-    #[cfg(target_os = "ios")]
     let builder = tauri::Builder::default();
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        if should_surface_existing_instance_args(args.iter()) {
+            let _ = show_main_window(app);
+        }
+    }));
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android_vpn::Builder::new().build());
+    let builder = builder.plugin(tauri_plugin_deep_link::init());
     let app = builder
         .setup(move |app| {
             #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
@@ -4137,6 +4181,28 @@ pub fn run() {
             }) {
                 return Err(anyhow!("application state already initialized").into());
             }
+
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            app.deep_link().register_all()?;
+
+            if let Some(urls) = app.deep_link().get_current()?
+                && let Err(error) = import_network_invites_from_deep_links(
+                    app.handle(),
+                    urls.iter().map(|url| url.as_str()),
+                )
+            {
+                eprintln!("deep-link: failed to import startup URL: {error:#}");
+            }
+
+            let deep_link_handle = app.handle().clone();
+            app.deep_link().on_open_url(move |event| {
+                if let Err(error) = import_network_invites_from_deep_links(
+                    &deep_link_handle,
+                    event.urls().iter().map(|url| url.as_str()),
+                ) {
+                    eprintln!("deep-link: failed to import open URL: {error:#}");
+                }
+            });
 
             #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
             app.handle().plugin(tauri_plugin_autostart::init(
@@ -4805,6 +4871,28 @@ mod tests {
                 "wss://invite.example".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn extract_invite_from_deep_link_accepts_nvpn_invite_urls() {
+        let invite = format!("{NETWORK_INVITE_PREFIX}payload-123");
+        assert_eq!(
+            super::extract_invite_from_deep_link(&invite).as_deref(),
+            Some(invite.as_str())
+        );
+    }
+
+    #[test]
+    fn extract_invite_from_deep_link_ignores_non_invite_urls() {
+        assert_eq!(
+            super::extract_invite_from_deep_link("https://example.com"),
+            None
+        );
+        assert_eq!(
+            super::extract_invite_from_deep_link("nvpn://settings"),
+            None
+        );
+        assert_eq!(super::extract_invite_from_deep_link("nvpn://invite/"), None);
     }
 
     #[test]
