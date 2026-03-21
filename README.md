@@ -1,10 +1,18 @@
 # nostr-vpn
 
-`nostr-vpn` is a Rust workspace for a Tailscale-style mesh VPN control plane built on:
+## Downloads
 
-- Nostr relays for peer signaling and encrypted presence exchange
-- `boringtun` for userspace WireGuard-compatible tunnel handling
-- a CLI daemon and a Tauri desktop app that operate on the same config/runtime model
+- [Latest release](https://github.com/mmalmi/nostr-vpn/releases/latest)
+
+Apple Silicon macOS: desktop app. Headless use: CLI tarballs. Intel macOS: build from source or use an older release.
+
+## Overview
+
+`nostr-vpn` is a Rust workspace for a Tailscale-style mesh VPN control plane built on Nostr signaling and userspace WireGuard. It ships a CLI daemon and a Tauri desktop app that share the same config and runtime model.
+
+<p align="center">
+  <img src="docs/images/desktop-gui-overview.png" alt="Nostr VPN desktop app showing a connected network, device identity, status badges, and join controls." width="900">
+</p>
 
 It currently ships:
 
@@ -15,12 +23,6 @@ It currently ships:
 | `nostr-vpn-relay` | Minimal local websocket relay used for integration and e2e testing |
 | `nvpn-reflector` | Minimal UDP reflector used for NAT discovery and hole-punch testing |
 | `nostr-vpn-core` | Shared library for config, signaling, NAT helpers, diagnostics, MagicDNS, and WireGuard helpers |
-
-## Downloads
-
-- [Latest release](https://github.com/mmalmi/nostr-vpn/releases/latest)
-
-Apple Silicon macOS: desktop app. Headless use: CLI tarballs. Intel macOS: build from source or use an older release.
 
 ## What the project does today
 
@@ -239,10 +241,6 @@ Lower-level commands:
 ## Desktop GUI
 
 The GUI lives in [`crates/nostr-vpn-gui`](crates/nostr-vpn-gui). It is a Tauri app backed by the same config and daemon used by `nvpn`.
-
-<p align="center">
-  <img src="docs/images/desktop-gui-overview.png" alt="Nostr VPN desktop app showing a connected network, device identity, status badges, and join controls." width="900">
-</p>
 
 Run it in development:
 
