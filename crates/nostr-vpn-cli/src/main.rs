@@ -9,6 +9,7 @@ use std::net::ToSocketAddrs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -18,6 +19,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+#[cfg(unix)]
 use boringtun::device::{DeviceConfig, DeviceHandle};
 use clap::{Args, Parser, Subcommand};
 use hex::encode as encode_hex;
@@ -50,6 +52,31 @@ use crate::diagnostics::{
     PortMappingRuntime, build_health_issues, capture_network_snapshot, detect_captive_portal,
     run_netcheck_report, write_doctor_bundle,
 };
+
+#[cfg(not(unix))]
+#[derive(Debug, Clone, Copy)]
+struct DeviceConfig {
+    n_threads: usize,
+    use_connected_socket: bool,
+}
+
+#[cfg(not(unix))]
+#[derive(Debug)]
+struct DeviceHandle;
+
+#[cfg(not(unix))]
+impl DeviceHandle {
+    fn new(_name: &str, config: DeviceConfig) -> Result<Self> {
+        let _ = (config.n_threads, config.use_connected_socket);
+        Err(anyhow!(
+            "WireGuard device backend is not available on this platform"
+        ))
+    }
+
+    fn wait(&mut self) {}
+
+    fn clean(&mut self) {}
+}
 
 const DAEMON_CONTROL_STOP_REQUEST: &str = "stop";
 const DAEMON_CONTROL_RELOAD_REQUEST: &str = "reload";
@@ -147,7 +174,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Install `nvpn` into PATH (default: /usr/local/bin/nvpn).
+    /// Install `nvpn` into a platform-appropriate default PATH location.
     InstallCli(InstallCliArgs),
     /// Remove an `nvpn` binary previously installed into PATH.
     UninstallCli(UninstallCliArgs),
@@ -247,7 +274,7 @@ struct InstallCliArgs {
 
 #[derive(Debug, Args)]
 struct UninstallCliArgs {
-    /// Path to remove (defaults to /usr/local/bin/nvpn).
+    /// Path to remove (defaults to the platform-appropriate install path).
     #[arg(long)]
     path: Option<PathBuf>,
 }
@@ -7416,7 +7443,37 @@ fn init_config(path: &Path, force: bool, participants: Vec<String>) -> Result<()
 }
 
 fn default_cli_install_path() -> PathBuf {
-    PathBuf::from("/usr/local/bin/nvpn")
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(dir) = default_windows_cli_install_dir() {
+            return dir.join("nvpn.exe");
+        }
+
+        return PathBuf::from("nvpn.exe");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        PathBuf::from("/usr/local/bin/nvpn")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn default_windows_cli_install_dir() -> Option<PathBuf> {
+    let home = dirs::home_dir();
+
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            if home.as_ref().is_some_and(|home| dir.starts_with(home)) {
+                return Some(dir);
+            }
+        }
+    }
+
+    home.map(|home| home.join(".cargo").join("bin"))
 }
 
 fn default_config_path() -> PathBuf {
@@ -8268,6 +8325,7 @@ fn apply_macos_route(iface: &str, target: &str) -> Result<()> {
     }
 }
 
+#[cfg(unix)]
 fn wait_for_socket(path: &str) -> Result<()> {
     for _ in 0..50 {
         if fs::metadata(path).is_ok() {
@@ -8278,6 +8336,14 @@ fn wait_for_socket(path: &str) -> Result<()> {
     Err(anyhow!("timed out waiting for uapi socket at {path}"))
 }
 
+#[cfg(not(unix))]
+fn wait_for_socket(path: &str) -> Result<()> {
+    Err(anyhow!(
+        "WireGuard control socket is unsupported on this platform: {path}"
+    ))
+}
+
+#[cfg(unix)]
 fn wg_set(socket_path: &str, body: &str) -> Result<()> {
     let mut socket =
         UnixStream::connect(socket_path).with_context(|| format!("connect {socket_path}"))?;
@@ -8298,6 +8364,14 @@ fn wg_set(socket_path: &str, body: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(unix))]
+fn wg_set(socket_path: &str, _body: &str) -> Result<()> {
+    Err(anyhow!(
+        "WireGuard control socket is unsupported on this platform: {socket_path}"
+    ))
+}
+
+#[cfg(unix)]
 fn wg_get(socket_path: &str) -> Result<String> {
     let mut socket =
         UnixStream::connect(socket_path).with_context(|| format!("connect {socket_path}"))?;
@@ -8316,6 +8390,13 @@ fn wg_get(socket_path: &str) -> Result<String> {
     }
 
     Ok(response)
+}
+
+#[cfg(not(unix))]
+fn wg_get(socket_path: &str) -> Result<String> {
+    Err(anyhow!(
+        "WireGuard control socket is unsupported on this platform: {socket_path}"
+    ))
 }
 
 fn parse_wg_peer_status(response: &str) -> HashMap<String, WireGuardPeerStatus> {

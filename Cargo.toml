@@ -18,7 +18,7 @@ anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
-boringtun = { version = "0.7", features = ["device"] }
+boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 futures = "0.3"

@@ -427,11 +427,15 @@ const fn runtime_capabilities_for_platform(platform: RuntimePlatform) -> Runtime
         RuntimePlatform::Desktop => RuntimeCapabilities {
             platform: "desktop",
             mobile: false,
-            vpn_session_control_supported: true,
+            vpn_session_control_supported: !cfg!(target_os = "windows"),
             cli_install_supported: true,
             startup_settings_supported: true,
             tray_behavior_supported: true,
-            runtime_status_detail: "",
+            runtime_status_detail: if cfg!(target_os = "windows") {
+                "Windows desktop packaging and CLI/service setup are available, but tunnel control is not wired up yet."
+            } else {
+                ""
+            },
         },
         RuntimePlatform::Android => RuntimeCapabilities {
             platform: "android",
@@ -2839,14 +2843,11 @@ fn validate_nvpn_binary(path: PathBuf) -> Result<PathBuf> {
     Ok(canonical)
 }
 
-fn default_cli_install_path() -> PathBuf {
-    PathBuf::from("/usr/local/bin/nvpn")
-}
-
 fn cli_binary_installed() -> bool {
-    cli_binary_installed_at(&default_cli_install_path())
+    resolve_nvpn_cli_path().is_ok()
 }
 
+#[cfg(test)]
 fn cli_binary_installed_at(path: &std::path::Path) -> bool {
     fs::metadata(path)
         .map(|metadata| metadata.is_file())
@@ -5350,11 +5351,20 @@ mod tests {
 
         assert_eq!(capabilities.platform, "desktop");
         assert!(!capabilities.mobile);
-        assert!(capabilities.vpn_session_control_supported);
         assert!(capabilities.cli_install_supported);
         assert!(capabilities.startup_settings_supported);
         assert!(capabilities.tray_behavior_supported);
-        assert_eq!(capabilities.runtime_status_detail, "");
+        if cfg!(target_os = "windows") {
+            assert!(!capabilities.vpn_session_control_supported);
+            assert!(
+                capabilities
+                    .runtime_status_detail
+                    .contains("tunnel control is not wired up yet")
+            );
+        } else {
+            assert!(capabilities.vpn_session_control_supported);
+            assert_eq!(capabilities.runtime_status_detail, "");
+        }
     }
 
     #[test]

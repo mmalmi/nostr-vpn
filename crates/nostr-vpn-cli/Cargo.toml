@@ -8,7 +8,6 @@ authors.workspace = true
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-boringtun.workspace = true
 clap.workspace = true
 dirs.workspace = true
 hex.workspace = true
@@ -23,6 +22,9 @@ nostr-vpn-core = { path = "../nostr-vpn-core" }
 crab_nat = "0.7"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = "0.40"
+
+[target.'cfg(unix)'.dependencies]
+boringtun = { workspace = true, features = ["device"] }
 
 [[bin]]
 name = "nvpn"

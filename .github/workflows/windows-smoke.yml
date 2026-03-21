@@ -1,0 +1,94 @@
+name: Windows Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to test (branch, tag, or SHA). Defaults to the current ref when left blank.
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-smoke:
+    name: Windows CLI + GUI smoke
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: crates/nostr-vpn-gui/pnpm-lock.yaml
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install GUI dependencies
+        run: pnpm --dir crates/nostr-vpn-gui install --frozen-lockfile
+
+      - name: Build frontend
+        run: pnpm --dir crates/nostr-vpn-gui build
+
+      - name: Run GUI unit tests
+        run: pnpm --dir crates/nostr-vpn-gui test:unit
+
+      - name: Run Rust tests
+        run: cargo test --workspace --exclude nostr-vpn-gui
+
+      - name: Build CLI release binary
+        run: cargo build --release -p nostr-vpn-cli
+
+      - name: Prepare GUI sidecar
+        run: pnpm --dir crates/nostr-vpn-gui run prepare:sidecar:release
+
+      - name: Build GUI release binary
+        run: cargo build --release -p nostr-vpn-gui
+
+      - name: Package smoke artifacts
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+
+          $files = @(
+            "target/release/nvpn.exe",
+            "target/release/nostr-vpn-gui.exe",
+            "crates/nostr-vpn-gui/src-tauri/binaries/nvpn-x86_64-pc-windows-msvc.exe"
+          )
+
+          foreach ($file in $files) {
+            if (-not (Test-Path $file)) {
+              throw "Expected build output not found: $file"
+            }
+            Copy-Item $file dist/
+          }
+
+          Compress-Archive -Path dist/* -DestinationPath artifacts/windows-smoke.zip -Force
+
+      - name: Upload smoke artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-smoke
+          path: artifacts/windows-smoke.zip
+          retention-days: 7
