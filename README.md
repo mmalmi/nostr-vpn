@@ -26,11 +26,12 @@ Most people on macOS want the desktop app:
 If you want the headless CLI instead:
 
 - [macOS Apple Silicon CLI](https://github.com/mmalmi/nostr-vpn/releases/latest/download/nvpn-aarch64-apple-darwin.tar.gz)
-- [macOS Intel CLI](https://github.com/mmalmi/nostr-vpn/releases/latest/download/nvpn-x86_64-apple-darwin.tar.gz)
 - [Linux x86_64 CLI](https://github.com/mmalmi/nostr-vpn/releases/latest/download/nvpn-x86_64-unknown-linux-musl.tar.gz)
 - [Linux ARM64 CLI](https://github.com/mmalmi/nostr-vpn/releases/latest/download/nvpn-aarch64-unknown-linux-musl.tar.gz)
 
-The CLI release installer and auto-detect command are intended for both macOS and Linux. GitHub Releases currently publish CLI tarballs for macOS Intel, macOS Apple Silicon, Linux x86_64, and Linux ARM64. The desktop GUI release is currently Apple Silicon macOS only.
+Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release.
+
+The CLI release installer and auto-detect command are intended for Apple Silicon macOS and Linux. GitHub Releases currently publish CLI tarballs for macOS Apple Silicon, Linux x86_64, and Linux ARM64. The desktop GUI release is Apple Silicon macOS only.
 
 ## What the project does today
 
@@ -110,19 +111,34 @@ cargo build -p nostr-vpn-cli -p nostr-vpn-relay
 
 ## Install `nvpn`
 
-Quick install for released headless CLI builds on macOS/Linux:
+Quick install for released headless CLI builds on Apple Silicon macOS and Linux:
 
 ```bash
-curl -fsSL https://github.com/mmalmi/nostr-vpn/releases/latest/download/nvpn-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/apple-darwin/' | sed 's/linux/unknown-linux-musl/').tar.gz | tar -xz && cd nvpn && ./install.sh
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64) ASSET=nvpn-aarch64-apple-darwin.tar.gz ;;
+  Linux/x86_64) ASSET=nvpn-x86_64-unknown-linux-musl.tar.gz ;;
+  Linux/aarch64|Linux/arm64) ASSET=nvpn-aarch64-unknown-linux-musl.tar.gz ;;
+  Darwin/x86_64)
+    echo "Prebuilt Intel macOS releases have been sunset. Build from source or use an older release." >&2
+    exit 1
+    ;;
+  *)
+    echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
+    exit 1
+    ;;
+esac
+curl -fsSL "https://github.com/mmalmi/nostr-vpn/releases/latest/download/${ASSET}" | tar -xz && cd nvpn && ./install.sh
 ```
 
-That auto-detect command is valid on both macOS and Linux. The bundled installer now creates the target directory when needed and defaults to `/opt/homebrew/bin` on Apple Silicon macOS when that location is present or already in `PATH`; otherwise it uses `/usr/local/bin`.
+That auto-detect command is valid on Apple Silicon macOS and Linux. On Intel macOS it exits with a clear message instead of fetching a missing artifact. The bundled installer creates the target directory when needed and defaults to `/opt/homebrew/bin` on Apple Silicon macOS when that location is present or already in `PATH`; otherwise it uses `/usr/local/bin`.
 
 From source:
 
 ```bash
 cargo install --path crates/nostr-vpn-cli --bin nvpn
 ```
+
+That source install path is the supported route on Intel macOS.
 
 If you already have a packaged CLI release artifact, extract it and run:
 

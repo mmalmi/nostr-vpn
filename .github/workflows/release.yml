@@ -78,9 +78,6 @@ jobs:
             target: aarch64-unknown-linux-musl
             cross: true
           - os: macos-14
-            target: x86_64-apple-darwin
-            cross: false
-          - os: macos-14
             target: aarch64-apple-darwin
             cross: false
     steps:
@@ -577,28 +574,37 @@ jobs:
 
             - [Nostr VPN for macOS (Apple Silicon)](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-macos-arm64.zip)
 
-            Intel Mac users currently need the CLI artifact below or a local source build.
+            Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release.
 
             ### Headless CLI downloads
             - [macOS Apple Silicon CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz)
-            - [macOS Intel CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-apple-darwin.tar.gz)
             - [Linux x86_64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz)
             - [Linux ARM64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz)
 
-            ### Quick CLI install (macOS/Linux)
+            ### Quick CLI install (Apple Silicon macOS/Linux)
             ```bash
-            curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-$(uname -m | sed 's/arm64/aarch64/')-$(uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/apple-darwin/' | sed 's/linux/unknown-linux-musl/').tar.gz | tar -xz && cd nvpn && ./install.sh
+            case "$(uname -s)/$(uname -m)" in
+              Darwin/arm64) ASSET=nvpn-aarch64-apple-darwin.tar.gz ;;
+              Linux/x86_64) ASSET=nvpn-x86_64-unknown-linux-musl.tar.gz ;;
+              Linux/aarch64|Linux/arm64) ASSET=nvpn-aarch64-unknown-linux-musl.tar.gz ;;
+              Darwin/x86_64)
+                echo "Prebuilt Intel macOS releases have been sunset. Build from source or use an older release." >&2
+                exit 1
+                ;;
+              *)
+                echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
+                exit 1
+                ;;
+            esac
+            curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/${ASSET}" | tar -xz && cd nvpn && ./install.sh
             ```
 
-            That command auto-detects the matching macOS/Linux CLI tarball, extracts `nvpn`, and runs the bundled installer.
+            That command auto-detects the matching Apple Silicon macOS/Linux CLI tarball, extracts `nvpn`, and runs the bundled installer.
 
             ### Manual CLI install
             ```bash
             # macOS Apple Silicon
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz
-
-            # macOS Intel
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-apple-darwin.tar.gz
 
             # Linux x86_64
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz
@@ -607,6 +613,11 @@ jobs:
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz
 
             tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh
+            ```
+
+            On Intel macOS, install from source instead:
+            ```bash
+            cargo install --git https://github.com/${{ github.repository }} --locked --bin nvpn nostr-vpn-cli
             ```
 
             ### Android app
