@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:assets": "node --test scripts/ios-icons.test.mjs",
-    "test:unit": "node --test src/lib/*.test.js",
+    "test:unit": "node --test src/lib/*.test.js scripts/prepare-sidecar.test.mjs",
     "prepare:sidecar:debug": "node ./scripts/prepare-sidecar.mjs --debug",
     "prepare:sidecar:release": "node ./scripts/prepare-sidecar.mjs --release",
     "tauri": "tauri",
