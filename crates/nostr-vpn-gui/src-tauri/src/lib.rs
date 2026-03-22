@@ -1055,7 +1055,7 @@ impl NvpnBackend {
         if let Err(error) = self.config.save(&self.config_path) {
             #[cfg(target_os = "windows")]
             {
-                if requires_admin_privileges(&error.to_string()) {
+                if requires_admin_privileges_error(&error) {
                     self.persist_config_with_admin_privileges()?;
                 } else {
                     return Err(error);
@@ -3279,6 +3279,13 @@ fn requires_admin_privileges(message: &str) -> bool {
         || lower.contains("openscmanager failed 5")
         || lower.contains("did you run with sudo")
         || lower.contains("admin privileges")
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn requires_admin_privileges_error(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| requires_admin_privileges(&cause.to_string()))
 }
 
 fn service_state_refresh_due(
@@ -5927,6 +5934,14 @@ mod tests {
     fn admin_privilege_detection_matches_windows_access_denied_errors() {
         let message = "nvpn service install failed\nstdout: daemon: not running\nError: sc create service failed\nstdout: [SC] OpenSCManager FAILED 5: Access is denied.\nstderr:";
         assert!(super::requires_admin_privileges(message));
+    }
+
+    #[test]
+    fn admin_privilege_detection_matches_windows_error_chain_context() {
+        let error = anyhow::anyhow!("Access is denied.")
+            .context(r"failed to write \\?\C:\ProgramData\Nostr VPN\config.toml");
+
+        assert!(super::requires_admin_privileges_error(&error));
     }
 
     #[test]
