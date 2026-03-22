@@ -30,7 +30,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
     AppConfig, derive_mesh_tunnel_ip, maybe_autoconfigure_node, normalize_advertised_route,
-    normalize_nostr_pubkey,
+    normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 use nostr_vpn_core::diagnostics::{HealthIssue, NetworkSummary, PortMappingStatus};
 #[cfg(any(target_os = "windows", test))]
@@ -2254,7 +2254,7 @@ impl NvpnBackend {
                 id: network.id.clone(),
                 name: network.name.clone(),
                 enabled: network.enabled,
-                network_id: network.network_id.clone(),
+                network_id: normalize_runtime_network_id(&network.network_id),
                 online_count,
                 expected_count,
                 participants: participant_rows,

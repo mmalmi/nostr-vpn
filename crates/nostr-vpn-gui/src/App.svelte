@@ -9,7 +9,6 @@
     canonicalizeMeshIdInput,
     formatMeshIdDraftForDisplay,
     formatMeshIdForDisplay,
-    meshIdUsesCompatPrefix,
     validateMeshIdInput,
   } from './lib/mesh-id.js'
   import {
@@ -635,9 +634,6 @@
     const errorMessage = meshIdDraftError(networkId)
     if (errorMessage) {
       return errorMessage
-    }
-    if (meshIdUsesCompatPrefix(currentMeshId)) {
-      return 'Shown without the internal nostr-vpn: prefix. Copy actions keep the full mesh ID.'
     }
     return 'Best for new IDs: letters or numbers in 4-character groups, like abcd-efgh-ijkl.'
   }

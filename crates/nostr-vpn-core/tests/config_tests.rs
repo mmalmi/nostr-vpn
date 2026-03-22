@@ -46,6 +46,7 @@ fn network_id_derivation_is_order_independent() {
         derive_network_id_from_participants(&["c".to_string(), "b".to_string(), "a".to_string()]);
 
     assert_eq!(left, right);
+    assert!(!left.contains(':'));
 }
 
 #[test]
@@ -182,6 +183,17 @@ fn active_network_network_id_takes_precedence_over_participant_hash() {
     config.ensure_defaults();
 
     assert_eq!(config.effective_network_id(), "mesh-fixed");
+}
+
+#[test]
+fn legacy_prefixed_network_ids_are_normalized_at_runtime() {
+    let mut config = AppConfig::generated();
+    config.networks[0].network_id = "nostr-vpn:1234abcd5678ef90".to_string();
+
+    config.ensure_defaults();
+
+    assert_eq!(config.networks[0].network_id, "nostr-vpn:1234abcd5678ef90");
+    assert_eq!(config.effective_network_id(), "1234abcd5678ef90");
 }
 
 #[test]
@@ -425,6 +437,8 @@ fn reciprocal_participant_configs_share_effective_network_id() {
 
     assert_ne!(alice_config.effective_network_id(), "nostr-vpn");
     assert_ne!(bob_config.effective_network_id(), "nostr-vpn");
+    assert!(!alice_config.effective_network_id().contains(':'));
+    assert!(!bob_config.effective_network_id().contains(':'));
     assert_eq!(
         alice_config.effective_network_id(),
         bob_config.effective_network_id()

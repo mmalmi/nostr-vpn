@@ -129,6 +129,8 @@ pub struct EnabledNetworkMesh {
     pub participants: Vec<String>,
 }
 
+const LEGACY_NETWORK_ID_COMPAT_PREFIX: &str = "nostr-vpn:";
+
 impl Default for AppConfig {
     fn default() -> Self {
         let mut config = Self {
@@ -353,7 +355,7 @@ impl AppConfig {
     }
 
     pub fn effective_network_id(&self) -> String {
-        self.active_network().network_id.clone()
+        normalize_runtime_network_id(&self.active_network().network_id)
     }
 
     pub fn enabled_network_meshes(&self) -> Vec<EnabledNetworkMesh> {
@@ -365,7 +367,7 @@ impl AppConfig {
         vec![EnabledNetworkMesh {
             id: network.id.clone(),
             name: network.name.clone(),
-            network_id: network.network_id.clone(),
+            network_id: normalize_runtime_network_id(&network.network_id),
             participants,
         }]
     }
@@ -507,7 +509,7 @@ impl AppConfig {
     }
 
     pub fn set_network_mesh_id(&mut self, network_id: &str, mesh_id: &str) -> Result<()> {
-        let normalized = mesh_id.trim();
+        let normalized = normalize_runtime_network_id(mesh_id);
         if normalized.is_empty() {
             return Err(anyhow::anyhow!("network id cannot be empty"));
         }
@@ -515,7 +517,7 @@ impl AppConfig {
         let network = self
             .network_by_id_mut(network_id)
             .ok_or_else(|| anyhow::anyhow!("network not found"))?;
-        network.network_id = normalized.to_string();
+        network.network_id = normalized;
 
         Ok(())
     }
@@ -768,7 +770,15 @@ pub fn derive_network_id_from_participants(participants: &[String]) -> String {
     }
 
     let digest = hasher.finalize();
-    format!("nostr-vpn:{}", &hex::encode(digest)[..16])
+    hex::encode(digest)[..16].to_string()
+}
+
+pub fn normalize_runtime_network_id(value: &str) -> String {
+    let trimmed = value.trim();
+    trimmed
+        .strip_prefix(LEGACY_NETWORK_ID_COMPAT_PREFIX)
+        .unwrap_or(trimmed)
+        .to_string()
 }
 
 pub fn normalize_nostr_pubkey(value: &str) -> Result<String> {
@@ -796,6 +806,7 @@ pub fn maybe_autoconfigure_node(config: &mut AppConfig) {
 }
 
 pub fn derive_mesh_tunnel_ip(network_id: &str, own_pubkey_hex: &str) -> Option<String> {
+    let network_id = normalize_runtime_network_id(network_id);
     let network_id = network_id.trim();
     let own_pubkey_hex = own_pubkey_hex.trim();
     if network_id.is_empty() || own_pubkey_hex.is_empty() {

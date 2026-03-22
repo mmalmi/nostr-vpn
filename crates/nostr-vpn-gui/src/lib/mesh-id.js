@@ -1,44 +1,37 @@
-export const MESH_ID_COMPAT_PREFIX = 'nostr-vpn:'
 export const MESH_ID_LEGACY_DEFAULT = 'nostr-vpn'
+const LEGACY_MESH_ID_PREFIX = 'nostr-vpn:'
 
 const COMPACT_MESH_ID_PATTERN = /^[A-Za-z0-9]+$/
 const HYPHENATED_MESH_ID_PATTERN = /^[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*$/
 
 const chunkMeshId = (value) => value.match(/.{1,4}/g)?.join('-') ?? value
 
-export const meshIdUsesCompatPrefix = (value) => value.trim().startsWith(MESH_ID_COMPAT_PREFIX)
-
-export const stripMeshIdPrefix = (value) => {
+const stripLegacyMeshIdPrefix = (value) => {
   const trimmed = value.trim()
-  if (!meshIdUsesCompatPrefix(trimmed)) {
+  if (!trimmed.startsWith(LEGACY_MESH_ID_PREFIX)) {
     return trimmed
   }
 
-  return trimmed.slice(MESH_ID_COMPAT_PREFIX.length)
+  return trimmed.slice(LEGACY_MESH_ID_PREFIX.length)
 }
 
 export const formatMeshIdForDisplay = (value) => {
-  const trimmed = value.trim()
+  const trimmed = stripLegacyMeshIdPrefix(value)
   if (!trimmed || trimmed === MESH_ID_LEGACY_DEFAULT) {
     return trimmed
   }
 
-  const visible = stripMeshIdPrefix(trimmed)
-  if (!COMPACT_MESH_ID_PATTERN.test(visible) || visible.length <= 4) {
-    return visible
+  if (!COMPACT_MESH_ID_PATTERN.test(trimmed) || trimmed.length <= 4) {
+    return trimmed
   }
 
-  return chunkMeshId(visible)
+  return chunkMeshId(trimmed)
 }
 
 export const formatMeshIdDraftForDisplay = (value, currentMeshId = '') => {
   const trimmed = value.trim()
   if (!trimmed) {
     return formatMeshIdForDisplay(currentMeshId)
-  }
-
-  if (!meshIdUsesCompatPrefix(trimmed)) {
-    return trimmed
   }
 
   return formatMeshIdForDisplay(trimmed)
@@ -50,23 +43,13 @@ export const canonicalizeMeshIdInput = (value, currentMeshId = '') => {
     return ''
   }
 
-  const currentTrimmed = currentMeshId.trim()
-  if (trimmed === formatMeshIdForDisplay(currentTrimmed)) {
-    return currentTrimmed
+  const currentNormalized = stripLegacyMeshIdPrefix(currentMeshId)
+  if (trimmed === formatMeshIdForDisplay(currentNormalized)) {
+    return currentNormalized
   }
 
-  if (meshIdUsesCompatPrefix(trimmed)) {
-    return trimmed
-  }
-
-  if (meshIdUsesCompatPrefix(currentTrimmed)) {
-    const compact = trimmed.replace(/-/g, '')
-    if (COMPACT_MESH_ID_PATTERN.test(compact) && compact.length >= 8 && compact.length <= 24) {
-      return `${MESH_ID_COMPAT_PREFIX}${compact}`
-    }
-  }
-
-  return trimmed
+  const normalized = stripLegacyMeshIdPrefix(trimmed)
+  return normalized
 }
 
 export const validateMeshIdInput = (value, currentMeshId = '') => {
@@ -80,16 +63,9 @@ export const validateMeshIdInput = (value, currentMeshId = '') => {
     return ''
   }
 
-  if (meshIdUsesCompatPrefix(canonical)) {
-    const suffix = canonical.slice(MESH_ID_COMPAT_PREFIX.length)
-    if (!suffix) {
-      return 'Mesh ID cannot be empty.'
-    }
-    if (!COMPACT_MESH_ID_PATTERN.test(suffix)) {
-      return 'Use only letters and numbers after the hidden app prefix.'
-    }
-    if (suffix.length < 8 || suffix.length > 24) {
-      return 'Use 8 to 24 letters or numbers.'
+  if (COMPACT_MESH_ID_PATTERN.test(canonical)) {
+    if (canonical.length < 8 || canonical.length > 24) {
+      return 'Use 8 to 24 letters or numbers total.'
     }
     return ''
   }

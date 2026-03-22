@@ -2,43 +2,33 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
-  MESH_ID_COMPAT_PREFIX,
   canonicalizeMeshIdInput,
   formatMeshIdDraftForDisplay,
   formatMeshIdForDisplay,
   validateMeshIdInput,
 } from './mesh-id.js'
 
-test('formatMeshIdForDisplay strips the compat prefix and groups compact ids', () => {
-  assert.equal(formatMeshIdForDisplay('nostr-vpn:1234abcd5678ef90'), '1234-abcd-5678-ef90')
+test('formatMeshIdForDisplay groups compact ids without adding a hidden prefix', () => {
+  assert.equal(formatMeshIdForDisplay('1234abcd5678ef90'), '1234-abcd-5678-ef90')
   assert.equal(formatMeshIdForDisplay('mesh-home'), 'mesh-home')
 })
 
-test('formatMeshIdDraftForDisplay keeps the hidden compat prefix out of inputs', () => {
-  const currentMeshId = `${MESH_ID_COMPAT_PREFIX}1234abcd5678ef90`
+test('formatMeshIdDraftForDisplay keeps compact ids grouped in inputs', () => {
+  const currentMeshId = '1234abcd5678ef90'
 
   assert.equal(formatMeshIdDraftForDisplay('', currentMeshId), '1234-abcd-5678-ef90')
-  assert.equal(
-    formatMeshIdDraftForDisplay(`${MESH_ID_COMPAT_PREFIX}1234abcd5678ef90`, currentMeshId),
-    '1234-abcd-5678-ef90',
-  )
+  assert.equal(formatMeshIdDraftForDisplay('1234abcd5678ef90', currentMeshId), '1234-abcd-5678-ef90')
   assert.equal(formatMeshIdDraftForDisplay('mesh-home', currentMeshId), 'mesh-home')
 })
 
-test('canonicalizeMeshIdInput restores the hidden compat prefix for generated ids', () => {
-  const currentMeshId = `${MESH_ID_COMPAT_PREFIX}1234abcd5678ef90`
+test('canonicalizeMeshIdInput returns plain ids for grouped input', () => {
+  const currentMeshId = '1234abcd5678ef90'
 
-  assert.equal(
-    canonicalizeMeshIdInput('1234-abcd-5678-ef90', currentMeshId),
-    `${MESH_ID_COMPAT_PREFIX}1234abcd5678ef90`,
-  )
-  assert.equal(
-    canonicalizeMeshIdInput('mesh-home', currentMeshId),
-    `${MESH_ID_COMPAT_PREFIX}meshhome`,
-  )
+  assert.equal(canonicalizeMeshIdInput('1234-abcd-5678-ef90', currentMeshId), '1234abcd5678ef90')
+  assert.equal(canonicalizeMeshIdInput('mesh-home', currentMeshId), 'mesh-home')
 })
 
-test('validateMeshIdInput accepts legacy ids and rejects malformed grouped ids', () => {
+test('validateMeshIdInput accepts plain ids and rejects malformed grouped ids', () => {
   assert.equal(validateMeshIdInput('nostr-vpn'), '')
   assert.equal(validateMeshIdInput('abcd-efgh-ijkl'), '')
   assert.equal(validateMeshIdInput('mesh-home'), '')
