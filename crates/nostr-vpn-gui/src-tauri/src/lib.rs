@@ -198,7 +198,6 @@ struct DaemonPeerState {
     tunnel_ip: String,
     endpoint: String,
     public_key: String,
-    #[serde(default)]
     advertised_routes: Vec<String>,
     presence_timestamp: u64,
     last_signal_seen_at: Option<u64>,

@@ -8,18 +8,18 @@ use nostr_sdk::prelude::{
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::signaling::{
-    NOSTR_KIND_NOSTR_VPN, NOSTR_KIND_NOSTR_VPN_LEGACY, NostrSignalingClient, SignalEnvelope,
-    SignalPayload, SignalingNetwork,
+    NOSTR_KIND_NOSTR_VPN, NostrSignalingClient, SignalEnvelope, SignalPayload, SignalingNetwork,
 };
 use tokio::time::timeout;
 
 use crate::support::ws_relay::WsRelay;
 
+const LEGACY_SIGNAL_KIND: u16 = 31_990;
+
 #[test]
 fn signaling_kind_uses_hashtree_style_ephemeral_range() {
     assert_eq!(NOSTR_KIND_NOSTR_VPN, 25_050);
     assert!((20_000..30_000).contains(&NOSTR_KIND_NOSTR_VPN));
-    assert_eq!(NOSTR_KIND_NOSTR_VPN_LEGACY, 31_990);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -408,7 +408,7 @@ async fn hello_and_private_events_include_stable_identifiers() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rollout_publishes_current_and_legacy_signal_kinds() {
+async fn publishes_only_current_signal_kind() {
     let mut relay = WsRelay::new();
     relay.start().await.expect("relay should start");
     let relay_url = relay.url().expect("relay url");
@@ -462,11 +462,7 @@ async fn rollout_publishes_current_and_legacy_signal_kinds() {
             .iter()
             .filter(|event| event.kind == u32::from(NOSTR_KIND_NOSTR_VPN))
             .count();
-        let legacy_count = events
-            .iter()
-            .filter(|event| event.kind == u32::from(NOSTR_KIND_NOSTR_VPN_LEGACY))
-            .count();
-        if current_count >= 2 && legacy_count >= 2 {
+        if current_count >= 2 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
@@ -476,39 +472,16 @@ async fn rollout_publishes_current_and_legacy_signal_kinds() {
         .iter()
         .filter(|event| event.kind == u32::from(NOSTR_KIND_NOSTR_VPN))
         .collect::<Vec<_>>();
-    let legacy_events = events
-        .iter()
-        .filter(|event| event.kind == u32::from(NOSTR_KIND_NOSTR_VPN_LEGACY))
-        .collect::<Vec<_>>();
 
     assert_eq!(
         current_events.len(),
         2,
         "expected current hello and private events"
     );
-    assert_eq!(
-        legacy_events.len(),
-        2,
-        "expected legacy hello and private events"
-    );
     assert!(
-        legacy_events.iter().any(|event| {
-            event
-                .tags
-                .iter()
-                .any(|tag| tag.len() >= 2 && tag[0] == "d" && tag[1] == "hello")
-        }),
-        "legacy hello should include a stable d tag",
-    );
-    assert!(
-        legacy_events.iter().any(|event| {
-            event.tags.iter().any(|tag| {
-                tag.len() >= 2
-                    && tag[0] == "d"
-                    && tag[1] == format!("private:{network_id}:{receiver_pubkey}")
-            })
-        }),
-        "legacy private signal should include a recipient-scoped d tag",
+        events
+            .iter()
+            .all(|event| event.kind == u32::from(NOSTR_KIND_NOSTR_VPN))
     );
 
     sender.disconnect().await;
@@ -516,7 +489,7 @@ async fn rollout_publishes_current_and_legacy_signal_kinds() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn receiver_accepts_legacy_signal_events_during_rollout() {
+async fn receiver_ignores_legacy_signal_events() {
     let mut relay = WsRelay::new();
     relay.start().await.expect("relay should start");
     let relay_url = relay.url().expect("relay url");
@@ -554,12 +527,11 @@ async fn receiver_accepts_legacy_signal_events_during_rollout() {
         .await
         .expect("legacy hello publish should succeed");
 
-    let hello = timeout(Duration::from_secs(5), receiver.recv())
-        .await
-        .expect("timed out waiting for legacy hello")
-        .expect("message expected");
-    assert_eq!(hello.payload, SignalPayload::Hello);
-    assert_eq!(hello.network_id, network_id);
+    assert!(
+        timeout(Duration::from_millis(400), receiver.recv())
+            .await
+            .is_err()
+    );
 
     let announcement = PeerAnnouncement {
         node_id: "legacy-node".to_string(),
@@ -581,12 +553,11 @@ async fn receiver_accepts_legacy_signal_events_during_rollout() {
     .await
     .expect("legacy private publish should succeed");
 
-    let received = timeout(Duration::from_secs(5), receiver.recv())
-        .await
-        .expect("timed out waiting for legacy private signal")
-        .expect("message expected");
-    assert_eq!(received.network_id, network_id);
-    assert_eq!(received.payload, SignalPayload::Announce(announcement));
+    assert!(
+        timeout(Duration::from_millis(400), receiver.recv())
+            .await
+            .is_err()
+    );
 
     let _ = sender_client.disconnect().await;
     receiver.disconnect().await;
@@ -679,7 +650,7 @@ async fn targeted_private_publish_only_reaches_requested_recipient() {
 async fn publish_legacy_hello(client: &nostr_sdk::Client, keys: &Keys) -> anyhow::Result<()> {
     let expiration = Timestamp::now() + Duration::from_secs(300);
     let event = EventBuilder::new(
-        Kind::Custom(NOSTR_KIND_NOSTR_VPN_LEGACY),
+        Kind::Custom(LEGACY_SIGNAL_KIND),
         "",
         vec![
             Tag::identifier("hello"),
@@ -724,7 +695,7 @@ async fn publish_legacy_private(
     )?;
     let expiration = Timestamp::now() + Duration::from_secs(300);
     let event = EventBuilder::new(
-        Kind::Custom(NOSTR_KIND_NOSTR_VPN_LEGACY),
+        Kind::Custom(LEGACY_SIGNAL_KIND),
         encrypted,
         vec![
             Tag::identifier(format!("private:{network_id}:{recipient_pubkey_hex}")),

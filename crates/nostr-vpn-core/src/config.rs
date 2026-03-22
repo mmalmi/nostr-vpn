@@ -69,8 +69,6 @@ const fn default_nat_discovery_timeout_secs() -> u64 {
 pub struct AppConfig {
     #[serde(default)]
     pub networks: Vec<NetworkConfig>,
-    #[serde(default = "default_network_id", skip_serializing)]
-    pub network_id: String,
     #[serde(default = "default_node_name")]
     pub node_name: String,
     #[serde(default = "default_auto_disconnect_relays_when_mesh_ready")]
@@ -141,7 +139,6 @@ impl Default for AppConfig {
                 network_id: default_network_id(),
                 participants: Vec::new(),
             }],
-            network_id: default_network_id(),
             node_name: default_node_name(),
             auto_disconnect_relays_when_mesh_ready: default_auto_disconnect_relays_when_mesh_ready(
             ),
@@ -242,9 +239,6 @@ impl AppConfig {
             self.node_name = default_node_name();
         }
 
-        if self.network_id.trim().is_empty() {
-            self.network_id = default_network_id();
-        }
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
 
         if self.nostr.relays.is_empty() {
@@ -337,8 +331,7 @@ impl AppConfig {
         }
 
         self.ensure_single_active_network();
-        self.promote_legacy_network_ids();
-        self.sync_legacy_network_id();
+        self.derive_default_network_ids();
         self.normalize_peer_aliases();
     }
 
@@ -485,7 +478,6 @@ impl AppConfig {
             first_network.enabled = true;
         }
 
-        self.sync_legacy_network_id();
         self.normalize_peer_aliases();
         Ok(())
     }
@@ -501,7 +493,6 @@ impl AppConfig {
             for (candidate_index, network) in self.networks.iter_mut().enumerate() {
                 network.enabled = candidate_index == index;
             }
-            self.sync_legacy_network_id();
             return Ok(());
         }
 
@@ -521,15 +512,10 @@ impl AppConfig {
             return Err(anyhow::anyhow!("network id cannot be empty"));
         }
 
-        let active_network_entry_id = self.active_network().id.clone();
         let network = self
             .network_by_id_mut(network_id)
             .ok_or_else(|| anyhow::anyhow!("network not found"))?;
         network.network_id = normalized.to_string();
-
-        if network_id == active_network_entry_id {
-            self.sync_legacy_network_id();
-        }
 
         Ok(())
     }
@@ -610,21 +596,11 @@ impl AppConfig {
         }
     }
 
-    fn promote_legacy_network_ids(&mut self) {
+    fn derive_default_network_ids(&mut self) {
         let own_pubkey = self.own_nostr_pubkey_hex().ok();
-        let legacy_app_network_id = self.network_id.clone();
-        let active_network_id = self.active_network().id.clone();
 
         for network in &mut self.networks {
-            if network.id == active_network_id
-                && uses_legacy_network_id(&network.network_id)
-                && !uses_legacy_network_id(&legacy_app_network_id)
-            {
-                network.network_id = legacy_app_network_id.clone();
-                continue;
-            }
-
-            if !uses_legacy_network_id(&network.network_id) {
+            if !uses_default_network_id(&network.network_id) {
                 continue;
             }
 
@@ -644,10 +620,6 @@ impl AppConfig {
             mesh_members.dedup();
             network.network_id = derive_network_id_from_participants(&mesh_members);
         }
-    }
-
-    fn sync_legacy_network_id(&mut self) {
-        self.network_id = self.active_network().network_id.clone();
     }
 
     pub fn effective_advertised_routes(&self) -> Vec<String> {
@@ -968,7 +940,7 @@ fn default_network_id() -> String {
     "nostr-vpn".to_string()
 }
 
-fn uses_legacy_network_id(value: &str) -> bool {
+fn uses_default_network_id(value: &str) -> bool {
     value.trim().is_empty() || value.trim() == "nostr-vpn"
 }
 

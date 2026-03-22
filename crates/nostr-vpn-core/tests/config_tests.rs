@@ -174,7 +174,7 @@ fn active_network_network_id_takes_precedence_over_participant_hash() {
     let own_hex = keys.public_key().to_hex();
 
     let mut config = AppConfig::generated();
-    config.network_id = "mesh-fixed".to_string();
+    config.networks[0].network_id = "mesh-fixed".to_string();
     config.nostr.secret_key = keys.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex;
     set_default_network_participants(&mut config, vec![peer.public_key().to_hex()]);
@@ -185,13 +185,59 @@ fn active_network_network_id_takes_precedence_over_participant_hash() {
 }
 
 #[test]
-fn legacy_network_id_is_not_promoted_without_participants() {
+fn default_network_id_stays_placeholder_without_participants() {
     let mut config = AppConfig::generated();
 
     maybe_autoconfigure_node(&mut config);
 
-    assert_eq!(config.network_id, "nostr-vpn");
     assert_eq!(config.effective_network_id(), "nostr-vpn");
+}
+
+#[test]
+fn legacy_top_level_network_id_is_ignored_when_loading_current_config_schema() {
+    let own = Keys::generate();
+    let peer = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let peer_hex = peer.public_key().to_hex();
+    let expected_network_id =
+        derive_network_id_from_participants(&vec![own_hex.clone(), peer_hex.clone()]);
+    let raw = format!(
+        r#"
+network_id = "mesh-legacy"
+node_name = "node"
+auto_disconnect_relays_when_mesh_ready = true
+lan_discovery_enabled = true
+launch_on_startup = true
+autoconnect = true
+close_to_tray_on_close = true
+
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
+network_id = "nostr-vpn"
+participants = ["{peer_hex}"]
+
+[nostr]
+relays = ["wss://temp.iris.to"]
+secret_key = "{secret_key}"
+public_key = "{own_hex}"
+
+[node]
+id = "node-id"
+private_key = ""
+public_key = ""
+endpoint = "127.0.0.1:51820"
+tunnel_ip = "10.44.0.1/32"
+listen_port = 51820
+"#,
+        secret_key = own.secret_key().to_secret_hex(),
+    );
+
+    let mut config: AppConfig = toml::from_str(&raw).expect("parse config");
+    config.ensure_defaults();
+
+    assert_eq!(config.effective_network_id(), expected_network_id);
 }
 
 #[test]
@@ -205,7 +251,7 @@ fn tunnel_ip_stays_stable_when_roster_changes_if_network_id_is_fixed() {
     let own_hex = own.public_key().to_hex();
 
     let mut config = AppConfig::generated();
-    config.network_id = "mesh-fixed".to_string();
+    config.networks[0].network_id = "mesh-fixed".to_string();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex.clone();
     set_default_network_participants(&mut config, vec![high.clone()]);
@@ -377,10 +423,8 @@ fn reciprocal_participant_configs_share_effective_network_id() {
     set_default_network_participants(&mut bob_config, vec![alice_hex.clone()]);
     maybe_autoconfigure_node(&mut bob_config);
 
-    assert_ne!(alice_config.network_id, "nostr-vpn");
-    assert_eq!(alice_config.network_id, alice_config.effective_network_id());
-    assert_ne!(bob_config.network_id, "nostr-vpn");
-    assert_eq!(bob_config.network_id, bob_config.effective_network_id());
+    assert_ne!(alice_config.effective_network_id(), "nostr-vpn");
+    assert_ne!(bob_config.effective_network_id(), "nostr-vpn");
     assert_eq!(
         alice_config.effective_network_id(),
         bob_config.effective_network_id()

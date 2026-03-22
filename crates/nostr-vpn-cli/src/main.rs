@@ -1343,7 +1343,6 @@ struct DaemonPeerState {
     tunnel_ip: String,
     endpoint: String,
     public_key: String,
-    #[serde(default)]
     advertised_routes: Vec<String>,
     presence_timestamp: u64,
     last_signal_seen_at: Option<u64>,
@@ -10616,7 +10615,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_runtime_state_parses_legacy_peer_without_advertised_routes() {
+    fn daemon_runtime_state_requires_advertised_routes() {
         let raw = r#"{
   "updated_at": 1773650797,
   "session_active": true,
@@ -10641,11 +10640,7 @@ mod tests {
   ]
 }"#;
 
-        let parsed =
-            serde_json::from_str::<DaemonRuntimeState>(raw).expect("legacy daemon state parses");
-
-        assert_eq!(parsed.peers.len(), 1);
-        assert!(parsed.peers[0].advertised_routes.is_empty());
+        assert!(serde_json::from_str::<DaemonRuntimeState>(raw).is_err());
     }
 
     #[test]
