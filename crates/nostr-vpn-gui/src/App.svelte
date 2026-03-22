@@ -127,8 +127,8 @@
         margin: 1,
         scale: 8,
         color: {
-          dark: '#dde8ff',
-          light: '#0000',
+          dark: '#121926',
+          light: '#ffffff',
         },
       })
       if (sequence === inviteQrSequence) {
