@@ -1,6 +1,4 @@
 mod diagnostics;
-#[cfg(test)]
-mod iroh_wg_transport;
 #[cfg(any(target_os = "windows", test))]
 mod userspace_wg;
 #[cfg(any(target_os = "windows", test))]
@@ -28,13 +26,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 #[cfg(unix)]
 use boringtun::device::{DeviceConfig, DeviceHandle};
-use bytes::Bytes;
 use clap::{Args, Parser, Subcommand};
 use hex::encode as encode_hex;
-use iroh::{
-    Endpoint as IrohEndpoint, RelayMode as IrohRelayMode, RelayUrl as IrohRelayUrl,
-    SecretKey as IrohSecretKey, endpoint::presets as iroh_presets,
-};
 use netdev::get_interfaces;
 use nostr_vpn_core::config::{
     AppConfig, DEFAULT_RELAYS, maybe_autoconfigure_node, normalize_advertised_route,
@@ -118,15 +111,14 @@ const MIN_PERSISTED_PATH_CACHE_TIMEOUT_SECS: u64 = 1_800;
 const PERSISTED_PATH_CACHE_TIMEOUT_MULTIPLIER: u64 = 90;
 const MESH_READY_RELAYS_PAUSED_STATUS: &str = "Mesh ready (relays paused)";
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
-const IROH_RELAY_PROBE_ALPN: &[u8] = b"nostr-vpn/iroh-relay-probe/1";
+#[cfg(any(target_os = "windows", test))]
+const WINDOWS_DAEMON_STATE_FRESHNESS_SECS: u64 = 5;
 #[cfg(target_os = "macos")]
 const MACOS_SERVICE_LABEL: &str = "to.nostrvpn.nvpn";
 #[cfg(target_os = "linux")]
 const LINUX_SERVICE_UNIT_NAME: &str = "nvpn.service";
 #[cfg(target_os = "windows")]
 const WINDOWS_SERVICE_NAME: &str = "NvpnService";
-#[cfg(target_os = "windows")]
-const WINDOWS_SERVICE_DISPLAY_NAME: &str = "Nostr VPN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DaemonControlRequest {
@@ -259,8 +251,6 @@ enum Command {
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Measure relay-only iroh datagram throughput between two local endpoints.
-    ProbeIrohRelay(ProbeIrohRelayArgs),
     /// Render a WireGuard config from local values and peer tuples.
     RenderWg {
         #[arg(long)]
@@ -659,16 +649,6 @@ struct HolePunchArgs {
     recv_timeout_ms: u64,
     #[arg(long)]
     json: bool,
-}
-
-#[derive(Debug, Args)]
-struct ProbeIrohRelayArgs {
-    #[arg(long)]
-    relay_url: Option<String>,
-    #[arg(long, default_value_t = 10)]
-    duration_secs: u64,
-    #[arg(long, default_value_t = 1024)]
-    datagram_bytes: usize,
 }
 
 #[tokio::main]
@@ -1190,9 +1170,6 @@ async fn main() -> Result<()> {
 
             client.disconnect().await;
         }
-        Command::ProbeIrohRelay(args) => {
-            probe_iroh_relay(args).await?;
-        }
         Command::NatDiscover(args) => {
             let reflector: SocketAddr = args
                 .reflector
@@ -1588,128 +1565,6 @@ async fn discover_peers(
     let mut values: Vec<PeerAnnouncement> = peers.into_values().collect();
     values.sort_by(|left, right| left.node_id.cmp(&right.node_id));
     Ok(values)
-}
-
-async fn probe_iroh_relay(args: ProbeIrohRelayArgs) -> Result<()> {
-    if args.duration_secs == 0 {
-        return Err(anyhow!("--duration-secs must be greater than zero"));
-    }
-    if args.datagram_bytes == 0 {
-        return Err(anyhow!("--datagram-bytes must be greater than zero"));
-    }
-
-    let relay_mode = match args.relay_url.as_deref() {
-        Some(url) => {
-            let relay_url = url
-                .parse::<IrohRelayUrl>()
-                .with_context(|| format!("invalid relay url {url}"))?;
-            IrohRelayMode::custom([relay_url])
-        }
-        None => IrohRelayMode::Default,
-    };
-
-    let sender = IrohEndpoint::builder(iroh_presets::Minimal)
-        .secret_key(IrohSecretKey::generate(&mut rand::rng()))
-        .alpns(vec![IROH_RELAY_PROBE_ALPN.to_vec()])
-        .clear_ip_transports()
-        .relay_mode(relay_mode.clone())
-        .bind()
-        .await
-        .context("failed to bind iroh sender endpoint")?;
-    let receiver = IrohEndpoint::builder(iroh_presets::Minimal)
-        .secret_key(IrohSecretKey::generate(&mut rand::rng()))
-        .alpns(vec![IROH_RELAY_PROBE_ALPN.to_vec()])
-        .clear_ip_transports()
-        .relay_mode(relay_mode)
-        .bind()
-        .await
-        .context("failed to bind iroh receiver endpoint")?;
-
-    tokio::time::timeout(Duration::from_secs(30), sender.online())
-        .await
-        .context("timed out waiting for sender relay connectivity")?;
-    tokio::time::timeout(Duration::from_secs(30), receiver.online())
-        .await
-        .context("timed out waiting for receiver relay connectivity")?;
-
-    let receiver_addr = receiver.addr();
-    let relay_url = receiver_addr
-        .relay_urls()
-        .next()
-        .cloned()
-        .map(|url| url.to_string())
-        .unwrap_or_else(|| "<none>".to_string());
-    let duration_secs = args.duration_secs;
-    let receiver_task = tokio::spawn(async move {
-        let incoming = receiver
-            .accept()
-            .await
-            .ok_or_else(|| anyhow!("receiver endpoint closed before probe connection"))?;
-        let connection = incoming
-            .await
-            .context("failed to accept probe connection")?;
-        let deadline = Instant::now() + Duration::from_secs(duration_secs);
-        let mut received_bytes = 0_u64;
-        loop {
-            let now = Instant::now();
-            if now >= deadline {
-                break;
-            }
-            match tokio::time::timeout(deadline - now, connection.read_datagram()).await {
-                Ok(Ok(payload)) => {
-                    received_bytes = received_bytes.saturating_add(payload.len() as u64);
-                }
-                Ok(Err(_)) | Err(_) => break,
-            }
-        }
-        receiver.close().await;
-        Ok::<u64, anyhow::Error>(received_bytes)
-    });
-
-    let connection = sender
-        .connect(receiver_addr, IROH_RELAY_PROBE_ALPN)
-        .await
-        .context("failed to establish relay-only iroh probe connection")?;
-    let max_datagram_size = connection
-        .max_datagram_size()
-        .ok_or_else(|| anyhow!("probe connection does not support datagrams"))?;
-    let payload_len = args.datagram_bytes.min(max_datagram_size);
-    let payload = Bytes::from(vec![0x5a; payload_len]);
-    let started_at = Instant::now();
-    let deadline = started_at + Duration::from_secs(duration_secs);
-    let mut sent_bytes = 0_u64;
-    while Instant::now() < deadline {
-        connection
-            .send_datagram_wait(payload.clone())
-            .await
-            .context("failed while sending probe datagram")?;
-        sent_bytes = sent_bytes.saturating_add(payload_len as u64);
-    }
-    connection.close(0u32.into(), b"probe complete");
-
-    let received_bytes = receiver_task
-        .await
-        .context("receiver probe task join failed")??;
-    let elapsed_secs = started_at.elapsed().as_secs_f64().max(f64::EPSILON);
-
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "relay_url": relay_url,
-            "duration_secs": elapsed_secs,
-            "payload_bytes": payload_len,
-            "max_datagram_size": max_datagram_size,
-            "sent_bytes": sent_bytes,
-            "received_bytes": received_bytes,
-            "sent_mbps": (sent_bytes as f64 * 8.0) / elapsed_secs / 1_000_000.0,
-            "received_mbps": (received_bytes as f64 * 8.0) / elapsed_secs / 1_000_000.0,
-            "sender_endpoint_id": sender.id().to_string(),
-            "receiver_endpoint_id": connection.remote_id().to_string(),
-        }))?
-    );
-
-    sender.close().await;
-    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -5802,15 +5657,8 @@ async fn start_session(args: StartArgs) -> Result<()> {
 fn stop_daemon(args: StopArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let status = daemon_status(&config_path)?;
-    let mut daemon_pids = find_daemon_pids_by_config(&config_path);
-    if daemon_pids.is_empty()
-        && let Some(pid) = status.pid
-        && daemon_process_matches(pid, &config_path)
-    {
-        daemon_pids.push(pid);
-    }
-    daemon_pids.sort_unstable();
-    daemon_pids.dedup();
+    let current_pid = std::process::id();
+    let daemon_pids = daemon_candidate_pids(&config_path, current_pid)?;
 
     if daemon_pids.is_empty() {
         let _ = fs::remove_file(&status.pid_file);
@@ -5819,7 +5667,16 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(target_os = "windows")]
+    let requested_control_stop = {
+        request_daemon_stop(&config_path)?;
+        true
+    };
+
+    #[cfg(not(target_os = "windows"))]
     let mut requested_control_stop = false;
+
+    #[cfg(not(target_os = "windows"))]
     for pid in &daemon_pids {
         match send_signal(*pid, "-TERM") {
             Ok(()) => {}
@@ -5836,7 +5693,7 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
     let timeout = Duration::from_secs(args.timeout_secs.max(1));
     let started = std::time::Instant::now();
     while started.elapsed() < timeout {
-        if find_daemon_pids_by_config(&config_path).is_empty() {
+        if daemon_candidate_pids(&config_path, current_pid)?.is_empty() {
             let _ = fs::remove_file(&status.pid_file);
             let _ = fs::remove_file(daemon_control_file_path(&config_path));
             println!("daemon stopped");
@@ -5846,7 +5703,11 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
     }
 
     if args.force {
-        for pid in find_daemon_pids_by_config(&config_path) {
+        for pid in daemon_candidate_pids(&config_path, current_pid)? {
+            #[cfg(target_os = "windows")]
+            windows_taskkill_pid(pid)?;
+
+            #[cfg(not(target_os = "windows"))]
             if let Err(error) = send_signal(pid, "-KILL")
                 && !kill_error_requires_control_fallback(&error.to_string())
             {
@@ -5857,10 +5718,11 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
     }
 
     if requested_control_stop {
+        #[cfg(not(target_os = "windows"))]
         request_daemon_stop(&config_path)?;
         let started = std::time::Instant::now();
         while started.elapsed() < timeout {
-            if find_daemon_pids_by_config(&config_path).is_empty() {
+            if daemon_candidate_pids(&config_path, current_pid)?.is_empty() {
                 let _ = fs::remove_file(&status.pid_file);
                 let _ = fs::remove_file(daemon_control_file_path(&config_path));
                 println!("daemon stopped");
@@ -5870,7 +5732,7 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
         }
     }
 
-    let remaining = find_daemon_pids_by_config(&config_path);
+    let remaining = daemon_candidate_pids(&config_path, current_pid)?;
     if !remaining.is_empty() {
         let hint = if requested_control_stop {
             "daemon ignored local stop request; likely an older daemon binary is still running. perform one elevated stop (e.g. sudo nvpn stop --force --config <config>) to migrate"
@@ -5943,10 +5805,9 @@ fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
     let state_file = daemon_state_file_path(config_path);
     let pid_record = read_daemon_pid_record(&pid_file)?;
     let pid_from_record = pid_record.as_ref().map(|record| record.pid);
-    let pid_from_scan = find_daemon_pid_by_config(config_path);
-    let pid_from_record_running =
-        pid_from_record.filter(|pid| daemon_process_matches(*pid, config_path));
-    let running_pid = pid_from_scan.or(pid_from_record_running);
+    let running_pid = daemon_candidate_pids(config_path, std::process::id())?
+        .into_iter()
+        .next();
     let running = running_pid.is_some();
     let pid = running_pid.or(pid_from_record);
     let state = read_daemon_state(&state_file)?;
@@ -5980,7 +5841,7 @@ fn daemon_status_json(config_path: &Path) -> Result<serde_json::Value> {
         "pid_file": status.pid_file,
         "log_file": status.log_file,
         "state_file": status.state_file,
-        "state": status.state,
+        "state": visible_daemon_state_for_status(status.running, status.state.as_ref()),
     }))
 }
 
@@ -5989,6 +5850,13 @@ fn daemon_pid_file_path(config_path: &Path) -> PathBuf {
         .parent()
         .map_or_else(|| Path::new(".").to_path_buf(), PathBuf::from);
     parent.join("daemon.pid")
+}
+
+fn visible_daemon_state_for_status(
+    running: bool,
+    state: Option<&DaemonRuntimeState>,
+) -> Option<DaemonRuntimeState> {
+    if running { state.cloned() } else { None }
 }
 
 fn daemon_log_file_path(config_path: &Path) -> PathBuf {
@@ -6020,20 +5888,7 @@ fn daemon_peer_cache_file_path(config_path: &Path) -> PathBuf {
 }
 
 fn ensure_no_other_daemon_processes_for_config(config_path: &Path, current_pid: u32) -> Result<()> {
-    let mut daemon_pids = find_daemon_pids_by_config(config_path);
-    daemon_pids.retain(|pid| *pid != current_pid);
-
-    let pid_file = daemon_pid_file_path(config_path);
-    if let Some(record) = read_daemon_pid_record(&pid_file)?
-        && record.pid != current_pid
-        && daemon_process_matches(record.pid, config_path)
-        && !daemon_pids.contains(&record.pid)
-    {
-        daemon_pids.push(record.pid);
-    }
-
-    daemon_pids.sort_unstable();
-    daemon_pids.dedup();
+    let daemon_pids = daemon_candidate_pids(config_path, current_pid)?;
 
     if let Some(existing_pid) = daemon_pids.first().copied() {
         return Err(anyhow!("daemon already running with pid {}", existing_pid));
@@ -6227,15 +6082,11 @@ fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
 }
 
 fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Result<u32> {
-    if let Some(existing_pid) = find_daemon_pid_by_config(config_path) {
-        return Err(anyhow!("daemon already running with pid {}", existing_pid));
-    }
-
-    let pid_file = daemon_pid_file_path(config_path);
-    if let Some(record) = read_daemon_pid_record(&pid_file)?
-        && daemon_process_matches(record.pid, config_path)
+    if let Some(existing_pid) = daemon_candidate_pids(config_path, std::process::id())?
+        .into_iter()
+        .next()
     {
-        return Err(anyhow!("daemon already running with pid {}", record.pid));
+        return Err(anyhow!("daemon already running with pid {}", existing_pid));
     }
 
     let log_file_path = daemon_log_file_path(config_path);
@@ -6310,11 +6161,12 @@ fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Result<u32> {
         config_path: config_path.display().to_string(),
         started_at: unix_timestamp(),
     };
+    let pid_file = daemon_pid_file_path(config_path);
     write_daemon_pid_record(&pid_file, &record)?;
     Ok(pid)
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn stop_existing_daemons_before_service_install(config_path: &Path) -> Result<()> {
     stop_daemon(StopArgs {
         config: Some(config_path.to_path_buf()),
@@ -6353,8 +6205,28 @@ fn is_process_running(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(windows)]
+fn is_process_running(pid: u32) -> bool {
+    let output = ProcessCommand::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .output();
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    tasklist_pids_from_output(&String::from_utf8_lossy(&output.stdout)).contains(&pid)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn is_process_running(_pid: u32) -> bool {
+    false
+}
+
 #[cfg(unix)]
-fn daemon_process_matches(pid: u32, config_path: &Path) -> bool {
+fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) -> bool {
     if !is_process_running(pid) {
         return false;
     }
@@ -6376,17 +6248,13 @@ fn daemon_process_matches(pid: u32, config_path: &Path) -> bool {
 }
 
 #[cfg(windows)]
-fn daemon_process_matches(pid: u32, config_path: &Path) -> bool {
-    find_daemon_pids_by_config(config_path).contains(&pid)
+fn daemon_pid_record_counts_as_running(pid: u32, _config_path: &Path) -> bool {
+    is_process_running(pid)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn daemon_process_matches(_pid: u32, _config_path: &Path) -> bool {
+fn daemon_pid_record_counts_as_running(_pid: u32, _config_path: &Path) -> bool {
     false
-}
-
-fn find_daemon_pid_by_config(config_path: &Path) -> Option<u32> {
-    find_daemon_pids_by_config(config_path).into_iter().next()
 }
 
 #[cfg(unix)]
@@ -6460,6 +6328,113 @@ fn daemon_pids_from_ps_output(ps_output: &str, config_path: &Path) -> Vec<u32> {
     pids.sort_unstable();
     pids.dedup();
     pids
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn tasklist_pids_from_output(tasklist_output: &str) -> Vec<u32> {
+    let trimmed = tasklist_output.trim();
+    if trimmed.is_empty()
+        || trimmed
+            .to_ascii_lowercase()
+            .contains("no tasks are running which match")
+    {
+        return Vec::new();
+    }
+
+    let mut pids = Vec::new();
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if !(line.starts_with('"') && line.ends_with('"')) {
+            continue;
+        }
+        let inner = &line[1..line.len().saturating_sub(1)];
+        let mut fields = inner.split("\",\"");
+        let _image_name = fields.next();
+        let Some(pid_text) = fields.next() else {
+            continue;
+        };
+        let Ok(pid) = pid_text.parse::<u32>() else {
+            continue;
+        };
+        pids.push(pid);
+    }
+
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+#[cfg(windows)]
+fn windows_nvpn_pids() -> Vec<u32> {
+    let output = ProcessCommand::new("tasklist")
+        .args(["/FI", "IMAGENAME eq nvpn.exe", "/FO", "CSV", "/NH"])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    tasklist_pids_from_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn recent_windows_daemon_pid_candidate(
+    state: Option<&DaemonRuntimeState>,
+    current_pid: u32,
+    nvpn_pids: &[u32],
+    now: u64,
+) -> Option<u32> {
+    let state = state?;
+    if now.saturating_sub(state.updated_at) > WINDOWS_DAEMON_STATE_FRESHNESS_SECS {
+        return None;
+    }
+
+    let mut other_pids = nvpn_pids
+        .iter()
+        .copied()
+        .filter(|pid| *pid != current_pid)
+        .collect::<Vec<_>>();
+    other_pids.sort_unstable();
+    other_pids.dedup();
+    if other_pids.len() == 1 {
+        Some(other_pids[0])
+    } else {
+        None
+    }
+}
+
+fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Result<Vec<u32>> {
+    let mut daemon_pids = find_daemon_pids_by_config(config_path);
+
+    let pid_file = daemon_pid_file_path(config_path);
+    if let Some(record) = read_daemon_pid_record(&pid_file)?
+        && record.pid != current_pid
+        && daemon_pid_record_counts_as_running(record.pid, config_path)
+        && !daemon_pids.contains(&record.pid)
+    {
+        daemon_pids.push(record.pid);
+    }
+
+    #[cfg(windows)]
+    {
+        let state = read_daemon_state(&daemon_state_file_path(config_path))?;
+        if let Some(pid) = recent_windows_daemon_pid_candidate(
+            state.as_ref(),
+            current_pid,
+            &windows_nvpn_pids(),
+            unix_timestamp(),
+        ) && !daemon_pids.contains(&pid)
+        {
+            daemon_pids.push(pid);
+        }
+    }
+
+    daemon_pids.retain(|pid| *pid != current_pid);
+    daemon_pids.sort_unstable();
+    daemon_pids.dedup();
+    Ok(daemon_pids)
 }
 
 fn daemon_command_matches_config(command: &str, config_path: &Path) -> bool {
@@ -6546,6 +6521,7 @@ fn set_private_cache_file_permissions(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn send_signal(pid: u32, signal: &str) -> Result<()> {
     if cfg!(not(unix)) {
         return Err(anyhow!("daemon signal control is only supported on unix"));
@@ -6570,6 +6546,35 @@ fn send_signal(pid: u32, signal: &str) -> Result<()> {
     ))
 }
 
+#[cfg(target_os = "windows")]
+fn windows_taskkill_pid(pid: u32) -> Result<()> {
+    let output = ProcessCommand::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .output()
+        .with_context(|| format!("failed to execute taskkill /PID {pid} /F"))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let details = format!("{}\n{}", stdout.trim(), stderr.trim())
+        .trim()
+        .to_string();
+    let lower = details.to_ascii_lowercase();
+    if lower.contains("not found") || lower.contains("no running instance") {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "taskkill /PID {pid} /F failed\nstdout: {}\nstderr: {}",
+        stdout.trim(),
+        stderr.trim()
+    ))
+}
+
+#[cfg(any(unix, test))]
 fn kill_error_requires_control_fallback(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
     lower.contains("operation not permitted") || lower.contains("permission denied")
@@ -7634,44 +7639,16 @@ fn windows_install_service(
     announce_interval_secs: u64,
     force: bool,
 ) -> Result<()> {
-    let existing = windows_service_query()?.is_some();
-    if existing && !force {
-        println!(
-            "service already installed (pass --force to reinstall): {}",
-            WINDOWS_SERVICE_NAME
-        );
-        return Ok(());
-    }
-
-    if existing && force {
-        let _ = windows_stop_service(true);
-        let _ = windows_delete_service(true);
-    }
-    stop_existing_daemons_before_service_install(config_path)?;
-
-    let exec = executable.display().to_string();
-    let config = config_path.display().to_string();
-    let bin_path = format!(
-        "\"{exec}\" daemon --config \"{config}\" --iface {iface} --announce-interval-secs {announce_interval_secs}"
+    let _ = (
+        executable,
+        config_path,
+        iface,
+        announce_interval_secs,
+        force,
     );
-    run_sc_checked(
-        &[
-            "create",
-            WINDOWS_SERVICE_NAME,
-            "binPath=",
-            bin_path.as_str(),
-            "start=",
-            "auto",
-            "DisplayName=",
-            WINDOWS_SERVICE_DISPLAY_NAME,
-        ],
-        "create service",
-    )?;
-    windows_start_service(true)?;
-
-    println!("installed system service: {}", WINDOWS_SERVICE_NAME);
-    println!("label: {}", WINDOWS_SERVICE_NAME);
-    Ok(())
+    Err(anyhow!(
+        "Windows system service installation is not implemented yet. The current Windows background process can run as an elevated daemon, but it is not a real SCM service entrypoint and times out with ERROR_SERVICE_REQUEST_TIMEOUT (1053)."
+    ))
 }
 
 #[cfg(target_os = "windows")]
@@ -7687,7 +7664,7 @@ fn windows_query_service_status() -> Result<ServiceStatusView> {
     let output = windows_service_query()?;
     let Some(output) = output else {
         return Ok(ServiceStatusView {
-            supported: true,
+            supported: false,
             installed: false,
             disabled: false,
             loaded: false,
@@ -7701,7 +7678,7 @@ fn windows_query_service_status() -> Result<ServiceStatusView> {
     let text = String::from_utf8_lossy(&output.stdout);
     let (running, pid) = windows_service_status_from_query_output(&text);
     Ok(ServiceStatusView {
-        supported: true,
+        supported: false,
         installed: true,
         disabled: false,
         loaded: true,
@@ -7728,25 +7705,6 @@ fn windows_service_query() -> Result<Option<std::process::Output>> {
 
     Err(anyhow!(
         "sc query failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
-}
-
-#[cfg(target_os = "windows")]
-fn windows_start_service(ignore_already_running: bool) -> Result<()> {
-    let output = run_sc_raw(&["start", WINDOWS_SERVICE_NAME], "start service")?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
-    if ignore_already_running && windows_service_already_running_message(&details) {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "sc start failed\nstdout: {}\nstderr: {}",
         stdout.trim(),
         stderr.trim()
     ))
@@ -7791,21 +7749,6 @@ fn windows_delete_service(ignore_missing: bool) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_sc_checked(args: &[&str], context: &str) -> Result<()> {
-    let output = run_sc_raw(args, context)?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Err(anyhow!(
-        "sc {context} failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
-}
-
-#[cfg(target_os = "windows")]
 fn run_sc_raw(args: &[&str], context: &str) -> Result<std::process::Output> {
     ProcessCommand::new("sc.exe")
         .args(args)
@@ -7817,13 +7760,6 @@ fn run_sc_raw(args: &[&str], context: &str) -> Result<std::process::Output> {
 fn windows_service_missing_message(details: &str) -> bool {
     let lowered = details.to_ascii_lowercase();
     lowered.contains("failed 1060") || lowered.contains("does not exist as an installed service")
-}
-
-#[cfg(target_os = "windows")]
-fn windows_service_already_running_message(details: &str) -> bool {
-    details
-        .to_ascii_lowercase()
-        .contains("service has already been started")
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -10921,6 +10857,64 @@ mod tests {
         let cim_json = r#"{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\sirius\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"}"#;
         let pids = super::daemon_pids_from_windows_cim_json(cim_json, config_path);
         assert_eq!(pids, vec![42063]);
+    }
+
+    #[test]
+    fn windows_tasklist_pid_parser_extracts_pids() {
+        let output = "\"nvpn.exe\",\"9564\",\"Services\",\"0\",\"172,248 K\"\n\"nvpn.exe\",\"3496\",\"Console\",\"1\",\"19,472 K\"\n";
+        assert_eq!(super::tasklist_pids_from_output(output), vec![3496, 9564]);
+    }
+
+    #[test]
+    fn windows_tasklist_pid_parser_ignores_no_tasks_message() {
+        let output = "INFO: No tasks are running which match the specified criteria.\r\n";
+        assert!(super::tasklist_pids_from_output(output).is_empty());
+    }
+
+    #[test]
+    fn recent_windows_daemon_pid_candidate_uses_fresh_state_and_single_other_process() {
+        let state = DaemonRuntimeState {
+            updated_at: 100,
+            ..Default::default()
+        };
+        assert_eq!(
+            super::recent_windows_daemon_pid_candidate(Some(&state), 42, &[42, 9564], 103),
+            Some(9564)
+        );
+        assert_eq!(
+            super::recent_windows_daemon_pid_candidate(Some(&state), 42, &[42, 9564], 106),
+            None
+        );
+        assert_eq!(
+            super::recent_windows_daemon_pid_candidate(Some(&state), 42, &[42, 9564, 97597], 103),
+            None
+        );
+        assert_eq!(
+            super::recent_windows_daemon_pid_candidate(None, 42, &[42, 9564], 103),
+            None
+        );
+    }
+
+    #[test]
+    fn visible_daemon_state_for_status_keeps_state_while_running() {
+        let state = DaemonRuntimeState {
+            session_active: true,
+            ..Default::default()
+        };
+
+        let visible = super::visible_daemon_state_for_status(true, Some(&state));
+        assert!(visible.is_some());
+        assert!(visible.expect("visible state").session_active);
+    }
+
+    #[test]
+    fn visible_daemon_state_for_status_hides_state_when_stopped() {
+        let state = DaemonRuntimeState {
+            session_active: true,
+            ..Default::default()
+        };
+
+        assert!(super::visible_daemon_state_for_status(false, Some(&state)).is_none());
     }
 
     #[test]

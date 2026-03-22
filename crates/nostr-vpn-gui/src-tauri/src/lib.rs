@@ -598,11 +598,7 @@ impl NvpnBackend {
             daemon_running: false,
             session_active: false,
             relay_connected: false,
-            service_supported: cfg!(any(
-                target_os = "macos",
-                target_os = "linux",
-                target_os = "windows"
-            )),
+            service_supported: cfg!(any(target_os = "macos", target_os = "linux")),
             service_enablement_supported: cfg!(target_os = "macos"),
             service_installed: false,
             service_disabled: false,
@@ -1939,11 +1935,7 @@ impl NvpnBackend {
                 );
             }
             Err(error) => {
-                self.service_supported = cfg!(any(
-                    target_os = "macos",
-                    target_os = "linux",
-                    target_os = "windows"
-                ));
+                self.service_supported = cfg!(any(target_os = "macos", target_os = "linux"));
                 self.service_installed = false;
                 self.service_disabled = false;
                 self.service_running = false;

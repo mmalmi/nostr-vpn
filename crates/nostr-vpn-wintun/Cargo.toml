@@ -9,5 +9,8 @@ authors.workspace = true
 anyhow.workspace = true
 wintun = "0.5.1"
 
+[dev-dependencies]
+anyhow.workspace = true
+
 [lints.rust]
 unsafe_code = "allow"

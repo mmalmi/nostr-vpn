@@ -7,7 +7,7 @@ authors.workspace = true
 default-run = "nostr-vpn-gui"
 
 [lib]
-name = "nostr_vpn_gui"
+name = "nostr_vpn_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

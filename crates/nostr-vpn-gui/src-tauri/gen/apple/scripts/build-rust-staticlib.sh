@@ -35,7 +35,7 @@ fi
 repo_root="$(cd "${SRCROOT}/../../../../.." && pwd)"
 artifact_dir="${SRCROOT}/Externals/${externals_arch}/${CONFIGURATION}"
 artifact_path="${artifact_dir}/libapp.a"
-source_path="${repo_root}/target/${rust_target}/${profile_dir}/libnostr_vpn_gui.a"
+source_path="${repo_root}/target/${rust_target}/${profile_dir}/libnostr_vpn_gui_lib.a"
 
 mkdir -p "${artifact_dir}"
 

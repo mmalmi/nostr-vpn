@@ -9,7 +9,7 @@ export default defineConfig({
   clearScreen: false,
   base: tauriTarget ? './' : '/',
   define: {
-    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.2.10'),
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.2.11'),
   },
   server: {
     port: 1420,

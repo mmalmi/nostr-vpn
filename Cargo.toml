@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.10"
+version = "0.2.11"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]
@@ -19,15 +19,12 @@ anyhow = "1"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
-bytes = "1"
 boringtun = "0.7"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.25"
-iroh = { path = "../iroh/iroh", features = ["test-utils"] }
-iroh-relay = { path = "../iroh/iroh-relay", features = ["server"] }
 rand = "0.9"
 rand_core = "0.6"
 serde = { version = "1", features = ["derive"] }
@@ -53,8 +50,3 @@ missing_panics_doc = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-
-[patch.crates-io]
-noq = { git = "https://github.com/n0-computer/noq", branch = "main" }
-noq-proto = { git = "https://github.com/n0-computer/noq", branch = "main" }
-noq-udp = { git = "https://github.com/n0-computer/noq", branch = "main" }

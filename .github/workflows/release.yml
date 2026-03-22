@@ -410,6 +410,81 @@ jobs:
           security delete-keychain "${KEYCHAIN_PATH}" || true
           rm -f "$RUNNER_TEMP/nvpn-signing-cert.p12" "$RUNNER_TEMP/nvpn-notarize.zip"
 
+  build-windows-app:
+    name: Build Windows desktop app
+    runs-on: windows-latest
+    needs: verify
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: crates/nostr-vpn-gui/pnpm-lock.yaml
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install GUI dependencies
+        run: pnpm --dir crates/nostr-vpn-gui install --frozen-lockfile
+
+      - name: Build Windows CLI
+        run: cargo build --release -p nostr-vpn-cli
+
+      - name: Build Windows installer
+        run: pnpm --dir crates/nostr-vpn-gui run tauri build --ci
+
+      - name: Package Windows artifacts
+        run: |
+          $releaseTag = "${{ github.event.inputs.tag || github.ref_name }}"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          $installer = Get-ChildItem target/release/bundle/nsis -Filter '*-setup.exe' |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw "No NSIS Windows installer found under target/release/bundle/nsis"
+          }
+          Copy-Item $installer.FullName "dist/nostr-vpn-$releaseTag-windows-x64-setup.exe"
+
+          $cli = "target/release/nvpn.exe"
+          if (-not (Test-Path $cli)) {
+            throw "Expected Windows CLI binary not found: $cli"
+          }
+
+          $cliDir = Join-Path $PWD 'dist\nvpn-windows'
+          New-Item -ItemType Directory -Force -Path $cliDir | Out-Null
+          Copy-Item $cli $cliDir
+          Compress-Archive -Path "$cliDir\\*" -DestinationPath "dist/nvpn-$releaseTag-x86_64-pc-windows-msvc.zip" -Force
+          Remove-Item -Recurse -Force $cliDir
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            dist/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-windows-x64-setup.exe
+            dist/nvpn-${{ github.event.inputs.tag || github.ref_name }}-x86_64-pc-windows-msvc.zip
+          retention-days: 7
+
   build-android-app:
     name: Build Android app
     runs-on: ubuntu-latest
@@ -544,6 +619,7 @@ jobs:
     needs:
       - build-cli
       - build-macos-app
+      - build-windows-app
       - build-android-app
     runs-on: ubuntu-latest
     permissions:
@@ -572,12 +648,14 @@ jobs:
             ### Most people
 
             - [Nostr VPN for macOS (Apple Silicon)](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-macos-arm64.zip)
+            - [Nostr VPN for Windows](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-windows-x64-setup.exe)
             - [Nostr VPN for Android](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-android-arm64.apk)
 
             Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release.
 
             ### Headless CLI downloads
             - [macOS Apple Silicon CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz)
+            - [Windows x86_64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-${{ github.event.inputs.tag || github.ref_name }}-x86_64-pc-windows-msvc.zip)
             - [Linux x86_64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz)
             - [Linux ARM64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz)
 
