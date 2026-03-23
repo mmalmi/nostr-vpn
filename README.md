@@ -4,11 +4,18 @@
 
 - [Latest release](https://github.com/mmalmi/nostr-vpn/releases/latest)
 
-Apple Silicon macOS: desktop app. Headless use: CLI tarballs. Intel macOS: build from source or use an older release.
+Current release artifacts:
+
+- Apple Silicon macOS desktop app
+- Windows x64 desktop installer
+- Android arm64 APK/AAB
+- Headless CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
+
+Intel macOS is source-only. iOS app code is in the repo, but releases do not publish an iOS artifact yet.
 
 ## Overview
 
-`nostr-vpn` is a Rust workspace for a Tailscale-style mesh VPN control plane built on Nostr signaling and userspace WireGuard. It ships a CLI daemon and a Tauri desktop app that share the same config and runtime model.
+`nostr-vpn` is a Rust workspace for a Tailscale-style mesh VPN control plane built on Nostr signaling and userspace WireGuard. It includes the `nvpn` CLI plus a Tauri/Svelte app codebase that targets desktop and mobile platforms.
 
 <p align="center">
   <img src="docs/images/desktop-gui-overview.png" alt="Nostr VPN desktop app showing a connected network, device identity, status badges, and join controls." width="900">
@@ -19,10 +26,20 @@ It currently ships:
 | Component | Purpose |
 | --- | --- |
 | `nvpn` | Main CLI for config, daemon lifecycle, networking, diagnostics, and tunnel sessions |
-| `nostr-vpn-gui` | Tauri + Svelte desktop app that manages the same `nvpn` daemon and config |
+| `nostr-vpn-gui` | Tauri + Svelte GUI app for desktop releases plus Android/iOS targets |
 | `nostr-vpn-relay` | Minimal local websocket relay used for integration and e2e testing |
 | `nvpn-reflector` | Minimal UDP reflector used for NAT discovery and hole-punch testing |
 | `nostr-vpn-core` | Shared library for config, signaling, NAT helpers, diagnostics, MagicDNS, and WireGuard helpers |
+
+## Platform status
+
+| Platform | Current status |
+| --- | --- |
+| Apple Silicon macOS | Signed desktop app in releases, plus a CLI tarball |
+| Windows x64 | Desktop installer and CLI zip in releases; a manual GitHub Actions smoke workflow builds both CLI and GUI |
+| Android arm64 | APK/AAB artifacts built in the release workflow |
+| iOS | Tauri mobile code, Packet Tunnel integration, and generated Apple project files are checked in, but releases do not publish an iOS artifact yet |
+| Linux | CLI-focused today: release CLI tarballs plus Docker e2e coverage, but no packaged desktop app release |
 
 ## What the project does today
 
@@ -88,6 +105,11 @@ cargo clippy --workspace --exclude nostr-vpn-gui --all-targets -- -D warnings
 cargo test --workspace --exclude nostr-vpn-gui
 ```
 
+Additional automation:
+
+- `.github/workflows/windows-smoke.yml` can manually build the Windows CLI and GUI on `windows-latest`
+- `.github/workflows/release.yml` publishes Apple Silicon macOS, Windows x64, and Android arm64 APK/AAB app artifacts, plus CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
+
 If you touch the Tauri shell:
 
 ```bash
@@ -102,7 +124,7 @@ cargo build -p nostr-vpn-cli -p nostr-vpn-relay
 
 ## Install `nvpn`
 
-Quick install for released headless CLI builds on Apple Silicon macOS and Linux:
+Latest releases publish CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64. The quick installer below auto-detects only Apple Silicon macOS and Linux:
 
 ```bash
 case "$(uname -s)/$(uname -m)" in
@@ -122,6 +144,8 @@ curl -fsSL "https://github.com/mmalmi/nostr-vpn/releases/latest/download/${ASSET
 ```
 
 That command supports Apple Silicon macOS and Linux. On Intel macOS it exits with a clear message. The installer creates the target directory when needed and defaults to `/opt/homebrew/bin` on Apple Silicon macOS when that location exists or is already in `PATH`; otherwise it uses `/usr/local/bin`.
+
+On Windows, download the `nvpn-<version>-x86_64-pc-windows-msvc.zip` release asset and run `nvpn.exe`, or build from source.
 
 From source:
 
@@ -238,9 +262,11 @@ Lower-level commands:
 - `ip`
 - `whois`
 
-## Desktop GUI
+## GUI app
 
-The GUI lives in [`crates/nostr-vpn-gui`](crates/nostr-vpn-gui). It is a Tauri app backed by the same config and daemon used by `nvpn`.
+The GUI lives in [`crates/nostr-vpn-gui`](crates/nostr-vpn-gui). It is the Tauri/Svelte app codebase for the shipped desktop app, the Android build, and the in-repo iOS target.
+
+The commands below are the desktop flow. Android and iOS use Tauri mobile tooling and the platform-specific code under `src-tauri/`.
 
 Run it in development:
 
@@ -258,10 +284,12 @@ pnpm --dir crates/nostr-vpn-gui tauri:build
 
 Notes:
 
-- `tauri:dev` and `tauri:build` automatically prepare an `nvpn` sidecar binary
-- the frontend does not run the VPN runtime itself; it shells out to `nvpn`
-- the app is service-first on supported platforms: install the background service first, then use the app for normal on/off control
-- the GUI exposes network membership, invite QR/import flows, relay state, session health, MagicDNS, exit-node selection, advertised routes, timed LAN pairing, autostart, and tray controls
+- `tauri:dev` and `tauri:build` automatically prepare an `nvpn` sidecar binary for desktop targets
+- on desktop, the frontend shells out to `nvpn`; mobile targets use the in-app platform-specific VPN runtime code
+- the desktop app is service-first on supported platforms: install the background service first, then use the app for normal on/off control
+- the GUI exposes network membership, invite QR/import flows, relay state, session health, MagicDNS, exit-node selection, advertised routes, timed LAN pairing, LAN discovery, autostart, and tray controls
+- tagged releases currently publish Apple Silicon macOS, Windows x64, and Android arm64 app artifacts
+- the iOS target is checked in for source builds, but the release workflow does not currently publish an iOS artifact
 
 You can override which CLI binary the GUI uses with `NVPN_CLI_PATH`.
 
@@ -309,7 +337,7 @@ These flows are Linux-oriented because they require real tunnel devices and cont
 - [`Cargo.toml`](Cargo.toml): workspace definition
 - [`crates/nostr-vpn-core`](crates/nostr-vpn-core): shared config, signaling, diagnostics, MagicDNS, NAT, and WireGuard helpers
 - [`crates/nostr-vpn-cli`](crates/nostr-vpn-cli): `nvpn` CLI and daemon implementation
-- [`crates/nostr-vpn-gui`](crates/nostr-vpn-gui): Tauri/Svelte desktop app
+- [`crates/nostr-vpn-gui`](crates/nostr-vpn-gui): Tauri/Svelte GUI app for desktop plus Android/iOS targets
 - [`crates/nostr-vpn-relay`](crates/nostr-vpn-relay): test relay and reflector binaries
 - [`scripts`](scripts): Docker and GUI smoke-test entrypoints
 
@@ -319,7 +347,10 @@ Release workflow ([`.github/workflows/release.yml`](.github/workflows/release.ym
 
 - runs on pushed `v*` tags or manual dispatch
 - verifies frontend build, formatting, clippy, and tests before publishing artifacts
-- publishes macOS and Linux CLI archives as `nvpn-<target>.tar.gz`
+- publishes CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
 - publishes Apple Silicon macOS as `nostr-vpn-<version>-macos-arm64.zip` containing a signed, notarized `Nostr VPN.app`
+- publishes Windows x64 as `nostr-vpn-<version>-windows-x64-setup.exe`
+- publishes Android arm64 release artifacts as APK/AAB files
+- does not currently publish an iOS release artifact
 - requires the macOS signing and notarization secrets to be configured before a release can publish the macOS app
 - uses autogenerated GitHub release notes

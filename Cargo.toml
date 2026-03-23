@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.12"
+version = "0.2.13"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]

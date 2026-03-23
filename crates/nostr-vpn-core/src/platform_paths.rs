@@ -29,10 +29,10 @@ pub fn windows_default_config_path_for_state(
     }
 
     let legacy = legacy_config_path_from_dirs_config_dir(legacy_dirs_config_dir);
-    if machine_config_exists {
-        if let Some(machine) = windows_machine_config_path_from_program_data_dir(program_data_dir) {
-            return machine;
-        }
+    if machine_config_exists
+        && let Some(machine) = windows_machine_config_path_from_program_data_dir(program_data_dir)
+    {
+        return machine;
     }
 
     if legacy_config_exists {

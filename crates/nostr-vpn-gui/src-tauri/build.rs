@@ -129,6 +129,10 @@ fn sidecar_target_dir(workspace_root: &Path) -> PathBuf {
 }
 
 fn is_desktop_target(target: &str) -> bool {
+    if target.contains("android") || target.contains("ios") {
+        return false;
+    }
+
     target.contains("windows") || target.contains("darwin") || target.contains("linux")
 }
 

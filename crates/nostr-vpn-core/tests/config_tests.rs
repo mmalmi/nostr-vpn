@@ -212,7 +212,7 @@ fn legacy_top_level_network_id_is_ignored_when_loading_current_config_schema() {
     let own_hex = own.public_key().to_hex();
     let peer_hex = peer.public_key().to_hex();
     let expected_network_id =
-        derive_network_id_from_participants(&vec![own_hex.clone(), peer_hex.clone()]);
+        derive_network_id_from_participants(&[own_hex.clone(), peer_hex.clone()]);
     let raw = format!(
         r#"
 network_id = "mesh-legacy"
