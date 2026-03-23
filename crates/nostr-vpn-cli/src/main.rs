@@ -6168,20 +6168,20 @@ fn wait_for_daemon_control_result(
     let result_file = daemon_control_result_file_path(config_path);
     let started = Instant::now();
     while started.elapsed() < timeout {
-        if let Some(result) = read_daemon_control_result(config_path)? {
-            if result.request == request.as_str() {
-                let _ = fs::remove_file(&result_file);
-                return if result.ok {
-                    Ok(())
-                } else {
-                    Err(anyhow!(
-                        "{}",
-                        result
-                            .error
-                            .unwrap_or_else(|| "daemon control request failed".to_string())
-                    ))
-                };
-            }
+        if let Some(result) = read_daemon_control_result(config_path)?
+            && result.request == request.as_str()
+        {
+            let _ = fs::remove_file(&result_file);
+            return if result.ok {
+                Ok(())
+            } else {
+                Err(anyhow!(
+                    "{}",
+                    result
+                        .error
+                        .unwrap_or_else(|| "daemon control request failed".to_string())
+                ))
+            };
         }
         thread::sleep(Duration::from_millis(100));
     }
