@@ -4,6 +4,10 @@
   import QRCode from 'qrcode'
 
   import { dispatchBootReady, waitForNextPaint } from './lib/boot.js'
+  import {
+    lanPairingDeadlineFromSnapshot,
+    remainingSecsFromDeadline,
+  } from './lib/countdown.js'
   import { heroStateText, heroStatusDetailText } from './lib/hero-state.js'
   import {
     canonicalizeMeshIdInput,
@@ -84,6 +88,7 @@
 
   const debouncers = new Map<string, number>()
   let pollHandle: number | null = null
+  let lanPairingTickHandle: number | null = null
   let copiedHandle: number | null = null
   let refreshInFlight = false
   let actionInFlight = false
@@ -96,6 +101,8 @@
   let trayBehaviorSupported = false
   let bootReadyDispatched = false
   let appDisposed = false
+  let lanPairingDeadlineMs: number | null = null
+  let lanPairingDisplayRemainingSecs = 0
 
   const NETWORK_MESH_ID_IDLE_COMMIT_MS = 5000
 
@@ -498,6 +505,28 @@
     state.lanPairingActive
       ? 'Nearby devices can join this mesh directly while pairing is active.'
       : 'Broadcast this invite on the local network for 15 minutes so nearby devices can join.'
+
+  function syncLanPairingCountdown() {
+    const now = Date.now()
+    lanPairingDeadlineMs = lanPairingDeadlineFromSnapshot(
+      lanPairingDeadlineMs,
+      !!state?.lanPairingActive,
+      state?.lanPairingRemainingSecs ?? 0,
+      now,
+    )
+    lanPairingDisplayRemainingSecs = remainingSecsFromDeadline(lanPairingDeadlineMs, now)
+  }
+
+  function tickLanPairingCountdown() {
+    lanPairingDisplayRemainingSecs = remainingSecsFromDeadline(lanPairingDeadlineMs, Date.now())
+  }
+
+  $: if (state) {
+    syncLanPairingCountdown()
+  } else {
+    lanPairingDeadlineMs = null
+    lanPairingDisplayRemainingSecs = 0
+  }
 
   async function refresh() {
     if (refreshInFlight || actionInFlight) {
@@ -1021,6 +1050,8 @@
   }
 
   onMount(() => {
+    lanPairingTickHandle = window.setInterval(tickLanPairingCountdown, 1000)
+
     void (async () => {
       await waitForNextPaint(window)
       if (appDisposed) {
@@ -1046,6 +1077,9 @@
     appDisposed = true
     if (pollHandle) {
       window.clearInterval(pollHandle)
+    }
+    if (lanPairingTickHandle) {
+      window.clearInterval(lanPairingTickHandle)
     }
     if (copiedHandle) {
       window.clearTimeout(copiedHandle)
@@ -1332,7 +1366,7 @@
             </button>
             {#if state.lanPairingActive}
               <span class="badge warn lan-pairing-timer">
-                {formatCountdown(state.lanPairingRemainingSecs)} left
+                {formatCountdown(lanPairingDisplayRemainingSecs)} left
               </span>
             {/if}
           </div>
