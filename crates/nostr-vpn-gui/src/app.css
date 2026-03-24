@@ -409,15 +409,25 @@ body {
   color: var(--cyan);
 }
 
-.hero-copy-btn {
+.hero-identity-row {
   display: flex;
-  width: 100%;
-  max-width: 100%;
-  overflow: hidden;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 8px;
 }
 
-.hero-copy-btn .copy-value {
-  font-size: 18px;
+.hero-copy-value {
+  font-size: 14px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.hero-copy-icon-btn {
+  flex: 0 0 auto;
 }
 
 .mesh-share-actions {
@@ -579,14 +589,6 @@ body {
   gap: 8px;
 }
 
-.copy-npub-btn {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 0;
-  justify-content: flex-start;
-  padding: 11px 14px;
-}
-
 .service-primary-btn {
   min-width: 170px;
   padding: 11px 16px;
@@ -683,9 +685,6 @@ body {
   font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
   font-size: 24px;
   color: var(--cyan);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
@@ -1273,6 +1272,10 @@ body {
 
   .copy-value {
     font-size: 19px;
+  }
+
+  .hero-copy-value {
+    font-size: 13px;
   }
 
   .identity-row {

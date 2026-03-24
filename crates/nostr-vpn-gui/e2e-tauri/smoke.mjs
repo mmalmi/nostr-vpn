@@ -25,6 +25,7 @@ const PEER_TUNNEL_IP = process.env.TAURI_E2E_PEER_TUNNEL_IP || '10.44.0.11/32'
 const PEER_IFACE = process.env.TAURI_E2E_PEER_IFACE || 'utun101'
 const WINDOW_WIDTH = Number(process.env.TAURI_E2E_WINDOW_WIDTH || '0')
 const WINDOW_HEIGHT = Number(process.env.TAURI_E2E_WINDOW_HEIGHT || '0')
+const MOCK_OWN_NPUB = 'npub1akgu9lxldpt32lnjf97k005a4kgasewmvsrmkpzqeff39ssev0ssd6t3u'
 
 const processes = []
 let driver
@@ -495,6 +496,14 @@ async function main() {
       '[data-testid="saved-networks-title"]',
       /other networks/i,
       'networks title',
+    )
+
+    await waitUntil(
+      async () => {
+        const text = await textForSelector(sessionId, '[data-testid="pubkey"]')
+        return text === MOCK_OWN_NPUB ? text : false
+      },
+      'full identity npub',
     )
 
     const identityCardId = await find(sessionId, '[data-testid="hero-identity-card"]')

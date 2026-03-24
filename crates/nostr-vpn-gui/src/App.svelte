@@ -1134,22 +1134,27 @@
       <div class="hero-stats-grid">
         <div class="hero-stat-card" data-testid="hero-identity-card">
           <div class="panel-kicker">Identity</div>
-          <button
-            class="btn copy-btn copy-npub-btn hero-copy-btn"
-            data-testid="copy-pubkey"
-            on:click={copyPubkey}
-          >
-            <span class="copy-icon" aria-hidden="true">
-              {#if copiedValue === 'pubkey'}
-                <Check size={16} strokeWidth={2.3} />
-              {:else}
-                <Copy size={16} strokeWidth={2.2} />
-              {/if}
-            </span>
-            <span class="copy-value" data-testid="pubkey">
-              {short(state.ownNpub, 18, 14)}
-            </span>
-          </button>
+          <div class="hero-identity-row">
+            <div class="copy-value hero-copy-value" data-testid="pubkey">
+              {state.ownNpub}
+            </div>
+            <button
+              class="btn icon-btn hero-copy-icon-btn"
+              type="button"
+              aria-label="Copy npub"
+              title="Copy npub"
+              data-testid="copy-pubkey"
+              on:click={copyPubkey}
+            >
+              <span class="copy-icon" aria-hidden="true">
+                {#if copiedValue === 'pubkey'}
+                  <Check size={16} strokeWidth={2.3} />
+                {:else}
+                  <Copy size={16} strokeWidth={2.2} />
+                {/if}
+              </span>
+            </button>
+          </div>
         </div>
 
         <div class="hero-stat-card">
