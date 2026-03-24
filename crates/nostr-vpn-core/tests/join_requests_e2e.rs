@@ -32,7 +32,7 @@ async fn mesh_join_requests_arrive_over_local_nostr_relay_without_plaintext_leak
 
     publish_join_request(
         requester_keys,
-        &[relay_url.clone()],
+        std::slice::from_ref(&relay_url),
         owner_pubkey.clone(),
         MeshJoinRequest {
             network_id: "mesh-home".to_string(),

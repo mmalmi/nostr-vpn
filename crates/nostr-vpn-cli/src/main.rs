@@ -10105,6 +10105,10 @@ mod tests {
                 enabled: false,
                 network_id: "mesh-home".to_string(),
                 participants: vec![alice.clone()],
+                listen_for_join_requests: true,
+                invite_inviter: String::new(),
+                outbound_join_request: None,
+                inbound_join_requests: Vec::new(),
             },
             NetworkConfig {
                 id: "work".to_string(),
@@ -10112,6 +10116,10 @@ mod tests {
                 enabled: true,
                 network_id: "mesh-work".to_string(),
                 participants: vec![bob],
+                listen_for_join_requests: true,
+                invite_inviter: String::new(),
+                outbound_join_request: None,
+                inbound_join_requests: Vec::new(),
             },
         ];
         config.ensure_defaults();
@@ -10150,6 +10158,10 @@ mod tests {
                 enabled: false,
                 network_id: "mesh-home".to_string(),
                 participants: vec!["11".repeat(32)],
+                listen_for_join_requests: true,
+                invite_inviter: String::new(),
+                outbound_join_request: None,
+                inbound_join_requests: Vec::new(),
             },
             NetworkConfig {
                 id: "work".to_string(),
@@ -10157,6 +10169,10 @@ mod tests {
                 enabled: true,
                 network_id: "mesh-work".to_string(),
                 participants: vec!["22".repeat(32)],
+                listen_for_join_requests: true,
+                invite_inviter: String::new(),
+                outbound_join_request: None,
+                inbound_join_requests: Vec::new(),
             },
         ];
         config.ensure_defaults();
