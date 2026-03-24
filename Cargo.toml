@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.2.18"
+version = "0.2.19"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]
@@ -25,6 +25,7 @@ dirs = "6"
 futures = "0.3"
 hex = "0.4"
 hickory-proto = "0.25"
+hostname = "0.4"
 rand = "0.9"
 rand_core = "0.6"
 serde = { version = "1", features = ["derive"] }

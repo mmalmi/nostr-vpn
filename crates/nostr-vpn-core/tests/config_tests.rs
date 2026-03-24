@@ -2,7 +2,8 @@ use std::fs;
 
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, DEFAULT_RELAYS, NetworkConfig, default_node_name_for_pubkey, derive_mesh_tunnel_ip,
+    AppConfig, DEFAULT_RELAYS, NetworkConfig, default_node_name_for_hostname_or_pubkey,
+    default_node_name_for_pubkey, default_node_name_from_hostname, derive_mesh_tunnel_ip,
     derive_network_id_from_participants, maybe_autoconfigure_node, needs_endpoint_autoconfig,
     needs_tunnel_ip_autoconfig, normalize_nostr_pubkey,
 };
@@ -52,13 +53,12 @@ fn network_id_derivation_is_order_independent() {
 #[test]
 fn generated_config_auto_populates_keys() {
     let config = AppConfig::generated();
-    let own_hex = config.own_nostr_pubkey_hex().expect("own pubkey hex");
 
     assert!(!config.node.private_key.is_empty());
     assert!(!config.node.public_key.is_empty());
     assert!(!config.nostr.secret_key.is_empty());
     assert!(!config.nostr.public_key.is_empty());
-    assert_eq!(config.node_name, default_node_name_for_pubkey(&own_hex));
+    assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
     assert!(!config.nostr.relays.is_empty());
     assert!(config.auto_disconnect_relays_when_mesh_ready);
@@ -200,17 +200,64 @@ fn legacy_prefixed_network_ids_are_normalized_at_runtime() {
 }
 
 #[test]
-fn legacy_default_node_name_migrates_to_pubkey_petname() {
+fn default_node_name_from_hostname_uses_first_label() {
+    assert_eq!(
+        default_node_name_from_hostname("Siriuss-Mini.fritz.box").as_deref(),
+        Some("siriuss-mini")
+    );
+}
+
+#[test]
+fn default_node_name_from_hostname_normalizes_human_device_names() {
+    assert_eq!(
+        default_node_name_from_hostname("Sirius's Mac mini").as_deref(),
+        Some("sirius-s-mac-mini")
+    );
+}
+
+#[test]
+fn default_node_name_from_hostname_ignores_localhost_placeholders() {
+    assert_eq!(default_node_name_from_hostname("localhost"), None);
+    assert_eq!(
+        default_node_name_from_hostname("localhost.localdomain"),
+        None
+    );
+}
+
+#[test]
+fn default_node_name_resolution_prefers_hostname_over_petname() {
     let keys = Keys::generate();
     let own_hex = keys.public_key().to_hex();
+
+    assert_eq!(
+        default_node_name_for_hostname_or_pubkey(Some("Siriuss-Mini.fritz.box"), &own_hex),
+        "siriuss-mini"
+    );
+}
+
+#[test]
+fn default_node_name_resolution_falls_back_to_petname_for_localhost() {
+    let keys = Keys::generate();
+    let own_hex = keys.public_key().to_hex();
+
+    assert_eq!(
+        default_node_name_for_hostname_or_pubkey(Some("localhost.localdomain"), &own_hex),
+        default_node_name_for_pubkey(&own_hex)
+    );
+}
+
+#[test]
+fn legacy_default_node_name_migrates_to_non_generic_default() {
+    let keys = Keys::generate();
     let mut config = AppConfig::generated();
     config.nostr.secret_key = keys.secret_key().to_secret_hex();
-    config.nostr.public_key = own_hex.clone();
+    config.nostr.public_key = keys.public_key().to_hex();
     config.node_name = "nostr-vpn-node".to_string();
 
     config.ensure_defaults();
 
-    assert_eq!(config.node_name, default_node_name_for_pubkey(&own_hex));
+    assert!(!config.node_name.trim().is_empty());
+    assert_ne!(config.node_name, "nostr-vpn-node");
 }
 
 #[test]

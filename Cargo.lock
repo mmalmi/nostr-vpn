@@ -2394,6 +2394,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hostname"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "617aaa3557aef3810a6369d0a99fac8a080891b68bd9f9812a1eeda0c0730cbd"
+dependencies = [
+ "cfg-if 1.0.4",
+ "libc",
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3384,7 +3395,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-cli"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3410,7 +3421,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3420,6 +3431,7 @@ dependencies = [
  "futures",
  "hex",
  "hickory-proto",
+ "hostname",
  "nostr-sdk",
  "rand_core 0.6.4",
  "serde",
@@ -3437,7 +3449,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-gui"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3460,7 +3472,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-relay"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "anyhow",
  "axum",
@@ -3474,7 +3486,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "0.2.18"
+version = "0.2.19"
 dependencies = [
  "anyhow",
  "wintun",

@@ -273,11 +273,20 @@ impl AppConfig {
 
     pub fn ensure_defaults(&mut self) {
         self.ensure_nostr_identity();
-        if uses_default_node_name(&self.node_name) {
-            self.node_name = self
-                .own_nostr_pubkey_hex()
-                .map(|pubkey_hex| default_node_name_for_pubkey(&pubkey_hex))
-                .unwrap_or_else(|_| default_node_name());
+        let own_pubkey_hex = self.own_nostr_pubkey_hex().ok();
+        if uses_default_node_name(&self.node_name, own_pubkey_hex.as_deref()) {
+            let hostname = detected_hostname();
+            self.node_name = own_pubkey_hex
+                .as_deref()
+                .map(|pubkey_hex| {
+                    default_node_name_for_hostname_or_pubkey(hostname.as_deref(), pubkey_hex)
+                })
+                .or_else(|| {
+                    hostname
+                        .as_deref()
+                        .and_then(default_node_name_from_hostname)
+                })
+                .unwrap_or_else(default_node_name);
         }
 
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
@@ -1081,13 +1090,44 @@ fn default_node_name() -> String {
     LEGACY_DEFAULT_NODE_NAME.to_string()
 }
 
-fn uses_default_node_name(value: &str) -> bool {
+fn uses_default_node_name(value: &str, own_pubkey_hex: Option<&str>) -> bool {
     let trimmed = value.trim();
-    trimmed.is_empty() || trimmed == LEGACY_DEFAULT_NODE_NAME
+    trimmed.is_empty()
+        || trimmed == LEGACY_DEFAULT_NODE_NAME
+        || own_pubkey_hex
+            .map(|pubkey_hex| trimmed == default_node_name_for_pubkey(pubkey_hex))
+            .unwrap_or(false)
 }
 
 pub fn default_node_name_for_pubkey(pubkey_hex: &str) -> String {
     default_magic_dns_label_for_pubkey(pubkey_hex, &HashSet::new())
+}
+
+pub fn default_node_name_from_hostname(hostname: &str) -> Option<String> {
+    let first_label = hostname
+        .trim()
+        .trim_matches('.')
+        .split('.')
+        .find(|label| !label.trim().is_empty())?;
+    let normalized = normalize_magic_dns_label(first_label)?;
+    if normalized == "localhost" {
+        return None;
+    }
+    Some(normalized)
+}
+
+pub fn default_node_name_for_hostname_or_pubkey(
+    hostname: Option<&str>,
+    pubkey_hex: &str,
+) -> String {
+    hostname
+        .and_then(default_node_name_from_hostname)
+        .unwrap_or_else(|| default_node_name_for_pubkey(pubkey_hex))
+}
+
+fn detected_hostname() -> Option<String> {
+    let hostname = hostname::get().ok()?;
+    Some(hostname.to_string_lossy().into_owned())
 }
 
 const fn default_auto_disconnect_relays_when_mesh_ready() -> bool {

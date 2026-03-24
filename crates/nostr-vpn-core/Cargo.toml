@@ -21,6 +21,7 @@ tracing.workspace = true
 uuid.workspace = true
 hex.workspace = true
 hickory-proto.workspace = true
+hostname.workspace = true
 x25519-dalek.workspace = true
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

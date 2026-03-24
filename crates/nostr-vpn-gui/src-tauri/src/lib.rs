@@ -77,6 +77,7 @@ const SERVICE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const TRAY_ICON_ID: &str = "nvpn-tray";
 const TRAY_OPEN_MENU_ID: &str = "tray_open_main";
 const TRAY_IDENTITY_MENU_ID: &str = "tray_identity";
+const TRAY_THIS_DEVICE_MENU_ID: &str = "tray_this_device";
 const TRAY_VPN_TOGGLE_MENU_ID: &str = "tray_vpn_toggle";
 const TRAY_RUN_EXIT_NODE_MENU_ID: &str = "tray_run_exit_node";
 const TRAY_EXIT_NODE_NONE_MENU_ID: &str = "tray_exit_node_none";
@@ -445,6 +446,7 @@ struct TrayRuntimeState {
     identity_npub: String,
     identity_text: String,
     this_device_text: String,
+    this_device_copy_value: String,
     advertise_exit_node: bool,
     network_groups: Vec<TrayNetworkGroup>,
     exit_nodes: Vec<TrayExitNodeEntry>,
@@ -460,6 +462,7 @@ impl Default for TrayRuntimeState {
             identity_npub: String::new(),
             identity_text: tray_identity_text(""),
             this_device_text: "This Device: unavailable".to_string(),
+            this_device_copy_value: String::new(),
             advertise_exit_node: false,
             network_groups: Vec::new(),
             exit_nodes: Vec::new(),
@@ -3312,6 +3315,7 @@ impl NvpnBackend {
             .unwrap_or_else(|_| self.config.nostr.public_key.clone());
         let service_setup_required = self.gui_requires_service_install();
         let service_enable_required = self.gui_requires_service_enable();
+        let this_device_tunnel_ip = display_tunnel_ip(&self.config.node.tunnel_ip);
 
         TrayRuntimeState {
             session_active: self.session_active,
@@ -3327,9 +3331,13 @@ impl NvpnBackend {
             identity_text: tray_identity_text(&identity),
             this_device_text: format!(
                 "This Device: {} ({})",
-                self.config.node_name,
-                display_tunnel_ip(&self.config.node.tunnel_ip)
+                self.config.node_name, this_device_tunnel_ip
             ),
+            this_device_copy_value: if this_device_tunnel_ip == "-" {
+                String::new()
+            } else {
+                this_device_tunnel_ip
+            },
             advertise_exit_node: self.config.node.advertise_exit_node,
             network_groups: tray_network_groups(&networks),
             exit_nodes: tray_exit_node_entries(&networks, &self.config.exit_node),
@@ -4924,9 +4932,9 @@ fn tray_menu_spec(runtime_state: &TrayRuntimeState) -> Vec<TrayMenuItemSpec> {
             enabled: !runtime_state.identity_npub.trim().is_empty(),
         },
         TrayMenuItemSpec::Text {
-            id: None,
+            id: Some(TRAY_THIS_DEVICE_MENU_ID.to_string()),
             text: runtime_state.this_device_text.clone(),
-            enabled: false,
+            enabled: !runtime_state.this_device_copy_value.trim().is_empty(),
         },
         TrayMenuItemSpec::Submenu {
             text: "Network Devices".to_string(),
@@ -5745,6 +5753,15 @@ pub fn run() {
                                         refresh_tray_menu(app);
                                     }
                                 }
+                                TRAY_THIS_DEVICE_MENU_ID => {
+                                    let runtime_state = current_tray_runtime_state(app);
+                                    if let Err(error) = copy_text_to_clipboard(
+                                        &runtime_state.this_device_copy_value,
+                                    ) {
+                                        run_tray_backend_action(app, |_backend| Err(error));
+                                        refresh_tray_menu(app);
+                                    }
+                                }
                                 TRAY_VPN_TOGGLE_MENU_ID => {
                                     let runtime_state = current_tray_runtime_state(app);
                                     run_tray_backend_action(app, |backend| {
@@ -5923,18 +5940,18 @@ mod tests {
         MeshJoinRequest, NETWORK_INVITE_PREFIX, NetworkInvite, NetworkView, NvpnBackend,
         ParticipantView, PeerPresenceStatus, PendingLaunchAction, ReceivedMeshJoinRequest,
         RuntimePlatform, TRAY_EXIT_NODE_NONE_MENU_ID, TRAY_RUN_EXIT_NODE_MENU_ID,
-        TRAY_VPN_TOGGLE_MENU_ID, TrayMenuItemSpec, TrayRuntimeState, active_network_invite_code,
-        apply_network_invite_to_active_network, bundled_nvpn_candidate_paths,
-        cli_binary_installed_at, config_path_from_roots, decode_lan_pairing_announcement,
-        desktop_config_path_from_roots, epoch_secs_to_system_time, expected_peer_count,
-        extract_json_document, gui_launch_disposition, gui_requires_service_enable,
-        gui_requires_service_install, ios_runtime_status_detail, ios_vpn_session_control_supported,
-        is_already_running_message, is_mesh_complete, is_not_running_message, network_device_count,
-        network_online_device_count, parse_advertised_routes_input, parse_exit_node_input,
-        parse_network_invite, parse_running_gui_instances, peer_offers_exit_node,
-        peer_presence_state_label, peer_state_label, pending_launch_action,
-        run_blocking_mutex_action, runtime_capabilities_for_platform,
-        should_defer_gui_daemon_start_to_service_on_autostart,
+        TRAY_THIS_DEVICE_MENU_ID, TRAY_VPN_TOGGLE_MENU_ID, TrayMenuItemSpec, TrayRuntimeState,
+        active_network_invite_code, apply_network_invite_to_active_network,
+        bundled_nvpn_candidate_paths, cli_binary_installed_at, config_path_from_roots,
+        decode_lan_pairing_announcement, desktop_config_path_from_roots, epoch_secs_to_system_time,
+        expected_peer_count, extract_json_document, gui_launch_disposition,
+        gui_requires_service_enable, gui_requires_service_install, ios_runtime_status_detail,
+        ios_vpn_session_control_supported, is_already_running_message, is_mesh_complete,
+        is_not_running_message, network_device_count, network_online_device_count,
+        parse_advertised_routes_input, parse_exit_node_input, parse_network_invite,
+        parse_running_gui_instances, peer_offers_exit_node, peer_presence_state_label,
+        peer_state_label, pending_launch_action, run_blocking_mutex_action,
+        runtime_capabilities_for_platform, should_defer_gui_daemon_start_to_service_on_autostart,
         should_defer_gui_daemon_start_until_first_tick, should_start_gui_daemon_on_launch,
         should_surface_existing_instance_args, started_from_autostart_args,
         strip_windows_verbatim_prefix, tauri_protocol_request_path, to_npub,
@@ -7060,6 +7077,7 @@ mod tests {
                 .to_string(),
             identity_text: "Copy npub1j4c4x0w2g6q...zq9w8m7n".to_string(),
             this_device_text: "This Device: sirius (10.44.0.10)".to_string(),
+            this_device_copy_value: "10.44.0.10".to_string(),
             advertise_exit_node: false,
             network_groups: tray_network_groups(&[NetworkView {
                 id: "home".to_string(),
@@ -7109,6 +7127,14 @@ mod tests {
             item,
             TrayMenuItemSpec::Submenu { text, .. } if text == "Network Devices"
         )));
+        assert!(spec.iter().any(|item| matches!(
+            item,
+            TrayMenuItemSpec::Text {
+                id: Some(id),
+                text,
+                enabled: true,
+            } if id == TRAY_THIS_DEVICE_MENU_ID && text == "This Device: sirius (10.44.0.10)"
+        )));
         assert!(spec.iter().any(|item| match item {
             TrayMenuItemSpec::Submenu { text, items, .. } if text == "Exit Nodes" =>
                 items.iter().any(|entry| matches!(
@@ -7138,6 +7164,23 @@ mod tests {
                 ..
             }) if text == "Quit"
         ));
+    }
+
+    #[test]
+    fn tray_menu_spec_disables_this_device_copy_when_tunnel_ip_is_unavailable() {
+        let spec = tray_menu_spec(&TrayRuntimeState {
+            this_device_text: "This Device: sirius (-)".to_string(),
+            ..TrayRuntimeState::default()
+        });
+
+        assert!(spec.iter().any(|item| matches!(
+            item,
+            TrayMenuItemSpec::Text {
+                id: Some(id),
+                text,
+                enabled: false,
+            } if id == TRAY_THIS_DEVICE_MENU_ID && text == "This Device: sirius (-)"
+        )));
     }
 
     #[test]
