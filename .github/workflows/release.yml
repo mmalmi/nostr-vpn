@@ -471,6 +471,90 @@ jobs:
           security delete-keychain "${KEYCHAIN_PATH}" || true
           rm -f "$RUNNER_TEMP/nvpn-signing-cert.p12" "$RUNNER_TEMP/nvpn-notarize.zip"
 
+  build-linux-app:
+    name: Build Linux desktop app
+    runs-on: ubuntu-22.04
+    needs: verify
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: crates/nostr-vpn-gui/pnpm-lock.yaml
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            file \
+            libayatana-appindicator3-dev \
+            libfuse2 \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf
+
+      - name: Install GUI dependencies
+        run: pnpm --dir crates/nostr-vpn-gui install --frozen-lockfile
+
+      - name: Build Linux desktop bundles
+        run: pnpm --dir crates/nostr-vpn-gui exec tauri build --bundles appimage,deb --ci
+
+      - name: Package Linux artifacts
+        shell: bash
+        run: |
+          RELEASE_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          APPIMAGE_PATH="$(find target/release/bundle/appimage -maxdepth 1 -name '*.AppImage' -print -quit)"
+          DEB_PATH="$(find target/release/bundle/deb -maxdepth 1 -name '*.deb' -print -quit)"
+          mkdir -p dist
+
+          if [ -z "${APPIMAGE_PATH}" ] || [ -z "${DEB_PATH}" ]; then
+            echo "Expected Linux desktop release artifacts were not produced."
+            echo "APPIMAGE_PATH=${APPIMAGE_PATH}"
+            echo "DEB_PATH=${DEB_PATH}"
+            exit 1
+          fi
+
+          cp "${APPIMAGE_PATH}" "dist/nostr-vpn-${RELEASE_VERSION}-linux-x64.AppImage"
+          cp "${DEB_PATH}" "dist/nostr-vpn-${RELEASE_VERSION}-linux-x64.deb"
+
+      - name: Verify Linux artifacts
+        shell: bash
+        run: |
+          RELEASE_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
+          file "dist/nostr-vpn-${RELEASE_VERSION}-linux-x64.AppImage"
+          dpkg-deb --info "dist/nostr-vpn-${RELEASE_VERSION}-linux-x64.deb" >/dev/null
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            dist/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-linux-x64.AppImage
+            dist/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-linux-x64.deb
+          retention-days: 7
+
   build-windows-app:
     name: Build Windows desktop app
     runs-on: windows-latest
@@ -680,6 +764,7 @@ jobs:
     needs:
       - build-cli
       - build-macos-app
+      - build-linux-app
       - build-windows-app
       - build-android-app
     runs-on: ubuntu-latest
@@ -709,6 +794,8 @@ jobs:
             echo "### Most people"
             echo
             echo "- [Nostr VPN for macOS (Apple Silicon)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-macos-arm64.zip)"
+            echo "- [Nostr VPN for Linux (AppImage)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.AppImage)"
+            echo "- [Nostr VPN for Debian/Ubuntu (.deb)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.deb)"
             echo "- [Nostr VPN for Windows](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-windows-x64-setup.exe)"
             echo "- [Nostr VPN for Android](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-android-arm64.apk)"
             echo
