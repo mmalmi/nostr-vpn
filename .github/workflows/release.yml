@@ -211,6 +211,9 @@ jobs:
     needs: verify
     permissions:
       contents: read
+    outputs:
+      macos_signed: ${{ steps.macos_release_status.outputs.signed }}
+      macos_notarized: ${{ steps.macos_release_status.outputs.notarized }}
     env:
       MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -249,32 +252,51 @@ jobs:
       - name: Install GUI dependencies
         run: pnpm --dir crates/nostr-vpn-gui install --frozen-lockfile
 
-      - name: Validate macOS release secrets
+      - name: Detect macOS release capabilities
+        id: macos_capabilities
         shell: bash
         run: |
-          required=(
+          signing_required=(
             MACOS_SIGNING_IDENTITY
             MACOS_CERTIFICATE_P12
             MACOS_CERTIFICATE_PASSWORD
+          )
+          notarization_required=(
             MACOS_NOTARIZE_APPLE_ID
             MACOS_NOTARIZE_APP_PASSWORD
             MACOS_NOTARIZE_TEAM_ID
           )
-          missing=()
+          missing_signing=()
+          missing_notarization=()
 
-          for name in "${required[@]}"; do
+          for name in "${signing_required[@]}"; do
             if [ -z "${!name}" ]; then
-              missing+=("${name}")
+              missing_signing+=("${name}")
             fi
           done
 
-          if [ "${#missing[@]}" -gt 0 ]; then
-            echo "macOS releases require a signed and notarized app."
-            echo "Missing required secrets: ${missing[*]}"
-            exit 1
+          for name in "${notarization_required[@]}"; do
+            if [ -z "${!name}" ]; then
+              missing_notarization+=("${name}")
+            fi
+          done
+
+          if [ "${#missing_signing[@]}" -eq 0 ]; then
+            echo "signing_ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "signing_ready=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::macOS signing secrets missing: ${missing_signing[*]}. The release will continue with an unsigned app bundle."
+          fi
+
+          if [ "${#missing_notarization[@]}" -eq 0 ]; then
+            echo "notarization_ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "notarization_ready=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::macOS notarization secrets missing: ${missing_notarization[*]}. The release will continue without notarization."
           fi
 
       - name: Install macOS signing certificate
+        if: ${{ steps.macos_capabilities.outputs.signing_ready == 'true' }}
         shell: bash
         run: |
           KEYCHAIN_PATH="$RUNNER_TEMP/nvpn-signing.keychain-db"
@@ -302,6 +324,7 @@ jobs:
         run: pnpm --dir crates/nostr-vpn-gui exec tauri build --target aarch64-apple-darwin --bundles app --no-sign --ci
 
       - name: Code sign macOS app
+        if: ${{ steps.macos_capabilities.outputs.signing_ready == 'true' }}
         shell: bash
         run: |
           APP_PATH="$(find target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
@@ -324,6 +347,9 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
 
       - name: Notarize macOS app
+        id: notarize_macos_app
+        if: ${{ steps.macos_capabilities.outputs.signing_ready == 'true' && steps.macos_capabilities.outputs.notarization_ready == 'true' }}
+        continue-on-error: true
         shell: bash
         run: |
           APP_PATH="$(find target/aarch64-apple-darwin/release/bundle/macos -maxdepth 1 -name '*.app' -print -quit)"
@@ -361,6 +387,29 @@ jobs:
           xcrun stapler staple "${APP_PATH}"
           xcrun stapler validate "${APP_PATH}"
 
+      - name: Record macOS release status
+        id: macos_release_status
+        if: ${{ always() }}
+        shell: bash
+        env:
+          SIGNING_READY: ${{ steps.macos_capabilities.outputs.signing_ready }}
+          NOTARIZATION_READY: ${{ steps.macos_capabilities.outputs.notarization_ready }}
+          NOTARIZE_OUTCOME: ${{ steps.notarize_macos_app.outcome }}
+        run: |
+          signed="${SIGNING_READY}"
+          notarized=false
+
+          if [ "${NOTARIZE_OUTCOME}" = "success" ]; then
+            notarized=true
+          fi
+
+          echo "signed=${signed}" >> "${GITHUB_OUTPUT}"
+          echo "notarized=${notarized}" >> "${GITHUB_OUTPUT}"
+
+          if [ "${signed}" = "true" ] && [ "${NOTARIZATION_READY}" = "true" ] && [ "${notarized}" != "true" ]; then
+            echo "::warning::macOS app is signed but not notarized. The GitHub release will continue with the signed artifact."
+          fi
+
       - name: Package macOS artifacts
         shell: bash
         run: |
@@ -377,6 +426,9 @@ jobs:
 
       - name: Verify packaged macOS artifact
         shell: bash
+        env:
+          MACOS_SIGNED: ${{ steps.macos_release_status.outputs.signed }}
+          MACOS_NOTARIZED: ${{ steps.macos_release_status.outputs.notarized }}
         run: |
           RELEASE_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           MACOS_ZIP="dist/nostr-vpn-${RELEASE_VERSION}-macos-arm64.zip"
@@ -392,8 +444,17 @@ jobs:
             exit 1
           fi
 
-          codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
-          spctl --assess --type execute --verbose=4 "${APP_PATH}"
+          if [ "${MACOS_SIGNED}" = "true" ]; then
+            codesign --verify --deep --strict --verbose=2 "${APP_PATH}"
+          else
+            echo "Skipping codesign verification because macOS signing was not configured."
+          fi
+
+          if [ "${MACOS_NOTARIZED}" = "true" ]; then
+            spctl --assess --type execute --verbose=4 "${APP_PATH}"
+          else
+            echo "Skipping Gatekeeper assessment because the app was not notarized."
+          fi
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -634,6 +695,87 @@ jobs:
       - name: List artifacts
         run: ls -la artifacts/
 
+      - name: Prepare release notes
+        shell: bash
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          MACOS_SIGNED: ${{ needs.build-macos-app.outputs.macos_signed }}
+          MACOS_NOTARIZED: ${{ needs.build-macos-app.outputs.macos_notarized }}
+        run: |
+          {
+            echo "## Downloads"
+            echo
+            echo "### Most people"
+            echo
+            echo "- [Nostr VPN for macOS (Apple Silicon)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-macos-arm64.zip)"
+            echo "- [Nostr VPN for Windows](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-windows-x64-setup.exe)"
+            echo "- [Nostr VPN for Android](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-android-arm64.apk)"
+            echo
+            if [ "${MACOS_NOTARIZED}" != "true" ]; then
+              if [ "${MACOS_SIGNED}" = "true" ]; then
+                echo "> Note: The macOS app in this GitHub release is signed but not notarized."
+                echo "> If Gatekeeper blocks it, right-click the app and choose Open."
+              else
+                echo "> Note: The macOS app in this GitHub release is unsigned."
+                echo "> If you only need the CLI, use the CLI tarball below."
+              fi
+              echo
+            fi
+            echo "Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release."
+            echo
+            echo "### Headless CLI downloads"
+            echo "- [macOS Apple Silicon CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-apple-darwin.tar.gz)"
+            echo "- [Windows x86_64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip)"
+            echo "- [Linux x86_64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-x86_64-unknown-linux-musl.tar.gz)"
+            echo "- [Linux ARM64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-unknown-linux-musl.tar.gz)"
+            echo
+            echo '### Quick CLI install (Apple Silicon macOS/Linux)'
+            echo '```bash'
+            echo 'case "$(uname -s)/$(uname -m)" in'
+            echo '  Darwin/arm64) ASSET=nvpn-aarch64-apple-darwin.tar.gz ;;'
+            echo '  Linux/x86_64) ASSET=nvpn-x86_64-unknown-linux-musl.tar.gz ;;'
+            echo '  Linux/aarch64|Linux/arm64) ASSET=nvpn-aarch64-unknown-linux-musl.tar.gz ;;'
+            echo '  Darwin/x86_64)'
+            echo '    echo "Prebuilt Intel macOS releases have been sunset. Build from source or use an older release." >&2'
+            echo '    exit 1'
+            echo '    ;;'
+            echo '  *)'
+            echo '    echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2'
+            echo '    exit 1'
+            echo '    ;;'
+            echo 'esac'
+            echo 'curl -fsSL "https://github.com/'"${RELEASE_REPOSITORY}"'/releases/download/'"${RELEASE_TAG}"'/${ASSET}" | tar -xz && cd nvpn && ./install.sh'
+            echo '```'
+            echo
+            echo 'That command auto-detects the matching Apple Silicon macOS/Linux CLI tarball, extracts `nvpn`, and runs the bundled installer.'
+            echo
+            echo '### Manual CLI install'
+            echo '```bash'
+            echo '# macOS Apple Silicon'
+            echo "curl -LO https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-apple-darwin.tar.gz"
+            echo
+            echo '# Linux x86_64'
+            echo "curl -LO https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-x86_64-unknown-linux-musl.tar.gz"
+            echo
+            echo '# Linux ARM64'
+            echo "curl -LO https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-unknown-linux-musl.tar.gz"
+            echo
+            echo 'tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh'
+            echo '```'
+            echo
+            echo 'On Intel macOS, install from source instead:'
+            echo '```bash'
+            echo "cargo install --git https://github.com/${RELEASE_REPOSITORY} --locked --bin nvpn nostr-vpn-cli"
+            echo '```'
+            echo
+            echo '### Verify'
+            echo '```bash'
+            echo 'nvpn --help'
+            echo 'nvpn init --participant npub1...alice --participant npub1...bob'
+            echo '```'
+          } > release-notes.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -642,64 +784,4 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.event.inputs.tag || github.ref_name, '-') }}
           files: artifacts/*
-          body: |
-            ## Downloads
-
-            ### Most people
-
-            - [Nostr VPN for macOS (Apple Silicon)](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-macos-arm64.zip)
-            - [Nostr VPN for Windows](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-windows-x64-setup.exe)
-            - [Nostr VPN for Android](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nostr-vpn-${{ github.event.inputs.tag || github.ref_name }}-android-arm64.apk)
-
-            Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release.
-
-            ### Headless CLI downloads
-            - [macOS Apple Silicon CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz)
-            - [Windows x86_64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-${{ github.event.inputs.tag || github.ref_name }}-x86_64-pc-windows-msvc.zip)
-            - [Linux x86_64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz)
-            - [Linux ARM64 CLI](https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz)
-
-            ### Quick CLI install (Apple Silicon macOS/Linux)
-            ```bash
-            case "$(uname -s)/$(uname -m)" in
-              Darwin/arm64) ASSET=nvpn-aarch64-apple-darwin.tar.gz ;;
-              Linux/x86_64) ASSET=nvpn-x86_64-unknown-linux-musl.tar.gz ;;
-              Linux/aarch64|Linux/arm64) ASSET=nvpn-aarch64-unknown-linux-musl.tar.gz ;;
-              Darwin/x86_64)
-                echo "Prebuilt Intel macOS releases have been sunset. Build from source or use an older release." >&2
-                exit 1
-                ;;
-              *)
-                echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
-                exit 1
-                ;;
-            esac
-            curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/${ASSET}" | tar -xz && cd nvpn && ./install.sh
-            ```
-
-            That command auto-detects the matching Apple Silicon macOS/Linux CLI tarball, extracts `nvpn`, and runs the bundled installer.
-
-            ### Manual CLI install
-            ```bash
-            # macOS Apple Silicon
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-apple-darwin.tar.gz
-
-            # Linux x86_64
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-x86_64-unknown-linux-musl.tar.gz
-
-            # Linux ARM64
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/nvpn-aarch64-unknown-linux-musl.tar.gz
-
-            tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh
-            ```
-
-            On Intel macOS, install from source instead:
-            ```bash
-            cargo install --git https://github.com/${{ github.repository }} --locked --bin nvpn nostr-vpn-cli
-            ```
-
-            ### Verify
-            ```bash
-            nvpn --help
-            nvpn init --participant npub1...alice --participant npub1...bob
-            ```
+          body_path: release-notes.md
