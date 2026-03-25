@@ -8671,10 +8671,7 @@ fn default_config_path() -> PathBuf {
         #[cfg(target_os = "windows")]
         {
             let program_data_dir = windows_program_data_dir();
-            let service_config_path = windows_installed_service_config_path()
-                .ok()
-                .flatten()
-                .filter(|path| path.exists());
+            let service_config_path = windows_installed_service_config_path().ok().flatten();
             let machine_config_exists =
                 windows_machine_config_path_from_program_data_dir(program_data_dir.as_deref())
                     .as_ref()

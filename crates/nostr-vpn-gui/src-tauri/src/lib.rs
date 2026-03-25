@@ -398,6 +398,8 @@ struct NetworkInvite {
     network_name: String,
     network_id: String,
     inviter_npub: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    inviter_node_name: String,
     relays: Vec<String>,
 }
 
@@ -1052,8 +1054,22 @@ impl NvpnBackend {
     fn accept_join_request(&mut self, network_id: &str, requester_npub: &str) -> Result<()> {
         let requester = normalize_nostr_pubkey(requester_npub)?;
         let should_connect_session = !self.session_active;
+        let requester_node_name = self
+            .config
+            .network_by_id(network_id)
+            .and_then(|network| {
+                network
+                    .inbound_join_requests
+                    .iter()
+                    .find(|request| request.requester == requester)
+                    .map(|request| request.requester_node_name.clone())
+            })
+            .unwrap_or_default();
         self.config
             .add_participant_to_network(network_id, &requester)?;
+        if !requester_node_name.trim().is_empty() {
+            let _ = self.config.set_peer_alias(&requester, &requester_node_name);
+        }
         if let Some(network) = self.config.network_by_id_mut(network_id) {
             network
                 .inbound_join_requests
@@ -1294,6 +1310,7 @@ impl NvpnBackend {
 
         #[cfg(target_os = "windows")]
         {
+            self.refresh_windows_config_path()?;
             if windows_should_use_daemon_owned_config_apply(
                 &self.config_path,
                 windows_program_data_dir().as_deref(),
@@ -1483,6 +1500,7 @@ impl NvpnBackend {
 
     #[cfg(target_os = "macos")]
     fn start_daemon_process(&mut self) -> Result<()> {
+        self.refresh_windows_config_path()?;
         let config_path = self.daemon_config_path_arg()?;
         let iface_override = nvpn_gui_iface_override();
 
@@ -1525,6 +1543,7 @@ impl NvpnBackend {
         not(target_os = "ios")
     ))]
     fn start_daemon_process(&mut self) -> Result<()> {
+        self.refresh_windows_config_path()?;
         let config_path = self.daemon_config_path_arg()?;
         let iface_override = nvpn_gui_iface_override();
         let output = if let Some(iface) = iface_override.as_deref() {
@@ -1603,6 +1622,7 @@ impl NvpnBackend {
 
     #[cfg(all(not(target_os = "android"), not(target_os = "ios")))]
     fn reload_daemon_process(&mut self) -> Result<()> {
+        self.refresh_windows_config_path()?;
         let args = [
             "reload",
             "--config",
@@ -1644,6 +1664,7 @@ impl NvpnBackend {
 
     #[cfg(all(not(target_os = "android"), not(target_os = "ios")))]
     fn pause_daemon_process(&mut self) -> Result<()> {
+        self.refresh_windows_config_path()?;
         let args = [
             "pause",
             "--config",
@@ -1683,6 +1704,7 @@ impl NvpnBackend {
 
     #[cfg(all(not(target_os = "android"), not(target_os = "ios")))]
     fn resume_daemon_process(&mut self) -> Result<()> {
+        self.refresh_windows_config_path()?;
         let args = [
             "resume",
             "--config",
@@ -1952,18 +1974,30 @@ impl NvpnBackend {
     #[cfg(target_os = "windows")]
     fn reload_preferred_windows_config_path(&mut self) -> Result<()> {
         let preferred_path = default_config_path();
-        if preferred_path == self.config_path || !preferred_path.exists() {
+        if preferred_path == self.config_path {
             return Ok(());
         }
 
-        let mut config = AppConfig::load(&preferred_path)
-            .with_context(|| format!("failed to load config {}", preferred_path.display()))?;
-        config.ensure_defaults();
-        maybe_autoconfigure_node(&mut config);
+        if preferred_path.exists() {
+            let mut config = AppConfig::load(&preferred_path)
+                .with_context(|| format!("failed to load config {}", preferred_path.display()))?;
+            config.ensure_defaults();
+            maybe_autoconfigure_node(&mut config);
+            self.config = config;
+        }
         self.config_path = preferred_path;
-        self.config = config;
         self.ensure_relay_status_entries();
         self.ensure_peer_status_entries();
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn refresh_windows_config_path(&mut self) -> Result<()> {
+        self.reload_preferred_windows_config_path()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn refresh_windows_config_path(&mut self) -> Result<()> {
         Ok(())
     }
 
@@ -2217,6 +2251,9 @@ impl NvpnBackend {
     }
 
     fn sync_daemon_state(&mut self) {
+        if let Err(error) = self.refresh_windows_config_path() {
+            eprintln!("gui: failed to refresh Windows config path: {error}");
+        }
         self.reload_config_from_disk_if_present();
         self.ensure_relay_status_entries();
         self.ensure_peer_status_entries();
@@ -3290,6 +3327,7 @@ fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         network_name: config.active_network().name.trim().to_string(),
         network_id: config.effective_network_id(),
         inviter_npub: to_npub(&config.own_nostr_pubkey_hex()?),
+        inviter_node_name: config.node_name.trim().to_string(),
         relays: normalized_invite_relays(&config.nostr.relays)?,
     };
     let encoded = URL_SAFE_NO_PAD
@@ -3336,6 +3374,7 @@ fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
     }
 
     invite.inviter_npub = to_npub(&normalize_nostr_pubkey(&invite.inviter_npub)?);
+    invite.inviter_node_name = invite.inviter_node_name.trim().to_string();
     invite.relays = normalized_invite_relays(&invite.relays)?;
 
     Ok(invite)
@@ -3346,6 +3385,7 @@ fn apply_network_invite_to_active_network(
     invite: &NetworkInvite,
 ) -> Result<()> {
     let normalized_invite_network_id = normalize_runtime_network_id(&invite.network_id);
+    let normalized_inviter_pubkey = normalize_nostr_pubkey(&invite.inviter_npub)?;
     let target_network_entry_id = if let Some(existing) = config.networks.iter().find(|network| {
         normalize_runtime_network_id(&network.network_id) == normalized_invite_network_id
     }) {
@@ -3361,11 +3401,23 @@ fn apply_network_invite_to_active_network(
         .network_by_id(&target_network_entry_id)
         .map(network_should_adopt_invite)
         .unwrap_or(false);
+    let inviter_already_configured = config
+        .network_by_id(&target_network_entry_id)
+        .map(|network| {
+            network
+                .participants
+                .iter()
+                .any(|participant| participant == &normalized_inviter_pubkey)
+        })
+        .unwrap_or(false);
 
     config.set_network_enabled(&target_network_entry_id, true)?;
     config.set_network_mesh_id(&target_network_entry_id, &invite.network_id)?;
     let normalized_inviter =
-        config.add_participant_to_network(&target_network_entry_id, &invite.inviter_npub)?;
+        config.add_participant_to_network(&target_network_entry_id, &normalized_inviter_pubkey)?;
+    if !inviter_already_configured && !invite.inviter_node_name.trim().is_empty() {
+        let _ = config.set_peer_alias(&normalized_inviter, &invite.inviter_node_name);
+    }
     if let Some(network) = config.network_by_id_mut(&target_network_entry_id) {
         network.invite_inviter = normalized_inviter.clone();
         if network
@@ -4102,8 +4154,7 @@ fn default_config_path() -> PathBuf {
     {
         let dirs_config_dir = dirs::config_dir();
         let program_data_dir = windows_program_data_dir();
-        let service_config_path =
-            windows_installed_service_config_path().filter(|path| path.exists());
+        let service_config_path = windows_installed_service_config_path();
         let machine_config_exists =
             windows_machine_config_path_from_program_data_dir(program_data_dir.as_deref())
                 .as_ref()
@@ -6236,6 +6287,7 @@ mod tests {
         let inviter_npub = to_npub(&inviter_hex);
         let mut config = AppConfig::generated();
         config.nostr.public_key = inviter_npub.clone();
+        config.node_name = "sirius-mini".to_string();
         config.networks[0].name = "Home".to_string();
         config.networks[0].network_id = "mesh-home".to_string();
         config.nostr.relays = vec![
@@ -6254,6 +6306,7 @@ mod tests {
                 network_name: "Home".to_string(),
                 network_id: "mesh-home".to_string(),
                 inviter_npub,
+                inviter_node_name: "sirius-mini".to_string(),
                 relays: vec![
                     "wss://relay.one.example".to_string(),
                     "wss://relay.two.example".to_string(),
@@ -6271,6 +6324,7 @@ mod tests {
             network_name: "Home".to_string(),
             network_id: "mesh-home".to_string(),
             inviter_npub: to_npub(&inviter_hex),
+            inviter_node_name: "macbook-pro".to_string(),
             relays: vec![
                 "wss://existing.example".to_string(),
                 "wss://invite.example".to_string(),
@@ -6287,6 +6341,12 @@ mod tests {
         assert_eq!(config.networks[0].name, "Home");
         assert_eq!(config.effective_network_id(), "mesh-home");
         assert_eq!(config.participant_pubkeys_hex(), vec![inviter_hex]);
+        assert_eq!(
+            config
+                .magic_dns_name_for_participant(&config.participant_pubkeys_hex()[0])
+                .as_deref(),
+            Some("macbook-pro.nvpn")
+        );
         assert_eq!(
             config.nostr.relays,
             vec![
@@ -6313,6 +6373,7 @@ mod tests {
             network_name: "Home".to_string(),
             network_id: "mesh-home".to_string(),
             inviter_npub: to_npub(&inviter_hex),
+            inviter_node_name: String::new(),
             relays: vec!["wss://invite.example".to_string()],
         };
         let mut config = AppConfig::generated();
@@ -6364,6 +6425,7 @@ mod tests {
             network_name: "Home".to_string(),
             network_id: "mesh-home".to_string(),
             inviter_npub: to_npub(&inviter_hex),
+            inviter_node_name: String::new(),
             relays: vec!["wss://invite.example".to_string()],
         };
         let mut config = AppConfig::generated();
@@ -6408,6 +6470,7 @@ mod tests {
             network_name: "Home".to_string(),
             network_id: "mesh-home".to_string(),
             inviter_npub: to_npub(&inviter_hex),
+            inviter_node_name: String::new(),
             relays: vec!["wss://invite.example".to_string()],
         };
         let mut config = AppConfig::generated();
@@ -6432,6 +6495,7 @@ mod tests {
                     network_name: "Home".to_string(),
                     network_id: "mesh-home".to_string(),
                     inviter_npub: inviter_npub.clone(),
+                    inviter_node_name: String::new(),
                     relays: vec!["wss://relay.one.example".to_string()],
                 })
                 .expect("invite payload"),
@@ -6477,6 +6541,7 @@ mod tests {
                         network_name: "Home".to_string(),
                         network_id: "mesh-home".to_string(),
                         inviter_npub: to_npub(&other_hex),
+                        inviter_node_name: String::new(),
                         relays: vec!["wss://relay.one.example".to_string()],
                     })
                     .expect("invite payload"),
@@ -6755,6 +6820,13 @@ mod tests {
                 .participants
                 .iter()
                 .any(|participant| participant == &requester)
+        );
+        assert_eq!(
+            backend
+                .config
+                .magic_dns_name_for_participant(&requester)
+                .as_deref(),
+            Some("alice-phone.nvpn")
         );
         assert!(backend.config.networks[0].inbound_join_requests.is_empty());
         assert!(
@@ -7628,6 +7700,24 @@ mod tests {
                 "--config",
                 r"C:\ProgramData\Nostr VPN\config.toml",
             ]
+        );
+    }
+
+    #[test]
+    fn desktop_config_path_prefers_windows_service_path_even_before_config_exists() {
+        let path = desktop_config_path_from_roots(
+            Some(std::path::Path::new(r"C:\Users\sirius\AppData\Roaming")),
+            Some(std::path::Path::new(r"C:\ProgramData")),
+            Some(std::path::Path::new(
+                r"C:\ProgramData\Nostr VPN\config.toml",
+            )),
+            false,
+            true,
+        );
+
+        assert_eq!(
+            path,
+            std::path::PathBuf::from(r"C:\ProgramData\Nostr VPN\config.toml")
         );
     }
 

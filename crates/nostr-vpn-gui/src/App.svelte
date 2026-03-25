@@ -1807,7 +1807,7 @@
             <div>Listen for join requests</div>
           </label>
           <div class="config-path">
-            Accept encrypted join requests for this mesh from invite holders, even if they are not configured yet.
+            Join requests from invite holders will appear here.
           </div>
           {#if activeNetworkView.inboundJoinRequests.length > 0}
             <div class="lan-title">Pending join requests</div>
@@ -2307,7 +2307,7 @@
                       <div>Listen for join requests</div>
                     </label>
                     <div class="config-path">
-                      Accept encrypted join requests for this saved mesh without activating it first.
+                      Join requests from invite holders will appear here, even when this mesh is not active.
                     </div>
                     {#if network.inboundJoinRequests.length > 0}
                       <div class="stack rows">
