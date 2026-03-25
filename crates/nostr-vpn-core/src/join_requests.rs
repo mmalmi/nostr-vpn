@@ -136,42 +136,11 @@ impl NostrJoinRequestListener {
                 let RelayPoolNotification::Event { event, .. } = notification else {
                     continue;
                 };
-                if !is_join_request_event(&event) {
-                    continue;
-                }
-                if event.pubkey.to_hex() == own_pubkey {
-                    continue;
-                }
-                if first_tag_value(&event, "d")
-                    .as_deref()
-                    .filter(|value| value.starts_with(JOIN_REQUEST_IDENTIFIER_PREFIX))
-                    .is_none()
-                {
-                    continue;
-                }
-                if !tag_contains_value(&event, "p", &own_pubkey) {
-                    continue;
-                }
-
-                let plaintext =
-                    match nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content) {
-                        Ok(plaintext) => plaintext,
-                        Err(_) => continue,
-                    };
-
-                let Ok(envelope) = serde_json::from_str::<MeshJoinRequestEnvelope>(&plaintext)
+                let Some(request) = decode_received_join_request_event(&event, &own_pubkey, &keys)
                 else {
                     continue;
                 };
-                let Ok(request) = decode_join_request(envelope) else {
-                    continue;
-                };
-
-                let _ = recv_tx.send(ReceivedMeshJoinRequest {
-                    sender_pubkey: event.pubkey.to_hex(),
-                    requested_at: event.created_at.as_u64(),
-                    request,
-                });
+                let _ = recv_tx.send(request);
             }
         });
     }
@@ -276,6 +245,54 @@ fn is_join_request_event(event: &Event) -> bool {
     event.kind.as_u16() == NOSTR_KIND_NOSTR_VPN
 }
 
+pub(crate) fn decode_received_join_request_event(
+    event: &Event,
+    own_pubkey: &str,
+    keys: &Keys,
+) -> Option<ReceivedMeshJoinRequest> {
+    if !is_join_request_event_for_recipient(event, own_pubkey) {
+        return None;
+    }
+
+    let plaintext = nip44::decrypt(keys.secret_key(), &event.pubkey, &event.content).ok()?;
+    decode_received_join_request_plaintext(event, own_pubkey, &plaintext)
+}
+
+pub(crate) fn decode_received_join_request_plaintext(
+    event: &Event,
+    own_pubkey: &str,
+    plaintext: &str,
+) -> Option<ReceivedMeshJoinRequest> {
+    if !is_join_request_event_for_recipient(event, own_pubkey) {
+        return None;
+    }
+
+    let envelope = serde_json::from_str::<MeshJoinRequestEnvelope>(plaintext).ok()?;
+    let request = decode_join_request(envelope).ok()?;
+    Some(ReceivedMeshJoinRequest {
+        sender_pubkey: event.pubkey.to_hex(),
+        requested_at: event.created_at.as_u64(),
+        request,
+    })
+}
+
+fn is_join_request_event_for_recipient(event: &Event, own_pubkey: &str) -> bool {
+    if !is_join_request_event(event) {
+        return false;
+    }
+    if event.pubkey.to_hex() == own_pubkey {
+        return false;
+    }
+    if first_tag_value(event, "d")
+        .as_deref()
+        .filter(|value| value.starts_with(JOIN_REQUEST_IDENTIFIER_PREFIX))
+        .is_none()
+    {
+        return false;
+    }
+    tag_contains_value(event, "p", own_pubkey)
+}
+
 fn first_tag_value(event: &Event, name: &str) -> Option<String> {
     event.tags.iter().find_map(|tag| {
         let values = tag.clone().to_vec();
@@ -292,4 +309,54 @@ fn tag_contains_value(event: &Event, name: &str, expected: &str) -> bool {
         let values = tag.clone().to_vec();
         values.len() >= 2 && values[0] == name && values[1] == expected
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_received_join_request_event_parses_encrypted_event_for_recipient() {
+        let owner_keys = Keys::generate();
+        let requester_keys = Keys::generate();
+        let owner_pubkey = owner_keys.public_key().to_hex();
+
+        let envelope = MeshJoinRequestEnvelope {
+            v: JOIN_REQUEST_PROTOCOL_VERSION,
+            network_id: "mesh-home".to_string(),
+            requester_node_name: "alice-phone".to_string(),
+        };
+        let plaintext = serde_json::to_string(&envelope).expect("join request plaintext");
+        let encrypted_content = nip44::encrypt(
+            requester_keys.secret_key(),
+            &owner_keys.public_key(),
+            &plaintext,
+            nip44::Version::V2,
+        )
+        .expect("encrypt join request");
+        let event = EventBuilder::new(
+            join_request_event_kind(),
+            encrypted_content,
+            vec![
+                Tag::identifier(join_request_identifier(&owner_pubkey)),
+                Tag::public_key(owner_keys.public_key()),
+                Tag::expiration(Timestamp::now() + Duration::from_secs(60)),
+            ],
+        )
+        .to_event(&requester_keys)
+        .expect("sign join request");
+
+        let received = decode_received_join_request_event(&event, &owner_pubkey, &owner_keys)
+            .expect("decode join request");
+
+        assert_eq!(received.sender_pubkey, requester_keys.public_key().to_hex());
+        assert_eq!(received.requested_at, event.created_at.as_u64());
+        assert_eq!(
+            received.request,
+            MeshJoinRequest {
+                network_id: "mesh-home".to_string(),
+                requester_node_name: "alice-phone".to_string(),
+            }
+        );
+    }
 }

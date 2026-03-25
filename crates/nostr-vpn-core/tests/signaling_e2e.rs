@@ -7,6 +7,7 @@ use nostr_sdk::prelude::{
     ClientBuilder, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp, nip44,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
+use nostr_vpn_core::join_requests::{MeshJoinRequest, publish_join_request};
 use nostr_vpn_core::signaling::{
     NOSTR_KIND_NOSTR_VPN, NostrSignalingClient, SignalEnvelope, SignalPayload, SignalingNetwork,
 };
@@ -138,6 +139,70 @@ async fn hello_presence_is_received_over_local_nostr_relay() {
     assert_eq!(received.payload, SignalPayload::Hello);
 
     sender.disconnect().await;
+    receiver.disconnect().await;
+    relay.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn join_requests_are_received_on_the_normal_signaling_connection() {
+    let mut relay = WsRelay::new();
+    relay.start().await.expect("relay should start");
+    let relay_url = relay.url().expect("relay url");
+
+    let owner_keys = Keys::generate();
+    let requester_keys = Keys::generate();
+    let owner_pubkey = owner_keys.public_key().to_hex();
+    let requester_pubkey = requester_keys.public_key().to_hex();
+
+    let receiver = NostrSignalingClient::new_with_keys(
+        "mesh-home".to_string(),
+        owner_keys,
+        vec![requester_pubkey.clone()],
+    )
+    .expect("receiver client");
+    receiver
+        .connect(std::slice::from_ref(&relay_url))
+        .await
+        .expect("receiver connect");
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    publish_join_request(
+        requester_keys,
+        std::slice::from_ref(&relay_url),
+        owner_pubkey,
+        MeshJoinRequest {
+            network_id: "mesh-home".to_string(),
+            requester_node_name: "alice-phone".to_string(),
+        },
+    )
+    .await
+    .expect("join request publish");
+
+    let received = timeout(Duration::from_secs(5), receiver.recv())
+        .await
+        .expect("timed out waiting for join request")
+        .expect("message expected");
+
+    assert_eq!(received.network_id, "mesh-home");
+    assert_eq!(received.sender_pubkey, requester_pubkey);
+    match received.payload {
+        SignalPayload::JoinRequest {
+            requested_at,
+            request,
+        } => {
+            assert!(requested_at > 0);
+            assert_eq!(
+                request,
+                MeshJoinRequest {
+                    network_id: "mesh-home".to_string(),
+                    requester_node_name: "alice-phone".to_string(),
+                }
+            );
+        }
+        other => panic!("expected join request payload, got {other:?}"),
+    }
+
     receiver.disconnect().await;
     relay.stop().await;
 }

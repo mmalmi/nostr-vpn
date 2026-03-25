@@ -1174,6 +1174,7 @@ fn signal_payload_kind(payload: &SignalPayload) -> &'static str {
         SignalPayload::Hello => "hello",
         SignalPayload::Announce(_) => "announce",
         SignalPayload::Disconnect { .. } => "disconnect",
+        SignalPayload::JoinRequest { .. } => "join-request",
     }
 }
 

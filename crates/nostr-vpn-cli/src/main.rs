@@ -131,6 +131,7 @@ const MIN_PERSISTED_PATH_CACHE_TIMEOUT_SECS: u64 = 1_800;
 const PERSISTED_PATH_CACHE_TIMEOUT_MULTIPLIER: u64 = 90;
 const MESH_READY_RELAYS_PAUSED_STATUS: &str = "Mesh ready (relays paused)";
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
+const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
 #[cfg(any(target_os = "windows", test))]
 const WINDOWS_DAEMON_STATE_FRESHNESS_SECS: u64 = 5;
 #[cfg(target_os = "macos")]
@@ -1622,6 +1623,7 @@ async fn discover_peers(
                 SignalPayload::Disconnect { node_id } => {
                     peers.remove(&node_id);
                 }
+                SignalPayload::JoinRequest { .. } => {}
             },
             Ok(None) => break,
             Err(_) => continue,
@@ -3198,8 +3200,15 @@ fn relay_connection_action(
     auto_disconnect_relays_when_mesh_ready: bool,
     relay_connected: bool,
     mesh_ready: bool,
+    join_requests_active: bool,
 ) -> RelayConnectionAction {
-    if relay_connected {
+    if join_requests_active {
+        if relay_connected {
+            RelayConnectionAction::KeepConnected
+        } else {
+            RelayConnectionAction::ReconnectWhenDue
+        }
+    } else if relay_connected {
         if auto_disconnect_relays_when_mesh_ready && mesh_ready {
             RelayConnectionAction::PauseForMesh
         } else {
@@ -3216,11 +3225,54 @@ fn daemon_session_active(session_enabled: bool, expected_peers: usize) -> bool {
     session_enabled && expected_peers > 0
 }
 
-fn daemon_session_idle_status(session_enabled: bool, expected_peers: usize) -> &'static str {
+fn relay_session_active(
+    session_enabled: bool,
+    expected_peers: usize,
+    join_requests_active: bool,
+) -> bool {
+    daemon_session_active(session_enabled, expected_peers) || join_requests_active
+}
+
+fn daemon_session_idle_status(
+    session_enabled: bool,
+    expected_peers: usize,
+    join_requests_active: bool,
+) -> &'static str {
     if session_enabled && expected_peers == 0 {
         WAITING_FOR_PARTICIPANTS_STATUS
+    } else if join_requests_active {
+        LISTENING_FOR_JOIN_REQUESTS_STATUS
     } else {
         "Paused"
+    }
+}
+
+fn persist_inbound_join_request(
+    app: &mut AppConfig,
+    config_path: &Path,
+    sender_pubkey: &str,
+    requested_at: u64,
+    network_id: &str,
+    requester_node_name: &str,
+    session_status: &mut String,
+) {
+    match app.record_inbound_join_request(
+        network_id,
+        sender_pubkey,
+        requester_node_name,
+        requested_at,
+    ) {
+        Ok(Some(network_name)) => {
+            if let Err(error) = app.save(config_path) {
+                *session_status = format!("Failed to persist join request: {error}");
+            } else {
+                *session_status = format!("Join request received for {network_name}.");
+            }
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("daemon: ignoring invalid join request from {sender_pubkey}: {error}");
+        }
     }
 }
 
@@ -4171,6 +4223,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     app.auto_disconnect_relays_when_mesh_ready,
                     relay_connected,
                     mesh_ready,
+                    app.join_requests_enabled(),
                 ) {
                     RelayConnectionAction::StayPausedForMesh => {
                         reconnect_attempt = 0;
@@ -4413,6 +4466,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     app.auto_disconnect_relays_when_mesh_ready,
                     relay_connected,
                     mesh_ready,
+                    app.join_requests_enabled(),
                 ) {
                     RelayConnectionAction::PauseForMesh => {
                         client.disconnect().await;
@@ -4725,7 +4779,8 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
 
     let mut session_enabled = true;
     let mut session_status = if !daemon_session_active(session_enabled, expected_peers) {
-        WAITING_FOR_PARTICIPANTS_STATUS.to_string()
+        daemon_session_idle_status(session_enabled, expected_peers, app.join_requests_enabled())
+            .to_string()
     } else if restored_peer_cache && app.auto_disconnect_relays_when_mesh_ready {
         "Trying cached mesh before relays".to_string()
     } else {
@@ -4765,7 +4820,9 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 break;
             }
             _ = reconnect_interval.tick() => {
-                if !daemon_session_active(session_enabled, expected_peers)
+                let join_requests_active = app.join_requests_enabled();
+                let session_active = daemon_session_active(session_enabled, expected_peers);
+                if !relay_session_active(session_enabled, expected_peers, join_requests_active)
                     || relay_connected
                     || Instant::now() < reconnect_due
                 {
@@ -4784,6 +4841,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     app.auto_disconnect_relays_when_mesh_ready,
                     relay_connected,
                     mesh_ready,
+                    join_requests_active,
                 ) {
                     RelayConnectionAction::StayPausedForMesh => {
                         reconnect_attempt = 0;
@@ -4807,29 +4865,40 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     Ok(()) => {
                         relay_connected = true;
                         reconnect_attempt = 0;
-                        session_status = "Connected".to_string();
-                        outbound_announces.clear();
-                        if let Err(error) = publish_private_announce_to_active_peers(
-                            &client,
-                            &app,
-                            own_pubkey.as_deref(),
-                            &presence,
-                            &tunnel_runtime,
-                            public_signal_endpoint.as_ref(),
-                            &mut outbound_announces,
-                        )
-                        .await
-                        {
-                            let error_text = error.to_string();
-                            session_status =
-                                format!("Connected; private announce failed ({error_text})");
-                            eprintln!("daemon: private announce failed after reconnect: {error_text}");
-                        }
-                        if let Err(error) = client.publish(SignalPayload::Hello).await {
-                            let error_text = error.to_string();
-                            session_status =
-                                format!("Connected; hello publish failed ({error_text})");
-                            eprintln!("daemon: initial hello publish failed after reconnect: {error_text}");
+                        session_status = if session_active {
+                            "Connected".to_string()
+                        } else {
+                            daemon_session_idle_status(
+                                session_enabled,
+                                expected_peers,
+                                join_requests_active,
+                            )
+                            .to_string()
+                        };
+                        if session_active {
+                            outbound_announces.clear();
+                            if let Err(error) = publish_private_announce_to_active_peers(
+                                &client,
+                                &app,
+                                own_pubkey.as_deref(),
+                                &presence,
+                                &tunnel_runtime,
+                                public_signal_endpoint.as_ref(),
+                                &mut outbound_announces,
+                            )
+                            .await
+                            {
+                                let error_text = error.to_string();
+                                session_status =
+                                    format!("Connected; private announce failed ({error_text})");
+                                eprintln!("daemon: private announce failed after reconnect: {error_text}");
+                            }
+                            if let Err(error) = client.publish(SignalPayload::Hello).await {
+                                let error_text = error.to_string();
+                                session_status =
+                                    format!("Connected; hello publish failed ({error_text})");
+                                eprintln!("daemon: initial hello publish failed after reconnect: {error_text}");
+                            }
                         }
                     }
                     Err(error) => {
@@ -4991,8 +5060,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             {
                                 "Connected (network refresh)".to_string()
                             } else {
-                                daemon_session_idle_status(session_enabled, expected_peers)
-                                    .to_string()
+                                daemon_session_idle_status(
+                                    session_enabled,
+                                    expected_peers,
+                                    app.join_requests_enabled(),
+                                )
+                                .to_string()
                             };
                         }
                         Err(error) => {
@@ -5051,16 +5124,21 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     let control_result = match request {
                         DaemonControlRequest::Stop => break,
                         DaemonControlRequest::Pause => {
-                            if relay_connected {
+                            let was_session_active =
+                                daemon_session_active(session_enabled, expected_peers);
+                            if relay_connected && was_session_active {
                                 let _ = client
                                     .publish(SignalPayload::Disconnect {
                                         node_id: app.node.id.clone(),
                                     })
                                     .await;
                             }
-                            client.disconnect().await;
-                            relay_connected = false;
                             session_enabled = false;
+                            let join_requests_active = app.join_requests_enabled();
+                            if !join_requests_active {
+                                client.disconnect().await;
+                                relay_connected = false;
+                            }
                             reconnect_attempt = 0;
                             reconnect_due = Instant::now();
                             port_mapping_runtime.stop().await;
@@ -5079,7 +5157,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             ) {
                                 session_status = format!("Pause failed ({error})");
                             } else {
-                                session_status = "Paused".to_string();
+                                session_status = daemon_session_idle_status(
+                                    session_enabled,
+                                    expected_peers,
+                                    join_requests_active,
+                                )
+                                .to_string();
                             }
                             Ok(())
                         }
@@ -5150,7 +5233,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                 } else {
                                     port_mapping_runtime.stop().await;
                                     public_signal_endpoint = None;
-                                    session_status = WAITING_FOR_PARTICIPANTS_STATUS.to_string();
+                                    session_status = daemon_session_idle_status(
+                                        session_enabled,
+                                        expected_peers,
+                                        app.join_requests_enabled(),
+                                    )
+                                    .to_string();
                                 }
                             }
                             Ok(())
@@ -5192,32 +5280,50 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                     ) {
                                         Ok(new_client) => {
                                             client = new_client;
-                                            if daemon_session_active(session_enabled, expected_peers) {
+                                            let join_requests_active = app.join_requests_enabled();
+                                            let session_active =
+                                                daemon_session_active(session_enabled, expected_peers);
+                                            if relay_session_active(
+                                                session_enabled,
+                                                expected_peers,
+                                                join_requests_active,
+                                            ) {
                                                 match client.connect(&relays).await {
                                                     Ok(()) => {
                                                         relay_connected = true;
                                                         reconnect_attempt = 0;
                                                         reconnect_due = Instant::now();
-                                                        session_status = "Config reloaded".to_string();
-                                                        if let Err(error) = publish_private_announce_to_active_peers(
-                                                            &client,
-                                                            &app,
-                                                            own_pubkey.as_deref(),
-                                                            &presence,
-                                                            &tunnel_runtime,
-                                                            public_signal_endpoint.as_ref(),
-                                                            &mut outbound_announces,
-                                                        ).await {
-                                                            session_status = format!(
-                                                                "Config reloaded; private announce failed ({})",
-                                                                error
-                                                            );
-                                                        }
-                                                        if let Err(error) = client.publish(SignalPayload::Hello).await {
-                                                            session_status = format!(
-                                                                "Config reloaded; hello publish failed ({})",
-                                                                error
-                                                            );
+                                                        session_status = if session_active {
+                                                            "Config reloaded".to_string()
+                                                        } else {
+                                                            daemon_session_idle_status(
+                                                                session_enabled,
+                                                                expected_peers,
+                                                                join_requests_active,
+                                                            )
+                                                            .to_string()
+                                                        };
+                                                        if session_active {
+                                                            if let Err(error) = publish_private_announce_to_active_peers(
+                                                                &client,
+                                                                &app,
+                                                                own_pubkey.as_deref(),
+                                                                &presence,
+                                                                &tunnel_runtime,
+                                                                public_signal_endpoint.as_ref(),
+                                                                &mut outbound_announces,
+                                                            ).await {
+                                                                session_status = format!(
+                                                                    "Config reloaded; private announce failed ({})",
+                                                                    error
+                                                                );
+                                                            }
+                                                            if let Err(error) = client.publish(SignalPayload::Hello).await {
+                                                                session_status = format!(
+                                                                    "Config reloaded; hello publish failed ({})",
+                                                                    error
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                     Err(error) => {
@@ -5239,7 +5345,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                 port_mapping_runtime.stop().await;
                                                 public_signal_endpoint = None;
                                                 session_status = if session_enabled {
-                                                    WAITING_FOR_PARTICIPANTS_STATUS.to_string()
+                                                    daemon_session_idle_status(
+                                                        session_enabled,
+                                                        expected_peers,
+                                                        join_requests_active,
+                                                    )
+                                                    .to_string()
                                                 } else {
                                                     "Config reloaded (paused)".to_string()
                                                 };
@@ -5366,6 +5477,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             app.auto_disconnect_relays_when_mesh_ready,
                             relay_connected,
                             mesh_ready,
+                            app.join_requests_enabled(),
                         ),
                         RelayConnectionAction::PauseForMesh
                     )
@@ -5404,7 +5516,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 );
             }
             message = async {
-                if daemon_session_active(session_enabled, expected_peers) && relay_connected {
+                if relay_session_active(
+                    session_enabled,
+                    expected_peers,
+                    app.join_requests_enabled(),
+                ) && relay_connected
+                {
                     client.recv().await
                 } else {
                     std::future::pending::<Option<SignalEnvelope>>().await
@@ -5422,6 +5539,28 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
 
                 let sender_pubkey = message.sender_pubkey;
                 let payload = message.payload.clone();
+                let session_active = daemon_session_active(session_enabled, expected_peers);
+                if let SignalPayload::JoinRequest {
+                    requested_at,
+                    request,
+                } = &payload
+                {
+                    persist_inbound_join_request(
+                        &mut app,
+                        &config_path,
+                        &sender_pubkey,
+                        *requested_at,
+                        &request.network_id,
+                        &request.requester_node_name,
+                        &mut session_status,
+                    );
+                    continue;
+                }
+
+                if !session_active {
+                    continue;
+                }
+
                 let changed =
                     presence.apply_signal(sender_pubkey.clone(), message.payload, unix_timestamp());
                 if matches!(&payload, SignalPayload::Disconnect { .. }) {
@@ -5501,7 +5640,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     session_status = if daemon_session_active(session_enabled, expected_peers) {
                         "Connected".to_string()
                     } else {
-                        daemon_session_idle_status(session_enabled, expected_peers).to_string()
+                        daemon_session_idle_status(
+                            session_enabled,
+                            expected_peers,
+                            app.join_requests_enabled(),
+                        )
+                        .to_string()
                     };
                 }
 
@@ -5516,7 +5660,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
         }
     }
 
-    if relay_connected {
+    if relay_connected && daemon_session_active(session_enabled, expected_peers) {
         let _ = client
             .publish(SignalPayload::Disconnect {
                 node_id: app.node.id.clone(),
@@ -9824,11 +9968,15 @@ mod tests {
     #[test]
     fn daemon_session_idle_status_distinguishes_waiting_from_paused() {
         assert_eq!(
-            daemon_session_idle_status(true, 0),
+            daemon_session_idle_status(true, 0, false),
             super::WAITING_FOR_PARTICIPANTS_STATUS
         );
-        assert_eq!(daemon_session_idle_status(false, 0), "Paused");
-        assert_eq!(daemon_session_idle_status(true, 2), "Paused");
+        assert_eq!(
+            daemon_session_idle_status(false, 0, true),
+            "Listening for join requests"
+        );
+        assert_eq!(daemon_session_idle_status(false, 0, false), "Paused");
+        assert_eq!(daemon_session_idle_status(true, 2, false), "Paused");
     }
 
     #[test]
@@ -10876,20 +11024,32 @@ mod tests {
     #[test]
     fn relay_connection_action_pauses_when_mesh_is_ready() {
         assert_eq!(
-            relay_connection_action(true, true, true),
+            relay_connection_action(true, true, true, false),
             super::RelayConnectionAction::PauseForMesh
         );
         assert_eq!(
-            relay_connection_action(true, false, true),
+            relay_connection_action(true, false, true, false),
             super::RelayConnectionAction::StayPausedForMesh
         );
         assert_eq!(
-            relay_connection_action(true, false, false),
+            relay_connection_action(true, false, false, false),
             super::RelayConnectionAction::ReconnectWhenDue
         );
         assert_eq!(
-            relay_connection_action(false, true, true),
+            relay_connection_action(false, true, true, false),
             super::RelayConnectionAction::KeepConnected
+        );
+    }
+
+    #[test]
+    fn relay_connection_action_keeps_relays_connected_when_join_request_listening_is_active() {
+        assert_eq!(
+            relay_connection_action(true, true, true, true),
+            super::RelayConnectionAction::KeepConnected
+        );
+        assert_eq!(
+            relay_connection_action(true, false, true, true),
+            super::RelayConnectionAction::ReconnectWhenDue
         );
     }
 

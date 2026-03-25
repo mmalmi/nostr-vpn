@@ -36,9 +36,7 @@ use nostr_vpn_core::config::{
     normalize_runtime_network_id,
 };
 use nostr_vpn_core::diagnostics::{HealthIssue, NetworkSummary, PortMappingStatus};
-use nostr_vpn_core::join_requests::{
-    MeshJoinRequest, NostrJoinRequestListener, ReceivedMeshJoinRequest, publish_join_request,
-};
+use nostr_vpn_core::join_requests::{MeshJoinRequest, publish_join_request};
 #[cfg(any(target_os = "windows", test))]
 use nostr_vpn_core::platform_paths::windows_default_config_path_for_state;
 #[cfg(any(target_os = "windows", test))]
@@ -68,7 +66,6 @@ const LAN_PAIRING_STALE_AFTER_SECS: u64 = 16;
 const LAN_PAIRING_DURATION_SECS: u64 = 15 * 60;
 const LAN_PAIRING_ANNOUNCEMENT_VERSION: u8 = 2;
 const LAN_PAIRING_BUFFER_BYTES: usize = 8192;
-const JOIN_REQUEST_LISTENER_RETRY_SECS: u64 = 5;
 // Keep the GUI's online/offline grace aligned with the daemon's WireGuard
 // session window so idle peers do not flap back to "awaiting handshake".
 const PEER_ONLINE_GRACE_SECS: u64 = 180;
@@ -587,9 +584,6 @@ struct NvpnBackend {
     lan_pairing_expires_at: Option<SystemTime>,
     lan_peers: HashMap<String, LanPeerRecord>,
 
-    join_request_rx: Option<mpsc::Receiver<ReceivedMeshJoinRequest>>,
-    join_request_stop: Option<Arc<AtomicBool>>,
-
     magic_dns_status: String,
 }
 
@@ -697,8 +691,6 @@ impl NvpnBackend {
             lan_pairing_stop: None,
             lan_pairing_expires_at: None,
             lan_peers: HashMap::new(),
-            join_request_rx: None,
-            join_request_stop: None,
             magic_dns_status: "DNS disabled (VPN off)".to_string(),
         };
         #[cfg(target_os = "ios")]
@@ -706,9 +698,6 @@ impl NvpnBackend {
 
         backend.ensure_relay_status_entries();
         backend.ensure_peer_status_entries();
-        if let Err(error) = backend.start_join_request_listener() {
-            eprintln!("gui: failed to start join request listener: {error}");
-        }
         #[cfg(target_os = "ios")]
         write_ios_probe("backend: status entries ensured");
         #[cfg(target_os = "ios")]
@@ -941,7 +930,6 @@ impl NvpnBackend {
 
         self.ensure_peer_status_entries();
         self.ensure_relay_status_entries();
-        self.restart_join_request_listener()?;
         if persist_outcome.needs_explicit_daemon_reload() {
             self.reload_daemon_if_running()?;
         }
@@ -1175,7 +1163,6 @@ impl NvpnBackend {
         let persist_outcome = self.persist_config()?;
 
         self.ensure_relay_status_entries();
-        self.restart_join_request_listener()?;
         if persist_outcome.needs_explicit_daemon_reload() {
             self.reload_daemon_if_running()?;
         }
@@ -1201,7 +1188,6 @@ impl NvpnBackend {
         let persist_outcome = self.persist_config()?;
 
         self.ensure_relay_status_entries();
-        self.restart_join_request_listener()?;
         if persist_outcome.needs_explicit_daemon_reload() {
             self.reload_daemon_if_running()?;
         }
@@ -1981,6 +1967,28 @@ impl NvpnBackend {
         Ok(())
     }
 
+    fn reload_config_from_disk_if_present(&mut self) {
+        if !self.config_path.exists() {
+            return;
+        }
+
+        let mut config = match AppConfig::load(&self.config_path) {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!(
+                    "gui: failed to reload config from {}: {error}",
+                    self.config_path.display()
+                );
+                return;
+            }
+        };
+        config.ensure_defaults();
+        maybe_autoconfigure_node(&mut config);
+        self.config = config;
+        self.ensure_relay_status_entries();
+        self.ensure_peer_status_entries();
+    }
+
     #[cfg(target_os = "android")]
     fn fetch_cli_status(&self) -> Result<CliStatusResponse> {
         let (running, state) = self.android_session.status();
@@ -2209,6 +2217,7 @@ impl NvpnBackend {
     }
 
     fn sync_daemon_state(&mut self) {
+        self.reload_config_from_disk_if_present();
         self.ensure_relay_status_entries();
         self.ensure_peer_status_entries();
         self.sync_service_state();
@@ -2874,7 +2883,6 @@ impl NvpnBackend {
 
     fn tick(&mut self) {
         self.refresh_lan_pairing();
-        self.refresh_join_requests();
         self.clear_connected_join_requests();
         self.maybe_perform_pending_launch_action();
         self.sync_daemon_state();
@@ -2922,140 +2930,6 @@ impl NvpnBackend {
 
         self.handle_lan_pairing_events();
         self.prune_lan_peers();
-    }
-
-    fn refresh_join_requests(&mut self) {
-        self.handle_join_request_events();
-    }
-
-    fn start_join_request_listener(&mut self) -> Result<()> {
-        if self.join_request_rx.is_some() {
-            return Ok(());
-        }
-
-        let secret_key = self.config.nostr.secret_key.trim().to_string();
-        if secret_key.is_empty() || self.config.nostr.relays.is_empty() {
-            return Ok(());
-        }
-
-        let relays = self.config.nostr.relays.clone();
-        let (tx, rx) = mpsc::channel();
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_flag = stop.clone();
-
-        self.runtime.spawn(async move {
-            run_join_request_listener(tx, stop_flag, secret_key, relays).await;
-        });
-
-        self.join_request_rx = Some(rx);
-        self.join_request_stop = Some(stop);
-        Ok(())
-    }
-
-    fn stop_join_request_listener(&mut self) {
-        if let Some(stop) = self.join_request_stop.take() {
-            stop.store(true, Ordering::Relaxed);
-        }
-        self.join_request_rx = None;
-    }
-
-    fn restart_join_request_listener(&mut self) -> Result<()> {
-        self.stop_join_request_listener();
-        self.start_join_request_listener()
-    }
-
-    fn handle_join_request_events(&mut self) {
-        let recv_result = self
-            .join_request_rx
-            .as_ref()
-            .map(|receiver| receiver.try_recv());
-
-        match recv_result {
-            Some(Ok(event)) => {
-                self.apply_join_request_event(event);
-
-                let mut pending = Vec::new();
-                if let Some(receiver) = &self.join_request_rx {
-                    while let Ok(event) = receiver.try_recv() {
-                        pending.push(event);
-                    }
-                }
-                for event in pending {
-                    self.apply_join_request_event(event);
-                }
-            }
-            Some(Err(mpsc::TryRecvError::Disconnected)) => {
-                self.join_request_rx = None;
-                self.join_request_stop = None;
-                if let Err(error) = self.start_join_request_listener() {
-                    eprintln!("gui: failed to restart join request listener: {error}");
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn apply_join_request_event(&mut self, event: ReceivedMeshJoinRequest) {
-        let target_network_id = self
-            .config
-            .networks
-            .iter()
-            .find(|network| {
-                network.listen_for_join_requests
-                    && normalize_runtime_network_id(&network.network_id) == event.request.network_id
-            })
-            .map(|network| network.id.clone());
-        let Some(target_network_id) = target_network_id else {
-            return;
-        };
-
-        let mut changed = false;
-        let mut network_name = String::new();
-        if let Some(network) = self.config.network_by_id_mut(&target_network_id) {
-            if network
-                .participants
-                .iter()
-                .any(|participant| participant == &event.sender_pubkey)
-            {
-                return;
-            }
-
-            network_name = network.name.clone();
-            let requester_node_name = event.request.requester_node_name.trim().to_string();
-            if let Some(existing) = network
-                .inbound_join_requests
-                .iter_mut()
-                .find(|request| request.requester == event.sender_pubkey)
-            {
-                if existing.requested_at < event.requested_at
-                    || existing.requester_node_name != requester_node_name
-                {
-                    existing.requested_at = existing.requested_at.max(event.requested_at);
-                    existing.requester_node_name = requester_node_name;
-                    changed = true;
-                }
-            } else {
-                network
-                    .inbound_join_requests
-                    .push(PendingInboundJoinRequest {
-                        requester: event.sender_pubkey.clone(),
-                        requester_node_name,
-                        requested_at: event.requested_at,
-                    });
-                network
-                    .inbound_join_requests
-                    .sort_by(|left, right| left.requester.cmp(&right.requester));
-                changed = true;
-            }
-        }
-
-        if changed {
-            if let Err(error) = self.persist_config_without_daemon_reload() {
-                self.session_status = format!("Failed to persist join request: {error}");
-            } else {
-                self.session_status = format!("Join request received for {network_name}.");
-            }
-        }
     }
 
     fn clear_connected_join_requests(&mut self) {
@@ -4303,54 +4177,6 @@ fn decode_lan_pairing_announcement(payload: &[u8], own_npub: &str) -> Option<Lan
         invite: parsed.invite,
         seen_at: SystemTime::now(),
     })
-}
-
-async fn run_join_request_listener(
-    tx: mpsc::Sender<ReceivedMeshJoinRequest>,
-    stop_flag: Arc<AtomicBool>,
-    secret_key: String,
-    relays: Vec<String>,
-) {
-    loop {
-        if stop_flag.load(Ordering::Relaxed) {
-            return;
-        }
-
-        let listener = match NostrJoinRequestListener::from_secret_key(&secret_key) {
-            Ok(listener) => listener,
-            Err(error) => {
-                eprintln!("gui: failed to initialize join request listener: {error}");
-                return;
-            }
-        };
-
-        if let Err(error) = listener.connect(&relays).await {
-            eprintln!("gui: join request listener connect failed: {error}");
-            tokio::time::sleep(Duration::from_secs(JOIN_REQUEST_LISTENER_RETRY_SECS)).await;
-            continue;
-        }
-
-        loop {
-            if stop_flag.load(Ordering::Relaxed) {
-                listener.disconnect().await;
-                return;
-            }
-
-            match tokio::time::timeout(Duration::from_millis(500), listener.recv()).await {
-                Ok(Some(event)) => {
-                    if tx.send(event).is_err() {
-                        listener.disconnect().await;
-                        return;
-                    }
-                }
-                Ok(None) => break,
-                Err(_) => continue,
-            }
-        }
-
-        listener.disconnect().await;
-        tokio::time::sleep(Duration::from_secs(JOIN_REQUEST_LISTENER_RETRY_SECS)).await;
-    }
 }
 
 async fn run_lan_pairing_loop(
@@ -5978,21 +5804,21 @@ mod tests {
     use super::{
         ConfiguredPeerStatus, DaemonPeerState, DaemonRuntimeState, GuiLaunchDisposition,
         IOS_TAURI_ORIGIN, LAN_PAIRING_ANNOUNCEMENT_VERSION, LAN_PAIRING_DURATION_SECS,
-        MeshJoinRequest, NETWORK_INVITE_PREFIX, NetworkInvite, NetworkView, NvpnBackend,
-        ParticipantView, PeerPresenceStatus, PendingLaunchAction, ReceivedMeshJoinRequest,
-        RuntimePlatform, TRAY_EXIT_NODE_NONE_MENU_ID, TRAY_RUN_EXIT_NODE_MENU_ID,
-        TRAY_THIS_DEVICE_MENU_ID, TRAY_VPN_TOGGLE_MENU_ID, TrayMenuItemSpec, TrayRuntimeState,
-        active_network_invite_code, apply_network_invite_to_active_network,
-        bundled_nvpn_candidate_paths, cli_binary_installed_at, config_path_from_roots,
-        decode_lan_pairing_announcement, desktop_config_path_from_roots, epoch_secs_to_system_time,
-        expected_peer_count, extract_json_document, gui_launch_disposition,
-        gui_requires_service_enable, gui_requires_service_install, ios_runtime_status_detail,
-        ios_vpn_session_control_supported, is_already_running_message, is_mesh_complete,
-        is_not_running_message, network_device_count, network_online_device_count,
-        parse_advertised_routes_input, parse_exit_node_input, parse_network_invite,
-        parse_running_gui_instances, peer_offers_exit_node, peer_presence_state_label,
-        peer_state_label, pending_launch_action, run_blocking_mutex_action,
-        runtime_capabilities_for_platform, should_defer_gui_daemon_start_to_service_on_autostart,
+        NETWORK_INVITE_PREFIX, NetworkInvite, NetworkView, NvpnBackend, ParticipantView,
+        PeerPresenceStatus, PendingLaunchAction, RuntimePlatform, TRAY_EXIT_NODE_NONE_MENU_ID,
+        TRAY_RUN_EXIT_NODE_MENU_ID, TRAY_THIS_DEVICE_MENU_ID, TRAY_VPN_TOGGLE_MENU_ID,
+        TrayMenuItemSpec, TrayRuntimeState, active_network_invite_code,
+        apply_network_invite_to_active_network, bundled_nvpn_candidate_paths,
+        cli_binary_installed_at, config_path_from_roots, decode_lan_pairing_announcement,
+        desktop_config_path_from_roots, epoch_secs_to_system_time, expected_peer_count,
+        extract_json_document, gui_launch_disposition, gui_requires_service_enable,
+        gui_requires_service_install, ios_runtime_status_detail, ios_vpn_session_control_supported,
+        is_already_running_message, is_mesh_complete, is_not_running_message, network_device_count,
+        network_online_device_count, parse_advertised_routes_input, parse_exit_node_input,
+        parse_network_invite, parse_running_gui_instances, peer_offers_exit_node,
+        peer_presence_state_label, peer_state_label, pending_launch_action,
+        run_blocking_mutex_action, runtime_capabilities_for_platform,
+        should_defer_gui_daemon_start_to_service_on_autostart,
         should_defer_gui_daemon_start_until_first_tick, should_start_gui_daemon_on_launch,
         should_surface_existing_instance_args, started_from_autostart_args,
         strip_windows_verbatim_prefix, tauri_protocol_request_path, to_npub,
@@ -6006,10 +5832,22 @@ mod tests {
         AppConfig, PendingInboundJoinRequest, PendingOutboundJoinRequest,
     };
     use std::collections::HashMap;
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
     use tokio::runtime::Runtime;
+
+    fn unique_test_config_path() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "nvpn-gui-test-{}-{}.toml",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ))
+    }
 
     fn test_backend(participant: &str) -> NvpnBackend {
         let mut config = AppConfig::generated();
@@ -6017,7 +5855,7 @@ mod tests {
 
         NvpnBackend {
             runtime: Runtime::new().expect("test runtime"),
-            config_path: PathBuf::from("/tmp/nvpn-gui-test.toml"),
+            config_path: unique_test_config_path(),
             config,
             nvpn_bin: None,
             session_status: "Disconnected".to_string(),
@@ -6041,8 +5879,6 @@ mod tests {
             lan_pairing_stop: None,
             lan_pairing_expires_at: None,
             lan_peers: HashMap::new(),
-            join_request_rx: None,
-            join_request_stop: None,
             magic_dns_status: String::new(),
         }
     }
@@ -6713,6 +6549,45 @@ mod tests {
     }
 
     #[test]
+    fn sync_daemon_state_reloads_config_written_by_daemon() {
+        let requester = "77".repeat(32);
+        let mut backend = test_backend(&"66".repeat(32));
+        let config_path = std::env::temp_dir().join(format!(
+            "nvpn-gui-sync-{}-{}.toml",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("epoch")
+                .as_nanos()
+        ));
+        backend.config_path = config_path.clone();
+        backend
+            .config
+            .save(&config_path)
+            .expect("write initial test config");
+
+        let mut updated = backend.config.clone();
+        updated.networks[0].inbound_join_requests = vec![PendingInboundJoinRequest {
+            requester: requester.clone(),
+            requester_node_name: "alice-phone".to_string(),
+            requested_at: 1_726_000_000,
+        }];
+        updated
+            .save(&config_path)
+            .expect("write daemon-updated config");
+
+        backend.sync_daemon_state();
+
+        assert_eq!(backend.config.networks[0].inbound_join_requests.len(), 1);
+        assert_eq!(
+            backend.config.networks[0].inbound_join_requests[0].requester,
+            requester
+        );
+
+        let _ = fs::remove_file(config_path);
+    }
+
+    #[test]
     fn tick_keeps_pending_outbound_join_request_when_connection_predates_request() {
         let inviter = "88".repeat(32);
         let mut backend = test_backend(&inviter);
@@ -6837,21 +6712,19 @@ mod tests {
     }
 
     #[test]
-    fn apply_join_request_event_ignores_mismatched_mesh_id() {
-        let owner = "88".repeat(32);
-        let requester = "99".repeat(32);
-        let mut backend = test_backend(&owner);
+    fn record_inbound_join_request_ignores_mismatched_mesh_id() {
+        let requester = AppConfig::generated()
+            .own_nostr_pubkey_hex()
+            .expect("requester pubkey");
+        let mut backend = test_backend(&"88".repeat(32));
         backend.config.networks[0].network_id = "mesh-home".to_string();
 
-        backend.apply_join_request_event(ReceivedMeshJoinRequest {
-            sender_pubkey: requester,
-            requested_at: 1_726_000_000,
-            request: MeshJoinRequest {
-                network_id: "mesh-other".to_string(),
-                requester_node_name: "alice-phone".to_string(),
-            },
-        });
+        let changed = backend
+            .config
+            .record_inbound_join_request("mesh-other", &requester, "alice-phone", 1_726_000_000)
+            .expect("record join request");
 
+        assert!(changed.is_none());
         assert!(backend.config.networks[0].inbound_join_requests.is_empty());
     }
 

@@ -48,6 +48,7 @@ impl PeerPresenceBook {
                 let known_removed = self.known.remove(&sender_pubkey).is_some();
                 active_removed || known_removed
             }
+            SignalPayload::JoinRequest { .. } => false,
         }
     }
 

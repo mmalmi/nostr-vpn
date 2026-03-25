@@ -189,6 +189,55 @@ fn active_network_network_id_takes_precedence_over_participant_hash() {
 }
 
 #[test]
+fn join_requests_enabled_is_true_when_any_network_listens() {
+    let mut config = AppConfig::generated();
+    config.networks[0].listen_for_join_requests = false;
+    let network_id = config.add_network("Other");
+    config
+        .set_network_join_requests_enabled(&network_id, true)
+        .expect("enable join requests");
+
+    assert!(config.join_requests_enabled());
+}
+
+#[test]
+fn record_inbound_join_request_ignores_mismatched_mesh_id() {
+    let requester = Keys::generate().public_key().to_hex();
+    let mut config = AppConfig::generated();
+    config.networks[0].network_id = "mesh-home".to_string();
+
+    let recorded = config
+        .record_inbound_join_request("mesh-other", &requester, "alice-phone", 1_726_000_000)
+        .expect("record join request");
+
+    assert!(recorded.is_none());
+    assert!(config.networks[0].inbound_join_requests.is_empty());
+}
+
+#[test]
+fn record_inbound_join_request_updates_matching_listening_network() {
+    let requester = Keys::generate().public_key().to_hex();
+    let mut config = AppConfig::generated();
+    config.networks[0].name = "Home".to_string();
+    config.networks[0].network_id = "mesh-home".to_string();
+
+    let recorded = config
+        .record_inbound_join_request("mesh-home", &requester, "alice-phone", 1_726_000_000)
+        .expect("record join request");
+
+    assert_eq!(recorded.as_deref(), Some("Home"));
+    assert_eq!(config.networks[0].inbound_join_requests.len(), 1);
+    assert_eq!(
+        config.networks[0].inbound_join_requests[0].requester,
+        requester
+    );
+    assert_eq!(
+        config.networks[0].inbound_join_requests[0].requester_node_name,
+        "alice-phone"
+    );
+}
+
+#[test]
 fn legacy_prefixed_network_ids_are_normalized_at_runtime() {
     let mut config = AppConfig::generated();
     config.networks[0].network_id = "nostr-vpn:1234abcd5678ef90".to_string();

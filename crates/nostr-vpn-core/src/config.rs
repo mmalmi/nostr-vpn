@@ -591,6 +591,75 @@ impl AppConfig {
         Ok(())
     }
 
+    pub fn join_requests_enabled(&self) -> bool {
+        self.networks
+            .iter()
+            .any(|network| network.listen_for_join_requests)
+    }
+
+    pub fn record_inbound_join_request(
+        &mut self,
+        requested_network_id: &str,
+        requester: &str,
+        requester_node_name: &str,
+        requested_at: u64,
+    ) -> Result<Option<String>> {
+        let requested_network_id = normalize_runtime_network_id(requested_network_id);
+        if requested_network_id.is_empty() {
+            return Ok(None);
+        }
+
+        let requester = normalize_nostr_pubkey(requester)?;
+        let requester_node_name = requester_node_name.trim().to_string();
+        let Some(network) = self.networks.iter_mut().find(|network| {
+            network.listen_for_join_requests
+                && normalize_runtime_network_id(&network.network_id) == requested_network_id
+        }) else {
+            return Ok(None);
+        };
+
+        if network
+            .participants
+            .iter()
+            .any(|participant| participant == &requester)
+        {
+            return Ok(None);
+        }
+
+        let mut changed = false;
+        if let Some(existing) = network
+            .inbound_join_requests
+            .iter_mut()
+            .find(|request| request.requester == requester)
+        {
+            if existing.requested_at < requested_at
+                || existing.requester_node_name != requester_node_name
+            {
+                existing.requested_at = existing.requested_at.max(requested_at);
+                existing.requester_node_name = requester_node_name;
+                changed = true;
+            }
+        } else {
+            network
+                .inbound_join_requests
+                .push(PendingInboundJoinRequest {
+                    requester,
+                    requester_node_name,
+                    requested_at,
+                });
+            network
+                .inbound_join_requests
+                .sort_by(|left, right| left.requester.cmp(&right.requester));
+            changed = true;
+        }
+
+        if changed {
+            Ok(Some(network.name.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn set_network_mesh_id(&mut self, network_id: &str, mesh_id: &str) -> Result<()> {
         let normalized = normalize_runtime_network_id(mesh_id);
         if normalized.is_empty() {

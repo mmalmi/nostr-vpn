@@ -9,6 +9,7 @@ use tokio::sync::{Mutex, broadcast};
 
 use crate::config::normalize_nostr_pubkey;
 use crate::control::PeerAnnouncement;
+use crate::join_requests::{MeshJoinRequest, decode_received_join_request_plaintext};
 
 pub const NOSTR_KIND_NOSTR_VPN: u16 = 25050;
 const SIGNAL_HELLO_TAG: &str = "hello";
@@ -22,7 +23,13 @@ const SIGNAL_HELLO_IDENTIFIER: &str = "hello";
 pub enum SignalPayload {
     Hello,
     Announce(PeerAnnouncement),
-    Disconnect { node_id: String },
+    Disconnect {
+        node_id: String,
+    },
+    JoinRequest {
+        requested_at: u64,
+        request: MeshJoinRequest,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -452,6 +459,19 @@ impl NostrSignalingClient {
                         };
 
                     let Ok(envelope) = serde_json::from_str::<SignalEnvelope>(&plaintext) else {
+                        let Some(request) =
+                            decode_received_join_request_plaintext(&event, &own_pubkey, &plaintext)
+                        else {
+                            continue;
+                        };
+                        let _ = recv_tx.send(SignalEnvelope {
+                            network_id: request.request.network_id.clone(),
+                            sender_pubkey: request.sender_pubkey,
+                            payload: SignalPayload::JoinRequest {
+                                requested_at: request.requested_at,
+                                request: request.request,
+                            },
+                        });
                         continue;
                     };
 
