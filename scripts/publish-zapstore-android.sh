@@ -53,6 +53,9 @@ cleanup() {
   if [ -n "${TEMP_P12_PATH:-}" ]; then
     rm -f "${TEMP_P12_PATH}"
   fi
+  if [ -n "${TEMP_IDENTITY_EVENT_PATH:-}" ]; then
+    rm -f "${TEMP_IDENTITY_EVENT_PATH}"
+  fi
   if [ -n "${TEMP_P12_DIR:-}" ]; then
     rmdir "${TEMP_P12_DIR}" 2>/dev/null || true
   fi
@@ -64,6 +67,9 @@ require_cmd keytool
 require_cmd pnpm
 require_cmd rustup
 require_cmd zsp
+if [ "${LINK_SIGNING_CERT}" = "1" ]; then
+  require_cmd nak
+fi
 
 if [ "${INSTALL_ON_DEVICE}" = "1" ] || [ "${CAPTURE_SCREENSHOT}" = "1" ]; then
   require_cmd adb
@@ -145,6 +151,7 @@ fi
 
 TEMP_P12_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nostr-vpn-zapstore-XXXXXX")"
 TEMP_P12_PATH="${TEMP_P12_DIR}/signing-key.p12"
+TEMP_IDENTITY_EVENT_PATH="${TEMP_P12_DIR}/identity-event.json"
 keytool -importkeystore \
   -noprompt \
   -srckeystore "${ANDROID_KEYSTORE_PATH}" \
@@ -160,7 +167,8 @@ keytool -importkeystore \
 
 if [ "${LINK_SIGNING_CERT}" = "1" ]; then
   KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD}" \
-    zsp identity --link-key "${TEMP_P12_PATH}" --relays "${ZAPSTORE_IDENTITY_RELAY}"
+    zsp identity --link-key "${TEMP_P12_PATH}" --relays "${ZAPSTORE_IDENTITY_RELAY}" --offline > "${TEMP_IDENTITY_EVENT_PATH}"
+  nak event "${ZAPSTORE_IDENTITY_RELAY}" < "${TEMP_IDENTITY_EVENT_PATH}"
 fi
 
 zsp utils extract-apk "${APK_PATH}" >/dev/null

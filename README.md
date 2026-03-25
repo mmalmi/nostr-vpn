@@ -129,6 +129,7 @@ Notes:
 
 - the script reads the Nostr signing key from `~/.keys/nostr` by default
 - if `~/.keys/nostr-vpn-android.jks` does not exist, the script creates it locally
+- the first publish path also uses `nak` to send the signed APK certificate proof to `wss://relay.zapstore.dev`
 - Android signing secrets are written only to a temporary `key.properties` file during the build and then removed
 - set `SKIP_PUBLISH=1` to stop after the local signed APK build and validation steps
 - set `INSTALL_ON_DEVICE=1` to install the APK over `adb`
