@@ -1311,6 +1311,7 @@ impl NvpnBackend {
                 &self.config_path,
                 windows_program_data_dir().as_deref(),
                 self.daemon_running,
+                self.service_installed,
             ) {
                 match self.persist_config_via_running_daemon() {
                     Ok(()) => {
@@ -1389,10 +1390,13 @@ impl NvpnBackend {
             if output.status.success() {
                 Ok(())
             } else {
-                Err(anyhow!(
-                    "{}",
-                    windows_nvpn_command_failure("apply-config-daemon", &output)
-                ))
+                let failure = windows_nvpn_command_failure("apply-config-daemon", &output);
+                if requires_admin_privileges(&failure) {
+                    self.run_nvpn_command_with_admin_privileges(args)?;
+                    Ok(())
+                } else {
+                    Err(anyhow!("{failure}"))
+                }
             }
         })();
 
@@ -1550,6 +1554,13 @@ impl NvpnBackend {
     ))]
     fn start_daemon_process(&mut self) -> Result<()> {
         self.refresh_windows_config_path()?;
+
+        #[cfg(target_os = "windows")]
+        if windows_should_start_installed_service(self.service_installed, self.service_disabled) {
+            self.enable_system_service()?;
+            return Ok(());
+        }
+
         let config_path = self.daemon_config_path_arg()?;
         let iface_override = nvpn_gui_iface_override();
         let output = if let Some(iface) = iface_override.as_deref() {
@@ -4031,8 +4042,9 @@ fn windows_should_use_daemon_owned_config_apply(
     config_path: &Path,
     windows_program_data_dir: Option<&std::path::Path>,
     daemon_running: bool,
+    service_installed: bool,
 ) -> bool {
-    if !daemon_running {
+    if !(daemon_running || service_installed) {
         return false;
     }
 
@@ -4046,6 +4058,11 @@ fn windows_should_use_daemon_owned_config_apply(
     let machine = machine_config_path.display().to_string();
     strip_windows_verbatim_prefix(&current)
         .eq_ignore_ascii_case(strip_windows_verbatim_prefix(&machine))
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_should_start_installed_service(service_installed: bool, service_disabled: bool) -> bool {
+    service_installed && !service_disabled
 }
 
 #[cfg(target_os = "windows")]
@@ -5965,8 +5982,8 @@ mod tests {
         tray_exit_node_entries, tray_menu_spec, tray_network_groups, tray_status_text,
         tray_vpn_status_menu_text, tray_vpn_toggle_text, validate_nvpn_binary,
         windows_daemon_config_import_args, windows_elevated_config_import_args,
-        windows_should_use_daemon_owned_config_apply, within_peer_online_grace,
-        within_peer_presence_grace,
+        windows_should_start_installed_service, windows_should_use_daemon_owned_config_apply,
+        within_peer_online_grace, within_peer_presence_grace,
     };
     use nostr_vpn_core::config::{
         AppConfig, PendingInboundJoinRequest, PendingOutboundJoinRequest,
@@ -7833,22 +7850,39 @@ mod tests {
             std::path::Path::new(r"C:\ProgramData\Nostr VPN\config.toml"),
             Some(std::path::Path::new(r"C:\ProgramData")),
             true,
+            false,
         ));
         assert!(windows_should_use_daemon_owned_config_apply(
             std::path::Path::new(r"\\?\C:\ProgramData\Nostr VPN\config.toml"),
             Some(std::path::Path::new(r"C:\ProgramData")),
             true,
+            false,
         ));
         assert!(!windows_should_use_daemon_owned_config_apply(
             std::path::Path::new(r"C:\Users\sirius\AppData\Roaming\nvpn\config.toml"),
             Some(std::path::Path::new(r"C:\ProgramData")),
+            true,
+            true,
+        ));
+        assert!(windows_should_use_daemon_owned_config_apply(
+            std::path::Path::new(r"C:\ProgramData\Nostr VPN\config.toml"),
+            Some(std::path::Path::new(r"C:\ProgramData")),
+            false,
             true,
         ));
         assert!(!windows_should_use_daemon_owned_config_apply(
             std::path::Path::new(r"C:\ProgramData\Nostr VPN\config.toml"),
             Some(std::path::Path::new(r"C:\ProgramData")),
             false,
+            false,
         ));
+    }
+
+    #[test]
+    fn windows_start_daemon_prefers_installed_service_when_available() {
+        assert!(windows_should_start_installed_service(true, false));
+        assert!(!windows_should_start_installed_service(false, false));
+        assert!(!windows_should_start_installed_service(true, true));
     }
 
     #[test]

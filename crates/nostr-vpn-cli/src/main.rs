@@ -6374,6 +6374,16 @@ fn request_daemon_reload(config_path: &Path) -> Result<()> {
 fn apply_config_via_running_daemon(source_path: &Path, config_path: &Path) -> Result<()> {
     let status = daemon_status(config_path)?;
     if !status.running {
+        #[cfg(target_os = "windows")]
+        {
+            let service_status = windows_query_service_status()?;
+            if windows_should_apply_config_via_service(&service_status) {
+                apply_config_file(source_path, config_path)?;
+                windows_start_service_and_wait(true, Duration::from_secs(10))?;
+                return Ok(());
+            }
+        }
+
         return Err(anyhow!("daemon: not running"));
     }
 
@@ -7422,7 +7432,12 @@ fn service_enable(args: ServiceControlArgs) -> Result<()> {
         macos_enable_service()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_enable_service()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Err(anyhow!(
             "system service enable is not implemented on this platform"
@@ -7438,7 +7453,12 @@ fn service_disable(args: ServiceControlArgs) -> Result<()> {
         macos_disable_service()
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows_disable_service()
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         Err(anyhow!(
             "system service disable is not implemented on this platform"
@@ -8167,8 +8187,7 @@ fn windows_install_service(
         ],
         "set service description",
     )?;
-    windows_start_service(false)?;
-    windows_wait_for_service_running(Duration::from_secs(10))?;
+    windows_start_service_and_wait(false, Duration::from_secs(10))?;
     println!("installed system service: {}", WINDOWS_SERVICE_NAME);
     Ok(())
 }
@@ -8179,6 +8198,43 @@ fn windows_uninstall_service() -> Result<()> {
     windows_delete_service(true)?;
     println!("removed system service: {}", WINDOWS_SERVICE_NAME);
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_enable_service() -> Result<()> {
+    let status = windows_query_service_status()?;
+    if !status.installed {
+        return Err(anyhow!("system service is not installed"));
+    }
+
+    run_sc_checked(
+        &["config", WINDOWS_SERVICE_NAME, "start=", "auto"],
+        "configure service start type",
+    )?;
+    windows_start_service_and_wait(true, Duration::from_secs(10))?;
+    println!("enabled system service: {}", WINDOWS_SERVICE_NAME);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_disable_service() -> Result<()> {
+    let status = windows_query_service_status()?;
+    if !status.installed {
+        return Err(anyhow!("system service is not installed"));
+    }
+
+    windows_stop_service(true)?;
+    run_sc_checked(
+        &["config", WINDOWS_SERVICE_NAME, "start=", "disabled"],
+        "configure service start type",
+    )?;
+    println!("disabled system service: {}", WINDOWS_SERVICE_NAME);
+    Ok(())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_should_apply_config_via_service(status: &ServiceStatusView) -> bool {
+    status.installed && !status.disabled
 }
 
 #[cfg(target_os = "windows")]
@@ -8274,6 +8330,12 @@ fn windows_start_service(ignore_already_running: bool) -> Result<()> {
         stdout.trim(),
         stderr.trim()
     ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_start_service_and_wait(ignore_already_running: bool, timeout: Duration) -> Result<()> {
+    windows_start_service(ignore_already_running)?;
+    windows_wait_for_service_running(timeout)
 }
 
 #[cfg(target_os = "windows")]
@@ -9763,7 +9825,7 @@ mod tests {
     use nostr_sdk::prelude::ToBech32;
     use nostr_vpn_core::config::NetworkConfig;
 
-    use crate::unix_timestamp;
+    use crate::{ServiceStatusView, unix_timestamp};
 
     use super::{
         AppConfig, Cli, DaemonPeerCacheEntry, DaemonPeerCacheRestore, DaemonPeerCacheState,
@@ -9797,7 +9859,8 @@ mod tests {
         stage_daemon_config_apply, take_daemon_control_request, uninstall_cli,
         update_daemon_config_from_staged_request, utun_interface_candidates,
         windows_service_bin_path, windows_service_disabled_from_qc_output,
-        windows_service_status_from_query_output, write_daemon_peer_cache,
+        windows_service_status_from_query_output, windows_should_apply_config_via_service,
+        write_daemon_peer_cache,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -9991,6 +10054,34 @@ mod tests {
 
         let auto_start = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 2   AUTO_START\n";
         assert!(!windows_service_disabled_from_qc_output(auto_start));
+    }
+
+    #[test]
+    fn windows_apply_config_uses_installed_enabled_service() {
+        let enabled_service = ServiceStatusView {
+            supported: true,
+            installed: true,
+            disabled: false,
+            loaded: true,
+            running: false,
+            pid: None,
+            label: "NvpnService".to_string(),
+            plist_path: "NvpnService".to_string(),
+        };
+        assert!(windows_should_apply_config_via_service(&enabled_service));
+
+        let disabled_service = ServiceStatusView {
+            disabled: true,
+            ..enabled_service.clone()
+        };
+        assert!(!windows_should_apply_config_via_service(&disabled_service));
+
+        let missing_service = ServiceStatusView {
+            installed: false,
+            loaded: false,
+            ..enabled_service
+        };
+        assert!(!windows_should_apply_config_via_service(&missing_service));
     }
 
     #[test]
