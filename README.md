@@ -127,8 +127,11 @@ $EDITOR .env.zapstore.local
 
 Notes:
 
-- the script reads the Nostr signing key from `~/.keys/nostr` by default
-- if `~/.keys/nostr-vpn-android.jks` does not exist, the script creates it locally
+- the publish script reads signing config from the shell environment or `.env.zapstore.local`
+- it stops with a clear error if no signing env is present
+- set either `SIGN_WITH` directly or `NOSTR_KEY_PATH` for the Nostr signer
+- set `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, and `ANDROID_KEY_PASSWORD`, and optionally `ANDROID_KEY_ALIAS`
+- if the keystore path does not exist yet, the script creates it locally
 - the first publish path also uses `nak` to send the signed APK certificate proof to `wss://relay.zapstore.dev`
 - Android signing secrets are written only to a temporary `key.properties` file during the build and then removed
 - set `SKIP_PUBLISH=1` to stop after the local signed APK build and validation steps

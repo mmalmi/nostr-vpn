@@ -17,12 +17,13 @@ fi
 
 cd "${REPO_ROOT}"
 
-ANDROID_KEYSTORE_PATH="${ANDROID_KEYSTORE_PATH:-${HOME}/.keys/nostr-vpn-android.jks}"
-ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS:-nostr-vpn-upload}"
+ANDROID_KEYSTORE_PATH="${ANDROID_KEYSTORE_PATH:-}"
+ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS:-}"
 ANDROID_KEYSTORE_PASSWORD="${ANDROID_KEYSTORE_PASSWORD:-}"
 ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD}}"
+DEFAULT_ANDROID_KEY_ALIAS="nostr-vpn-upload"
 KEYSTORE_DNAME="${KEYSTORE_DNAME:-CN=Nostr VPN, OU=Mobile, O=Iris, L=Helsinki, S=Uusimaa, C=FI}"
-NOSTR_KEY_PATH="${NOSTR_KEY_PATH:-${HOME}/.keys/nostr}"
+NOSTR_KEY_PATH="${NOSTR_KEY_PATH:-}"
 ZAPSTORE_CHANNEL="${ZAPSTORE_CHANNEL:-main}"
 ZSP_EXTRA_FLAGS="${ZSP_EXTRA_FLAGS:-}"
 INSTALL_ON_DEVICE="${INSTALL_ON_DEVICE:-0}"
@@ -99,12 +100,28 @@ if [ ! -f "${ZAPSTORE_CONFIG}" ]; then
   exit 1
 fi
 
-if [ ! -f "${NOSTR_KEY_PATH}" ]; then
-  echo "Missing Nostr signer file: ${NOSTR_KEY_PATH}" >&2
+if [ ! -f "${ZAPSTORE_ENV_FILE}" ] && [ -z "${ANDROID_KEYSTORE_PATH}" ] && [ -z "${SIGN_WITH:-}" ] && [ -z "${NOSTR_KEY_PATH}" ]; then
+  echo "No Zapstore signing env found. Create ${ZAPSTORE_ENV_FILE} or export the required variables first." >&2
   exit 1
 fi
 
-SIGN_WITH="${SIGN_WITH:-$(tr -d '\r\n' < "${NOSTR_KEY_PATH}")}"
+if [ -z "${ANDROID_KEYSTORE_PATH}" ]; then
+  echo "Set ANDROID_KEYSTORE_PATH." >&2
+  exit 1
+fi
+
+if [ -z "${SIGN_WITH:-}" ] && [ -z "${NOSTR_KEY_PATH}" ]; then
+  echo "Set SIGN_WITH or NOSTR_KEY_PATH." >&2
+  exit 1
+fi
+
+if [ -z "${SIGN_WITH:-}" ]; then
+  if [ ! -f "${NOSTR_KEY_PATH}" ]; then
+    echo "Missing Nostr signer file: ${NOSTR_KEY_PATH}" >&2
+    exit 1
+  fi
+  SIGN_WITH="$(tr -d '\r\n' < "${NOSTR_KEY_PATH}")"
+fi
 export SIGN_WITH
 
 if [ ! -f "${ANDROID_KEYSTORE_PATH}" ]; then
@@ -113,10 +130,11 @@ if [ ! -f "${ANDROID_KEYSTORE_PATH}" ]; then
     exit 1
   fi
 
+  key_alias_for_generation="${ANDROID_KEY_ALIAS:-${DEFAULT_ANDROID_KEY_ALIAS}}"
   mkdir -p "$(dirname "${ANDROID_KEYSTORE_PATH}")"
   umask 077
   keytool -genkeypair \
-    -alias "${ANDROID_KEY_ALIAS}" \
+    -alias "${key_alias_for_generation}" \
     -keyalg RSA \
     -keysize 4096 \
     -validity 9125 \
@@ -125,12 +143,26 @@ if [ ! -f "${ANDROID_KEYSTORE_PATH}" ]; then
     -storepass "${ANDROID_KEYSTORE_PASSWORD}" \
     -keypass "${ANDROID_KEY_PASSWORD}" \
     -dname "${KEYSTORE_DNAME}"
+  ANDROID_KEY_ALIAS="${key_alias_for_generation}"
 fi
 
 if [ -z "${ANDROID_KEYSTORE_PASSWORD}" ] || [ -z "${ANDROID_KEY_PASSWORD}" ]; then
   echo "Set ANDROID_KEYSTORE_PASSWORD and ANDROID_KEY_PASSWORD." >&2
   exit 1
 fi
+
+if [ -z "${ANDROID_KEY_ALIAS}" ] && [ -f "${ANDROID_KEYSTORE_PATH}" ]; then
+  alias_lines="$(keytool -list -v -keystore "${ANDROID_KEYSTORE_PATH}" -storepass "${ANDROID_KEYSTORE_PASSWORD}" 2>/dev/null | sed -n 's/^Alias name: //p')"
+  alias_count="$(printf '%s\n' "${alias_lines}" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "${alias_count}" = "1" ]; then
+    ANDROID_KEY_ALIAS="$(printf '%s\n' "${alias_lines}" | sed -n '1p')"
+  else
+    echo "Set ANDROID_KEY_ALIAS because the keystore alias could not be auto-detected." >&2
+    exit 1
+  fi
+fi
+
+ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS:-${DEFAULT_ANDROID_KEY_ALIAS}}"
 
 cat > "${KEY_PROPERTIES_PATH}" <<EOF
 storePassword=${ANDROID_KEYSTORE_PASSWORD}
