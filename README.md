@@ -5,6 +5,7 @@
 ## Downloads
 
 - [Latest release](https://github.com/mmalmi/nostr-vpn/releases/latest)
+- [Android app on Zapstore](https://zapstore.dev/apps/to.iris.nvpn)
 
 Current release artifacts:
 
