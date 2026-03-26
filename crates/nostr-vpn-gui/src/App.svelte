@@ -70,7 +70,8 @@
   let error = ''
   let cliActionStatus = ''
   let serviceActionStatus = ''
-  let copiedValue: 'pubkey' | 'meshId' | 'invite' | null = null
+  let copiedValue: 'pubkey' | 'meshId' | 'invite' | 'peerNpub' | null = null
+  let copiedPeerNpub: string | null = null
   let inviteQrDataUrl = ''
   let inviteQrError = ''
   let inviteQrSource = ''
@@ -337,7 +338,7 @@
     if (!network.inviteInviterNpub) {
       return ''
     }
-    return `Imported from ${short(network.inviteInviterNpub, 18, 12)}. Send a Nostr join request if they have not added this device yet.`
+    return `Imported from ${network.inviteInviterNpub}. Send a Nostr join request if they have not added this device yet.`
   }
 
   const describeInviteScanError = (err: unknown) => {
@@ -715,7 +716,7 @@
   }
 
   const exitNodeOptionLabel = (participant: ParticipantView) => {
-    const base = participant.magicDnsName || short(participant.npub, 18, 12)
+    const base = participant.magicDnsName || participant.npub
     return participant.offersExitNode
       ? `${base} (offers exit node)`
       : `${base} (not offering exit node)`
@@ -827,7 +828,7 @@
       return 'Selected exit node is not present in the current network view.'
     }
 
-    const label = selected.magicDnsName || short(selected.npub, 18, 12)
+    const label = selected.magicDnsName || selected.npub
     if (!selected.offersExitNode) {
       return `${label} is selected, but it is not offering exit-node traffic right now.`
     }
@@ -1432,15 +1433,21 @@
     autostartUpdating = false
   }
 
-  async function copyText(value: string, kind: 'pubkey' | 'meshId' | 'invite') {
+  async function copyText(
+    value: string,
+    kind: 'pubkey' | 'meshId' | 'invite' | 'peerNpub',
+    peerNpub: string | null = null,
+  ) {
     try {
       await navigator.clipboard.writeText(value)
       copiedValue = kind
+      copiedPeerNpub = kind === 'peerNpub' ? (peerNpub ?? value) : null
       if (copiedHandle) {
         window.clearTimeout(copiedHandle)
       }
       copiedHandle = window.setTimeout(() => {
         copiedValue = null
+        copiedPeerNpub = null
         copiedHandle = null
       }, 2000)
     } catch {
@@ -1454,6 +1461,10 @@
     }
 
     await copyText(state.ownNpub, 'pubkey')
+  }
+
+  async function copyPeerNpub(npub: string) {
+    await copyText(npub, 'peerNpub', npub)
   }
 
   async function copyMeshId() {
@@ -1816,10 +1827,29 @@
                 <div class="item-row" data-testid="join-request-row">
                   <div class="item-main">
                     <div class="item-title">
-                      {request.requesterNodeName || short(request.requesterNpub, 22, 12)}
+                      {request.requesterNodeName || 'Pending device'}
+                    </div>
+                    <div class="peer-npub-row">
+                      <div class="peer-npub-text">{request.requesterNpub}</div>
+                      <button
+                        class="btn ghost icon-btn peer-npub-copy-btn"
+                        type="button"
+                        aria-label="Copy peer npub"
+                        title="Copy peer npub"
+                        data-testid="copy-peer-npub"
+                        on:click={() => copyPeerNpub(request.requesterNpub)}
+                      >
+                        <span class="copy-icon" aria-hidden="true">
+                          {#if copiedValue === 'peerNpub' && copiedPeerNpub === request.requesterNpub}
+                            <Check size={16} strokeWidth={2.3} />
+                          {:else}
+                            <Copy size={16} strokeWidth={2.2} />
+                          {/if}
+                        </span>
+                      </button>
                     </div>
                     <div class="item-sub">
-                      {short(request.requesterNpub, 18, 12)} | requested {request.requestedAtText}
+                      requested {request.requestedAtText}
                     </div>
                   </div>
                   <button
@@ -1876,9 +1906,31 @@
                 {#each lanJoinCandidates as peer}
                   <div class="item-row" data-testid="lan-peer-row">
                     <div class="item-main">
-                      <div class="item-title">{peer.networkName || short(peer.npub, 22, 12)}</div>
+                      <div class="item-title">{peer.networkName || peer.nodeName || 'Nearby device'}</div>
+                      <div class="peer-npub-row">
+                        <div class="peer-npub-text">{peer.npub}</div>
+                        <button
+                          class="btn ghost icon-btn peer-npub-copy-btn"
+                          type="button"
+                          aria-label="Copy peer npub"
+                          title="Copy peer npub"
+                          data-testid="copy-peer-npub"
+                          on:click={() => copyPeerNpub(peer.npub)}
+                        >
+                          <span class="copy-icon" aria-hidden="true">
+                            {#if copiedValue === 'peerNpub' && copiedPeerNpub === peer.npub}
+                              <Check size={16} strokeWidth={2.3} />
+                            {:else}
+                              <Copy size={16} strokeWidth={2.2} />
+                            {/if}
+                          </span>
+                        </button>
+                      </div>
                       <div class="item-sub">
-                        {peer.nodeName} | {short(peer.npub, 18, 12)} | {peer.endpoint} | seen {peer.lastSeenText}
+                        {#if peer.networkName && peer.nodeName}
+                          {peer.nodeName} |
+                        {/if}
+                        {peer.endpoint} | seen {peer.lastSeenText}
                       </div>
                     </div>
                     <button class="btn" on:click={() => onJoinLanPeer(peer.invite)}>
@@ -2022,7 +2074,25 @@
           {#each activeNetworkView.participants as participant}
             <div class="item-row" data-testid="participant-row">
               <div class="item-main">
-                <div class="item-title">{short(participant.npub, 22, 12)}</div>
+                <div class="peer-npub-row">
+                  <div class="peer-npub-text" data-testid="participant-npub">{participant.npub}</div>
+                  <button
+                    class="btn ghost icon-btn peer-npub-copy-btn"
+                    type="button"
+                    aria-label="Copy peer npub"
+                    title="Copy peer npub"
+                    data-testid="copy-peer-npub"
+                    on:click={() => copyPeerNpub(participant.npub)}
+                  >
+                    <span class="copy-icon" aria-hidden="true">
+                      {#if copiedValue === 'peerNpub' && copiedPeerNpub === participant.npub}
+                        <Check size={16} strokeWidth={2.3} />
+                      {:else}
+                        <Copy size={16} strokeWidth={2.2} />
+                      {/if}
+                    </span>
+                  </button>
+                </div>
                 <div class="row alias-row">
                   <input
                     class="text-input alias-input"
@@ -2040,7 +2110,7 @@
                   {/if}
                 </div>
                 <div class="item-sub" data-testid="participant-status-text">
-                  {participant.magicDnsName} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
+                  {participant.magicDnsName || participant.magicDnsAlias || 'No alias'} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
                   {#if participant.advertisedRoutes.length > 0}
                     | routes {participant.advertisedRoutes.join(', ')}
                   {/if}
@@ -2157,13 +2227,15 @@
                 disabled={!participant.offersExitNode}
               >
                 <div class="row spread">
-                  <div class="item-title">{participant.magicDnsName || short(participant.npub, 18, 12)}</div>
+                  <div class="item-title">
+                    {participant.magicDnsName || participant.magicDnsAlias || participant.npub}
+                  </div>
                   <span class={`badge ${exitNodeAvailabilityClass(participant)}`}>
                     {exitNodeAvailabilityText(participant)}
                   </span>
                 </div>
                 <div class="item-sub">
-                  {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
+                  {participant.npub} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
                 </div>
               </button>
             {/each}
@@ -2315,10 +2387,29 @@
                           <div class="item-row">
                             <div class="item-main">
                               <div class="item-title">
-                                {request.requesterNodeName || short(request.requesterNpub, 22, 12)}
+                                {request.requesterNodeName || 'Pending device'}
+                              </div>
+                              <div class="peer-npub-row">
+                                <div class="peer-npub-text">{request.requesterNpub}</div>
+                                <button
+                                  class="btn ghost icon-btn peer-npub-copy-btn"
+                                  type="button"
+                                  aria-label="Copy peer npub"
+                                  title="Copy peer npub"
+                                  data-testid="copy-peer-npub"
+                                  on:click={() => copyPeerNpub(request.requesterNpub)}
+                                >
+                                  <span class="copy-icon" aria-hidden="true">
+                                    {#if copiedValue === 'peerNpub' && copiedPeerNpub === request.requesterNpub}
+                                      <Check size={16} strokeWidth={2.3} />
+                                    {:else}
+                                      <Copy size={16} strokeWidth={2.2} />
+                                    {/if}
+                                  </span>
+                                </button>
                               </div>
                               <div class="item-sub">
-                                {short(request.requesterNpub, 18, 12)} | requested {request.requestedAtText}
+                                requested {request.requestedAtText}
                               </div>
                             </div>
                             <button class="btn" on:click={() => onAcceptJoinRequest(network.id, request.requesterNpub)}>
@@ -2379,7 +2470,25 @@
                       {#each network.participants as participant}
                         <div class="item-row saved-participant-row">
                           <div class="item-main">
-                            <div class="item-title">{short(participant.npub, 22, 12)}</div>
+                            <div class="peer-npub-row">
+                              <div class="peer-npub-text" data-testid="participant-npub">{participant.npub}</div>
+                              <button
+                                class="btn ghost icon-btn peer-npub-copy-btn"
+                                type="button"
+                                aria-label="Copy peer npub"
+                                title="Copy peer npub"
+                                data-testid="copy-peer-npub"
+                                on:click={() => copyPeerNpub(participant.npub)}
+                              >
+                                <span class="copy-icon" aria-hidden="true">
+                                  {#if copiedValue === 'peerNpub' && copiedPeerNpub === participant.npub}
+                                    <Check size={16} strokeWidth={2.3} />
+                                  {:else}
+                                    <Copy size={16} strokeWidth={2.2} />
+                                  {/if}
+                                </span>
+                              </button>
+                            </div>
                             <div class="row alias-row">
                               <input
                                 class="text-input alias-input"
@@ -2396,7 +2505,7 @@
                               {/if}
                             </div>
                             <div class="item-sub">
-                              {participant.magicDnsName || participant.magicDnsAlias || short(participant.npub, 16, 10)} | {participant.tunnelIp}
+                              {participant.magicDnsName || participant.magicDnsAlias || 'No alias'} | {participant.tunnelIp}
                               {#if participant.offersExitNode}
                                 | exit routes advertised
                               {/if}

@@ -435,7 +435,7 @@ body {
 }
 
 .hero-copy-value {
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.35;
   white-space: normal;
   overflow-wrap: anywhere;
@@ -1022,6 +1022,32 @@ body {
   margin-top: 6px;
 }
 
+.peer-npub-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 4px 0 6px;
+}
+
+.peer-npub-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--cyan);
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.peer-npub-copy-btn {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
 .participant-badges {
   display: flex;
   flex-direction: column;
@@ -1350,7 +1376,7 @@ body {
   }
 
   .hero-copy-value {
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .identity-row {

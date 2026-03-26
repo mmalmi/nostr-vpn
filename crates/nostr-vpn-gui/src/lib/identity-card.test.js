@@ -16,3 +16,13 @@ test('identity card pubkey styling wraps instead of truncating', () => {
     /\.hero-copy-value\s*\{[^}]*white-space:\s*normal;[^}]*overflow-wrap:\s*anywhere;[^}]*user-select:\s*text;/s,
   )
 })
+
+test('identity card uses compact info-sized pubkey text', () => {
+  assert.match(cssSource, /\.hero-copy-value\s*\{[^}]*font-size:\s*12px;/s)
+})
+
+test('peer rows render full npub text with copy actions', () => {
+  assert.match(appSource, /data-testid="participant-npub"/)
+  assert.match(appSource, /data-testid="copy-peer-npub"/)
+  assert.match(appSource, /copyPeerNpub\(participant\.npub\)/)
+})
