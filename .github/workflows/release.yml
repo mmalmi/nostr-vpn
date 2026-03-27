@@ -561,6 +561,13 @@ jobs:
     needs: verify
     permissions:
       contents: read
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_CODE_SIGNING_ENDPOINT: ${{ secrets.AZURE_CODE_SIGNING_ENDPOINT }}
+      AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+      AZURE_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_CERTIFICATE_PROFILE_NAME }}
     defaults:
       run:
         shell: pwsh
@@ -597,6 +604,55 @@ jobs:
 
       - name: Build Windows installer
         run: pnpm --dir crates/nostr-vpn-gui run tauri build --ci
+
+      - name: Detect Windows signing capabilities
+        id: windows_capabilities
+        shell: bash
+        run: |
+          signing_required=(
+            AZURE_TENANT_ID
+            AZURE_CLIENT_ID
+            AZURE_CLIENT_SECRET
+            AZURE_CODE_SIGNING_ENDPOINT
+            AZURE_CODE_SIGNING_ACCOUNT_NAME
+            AZURE_CERTIFICATE_PROFILE_NAME
+          )
+          missing=()
+          for name in "${signing_required[@]}"; do
+            if [ -z "${!name}" ]; then
+              missing+=("${name}")
+            fi
+          done
+
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "signing_ready=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "signing_ready=false" >> "${GITHUB_OUTPUT}"
+            echo "::warning::Windows signing secrets missing: ${missing[*]}. The release will continue with an unsigned installer."
+          fi
+
+      - name: Sign Windows installer
+        id: sign_windows
+        if: ${{ steps.windows_capabilities.outputs.signing_ready == 'true' }}
+        continue-on-error: true
+        uses: azure/trusted-signing-action@v0.5.0
+        with:
+          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
+          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ env.AZURE_CODE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ env.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ env.AZURE_CERTIFICATE_PROFILE_NAME }}
+          files-folder: ${{ github.workspace }}/target/release/bundle/nsis
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Warn if signing failed
+        if: ${{ steps.windows_capabilities.outputs.signing_ready == 'true' && steps.sign_windows.outcome == 'failure' }}
+        shell: bash
+        run: echo "::warning::Windows code signing was attempted but failed (identity validation may still be pending). The release will continue with an unsigned installer."
 
       - name: Package Windows artifacts
         run: |
