@@ -1,4 +1,7 @@
 /target
+dist/
+.claude/
+.codex_tmp*
 crates/nostr-vpn-gui/node_modules
 crates/nostr-vpn-gui/dist
 crates/nostr-vpn-gui/src-tauri/target
