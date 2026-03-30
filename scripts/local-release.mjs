@@ -53,7 +53,7 @@ Options:
   --dry-run                 Print the plan without running build or publish commands
   --skip-verify            Skip fmt/clippy/test verification
   --tag <tag>              Release tag (defaults to workspace version, for example v0.2.27)
-  --release-tree <name>    htree release tree name (default: nostr-vpn-releases)
+  --release-tree <name>    htree release tree name (default: releases/nostr-vpn)
   --stage-dir <path>       Directory used for staged release metadata
   --env-file <path>        Extra dotenv file to load (repeatable)
   --only <csv>             Limit steps to verify,macos,android,windows
@@ -716,7 +716,7 @@ function main() {
   const env = { ...loaded, ...process.env }
 
   const tag = options.tag || readWorkspaceVersionTag(readFileSync(rootCargoToml, 'utf8'))
-  const releaseTree = options.releaseTree || env.NVPN_RELEASE_TREE || 'nostr-vpn-releases'
+  const releaseTree = options.releaseTree || env.NVPN_RELEASE_TREE || 'releases/nostr-vpn'
   const stageDir =
     options.stageDir || join(os.tmpdir(), `nostr-vpn-release-${tag.replace(/[^\w.-]/g, '_')}`)
 
