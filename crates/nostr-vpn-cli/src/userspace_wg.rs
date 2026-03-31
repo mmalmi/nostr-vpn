@@ -480,8 +480,14 @@ mod tests {
 
         let alice_statuses = alice_runtime.peer_statuses();
         let bob_statuses = bob_runtime.peer_statuses();
-        assert!(alice_statuses[0].tx_bytes > 0, "alice should record transmitted data bytes");
-        assert!(bob_statuses[0].rx_bytes > 0, "bob should record received data bytes");
+        assert!(
+            alice_statuses[0].tx_bytes > 0,
+            "alice should record transmitted data bytes"
+        );
+        assert!(
+            bob_statuses[0].rx_bytes > 0,
+            "bob should record received data bytes"
+        );
     }
 
     #[test]
