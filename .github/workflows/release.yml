@@ -855,6 +855,7 @@ jobs:
 
   release:
     name: Create GitHub Release
+    if: ${{ always() && needs.verify.result == 'success' && needs.build-cli.result == 'success' }}
     needs:
       - build-cli
       - build-macos-app
@@ -879,6 +880,9 @@ jobs:
         env:
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          LINUX_APP_RELEASED: ${{ needs.build-linux-app.result }}
+          WINDOWS_APP_RELEASED: ${{ needs.build-windows-app.result }}
+          ANDROID_APP_RELEASED: ${{ needs.build-android-app.result }}
           MACOS_SIGNED: ${{ needs.build-macos-app.outputs.macos_signed }}
           MACOS_NOTARIZED: ${{ needs.build-macos-app.outputs.macos_notarized }}
           MACOS_ARTIFACT_PUBLISHED: ${{ needs.build-macos-app.outputs.macos_artifact_published }}
@@ -891,14 +895,32 @@ jobs:
             if [ "${MACOS_ARTIFACT_PUBLISHED}" = "true" ]; then
               echo "- [Nostr VPN for macOS (Apple Silicon)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-macos-arm64.zip)"
             fi
-            echo "- [Nostr VPN for Linux (AppImage)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.AppImage)"
-            echo "- [Nostr VPN for Debian/Ubuntu (.deb)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.deb)"
-            echo "- [Nostr VPN for Windows](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-windows-x64-setup.exe)"
-            echo "- [Nostr VPN for Android](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-android-arm64.apk)"
+            if [ "${LINUX_APP_RELEASED}" = "success" ]; then
+              echo "- [Nostr VPN for Linux (AppImage)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.AppImage)"
+              echo "- [Nostr VPN for Debian/Ubuntu (.deb)](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-linux-x64.deb)"
+            fi
+            if [ "${WINDOWS_APP_RELEASED}" = "success" ]; then
+              echo "- [Nostr VPN for Windows](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-windows-x64-setup.exe)"
+            fi
+            if [ "${ANDROID_APP_RELEASED}" = "success" ]; then
+              echo "- [Nostr VPN for Android](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nostr-vpn-${RELEASE_TAG}-android-arm64.apk)"
+            fi
             echo
             if [ "${MACOS_ARTIFACT_PUBLISHED}" != "true" ]; then
               echo "> Note: The macOS desktop app is not included in this GitHub release because Apple signing/notarization did not complete."
               echo "> If you only need macOS today, use the CLI tarball below or build from source."
+              echo
+            fi
+            if [ "${WINDOWS_APP_RELEASED}" != "success" ]; then
+              echo "> Note: The Windows desktop app is not included in this GitHub release because the Windows build did not complete."
+              echo
+            fi
+            if [ "${ANDROID_APP_RELEASED}" != "success" ]; then
+              echo "> Note: The Android app is not included in this GitHub release because the Android build did not complete."
+              echo
+            fi
+            if [ "${LINUX_APP_RELEASED}" != "success" ]; then
+              echo "> Note: The Linux desktop app is not included in this GitHub release because the Linux build did not complete."
               echo
             fi
             echo "Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release."
