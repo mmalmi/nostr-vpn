@@ -34,6 +34,10 @@ It currently ships:
 | `nvpn-reflector` | Minimal UDP reflector used for NAT discovery and hole-punch testing |
 | `nostr-vpn-core` | Shared library for config, signaling, NAT helpers, diagnostics, MagicDNS, and WireGuard helpers |
 
+## Protocol
+
+For the current protocol-level description of invites, signaling, admin roster sync, relay fallback, NAT traversal, and the WireGuard data plane, see [docs/protocol.md](docs/protocol.md).
+
 ## Platform status
 
 | Platform | Current status |
