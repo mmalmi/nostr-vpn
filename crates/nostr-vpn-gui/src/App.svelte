@@ -752,8 +752,8 @@
   const exitNodeOptionLabel = (participant: ParticipantView) => {
     const base = participant.magicDnsName || participant.npub
     return participant.offersExitNode
-      ? `${base} (offers exit node)`
-      : `${base} (not offering exit node)`
+      ? `${base} (offers private exit node)`
+      : `${base} (not offering private exit node)`
   }
 
   const filteredExitNodeCandidates = (state: UiState, query: string) => {
@@ -813,7 +813,7 @@
       return `Will advertise default routes: ${advertised}`
     }
 
-    return 'Turn this on to offer this device as an exit node.'
+    return 'Turn this on to offer this device as a private exit node.'
   }
 
   const additionalRoutesStatusText = (state: UiState) => {
@@ -832,7 +832,7 @@
       return 'Using remote exit'
     }
     if (state.advertiseExitNode) {
-      return 'Sharing local exit'
+      return 'Sharing local private exit'
     }
 
     return 'Direct mesh'
@@ -840,13 +840,13 @@
 
   const routingModeStatusText = (state: UiState) => {
     if (state.exitNode && state.advertiseExitNode) {
-      return 'Your internet-bound traffic uses the selected peer while this device also advertises default routes to others.'
+      return 'Your internet-bound traffic uses the selected peer while this device also advertises private default routes to peers.'
     }
     if (state.exitNode) {
       return selectedExitNodeStatusText(state)
     }
     if (state.advertiseExitNode) {
-      return 'This device is offering default-route traffic to peers while your own internet-bound traffic stays local.'
+      return 'This device is offering private default-route traffic to peers while your own internet-bound traffic stays local.'
     }
 
     return 'Internet-bound traffic stays local; only mesh routes are used.'
@@ -2330,7 +2330,7 @@
                   <span class="badge participant-badge warn">Relay fallback</span>
                 {/if}
                 {#if participant.offersExitNode}
-                  <span class="badge participant-badge warn">Exit node</span>
+                  <span class="badge participant-badge warn">Private exit</span>
                 {/if}
                 {#if state.exitNode === participant.npub}
                   <span class="badge participant-badge ok">Selected exit</span>
@@ -2387,7 +2387,7 @@
                   advertiseExitNode: (event.currentTarget as HTMLInputElement).checked,
                 })}
             />
-            <div>Advertise this device as an exit node</div>
+            <div>Advertise this device as a private exit node</div>
           </label>
           <div class="config-path settings-note">{offerExitNodeStatusText(state)}</div>
         </div>
@@ -3085,18 +3085,6 @@
             <span>Use public relay fallback when direct connection fails</span>
           </label>
           <div class="config-path settings-note">{publicRelayFallbackStatusText(state)}</div>
-
-          <label class="toggle-row">
-            <input
-              type="checkbox"
-              checked={state.autoDisconnectRelaysWhenMeshReady}
-              on:change={(event) =>
-                onUpdateSettings({
-                  autoDisconnectRelaysWhenMeshReady: (event.target as HTMLInputElement).checked,
-                })}
-            />
-            <span>Auto-disconnect relays when mesh is ready</span>
-          </label>
 
           <label class="toggle-row">
             <input

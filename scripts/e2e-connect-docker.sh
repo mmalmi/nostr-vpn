@@ -87,26 +87,17 @@ if ! "${COMPOSE[@]}" exec -T node-b ping -c 3 -W 2 10.44.0.10 >/tmp/ping-b.log; 
   exit 1
 fi
 
-for _ in $(seq 1 15); do
-  ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
-  BOB_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+BOB_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
 
-  if grep -q "Mesh ready (relays paused)" <<<"$ALICE_CONNECT_LOGS" \
-    && grep -q "Mesh ready (relays paused)" <<<"$BOB_CONNECT_LOGS"; then
-    break
-  fi
-
-  sleep 1
-done
-
-if ! grep -q "Mesh ready (relays paused)" <<<"$ALICE_CONNECT_LOGS"; then
-  echo "connect e2e failed: alice did not pause relays after handshake-backed mesh was ready" >&2
+if grep -q "Mesh ready (relays paused)" <<<"$ALICE_CONNECT_LOGS"; then
+  echo "connect e2e failed: alice still paused relays after mesh became ready" >&2
   echo "$ALICE_CONNECT_LOGS"
   exit 1
 fi
 
-if ! grep -q "Mesh ready (relays paused)" <<<"$BOB_CONNECT_LOGS"; then
-  echo "connect e2e failed: bob did not pause relays after handshake-backed mesh was ready" >&2
+if grep -q "Mesh ready (relays paused)" <<<"$BOB_CONNECT_LOGS"; then
+  echo "connect e2e failed: bob still paused relays after mesh became ready" >&2
   echo "$BOB_CONNECT_LOGS"
   exit 1
 fi
@@ -120,4 +111,4 @@ cat /tmp/ping-a.log
 echo "--- Ping B -> A ---"
 cat /tmp/ping-b.log
 
-echo "connect docker e2e passed: config-driven nvpn connect paused relays after mesh and kept the boringtun tunnel up"
+echo "connect docker e2e passed: config-driven nvpn connect kept relays available while the boringtun tunnel stayed up"

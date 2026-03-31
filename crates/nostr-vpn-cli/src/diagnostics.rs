@@ -432,17 +432,14 @@ pub(crate) fn build_health_issues(
     app: &AppConfig,
     session_active: bool,
     relay_connected: bool,
-    mesh_ready: bool,
+    _mesh_ready: bool,
     network: &NetworkSummary,
     port_mapping: &PortMappingStatus,
     peers: &[DaemonPeerState],
 ) -> Vec<HealthIssue> {
     let mut issues = Vec::new();
 
-    let relays_intentionally_paused =
-        app.auto_disconnect_relays_when_mesh_ready && mesh_ready && !relay_connected;
-
-    if session_active && !relay_connected && !relays_intentionally_paused {
+    if session_active && !relay_connected {
         issues.push(HealthIssue::new(
             "relay.disconnected",
             HealthSeverity::Warning,
@@ -593,7 +590,6 @@ fn sanitized_config_json(app: &AppConfig) -> serde_json::Value {
         "networkId": app.effective_network_id(),
         "nodeName": app.node_name,
         "autoconnect": app.autoconnect,
-        "autoDisconnectRelaysWhenMeshReady": app.auto_disconnect_relays_when_mesh_ready,
         "magicDnsSuffix": app.magic_dns_suffix,
         "exitNode": app.exit_node,
         "nostr": {
@@ -1112,11 +1108,8 @@ mod tests {
     }
 
     #[test]
-    fn health_issues_skip_relay_warning_when_relays_are_paused_for_mesh() {
-        let app = AppConfig {
-            auto_disconnect_relays_when_mesh_ready: true,
-            ..AppConfig::default()
-        };
+    fn health_issues_warn_when_relays_are_disconnected_even_if_mesh_is_ready() {
+        let app = AppConfig::default();
         let network = NetworkSnapshot {
             default_interface: Some("en0".to_string()),
             primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 4)),
@@ -1129,7 +1122,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .all(|issue| issue.code != "relay.disconnected")
+                .any(|issue| issue.code == "relay.disconnected")
         );
     }
 }

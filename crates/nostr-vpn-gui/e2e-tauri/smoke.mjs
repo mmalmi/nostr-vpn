@@ -97,8 +97,6 @@ async function main() {
       GUI_TUNNEL_IP,
       '--listen-port',
       String(Number(GUI_ENDPOINT.split(':').pop() || '51820')),
-      '--auto-disconnect-relays-when-mesh-ready',
-      'false',
     ],
     { cwd: ROOT_DIR },
   )
@@ -121,8 +119,6 @@ async function main() {
       PEER_TUNNEL_IP,
       '--listen-port',
       String(Number(PEER_ENDPOINT.split(':').pop() || '51821')),
-      '--auto-disconnect-relays-when-mesh-ready',
-      'false',
     ],
     { cwd: ROOT_DIR },
   )

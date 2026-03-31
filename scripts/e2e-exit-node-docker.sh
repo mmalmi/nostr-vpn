@@ -127,12 +127,10 @@ fi
 "${COMPOSE[@]}" exec -T node-a nvpn set \
   --participant "$BOB_NPUB" \
   --relay "$RELAY_URL" \
-  --auto-disconnect-relays-when-mesh-ready false \
   --advertise-exit-node >/dev/null
 "${COMPOSE[@]}" exec -T node-b nvpn set \
   --participant "$ALICE_NPUB" \
   --relay "$RELAY_URL" \
-  --auto-disconnect-relays-when-mesh-ready false \
   --exit-node "$ALICE_NPUB" >/dev/null
 
 for node in node-a node-b; do

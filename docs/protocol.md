@@ -362,11 +362,7 @@ Exit-node behavior is policy on top of the same data plane:
 
 Relays are used for signaling, not for the actual tunnel unless relay fallback is active.
 
-If `auto_disconnect_relays_when_mesh_ready` is enabled:
-
-- signaling relays can be paused after the expected mesh is up and handshaking
-- cached presence and path state keep the tunnel running
-- relays stay connected when needed for join-request listening
+Relays stay connected so control-plane changes propagate promptly.
 
 ## Canonical Source
 

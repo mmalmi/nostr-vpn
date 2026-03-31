@@ -130,7 +130,6 @@ const PEER_PATH_RETRY_AFTER_SECS: u64 = 5;
 // sessions can stay healthy for roughly the reject-after window (~180s), so a
 // 20s cutoff misclassifies healthy peers as disconnected.
 const PEER_ONLINE_GRACE_SECS: u64 = 180;
-const DIRECT_MESH_BOOTSTRAP_RELAY_DELAY_SECS: u64 = 5;
 const RELAY_DISCOVERY_LOOKBACK_SECS: u64 = 900;
 const RELAY_REQUEST_RETRY_AFTER_SECS: u64 = 30;
 const RELAY_REQUEST_TIMEOUT_SECS: u64 = 120;
@@ -145,7 +144,6 @@ const MIN_PERSISTED_PEER_CACHE_TIMEOUT_SECS: u64 = 600;
 const PERSISTED_PEER_CACHE_TIMEOUT_MULTIPLIER: u64 = 30;
 const MIN_PERSISTED_PATH_CACHE_TIMEOUT_SECS: u64 = 1_800;
 const PERSISTED_PATH_CACHE_TIMEOUT_MULTIPLIER: u64 = 90;
-const MESH_READY_RELAYS_PAUSED_STATUS: &str = "Mesh ready (relays paused)";
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
 const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -177,8 +175,6 @@ enum DaemonControlRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RelayConnectionAction {
     KeepConnected,
-    PauseForMesh,
-    StayPausedForMesh,
     ReconnectWhenDue,
 }
 
@@ -581,8 +577,6 @@ struct SetArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     advertise_exit_node: Option<bool>,
     #[arg(long)]
-    auto_disconnect_relays_when_mesh_ready: Option<bool>,
-    #[arg(long)]
     relay_for_others: Option<bool>,
     #[arg(long)]
     provide_nat_assist: Option<bool>,
@@ -941,7 +935,6 @@ async fn run_command(command: Command) -> Result<()> {
                         "relays": relays,
                         "relay_for_others": app.relay_for_others,
                         "provide_nat_assist": app.provide_nat_assist,
-                        "auto_disconnect_relays_when_mesh_ready": app.auto_disconnect_relays_when_mesh_ready,
                         "daemon": daemon_status_json(&config_path)?,
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
@@ -980,14 +973,6 @@ async fn run_command(command: Command) -> Result<()> {
                     println!("daemon: stopped");
                 }
                 println!("status_source: {status_source}");
-                println!(
-                    "relay_policy: {}",
-                    if app.auto_disconnect_relays_when_mesh_ready {
-                        "auto_disconnect_on_mesh_ready"
-                    } else {
-                        "keep_connected"
-                    }
-                );
                 if expected_peers > 0 {
                     println!("mesh_progress: {}/{}", peer_count, expected_peers);
                     println!("mesh_ready: {mesh_ready}");
@@ -1041,9 +1026,6 @@ async fn run_command(command: Command) -> Result<()> {
             }
             if let Some(value) = args.advertise_exit_node {
                 app.node.advertise_exit_node = value;
-            }
-            if let Some(value) = args.auto_disconnect_relays_when_mesh_ready {
-                app.auto_disconnect_relays_when_mesh_ready = value;
             }
             if let Some(value) = args.relay_for_others {
                 app.relay_for_others = value;
@@ -4386,32 +4368,13 @@ fn direct_peer_announcements(
 }
 
 fn relay_connection_action(
-    auto_disconnect_relays_when_mesh_ready: bool,
     relay_connected: bool,
-    mesh_ready: bool,
-    join_requests_active: bool,
 ) -> RelayConnectionAction {
-    if join_requests_active {
-        if relay_connected {
-            RelayConnectionAction::KeepConnected
-        } else {
-            RelayConnectionAction::ReconnectWhenDue
-        }
-    } else if relay_connected {
-        if auto_disconnect_relays_when_mesh_ready && mesh_ready {
-            RelayConnectionAction::PauseForMesh
-        } else {
-            RelayConnectionAction::KeepConnected
-        }
-    } else if auto_disconnect_relays_when_mesh_ready && mesh_ready {
-        RelayConnectionAction::StayPausedForMesh
+    if relay_connected {
+        RelayConnectionAction::KeepConnected
     } else {
         RelayConnectionAction::ReconnectWhenDue
     }
-}
-
-fn should_prune_stale_presence(relays_paused_for_mesh: bool, mesh_ready: bool) -> bool {
-    !(relays_paused_for_mesh && mesh_ready)
 }
 
 fn daemon_session_active(session_enabled: bool, expected_peers: usize) -> bool {
@@ -4502,42 +4465,6 @@ fn persist_shared_network_roster(
         .unwrap_or_else(|| network_id.to_string());
     *session_status = format!("Roster updated for {network_name}.");
     Ok(Some(network_name))
-}
-
-fn mesh_ready_for_tunnel_runtime(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    expected_peers: usize,
-    presence: &PeerPresenceBook,
-    tunnel_runtime: &CliTunnelRuntime,
-    now: u64,
-) -> bool {
-    if expected_peers == 0 {
-        return false;
-    }
-
-    let runtime_peers = tunnel_runtime.peer_status().ok();
-    connected_peer_count_for_runtime(app, own_pubkey, presence, runtime_peers.as_ref(), now)
-        >= expected_peers
-}
-
-fn should_pause_relays_for_mesh(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    expected_peers: usize,
-    presence: &PeerPresenceBook,
-    tunnel_runtime: &CliTunnelRuntime,
-    now: u64,
-) -> bool {
-    app.auto_disconnect_relays_when_mesh_ready
-        && mesh_ready_for_tunnel_runtime(
-            app,
-            own_pubkey,
-            expected_peers,
-            presence,
-            tunnel_runtime,
-            now,
-        )
 }
 
 fn build_daemon_peer_cache_state(
@@ -4753,12 +4680,7 @@ async fn publish_private_announce_to_active_peers(
     relay_sessions: &HashMap<String, ActiveRelaySession>,
     outbound_announces: &mut OutboundAnnounceBook,
 ) -> Result<usize> {
-    let participants = app
-        .participant_pubkeys_hex()
-        .into_iter()
-        .filter(|participant| Some(participant.as_str()) != own_pubkey)
-        .filter(|participant| presence.active().contains_key(participant))
-        .collect::<Vec<_>>();
+    let participants = active_private_announce_participants(app, own_pubkey, presence);
 
     publish_private_announce_to_participants(
         client,
@@ -4769,6 +4691,56 @@ async fn publish_private_announce_to_active_peers(
         outbound_announces,
         &participants,
         Some(presence.active()),
+    )
+    .await
+}
+
+fn active_private_announce_participants(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+) -> Vec<String> {
+    app.participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .filter(|participant| presence.active().contains_key(participant))
+        .collect()
+}
+
+fn known_private_announce_participants(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+) -> Vec<String> {
+    app.participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .filter(|participant| presence.announcement_for(participant).is_some())
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn publish_private_announce_to_known_peers(
+    client: &NostrSignalingClient,
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+    tunnel_runtime: &CliTunnelRuntime,
+    public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
+    relay_sessions: &HashMap<String, ActiveRelaySession>,
+    outbound_announces: &mut OutboundAnnounceBook,
+) -> Result<usize> {
+    let participants = known_private_announce_participants(app, own_pubkey, presence);
+
+    publish_private_announce_to_participants(
+        client,
+        app,
+        tunnel_runtime,
+        public_signal_endpoint,
+        relay_sessions,
+        outbound_announces,
+        &participants,
+        Some(presence.known()),
     )
     .await
 }
@@ -5462,7 +5434,6 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
     let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
     let mut reconnect_attempt = 0u32;
     let mut reconnect_due = Instant::now();
-    let mut relays_paused_for_mesh = false;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -5473,38 +5444,11 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     continue;
                 }
 
-                let mesh_ready = should_pause_relays_for_mesh(
-                    &app,
-                    own_pubkey.as_deref(),
-                    expected_peers,
-                    &presence,
-                    &tunnel_runtime,
-                    unix_timestamp(),
-                );
-                match relay_connection_action(
-                    app.auto_disconnect_relays_when_mesh_ready,
-                    relay_connected,
-                    mesh_ready,
-                    false,
+                if matches!(
+                    relay_connection_action(relay_connected),
+                    RelayConnectionAction::KeepConnected
                 ) {
-                    RelayConnectionAction::StayPausedForMesh => {
-                        reconnect_attempt = 0;
-                        reconnect_due = Instant::now();
-                        if !relays_paused_for_mesh {
-                            println!("connect: {MESH_READY_RELAYS_PAUSED_STATUS}");
-                            relays_paused_for_mesh = true;
-                        }
-                        continue;
-                    }
-                    RelayConnectionAction::ReconnectWhenDue => {
-                        if relays_paused_for_mesh {
-                            println!("connect: mesh degraded; reconnecting relays");
-                            relays_paused_for_mesh = false;
-                        }
-                    }
-                    RelayConnectionAction::KeepConnected | RelayConnectionAction::PauseForMesh => {
-                        continue;
-                    }
+                    continue;
                 }
 
                 client.disconnect().await;
@@ -5521,7 +5465,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                         {
                             eprintln!("signal: roster publish failed after reconnect: {error}");
                         }
-                        if let Err(error) = publish_private_announce_to_active_peers(
+                        if let Err(error) = publish_private_announce_to_known_peers(
                             &client,
                             &app,
                             own_pubkey.as_deref(),
@@ -5533,7 +5477,7 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                         )
                         .await
                         {
-                            eprintln!("signal: active peer announce refresh failed after reconnect: {error}");
+                            eprintln!("signal: known peer announce refresh failed after reconnect: {error}");
                         }
                         if let Err(error) = client.publish(SignalPayload::Hello).await {
                             let error_text = error.to_string();
@@ -5593,32 +5537,6 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed: {error}");
-                }
-                let mesh_ready = should_pause_relays_for_mesh(
-                    &app,
-                    own_pubkey.as_deref(),
-                    expected_peers,
-                    &presence,
-                    &tunnel_runtime,
-                    unix_timestamp(),
-                );
-                if matches!(
-                    relay_connection_action(
-                        app.auto_disconnect_relays_when_mesh_ready,
-                        relay_connected,
-                        mesh_ready,
-                        false,
-                    ),
-                    RelayConnectionAction::PauseForMesh
-                ) {
-                    client.disconnect().await;
-                    relay_connected = false;
-                    reconnect_attempt = 0;
-                    reconnect_due = Instant::now();
-                    if !relays_paused_for_mesh {
-                        println!("connect: {MESH_READY_RELAYS_PAUSED_STATUS}");
-                        relays_paused_for_mesh = true;
-                    }
                 }
             }
             _ = network_interval.tick() => {
@@ -5741,22 +5659,8 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                     )
                     .context("failed to apply tunnel update after relay expiry")?;
                 }
-                let mesh_ready_before_prune = should_pause_relays_for_mesh(
-                    &app,
-                    own_pubkey.as_deref(),
-                    expected_peers,
-                    &presence,
-                    &tunnel_runtime,
-                    now,
-                );
-                let removed = if should_prune_stale_presence(
-                    relays_paused_for_mesh,
-                    mesh_ready_before_prune,
-                ) {
-                    presence.prune_stale(now, peer_signal_timeout_secs(args.announce_interval_secs))
-                } else {
-                    Vec::new()
-                };
+                let removed =
+                    presence.prune_stale(now, peer_signal_timeout_secs(args.announce_interval_secs));
                 for participant in &removed {
                     outbound_announces.forget(participant);
                 }
@@ -5788,39 +5692,6 @@ async fn connect_session(args: ConnectArgs) -> Result<()> {
                         expected_peers,
                         &mut last_mesh_count,
                     );
-                }
-                let mesh_ready = should_pause_relays_for_mesh(
-                    &app,
-                    own_pubkey.as_deref(),
-                    expected_peers,
-                    &presence,
-                    &tunnel_runtime,
-                    now,
-                );
-                match relay_connection_action(
-                    app.auto_disconnect_relays_when_mesh_ready,
-                    relay_connected,
-                    mesh_ready,
-                    false,
-                ) {
-                    RelayConnectionAction::PauseForMesh => {
-                        client.disconnect().await;
-                        relay_connected = false;
-                        reconnect_attempt = 0;
-                        reconnect_due = Instant::now();
-                        if !relays_paused_for_mesh {
-                            println!("connect: {MESH_READY_RELAYS_PAUSED_STATUS}");
-                            relays_paused_for_mesh = true;
-                        }
-                    }
-                    RelayConnectionAction::ReconnectWhenDue => {
-                        if relays_paused_for_mesh {
-                            println!("connect: mesh degraded; reconnecting relays");
-                            relays_paused_for_mesh = false;
-                            reconnect_due = Instant::now();
-                        }
-                    }
-                    RelayConnectionAction::KeepConnected | RelayConnectionAction::StayPausedForMesh => {}
                 }
                 if !relay_connected {
                     continue;
@@ -6170,20 +6041,12 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let mut session_status = if !daemon_session_active(session_enabled, expected_peers) {
         daemon_session_idle_status(session_enabled, expected_peers, app.join_requests_enabled())
             .to_string()
-    } else if restored_peer_cache && app.auto_disconnect_relays_when_mesh_ready {
-        "Trying cached mesh before relays".to_string()
     } else {
         "Connecting to relays".to_string()
     };
     let mut relay_connected = false;
-    let mut relays_paused_for_mesh = false;
     let mut reconnect_attempt = 0u32;
-    let mut reconnect_due = Instant::now()
-        + if restored_peer_cache && app.auto_disconnect_relays_when_mesh_ready {
-            Duration::from_secs(DIRECT_MESH_BOOTSTRAP_RELAY_DELAY_SECS)
-        } else {
-            Duration::ZERO
-        };
+    let mut reconnect_due = Instant::now();
     let mut last_mesh_count = 0_usize;
     let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
     write_daemon_state(
@@ -6229,31 +6092,11 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     continue;
                 }
 
-                let mesh_ready = should_pause_relays_for_mesh(
-                    &app,
-                    own_pubkey.as_deref(),
-                    expected_peers,
-                    &presence,
-                    &tunnel_runtime,
-                    unix_timestamp(),
-                );
-                match relay_connection_action(
-                    app.auto_disconnect_relays_when_mesh_ready,
-                    relay_connected,
-                    mesh_ready,
-                    join_requests_active,
+                if matches!(
+                    relay_connection_action(relay_connected),
+                    RelayConnectionAction::KeepConnected
                 ) {
-                    RelayConnectionAction::StayPausedForMesh => {
-                        reconnect_attempt = 0;
-                        reconnect_due = Instant::now();
-                        relays_paused_for_mesh = true;
-                        session_status = MESH_READY_RELAYS_PAUSED_STATUS.to_string();
-                        continue;
-                    }
-                    RelayConnectionAction::ReconnectWhenDue => {}
-                    RelayConnectionAction::KeepConnected | RelayConnectionAction::PauseForMesh => {
-                        continue;
-                    }
+                    continue;
                 }
 
                 client.disconnect().await;
@@ -6268,7 +6111,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 match client.connect(&relays).await {
                     Ok(()) => {
                         relay_connected = true;
-                        relays_paused_for_mesh = false;
                         reconnect_attempt = 0;
                         relay_service_connected = match service_client.connect(&relays).await {
                             Ok(()) => true,
@@ -6293,7 +6135,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         };
                         if session_active {
                             outbound_announces.clear();
-                            if let Err(error) = publish_private_announce_to_active_peers(
+                            if let Err(error) = publish_private_announce_to_known_peers(
                                 &client,
                                 &app,
                                 own_pubkey.as_deref(),
@@ -6696,7 +6538,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                 relay_connected = false;
                                 reconnect_attempt = 0;
                                 reconnect_due = Instant::now();
-                                let restored_peer_cache = if daemon_session_active(
+                                let _restored_peer_cache = if daemon_session_active(
                                     session_enabled,
                                     expected_peers,
                                 ) {
@@ -6744,17 +6586,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                         &mut public_signal_endpoint,
                                     )
                                     .await;
-                                    session_status = if restored_peer_cache
-                                        && app.auto_disconnect_relays_when_mesh_ready
-                                    {
-                                        reconnect_due = Instant::now()
-                                            + Duration::from_secs(
-                                                DIRECT_MESH_BOOTSTRAP_RELAY_DELAY_SECS,
-                                            );
-                                        "Resuming with cached mesh".to_string()
-                                    } else {
-                                        "Resuming".to_string()
-                                    };
+                                    session_status = "Resuming".to_string();
                                 } else {
                                     port_mapping_runtime.stop().await;
                                     public_signal_endpoint = None;
@@ -6816,7 +6648,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                 match client.connect(&relays).await {
                                                     Ok(()) => {
                                                         relay_connected = true;
-                                                        relays_paused_for_mesh = false;
                                                         reconnect_attempt = 0;
                                                         reconnect_due = Instant::now();
                                                         if let Err(error) =
@@ -6842,7 +6673,7 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                             .to_string()
                                                         };
                                                         if session_active {
-                                                            if let Err(error) = publish_private_announce_to_active_peers(
+                                                            if let Err(error) = publish_private_announce_to_known_peers(
                                                                 &client,
                                                                 &app,
                                                                 own_pubkey.as_deref(),
@@ -6867,7 +6698,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                     }
                                                     Err(error) => {
                                                         relay_connected = false;
-                                                        relays_paused_for_mesh = false;
                                                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                                                         let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
                                                         reconnect_due = Instant::now() + delay;
@@ -6880,7 +6710,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                                 }
                                             } else {
                                                 relay_connected = false;
-                                                relays_paused_for_mesh = false;
                                                 reconnect_attempt = 0;
                                                 reconnect_due = Instant::now();
                                                 port_mapping_runtime.stop().await;
@@ -6996,25 +6825,10 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 }
                 if daemon_session_active(session_enabled, expected_peers) {
                     let now = unix_timestamp();
-                    let mesh_ready_before_prune = should_pause_relays_for_mesh(
-                        &app,
-                        own_pubkey.as_deref(),
-                        expected_peers,
-                        &presence,
-                        &tunnel_runtime,
+                    let removed = presence.prune_stale(
                         now,
+                        peer_signal_timeout_secs(args.announce_interval_secs),
                     );
-                    let removed = if should_prune_stale_presence(
-                        relays_paused_for_mesh,
-                        mesh_ready_before_prune,
-                    ) {
-                        presence.prune_stale(
-                            now,
-                            peer_signal_timeout_secs(args.announce_interval_secs),
-                        )
-                    } else {
-                        Vec::new()
-                    };
                     for participant in &removed {
                         outbound_announces.forget(participant);
                     }
@@ -7049,34 +6863,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             );
                         }
                     }
-                }
-                let mesh_ready = should_pause_relays_for_mesh(
-                    &app,
-                    own_pubkey.as_deref(),
-                    expected_peers,
-                    &presence,
-                    &tunnel_runtime,
-                    unix_timestamp(),
-                );
-                if daemon_session_active(session_enabled, expected_peers)
-                    && matches!(
-                        relay_connection_action(
-                            app.auto_disconnect_relays_when_mesh_ready,
-                            relay_connected,
-                            mesh_ready,
-                            app.join_requests_enabled(),
-                        ),
-                        RelayConnectionAction::PauseForMesh
-                    )
-                {
-                    client.disconnect().await;
-                    relay_connected = false;
-                    relays_paused_for_mesh = true;
-                    reconnect_attempt = 0;
-                    reconnect_due = Instant::now();
-                    session_status = MESH_READY_RELAYS_PAUSED_STATUS.to_string();
-                } else if relays_paused_for_mesh && !mesh_ready {
-                    relays_paused_for_mesh = false;
                 }
                 if let Err(error) = write_daemon_peer_cache_if_changed(
                     DaemonPeerCacheWrite {
@@ -7205,7 +6991,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                         match client.connect(&relays).await {
                                             Ok(()) => {
                                                 relay_connected = true;
-                                                relays_paused_for_mesh = false;
                                                 reconnect_attempt = 0;
                                                 reconnect_due = Instant::now();
                                                 if let Err(error) = apply_presence_runtime_update(
@@ -12088,14 +11873,15 @@ mod tests {
         LinuxExitNodeIpFamily, OutboundAnnounceBook, PeerAnnouncement, PendingRelayRequest,
         PlannedTunnelPeer, RelayAllocationGranted, RelayAllocationRejected, RelayGrantAction,
         RelayProviderVerification, TunnelPeer, UninstallCliArgs, WireGuardPeerStatus,
-        announcement_fingerprint, apply_config_file, apply_participants_override,
-        build_daemon_reload_config, build_peer_announcement, build_runtime_magic_dns_records,
-        can_reuse_active_listen_port, connected_peer_count_for_runtime, daemon_control_file_path,
-        daemon_peer_cache_file_path, daemon_peer_transport_state, daemon_pids_from_ps_output,
-        daemon_reconnect_backoff_delay, daemon_session_active, daemon_session_idle_status,
-        daemon_staged_config_file_path, default_cli_install_path, endpoint_with_listen_port,
-        install_cli, is_uapi_addr_in_use_error, key_b64_to_hex,
-        kill_error_requires_control_fallback, linux_default_route_device_from_output,
+        active_private_announce_participants, announcement_fingerprint, apply_config_file,
+        apply_participants_override, build_daemon_reload_config, build_peer_announcement,
+        build_runtime_magic_dns_records, can_reuse_active_listen_port,
+        connected_peer_count_for_runtime, daemon_control_file_path, daemon_peer_cache_file_path,
+        daemon_peer_transport_state, daemon_pids_from_ps_output, daemon_reconnect_backoff_delay,
+        daemon_session_active, daemon_session_idle_status, daemon_staged_config_file_path,
+        default_cli_install_path, endpoint_with_listen_port, install_cli,
+        is_uapi_addr_in_use_error, key_b64_to_hex, kill_error_requires_control_fallback,
+        known_private_announce_participants, linux_default_route_device_from_output,
         linux_exit_node_default_route_families, linux_exit_node_firewall_binary,
         linux_exit_node_forward_in_rule, linux_exit_node_forward_out_rule,
         linux_exit_node_ipv4_masquerade_rule, linux_exit_node_source_cidr, linux_ipv4_route_source,
@@ -12114,8 +11900,8 @@ mod tests {
         restore_daemon_peer_cache, route_targets_for_tunnel_peers,
         route_targets_require_endpoint_bypass, runtime_endpoint_requires_refresh,
         runtime_local_signal_endpoint, runtime_peer_endpoints_require_refresh, runtime_signal_ipv4,
-        should_prune_stale_presence, stage_daemon_config_apply, take_daemon_control_request,
-        uninstall_cli, update_daemon_config_from_staged_request, utun_interface_candidates,
+        stage_daemon_config_apply, take_daemon_control_request, uninstall_cli,
+        update_daemon_config_from_staged_request, utun_interface_candidates,
         windows_service_bin_path, windows_service_disabled_from_qc_output,
         windows_service_status_from_query_output, windows_should_apply_config_via_service,
         write_daemon_peer_cache,
@@ -12526,6 +12312,46 @@ mod tests {
         let runtime_peer = peer_runtime_lookup(&announcement, Some(&runtime_peers))
             .expect("runtime peer should resolve from cached announcement");
         assert!(peer_has_recent_handshake(runtime_peer));
+    }
+
+    #[test]
+    fn known_private_announce_participants_include_cached_inactive_peers() {
+        let mut config = AppConfig::generated();
+        let participant = "11".repeat(32);
+        config.networks[0].participants = vec![participant.clone()];
+
+        let announcement = PeerAnnouncement {
+            node_id: "peer-a".to_string(),
+            public_key: generate_keypair().public_key,
+            endpoint: "203.0.113.20:51820".to_string(),
+            local_endpoint: None,
+            public_endpoint: Some("203.0.113.20:51820".to_string()),
+            relay_endpoint: None,
+            relay_pubkey: None,
+            relay_expires_at: None,
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: vec!["0.0.0.0/0".to_string()],
+            timestamp: 1,
+        };
+
+        let mut presence = PeerPresenceBook::default();
+        assert!(presence.apply_signal(
+            participant.clone(),
+            SignalPayload::Announce(announcement),
+            100,
+        ));
+        assert_eq!(presence.prune_stale(200, 20), vec![participant.clone()]);
+        assert!(presence.active().is_empty());
+        assert!(presence.announcement_for(&participant).is_some());
+
+        assert!(
+            active_private_announce_participants(&config, None, &presence).is_empty(),
+            "inactive cached peers should not be part of active announce refreshes"
+        );
+        assert_eq!(
+            known_private_announce_participants(&config, None, &presence),
+            vec![participant]
+        );
     }
 
     #[test]
@@ -13474,43 +13300,15 @@ errno=0\n";
     }
 
     #[test]
-    fn relay_connection_action_pauses_when_mesh_is_ready() {
+    fn relay_connection_action_reconnects_only_when_disconnected() {
         assert_eq!(
-            relay_connection_action(true, true, true, false),
-            super::RelayConnectionAction::PauseForMesh
-        );
-        assert_eq!(
-            relay_connection_action(true, false, true, false),
-            super::RelayConnectionAction::StayPausedForMesh
-        );
-        assert_eq!(
-            relay_connection_action(true, false, false, false),
-            super::RelayConnectionAction::ReconnectWhenDue
-        );
-        assert_eq!(
-            relay_connection_action(false, true, true, false),
-            super::RelayConnectionAction::KeepConnected
-        );
-    }
-
-    #[test]
-    fn relay_connection_action_keeps_relays_connected_when_join_request_listening_is_active() {
-        assert_eq!(
-            relay_connection_action(true, true, true, true),
+            relay_connection_action(true),
             super::RelayConnectionAction::KeepConnected
         );
         assert_eq!(
-            relay_connection_action(true, false, true, true),
+            relay_connection_action(false),
             super::RelayConnectionAction::ReconnectWhenDue
         );
-    }
-
-    #[test]
-    fn paused_mesh_skips_stale_presence_prune() {
-        assert!(!should_prune_stale_presence(true, true));
-        assert!(should_prune_stale_presence(true, false));
-        assert!(should_prune_stale_presence(false, true));
-        assert!(should_prune_stale_presence(false, false));
     }
 
     #[test]
@@ -14835,7 +14633,7 @@ errno=0\n";
     }
 
     #[test]
-    fn persist_daemon_runtime_state_marks_resuming_cached_mesh_as_active() {
+    fn persist_daemon_runtime_state_marks_resuming_as_active() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -14856,7 +14654,7 @@ errno=0\n";
             1,
             &presence,
             &tunnel_runtime,
-            "Resuming with cached mesh",
+            "Resuming",
             false,
             &nostr_vpn_core::diagnostics::NetworkSummary::default(),
             &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
@@ -14868,7 +14666,7 @@ errno=0\n";
             .expect("read daemon state")
             .expect("daemon state should exist");
         assert!(state.session_active);
-        assert_eq!(state.session_status, "Resuming with cached mesh");
+        assert_eq!(state.session_status, "Resuming");
         assert!(!state.relay_connected);
 
         let _ = fs::remove_dir_all(&dir);

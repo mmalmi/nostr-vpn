@@ -8,7 +8,6 @@ function baseState() {
     sessionActive: false,
     meshReady: false,
     relayConnected: false,
-    autoDisconnectRelaysWhenMeshReady: true,
     sessionStatus: '',
   }
 }
@@ -49,17 +48,16 @@ test('heroStateText reports disconnected for inactive sessions without service b
   assert.equal(heroStateText(baseState()), 'Disconnected')
 })
 
-test('heroStatusDetailText hides steady-state paused-relay status based on runtime flags', () => {
+test('heroStatusDetailText keeps status text visible', () => {
   const state = {
     ...baseState(),
     sessionActive: true,
     meshReady: true,
     relayConnected: false,
-    autoDisconnectRelaysWhenMeshReady: true,
-    sessionStatus: 'Mesh ready (relays paused)',
+    sessionStatus: 'Connected',
   }
 
-  assert.equal(heroStatusDetailText(state), '')
+  assert.equal(heroStatusDetailText(state), 'Connected')
 })
 
 test('heroStatusDetailText keeps non-paused status details visible', () => {
@@ -68,7 +66,6 @@ test('heroStatusDetailText keeps non-paused status details visible', () => {
     sessionActive: true,
     meshReady: false,
     relayConnected: false,
-    autoDisconnectRelaysWhenMeshReady: true,
     sessionStatus: 'Relay connect failed; retry in 5s',
   }
 

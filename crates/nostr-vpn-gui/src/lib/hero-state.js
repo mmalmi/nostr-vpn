@@ -34,14 +34,5 @@ export function heroStatusDetailText(state) {
     return ''
   }
 
-  const relaysIntentionallyPaused =
-    state.meshReady &&
-    state.autoDisconnectRelaysWhenMeshReady &&
-    !state.relayConnected
-
-  if (relaysIntentionallyPaused) {
-    return ''
-  }
-
   return sessionStatus
 }

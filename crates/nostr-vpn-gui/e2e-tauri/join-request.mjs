@@ -212,8 +212,6 @@ async function main() {
       String(Number(OWNER_ENDPOINT.split(':').pop() || '51830')),
       '--node-name',
       'owner-desk',
-      '--auto-disconnect-relays-when-mesh-ready',
-      'false',
     ],
     { cwd: ROOT_DIR },
   )
@@ -236,8 +234,6 @@ async function main() {
       String(Number(REQUESTER_ENDPOINT.split(':').pop() || '51831')),
       '--node-name',
       'requester-phone',
-      '--auto-disconnect-relays-when-mesh-ready',
-      'false',
     ],
     { cwd: ROOT_DIR },
   )

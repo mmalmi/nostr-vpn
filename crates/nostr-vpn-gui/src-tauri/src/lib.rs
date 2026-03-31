@@ -427,7 +427,6 @@ struct UiState {
     nat_assist_status: String,
     magic_dns_suffix: String,
     magic_dns_status: String,
-    auto_disconnect_relays_when_mesh_ready: bool,
     autoconnect: bool,
     lan_pairing_active: bool,
     lan_pairing_remaining_secs: u64,
@@ -460,7 +459,6 @@ struct SettingsPatch {
     relay_for_others: Option<bool>,
     provide_nat_assist: Option<bool>,
     magic_dns_suffix: Option<String>,
-    auto_disconnect_relays_when_mesh_ready: Option<bool>,
     autoconnect: Option<bool>,
     launch_on_startup: Option<bool>,
     close_to_tray_on_close: Option<bool>,
@@ -1424,14 +1422,6 @@ impl NvpnBackend {
 
         if let Some(magic_dns_suffix) = patch.magic_dns_suffix {
             self.config.magic_dns_suffix = magic_dns_suffix;
-            restart_required = true;
-        }
-
-        if let Some(auto_disconnect_relays_when_mesh_ready) =
-            patch.auto_disconnect_relays_when_mesh_ready
-        {
-            self.config.auto_disconnect_relays_when_mesh_ready =
-                auto_disconnect_relays_when_mesh_ready;
             restart_required = true;
         }
 
@@ -2698,11 +2688,6 @@ impl NvpnBackend {
     }
 
     fn refresh_relay_runtime_status(&mut self) {
-        let mesh_ready = self
-            .daemon_state
-            .as_ref()
-            .is_some_and(|value| value.mesh_ready);
-
         for relay in &self.config.nostr.relays {
             let entry = self.relay_status.entry(relay.clone()).or_default();
 
@@ -2712,9 +2697,6 @@ impl NvpnBackend {
             } else if self.relay_connected {
                 entry.state = "up".to_string();
                 entry.status_text = "connected".to_string();
-            } else if self.config.auto_disconnect_relays_when_mesh_ready && mesh_ready {
-                entry.state = "down".to_string();
-                entry.status_text = "paused (mesh ready)".to_string();
             } else {
                 entry.state = "down".to_string();
                 entry.status_text = "disconnected".to_string();
@@ -3606,9 +3588,6 @@ impl NvpnBackend {
                 }),
             magic_dns_suffix: self.config.magic_dns_suffix.clone(),
             magic_dns_status: self.magic_dns_status.clone(),
-            auto_disconnect_relays_when_mesh_ready: self
-                .config
-                .auto_disconnect_relays_when_mesh_ready,
             autoconnect: self.config.autoconnect,
             lan_pairing_active: self.lan_pairing_running && self.lan_pairing_remaining_secs() > 0,
             lan_pairing_remaining_secs: self.lan_pairing_remaining_secs(),
@@ -5459,7 +5438,7 @@ fn tray_menu_spec(runtime_state: &TrayRuntimeState) -> Vec<TrayMenuItemSpec> {
         },
         TrayMenuItemSpec::Check {
             id: TRAY_RUN_EXIT_NODE_MENU_ID.to_string(),
-            text: "Run Exit Node".to_string(),
+            text: "Offer Private Exit Node".to_string(),
             enabled: true,
             checked: runtime_state.advertise_exit_node,
         },
@@ -8003,7 +7982,7 @@ mod tests {
                         text,
                         checked: false,
                         ..
-                    } if id == TRAY_RUN_EXIT_NODE_MENU_ID && text == "Run Exit Node"
+                    } if id == TRAY_RUN_EXIT_NODE_MENU_ID && text == "Offer Private Exit Node"
                 )),
             _ => false,
         }));
@@ -8058,7 +8037,7 @@ mod tests {
                         text,
                         checked: true,
                         ..
-                    } if id == TRAY_RUN_EXIT_NODE_MENU_ID && text == "Run Exit Node"
+                    } if id == TRAY_RUN_EXIT_NODE_MENU_ID && text == "Offer Private Exit Node"
                 )),
             _ => false,
         }));

@@ -181,7 +181,6 @@ export interface UiState {
   natAssistStatus: string
   magicDnsSuffix: string
   magicDnsStatus: string
-  autoDisconnectRelaysWhenMeshReady: boolean
   autoconnect: boolean
   lanPairingActive: boolean
   lanPairingRemainingSecs: number
@@ -212,7 +211,6 @@ export interface SettingsPatch {
   relayForOthers?: boolean
   provideNatAssist?: boolean
   magicDnsSuffix?: string
-  autoDisconnectRelaysWhenMeshReady?: boolean
   autoconnect?: boolean
   launchOnStartup?: boolean
   closeToTrayOnClose?: boolean

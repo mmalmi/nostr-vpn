@@ -141,7 +141,6 @@ const mockState: UiState = {
   natAssistStatus: 'NAT assist disabled',
   magicDnsSuffix: 'nvpn',
   magicDnsStatus: 'System DNS active for .nvpn via 127.0.0.1:1053',
-  autoDisconnectRelaysWhenMeshReady: true,
   autoconnect: true,
   lanPairingActive: true,
   lanPairingRemainingSecs: 11 * 60 + 42,
@@ -881,10 +880,6 @@ export const updateSettings = (patch: SettingsPatch) =>
         mockState.effectiveAdvertisedRoutes = computeMockEffectiveAdvertisedRoutes()
         if (patch.usePublicRelayFallback !== undefined) {
           mockState.usePublicRelayFallback = patch.usePublicRelayFallback
-        }
-        if (patch.autoDisconnectRelaysWhenMeshReady !== undefined) {
-          mockState.autoDisconnectRelaysWhenMeshReady =
-            patch.autoDisconnectRelaysWhenMeshReady
         }
         if (patch.autoconnect !== undefined) {
           mockState.autoconnect = patch.autoconnect

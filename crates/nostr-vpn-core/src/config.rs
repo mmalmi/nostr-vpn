@@ -78,9 +78,9 @@ pub struct AppConfig {
     pub relay_for_others: bool,
     #[serde(default = "default_provide_nat_assist")]
     pub provide_nat_assist: bool,
-    #[serde(default = "default_auto_disconnect_relays_when_mesh_ready")]
-    pub auto_disconnect_relays_when_mesh_ready: bool,
     // Legacy field kept so older config files still deserialize cleanly.
+    #[serde(default, skip_serializing)]
+    pub auto_disconnect_relays_when_mesh_ready: bool,
     #[serde(default = "default_lan_discovery_enabled", skip_serializing)]
     pub lan_discovery_enabled: bool,
     #[serde(default = "default_launch_on_startup")]
@@ -206,8 +206,7 @@ impl Default for AppConfig {
             use_public_relay_fallback: default_use_public_relay_fallback(),
             relay_for_others: default_relay_for_others(),
             provide_nat_assist: default_provide_nat_assist(),
-            auto_disconnect_relays_when_mesh_ready: default_auto_disconnect_relays_when_mesh_ready(
-            ),
+            auto_disconnect_relays_when_mesh_ready: false,
             lan_discovery_enabled: default_lan_discovery_enabled(),
             launch_on_startup: default_launch_on_startup(),
             autoconnect: default_autoconnect(),
@@ -302,6 +301,7 @@ impl AppConfig {
 
     pub fn ensure_defaults(&mut self) {
         self.ensure_nostr_identity();
+        self.auto_disconnect_relays_when_mesh_ready = false;
         let own_pubkey_hex = self.own_nostr_pubkey_hex().ok();
         if uses_default_node_name(&self.node_name, own_pubkey_hex.as_deref()) {
             let hostname = detected_hostname();
@@ -1542,10 +1542,6 @@ pub fn default_node_name_for_hostname_or_pubkey(
 fn detected_hostname() -> Option<String> {
     let hostname = hostname::get().ok()?;
     Some(hostname.to_string_lossy().into_owned())
-}
-
-const fn default_auto_disconnect_relays_when_mesh_ready() -> bool {
-    true
 }
 
 const fn default_lan_discovery_enabled() -> bool {

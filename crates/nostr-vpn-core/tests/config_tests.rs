@@ -61,7 +61,7 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
     assert!(!config.nostr.relays.is_empty());
-    assert!(config.auto_disconnect_relays_when_mesh_ready);
+    assert!(!config.auto_disconnect_relays_when_mesh_ready);
     assert!(config.autoconnect);
     assert!(config.lan_discovery_enabled);
     assert!(config.launch_on_startup);
@@ -529,6 +529,45 @@ fn save_omits_legacy_lan_discovery_flag() {
     let _ = fs::remove_file(&path);
 
     assert!(!raw.contains("lan_discovery_enabled"));
+    assert!(!raw.contains("auto_disconnect_relays_when_mesh_ready"));
+}
+
+#[test]
+fn legacy_auto_disconnect_flag_is_ignored_when_loading() {
+    let path = unique_temp_config_path("ignore-legacy-auto-disconnect");
+    let raw = r#"
+node_name = "node"
+auto_disconnect_relays_when_mesh_ready = true
+lan_discovery_enabled = true
+launch_on_startup = true
+autoconnect = true
+close_to_tray_on_close = true
+
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
+participants = []
+
+[nostr]
+relays = ["wss://temp.iris.to"]
+secret_key = ""
+public_key = ""
+
+[node]
+id = "node-id"
+private_key = ""
+public_key = ""
+endpoint = "127.0.0.1:51820"
+tunnel_ip = "10.44.0.1/32"
+listen_port = 51820
+"#;
+
+    fs::write(&path, raw).expect("write config");
+    let config = AppConfig::load(&path).expect("load config");
+    let _ = fs::remove_file(&path);
+
+    assert!(!config.auto_disconnect_relays_when_mesh_ready);
 }
 
 #[test]
