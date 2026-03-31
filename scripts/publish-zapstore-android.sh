@@ -216,7 +216,11 @@ if [ "${CAPTURE_SCREENSHOT}" = "1" ]; then
   adb exec-out screencap -p > "${SCREENSHOT_PATH}"
 fi
 
-IFS=' ' read -r -a ZSP_EXTRA_FLAGS_ARRAY <<< "${ZSP_EXTRA_FLAGS}"
 if [ "${SKIP_PUBLISH}" != "1" ]; then
-  zsp publish "${ZAPSTORE_CONFIG}" --channel "${ZAPSTORE_CHANNEL}" "${ZSP_EXTRA_FLAGS_ARRAY[@]}"
+  if [ -n "${ZSP_EXTRA_FLAGS}" ]; then
+    IFS=' ' read -r -a ZSP_EXTRA_FLAGS_ARRAY <<< "${ZSP_EXTRA_FLAGS}"
+    zsp publish "${ZAPSTORE_CONFIG}" --channel "${ZAPSTORE_CHANNEL}" "${ZSP_EXTRA_FLAGS_ARRAY[@]}"
+  else
+    zsp publish "${ZAPSTORE_CONFIG}" --channel "${ZAPSTORE_CHANNEL}"
+  fi
 fi
