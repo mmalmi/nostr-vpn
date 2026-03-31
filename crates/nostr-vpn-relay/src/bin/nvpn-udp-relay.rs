@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
@@ -54,6 +55,10 @@ struct Args {
     nat_assist_port: u16,
     #[arg(long, default_value_t = DEFAULT_LEASE_SECS)]
     lease_secs: u64,
+    #[arg(long)]
+    relay_port_range_start: Option<u16>,
+    #[arg(long)]
+    relay_port_range_end: Option<u16>,
     #[arg(long, default_value_t = DEFAULT_PUBLISH_INTERVAL_SECS)]
     publish_interval_secs: u64,
     #[arg(long, default_value_t = DEFAULT_MAX_ACTIVE_RELAY_SESSIONS)]
@@ -88,6 +93,141 @@ struct RelayServiceLimits {
     max_sessions_per_requester: usize,
     max_bytes_per_session: u64,
     max_forward_bps: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RelayPortRange {
+    start: u16,
+    end: u16,
+}
+
+impl RelayPortRange {
+    fn new(start: u16, end: u16) -> Result<Self> {
+        if start == 0 || end == 0 {
+            return Err(anyhow!("relay port range cannot include port 0"));
+        }
+        if end < start {
+            return Err(anyhow!(
+                "invalid relay port range {start}-{end}: end must be >= start"
+            ));
+        }
+
+        Ok(Self { start, end })
+    }
+
+    fn len(self) -> usize {
+        usize::from(self.end - self.start) + 1
+    }
+
+    fn capacity_sessions(self) -> usize {
+        self.len() / 2
+    }
+
+    fn contains(self, port: u16) -> bool {
+        (self.start..=self.end).contains(&port)
+    }
+
+    fn next_after(self, port: u16) -> u16 {
+        if port >= self.end {
+            self.start
+        } else {
+            port + 1
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RelayPortAllocator {
+    range: RelayPortRange,
+    next_port: u16,
+}
+
+impl RelayPortAllocator {
+    fn new(range: RelayPortRange) -> Self {
+        Self {
+            range,
+            next_port: range.start,
+        }
+    }
+
+    fn bind_pair(
+        &mut self,
+        bind_ip: IpAddr,
+        advertise_host: &str,
+    ) -> Result<(Arc<UdpSocket>, Arc<UdpSocket>, String, String)> {
+        let advertise_ip = parse_advertise_ip(advertise_host)?;
+        let mut first_port = self.next_port;
+        let start_port = self.next_port;
+        let mut tried_first = false;
+
+        while !tried_first || first_port != start_port {
+            tried_first = true;
+            let requester_bind_addr = SocketAddr::new(bind_ip, first_port);
+            let requester_socket = match bind_udp_socket(requester_bind_addr) {
+                Ok(socket) => socket,
+                Err(error) if io_error_kind(&error) == Some(ErrorKind::AddrInUse) => {
+                    first_port = self.range.next_after(first_port);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("failed to bind requester relay leg on {requester_bind_addr}")
+                    });
+                }
+            };
+
+            let requester_addr = requester_socket
+                .local_addr()
+                .context("failed to read requester leg addr")?;
+            let second_start = self.range.next_after(first_port);
+            let mut second_port = second_start;
+            let mut tried_second = false;
+
+            while !tried_second || second_port != second_start {
+                tried_second = true;
+                if second_port == first_port {
+                    break;
+                }
+
+                let target_bind_addr = SocketAddr::new(bind_ip, second_port);
+                match bind_udp_socket(target_bind_addr) {
+                    Ok(target_socket) => {
+                        let target_addr = target_socket
+                            .local_addr()
+                            .context("failed to read target leg addr")?;
+                        self.next_port = self.range.next_after(second_port);
+                        let requester_ingress_endpoint =
+                            SocketAddr::new(advertise_ip, requester_addr.port()).to_string();
+                        let target_ingress_endpoint =
+                            SocketAddr::new(advertise_ip, target_addr.port()).to_string();
+                        return Ok((
+                            requester_socket,
+                            target_socket,
+                            requester_ingress_endpoint,
+                            target_ingress_endpoint,
+                        ));
+                    }
+                    Err(error) if io_error_kind(&error) == Some(ErrorKind::AddrInUse) => {
+                        second_port = self.range.next_after(second_port);
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!("failed to bind target relay leg on {target_bind_addr}")
+                        });
+                    }
+                }
+            }
+
+            drop(requester_socket);
+            first_port = self.range.next_after(first_port);
+        }
+
+        Err(anyhow!(
+            "no free relay port pair available in configured range {}-{}",
+            self.range.start,
+            self.range.end
+        ))
+    }
 }
 
 struct RelayLegTask {
@@ -564,16 +704,11 @@ fn spawn_nat_assist_listener(
     bind_ip: IpAddr,
     port: u16,
     service_runtime_state: Arc<Mutex<ServiceRuntimeState>>,
-) {
+) -> Result<()> {
+    let bind_addr = SocketAddr::new(bind_ip, port);
+    let socket = bind_udp_socket(bind_addr)
+        .with_context(|| format!("failed to bind nat assist on {bind_addr}"))?;
     tokio::spawn(async move {
-        let bind_addr = SocketAddr::new(bind_ip, port);
-        let socket = match UdpSocket::bind(bind_addr).await {
-            Ok(socket) => socket,
-            Err(error) => {
-                eprintln!("relay-service: failed to bind nat assist on {bind_addr}: {error}");
-                return;
-            }
-        };
         let mut buf = [0u8; 2048];
         loop {
             let (read, src) = match socket.recv_from(&mut buf).await {
@@ -602,6 +737,7 @@ fn spawn_nat_assist_listener(
             }
         }
     });
+    Ok(())
 }
 
 async fn send_allocation_rejection(
@@ -646,20 +782,22 @@ async fn send_probe_rejection(
         .await
 }
 
-async fn bind_relay_leg_pair(
+fn bind_relay_leg_pair(
     bind_ip: IpAddr,
     advertise_host: &str,
+    relay_port_allocator: Option<&Arc<StdMutex<RelayPortAllocator>>>,
 ) -> Result<(Arc<UdpSocket>, Arc<UdpSocket>, String, String)> {
-    let requester_socket = Arc::new(
-        UdpSocket::bind(SocketAddr::new(bind_ip, 0))
-            .await
-            .with_context(|| format!("failed to bind requester leg on {bind_ip}"))?,
-    );
-    let target_socket = Arc::new(
-        UdpSocket::bind(SocketAddr::new(bind_ip, 0))
-            .await
-            .with_context(|| format!("failed to bind target leg on {bind_ip}"))?,
-    );
+    if let Some(relay_port_allocator) = relay_port_allocator {
+        let mut relay_port_allocator = relay_port_allocator
+            .lock()
+            .map_err(|_| anyhow!("relay port allocator poisoned"))?;
+        return relay_port_allocator.bind_pair(bind_ip, advertise_host);
+    }
+
+    let requester_socket = bind_udp_socket(SocketAddr::new(bind_ip, 0))
+        .with_context(|| format!("failed to bind requester leg on {bind_ip}"))?;
+    let target_socket = bind_udp_socket(SocketAddr::new(bind_ip, 0))
+        .with_context(|| format!("failed to bind target leg on {bind_ip}"))?;
     let requester_addr = requester_socket
         .local_addr()
         .context("failed to read requester leg addr")?;
@@ -678,6 +816,62 @@ async fn bind_relay_leg_pair(
     ))
 }
 
+fn relay_port_range(args: &Args) -> Result<Option<RelayPortRange>> {
+    match (args.relay_port_range_start, args.relay_port_range_end) {
+        (None, None) => Ok(None),
+        (Some(_), None) | (None, Some(_)) => Err(anyhow!(
+            "both --relay-port-range-start and --relay-port-range-end are required together"
+        )),
+        (Some(_), Some(_)) if args.disable_relay => Err(anyhow!(
+            "relay port range flags cannot be used with --disable-relay"
+        )),
+        (Some(start), Some(end)) => {
+            let range = RelayPortRange::new(start, end)?;
+            if range.capacity_sessions() == 0 {
+                return Err(anyhow!(
+                    "relay port range {}-{} must contain at least 2 ports",
+                    range.start,
+                    range.end
+                ));
+            }
+            if args.enable_nat_assist && range.contains(args.nat_assist_port) {
+                return Err(anyhow!(
+                    "nat assist port {} overlaps relay port range {}-{}",
+                    args.nat_assist_port,
+                    range.start,
+                    range.end
+                ));
+            }
+            if args.max_active_sessions > range.capacity_sessions() {
+                return Err(anyhow!(
+                    "relay port range {}-{} supports at most {} simultaneous sessions; lower --max-active-sessions or widen the range",
+                    range.start,
+                    range.end,
+                    range.capacity_sessions()
+                ));
+            }
+            Ok(Some(range))
+        }
+    }
+}
+
+fn bind_udp_socket(bind_addr: SocketAddr) -> Result<Arc<UdpSocket>> {
+    let socket = std::net::UdpSocket::bind(bind_addr)
+        .with_context(|| format!("failed to bind udp socket on {bind_addr}"))?;
+    socket
+        .set_nonblocking(true)
+        .with_context(|| format!("failed to set nonblocking on udp socket {bind_addr}"))?;
+    let socket = UdpSocket::from_std(socket)
+        .with_context(|| format!("failed to create async udp socket for {bind_addr}"))?;
+    Ok(Arc::new(socket))
+}
+
+fn io_error_kind(error: &anyhow::Error) -> Option<ErrorKind> {
+    error
+        .downcast_ref::<std::io::Error>()
+        .map(std::io::Error::kind)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -694,6 +888,7 @@ async fn main() -> Result<()> {
         .bind_ip
         .parse::<IpAddr>()
         .with_context(|| format!("invalid bind ip {}", args.bind_ip))?;
+    let relay_port_range = relay_port_range(&args)?;
     let state_file = args
         .state_file
         .clone()
@@ -731,10 +926,12 @@ async fn main() -> Result<()> {
         max_bytes_per_session: args.max_bytes_per_session.max(1),
         max_forward_bps: args.max_forward_bps.filter(|value| *value > 0),
     };
+    let relay_port_allocator =
+        relay_port_range.map(|range| Arc::new(StdMutex::new(RelayPortAllocator::new(range))));
     spawn_state_writer(state_file, service_runtime_state.clone());
     spawn_node_record_publisher(&args)?;
     if args.enable_nat_assist {
-        spawn_nat_assist_listener(bind_ip, args.nat_assist_port, service_runtime_state.clone());
+        spawn_nat_assist_listener(bind_ip, args.nat_assist_port, service_runtime_state.clone())?;
     }
 
     if args.disable_relay {
@@ -784,7 +981,35 @@ async fn main() -> Result<()> {
                     target_socket,
                     requester_ingress_endpoint,
                     target_ingress_endpoint,
-                ) = bind_relay_leg_pair(bind_ip, &args.advertise_host).await?;
+                ) = match bind_relay_leg_pair(
+                    bind_ip,
+                    &args.advertise_host,
+                    relay_port_allocator.as_ref(),
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!(
+                            "relay-service: failed to bind relay ports for allocation {}: {error}",
+                            request.request_id
+                        );
+                        if let Err(rejection_error) = send_allocation_rejection(
+                            &service_client,
+                            &message.sender_pubkey,
+                            request.request_id.clone(),
+                            request.network_id.clone(),
+                            RelayAllocationRejectReason::OverCapacity,
+                            Some(30),
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "relay-service: failed to send allocation rejection to {} after bind failure: {rejection_error}",
+                                message.sender_pubkey
+                            );
+                        }
+                        continue;
+                    }
+                };
                 let state = Arc::new(Mutex::new(SessionState::default()));
                 let lease_secs = args.lease_secs.max(30);
                 let started_at = unix_timestamp();
@@ -889,7 +1114,34 @@ async fn main() -> Result<()> {
                     target_socket,
                     requester_ingress_endpoint,
                     target_ingress_endpoint,
-                ) = bind_relay_leg_pair(bind_ip, &args.advertise_host).await?;
+                ) = match bind_relay_leg_pair(
+                    bind_ip,
+                    &args.advertise_host,
+                    relay_port_allocator.as_ref(),
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        eprintln!(
+                            "relay-service: failed to bind relay ports for probe {}: {error}",
+                            request.request_id
+                        );
+                        if let Err(rejection_error) = send_probe_rejection(
+                            &service_client,
+                            &message.sender_pubkey,
+                            request.request_id.clone(),
+                            RelayAllocationRejectReason::OverCapacity,
+                            Some(30),
+                        )
+                        .await
+                        {
+                            eprintln!(
+                                "relay-service: failed to send probe rejection to {} after bind failure: {rejection_error}",
+                                message.sender_pubkey
+                            );
+                        }
+                        continue;
+                    }
+                };
                 let state = Arc::new(Mutex::new(SessionState::default()));
                 let lease_secs = DEFAULT_PROBE_LEASE_SECS;
                 let started_at = unix_timestamp();
@@ -1119,10 +1371,14 @@ mod tests {
     use std::fs;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use super::{
-        NatAssistRuntimeState, RelayRuntimeState, RelayServiceLimits, SessionForwardingState,
+        DEFAULT_LEASE_SECS, DEFAULT_MAX_ACTIVE_RELAY_SESSIONS, DEFAULT_MAX_BYTES_PER_SESSION,
+        DEFAULT_MAX_SESSIONS_PER_REQUESTER, DEFAULT_NAT_ASSIST_PORT, DEFAULT_PUBLISH_INTERVAL_SECS,
+        NatAssistRuntimeState, RelayPortAllocator, RelayPortRange, RelayRuntimeState,
+        RelayServiceLimits, SessionForwardingState, bind_relay_leg_pair, relay_port_range,
         unix_timestamp,
     };
     use nostr_vpn_core::relay::{
@@ -1140,6 +1396,34 @@ mod tests {
                 .expect("epoch")
                 .as_nanos()
         ))
+    }
+
+    fn find_reserved_udp_range(port_count: usize) -> (u16, Vec<std::net::UdpSocket>) {
+        for start in 40_000_u16..60_000_u16 {
+            let end = start.saturating_add(port_count as u16).saturating_sub(1);
+            if end < start {
+                break;
+            }
+            let mut reservations = Vec::with_capacity(port_count);
+            let mut all_free = true;
+            for port in start..=end {
+                match std::net::UdpSocket::bind(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::LOCALHOST),
+                    port,
+                )) {
+                    Ok(socket) => reservations.push(socket),
+                    Err(_) => {
+                        all_free = false;
+                        break;
+                    }
+                }
+            }
+            if all_free {
+                return (start, reservations);
+            }
+        }
+
+        panic!("failed to reserve UDP test range");
     }
 
     #[test]
@@ -1419,6 +1703,147 @@ mod tests {
                 .allow_forward(&limits, now + Duration::from_secs(1), 256)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn relay_port_range_requires_both_bounds() {
+        let args = super::Args {
+            secret_key: "00".repeat(32),
+            relays: vec!["wss://temp.iris.to".to_string()],
+            bind_ip: "0.0.0.0".to_string(),
+            advertise_host: "203.0.113.7".to_string(),
+            disable_relay: false,
+            enable_nat_assist: false,
+            nat_assist_port: DEFAULT_NAT_ASSIST_PORT,
+            lease_secs: DEFAULT_LEASE_SECS,
+            relay_port_range_start: Some(12_000),
+            relay_port_range_end: None,
+            publish_interval_secs: DEFAULT_PUBLISH_INTERVAL_SECS,
+            max_active_sessions: DEFAULT_MAX_ACTIVE_RELAY_SESSIONS,
+            max_sessions_per_requester: DEFAULT_MAX_SESSIONS_PER_REQUESTER,
+            max_bytes_per_session: DEFAULT_MAX_BYTES_PER_SESSION,
+            max_forward_bps: None,
+            price_hint_msats: None,
+            state_file: None,
+        };
+
+        let error = relay_port_range(&args).expect_err("missing range end should fail");
+        assert!(error.to_string().contains(
+            "both --relay-port-range-start and --relay-port-range-end are required together"
+        ));
+    }
+
+    #[test]
+    fn relay_port_range_rejects_nat_assist_overlap() {
+        let args = super::Args {
+            secret_key: "00".repeat(32),
+            relays: vec!["wss://temp.iris.to".to_string()],
+            bind_ip: "0.0.0.0".to_string(),
+            advertise_host: "203.0.113.7".to_string(),
+            disable_relay: false,
+            enable_nat_assist: true,
+            nat_assist_port: 12_000,
+            lease_secs: DEFAULT_LEASE_SECS,
+            relay_port_range_start: Some(12_000),
+            relay_port_range_end: Some(12_127),
+            publish_interval_secs: DEFAULT_PUBLISH_INTERVAL_SECS,
+            max_active_sessions: 32,
+            max_sessions_per_requester: DEFAULT_MAX_SESSIONS_PER_REQUESTER,
+            max_bytes_per_session: DEFAULT_MAX_BYTES_PER_SESSION,
+            max_forward_bps: None,
+            price_hint_msats: None,
+            state_file: None,
+        };
+
+        let error = relay_port_range(&args).expect_err("overlapping nat assist should fail");
+        assert!(
+            error
+                .to_string()
+                .contains("nat assist port 12000 overlaps relay port range 12000-12127")
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_port_allocator_skips_busy_ports() {
+        let (start, mut reservations) = find_reserved_udp_range(4);
+        let busy_socket = reservations.remove(0);
+        drop(reservations);
+
+        let range = RelayPortRange::new(start, start + 3).expect("range");
+        let mut allocator = RelayPortAllocator::new(range);
+        let (_, _, requester_endpoint, target_endpoint) = allocator
+            .bind_pair(IpAddr::V4(Ipv4Addr::LOCALHOST), "127.0.0.1")
+            .expect("bind relay pair");
+
+        let requester_port = requester_endpoint
+            .rsplit(':')
+            .next()
+            .expect("requester port")
+            .parse::<u16>()
+            .expect("requester port number");
+        let target_port = target_endpoint
+            .rsplit(':')
+            .next()
+            .expect("target port")
+            .parse::<u16>()
+            .expect("target port number");
+
+        assert_ne!(requester_port, start);
+        assert_ne!(target_port, start);
+        assert_ne!(requester_port, target_port);
+
+        drop(busy_socket);
+    }
+
+    #[test]
+    fn relay_port_allocator_rejects_exhausted_range() {
+        let (start, reservations) = find_reserved_udp_range(2);
+        let range = RelayPortRange::new(start, start + 1).expect("range");
+        let mut allocator = RelayPortAllocator::new(range);
+
+        let error = allocator
+            .bind_pair(IpAddr::V4(Ipv4Addr::LOCALHOST), "127.0.0.1")
+            .expect_err("fully reserved range should fail");
+        assert!(error.to_string().contains(&format!(
+            "no free relay port pair available in configured range {start}-{}",
+            start + 1
+        )));
+
+        drop(reservations);
+    }
+
+    #[tokio::test]
+    async fn bind_relay_leg_pair_uses_configured_range() {
+        let (start, reservations) = find_reserved_udp_range(4);
+        drop(reservations);
+
+        let allocator = Arc::new(std::sync::Mutex::new(RelayPortAllocator::new(
+            RelayPortRange::new(start, start + 3).expect("range"),
+        )));
+
+        let (_, _, requester_endpoint, target_endpoint) = bind_relay_leg_pair(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "127.0.0.1",
+            Some(&allocator),
+        )
+        .expect("bind relay pair");
+
+        let requester_port = requester_endpoint
+            .rsplit(':')
+            .next()
+            .expect("requester port")
+            .parse::<u16>()
+            .expect("requester port number");
+        let target_port = target_endpoint
+            .rsplit(':')
+            .next()
+            .expect("target port")
+            .parse::<u16>()
+            .expect("target port number");
+
+        assert!((start..=start + 3).contains(&requester_port));
+        assert!((start..=start + 3).contains(&target_port));
+        assert_ne!(requester_port, target_port);
     }
 
     #[test]
