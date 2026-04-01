@@ -8544,6 +8544,7 @@ fn wait_for_daemon_control_ack(config_path: &Path, timeout: Duration) -> Result<
     ))
 }
 
+#[cfg(test)]
 fn wait_for_daemon_session_active(
     config_path: &Path,
     expected_active: bool,
