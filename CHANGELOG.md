@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.3 - 2026-04-01
+
+Changes since `v0.3.2` on 2026-04-01.
+
+### Fixed
+
+- Relay fallback now uses the peer's active-session age for its direct-handshake grace period, so healthy periodic announces no longer prevent fallback from ever engaging.
+- Runtime path caching now drops stale relay ingress endpoints when newer peer announcements stop advertising them, preventing clients from sticking to expired relay ports.
+- Docker relay-fallback end-to-end verification now passes again for the blocked-direct-UDP scenario, with both peers converging on the reachable relay ingress and completing tunnel traffic through it.
+
 ## 0.3.2 - 2026-04-01
 
 Changes since `v0.3.1` on 2026-03-31.

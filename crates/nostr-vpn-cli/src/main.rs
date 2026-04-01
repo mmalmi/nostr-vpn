@@ -2271,8 +2271,10 @@ fn peer_is_past_direct_handshake_grace(
     now: u64,
 ) -> bool {
     presence
-        .last_seen_at(participant)
-        .is_some_and(|last_seen_at| now.saturating_sub(last_seen_at) >= PEER_PATH_RETRY_AFTER_SECS)
+        .active_since_at(participant)
+        .is_some_and(|active_since_at| {
+            now.saturating_sub(active_since_at) >= PEER_PATH_RETRY_AFTER_SECS
+        })
 }
 
 fn participants_needing_relay(
@@ -14313,6 +14315,40 @@ errno=0\n";
         assert!(
             selected.is_empty(),
             "known-only peers should not trigger relay routing"
+        );
+    }
+
+    #[test]
+    fn participants_needing_relay_grace_survives_fresh_announces() {
+        let mut config = AppConfig::generated();
+        let participant = "11".repeat(32);
+        config.networks[0].participants = vec![participant.clone()];
+
+        let public_key = generate_keypair().public_key;
+        let mut first = sample_peer_announcement(public_key.clone());
+        first.timestamp = 100;
+
+        let mut refreshed = sample_peer_announcement(public_key);
+        refreshed.timestamp = 104;
+
+        let mut presence = PeerPresenceBook::default();
+        presence.apply_signal(participant.clone(), SignalPayload::Announce(first), 100);
+        presence.apply_signal(participant.clone(), SignalPayload::Announce(refreshed), 104);
+
+        let selected = participants_needing_relay(
+            &config,
+            None,
+            &presence,
+            None,
+            &HashMap::new(),
+            &HashMap::new(),
+            106,
+        );
+
+        assert_eq!(
+            selected,
+            vec![participant],
+            "repeat announces should not reset the direct-handshake grace window"
         );
     }
 

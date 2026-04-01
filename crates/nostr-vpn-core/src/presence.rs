@@ -8,6 +8,7 @@ pub struct PeerPresenceBook {
     active: HashMap<String, PeerAnnouncement>,
     known: HashMap<String, PeerAnnouncement>,
     last_seen_at: HashMap<String, u64>,
+    active_since_at: HashMap<String, u64>,
 }
 
 impl PeerPresenceBook {
@@ -23,6 +24,7 @@ impl PeerPresenceBook {
         match payload {
             SignalPayload::Hello => false,
             SignalPayload::Announce(announcement) => {
+                let was_active = self.active.contains_key(&sender_pubkey);
                 let should_update_known = self
                     .known
                     .get(&sender_pubkey)
@@ -37,6 +39,9 @@ impl PeerPresenceBook {
                     .get(&sender_pubkey)
                     .is_none_or(|existing| existing.timestamp <= announcement.timestamp);
                 if should_update_active {
+                    if !was_active {
+                        self.active_since_at.insert(sender_pubkey.clone(), seen_at);
+                    }
                     self.active.insert(sender_pubkey, announcement);
                     true
                 } else {
@@ -45,6 +50,7 @@ impl PeerPresenceBook {
             }
             SignalPayload::Disconnect { .. } => {
                 let active_removed = self.active.remove(&sender_pubkey).is_some();
+                self.active_since_at.remove(&sender_pubkey);
                 let known_removed = self.known.remove(&sender_pubkey).is_some();
                 active_removed || known_removed
             }
@@ -88,6 +94,10 @@ impl PeerPresenceBook {
         self.last_seen_at.get(sender_pubkey).copied()
     }
 
+    pub fn active_since_at(&self, sender_pubkey: &str) -> Option<u64> {
+        self.active_since_at.get(sender_pubkey).copied()
+    }
+
     pub fn prune_stale(&mut self, now: u64, stale_after_secs: u64) -> Vec<String> {
         if stale_after_secs == 0 {
             return Vec::new();
@@ -103,6 +113,7 @@ impl PeerPresenceBook {
                 .is_some_and(|last_seen| last_seen > cutoff);
             if !keep {
                 removed.push(sender_pubkey.clone());
+                self.active_since_at.remove(sender_pubkey);
             }
             keep
         });
@@ -116,6 +127,8 @@ impl PeerPresenceBook {
         self.known
             .retain(|participant, _| participants.contains(participant));
         self.last_seen_at
+            .retain(|participant, _| participants.contains(participant));
+        self.active_since_at
             .retain(|participant, _| participants.contains(participant));
     }
 }
