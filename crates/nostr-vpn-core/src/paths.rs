@@ -85,6 +85,27 @@ impl PeerPathBook {
         let participant = participant.into();
         let state = self.peers.entry(participant).or_default();
         let mut changed = false;
+        let announced_relay_endpoints = announcement
+            .relay_endpoint
+            .as_deref()
+            .filter(|endpoint| !endpoint.trim().is_empty())
+            .into_iter()
+            .map(str::to_string)
+            .collect::<HashSet<_>>();
+
+        let before = state.endpoints.len();
+        state.endpoints.retain(|endpoint, tracked| {
+            tracked.source != PeerPathSource::Relay || announced_relay_endpoints.contains(endpoint)
+        });
+        if state.endpoints.len() != before {
+            changed = true;
+        }
+        if let Some(current_endpoint) = state.current_endpoint.as_deref()
+            && !state.endpoints.contains_key(current_endpoint)
+        {
+            state.current_endpoint = None;
+            changed = true;
+        }
 
         for (endpoint, source) in announcement_endpoints(announcement) {
             let entry = state
@@ -413,5 +434,63 @@ fn endpoint_is_local_only(endpoint: &str) -> bool {
             ip.is_loopback() || ip.is_unicast_link_local() || ip.is_unique_local()
         }
         Err(_) => host.eq_ignore_ascii_case("localhost"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PeerPathBook;
+    use crate::control::PeerAnnouncement;
+
+    fn sample_peer_announcement(relay_endpoint: Option<&str>) -> PeerAnnouncement {
+        PeerAnnouncement {
+            node_id: "peer-a".to_string(),
+            public_key: "peer-public-key".to_string(),
+            endpoint: "203.0.113.20:51820".to_string(),
+            local_endpoint: Some("192.168.1.20:51820".to_string()),
+            public_endpoint: Some("203.0.113.20:51820".to_string()),
+            relay_endpoint: relay_endpoint.map(str::to_string),
+            relay_pubkey: relay_endpoint.map(|_| "relay-pubkey".to_string()),
+            relay_expires_at: relay_endpoint.map(|_| 500),
+            tunnel_ip: "10.44.0.2/32".to_string(),
+            advertised_routes: Vec::new(),
+            timestamp: 100,
+        }
+    }
+
+    #[test]
+    fn refresh_from_announcement_drops_relay_paths_that_are_no_longer_advertised() {
+        let participant = "11".repeat(32);
+        let mut paths = PeerPathBook::default();
+        let relay_announcement = sample_peer_announcement(Some("198.51.100.30:40001"));
+        paths.refresh_from_announcement(participant.clone(), &relay_announcement, 100);
+        paths.note_selected(participant.clone(), "198.51.100.30:40001", 100);
+
+        let direct_only = sample_peer_announcement(None);
+        paths.refresh_from_announcement(participant.clone(), &direct_only, 101);
+
+        let selected = paths
+            .select_endpoint_for_local_endpoints(&participant, &direct_only, &[], 101, 5)
+            .expect("selected endpoint");
+
+        assert_eq!(selected, "203.0.113.20:51820");
+    }
+
+    #[test]
+    fn refresh_from_announcement_replaces_stale_relay_path_with_new_endpoint() {
+        let participant = "11".repeat(32);
+        let mut paths = PeerPathBook::default();
+        let relay_a = sample_peer_announcement(Some("198.51.100.30:40001"));
+        paths.refresh_from_announcement(participant.clone(), &relay_a, 100);
+        paths.note_selected(participant.clone(), "198.51.100.30:40001", 100);
+
+        let relay_b = sample_peer_announcement(Some("198.51.100.30:40002"));
+        paths.refresh_from_announcement(participant.clone(), &relay_b, 101);
+
+        let selected = paths
+            .select_endpoint_for_local_endpoints(&participant, &relay_b, &[], 101, 5)
+            .expect("selected endpoint");
+
+        assert_eq!(selected, "198.51.100.30:40002");
     }
 }
