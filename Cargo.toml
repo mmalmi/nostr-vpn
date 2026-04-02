@@ -2,6 +2,7 @@
 members = [
   "crates/nostr-vpn-core",
   "crates/nostr-vpn-cli",
+  "crates/nostr-vpn-web",
   "crates/nostr-vpn-wintun",
   "crates/nostr-vpn-gui/src-tauri",
   "crates/nostr-vpn-relay",
@@ -9,7 +10,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.3"
+version = "0.3.4"
 edition = "2024"
 license = "MIT"
 authors = ["sirius"]

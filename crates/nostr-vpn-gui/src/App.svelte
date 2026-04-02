@@ -1,7 +1,5 @@
-<script lang="ts">
+  <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
-  import { listen } from '@tauri-apps/api/event'
   import jsQR from 'jsqr'
   import { Check, Copy, Trash2 } from 'lucide-svelte'
   import QRCode from 'qrcode'
@@ -1089,6 +1087,10 @@
     }
 
     try {
+      const [{ listen }, { invoke }] = await Promise.all([
+        import('@tauri-apps/api/event'),
+        import('@tauri-apps/api/core'),
+      ])
       deepLinkUnlisten = await listen('deep-link://new-url', async (event) => {
         const urls = Array.isArray(event.payload) ? event.payload : []
         for (const url of urls) {

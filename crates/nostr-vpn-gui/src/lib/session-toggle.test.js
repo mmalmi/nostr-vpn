@@ -6,25 +6,29 @@ import { sessionToggleVisualState } from './session-toggle.js'
 test('sessionToggleVisualState uses the live session state when nothing is pending', () => {
   assert.deepEqual(sessionToggleVisualState(false), {
     active: false,
+    pending: false,
     className: 'off',
     label: 'VPN Off',
   })
   assert.deepEqual(sessionToggleVisualState(true), {
     active: true,
+    pending: false,
     className: 'on',
     label: 'VPN On',
   })
 })
 
-test('sessionToggleVisualState prefers the pending target while a toggle is in flight', () => {
+test('sessionToggleVisualState keeps the live daemon state while a toggle is in flight', () => {
   assert.deepEqual(sessionToggleVisualState(false, true), {
-    active: true,
-    className: 'on',
-    label: 'VPN On',
+    active: false,
+    pending: true,
+    className: 'off',
+    label: 'VPN Starting',
   })
   assert.deepEqual(sessionToggleVisualState(true, false), {
-    active: false,
-    className: 'off',
-    label: 'VPN Off',
+    active: true,
+    pending: true,
+    className: 'on',
+    label: 'VPN Stopping',
   })
 })

@@ -955,12 +955,16 @@ function resolveReleaseCommit(tag, { dryRun = false } = {}) {
     return normalizedTag
   }
 
-  const taggedCommit = run('git', ['rev-parse', '-q', '--verify', `${normalizedTag}^{commit}`], {
-    capture: true,
-    dryRun,
+  const taggedResult = spawnSync('git', ['rev-parse', '-q', '--verify', `${normalizedTag}^{commit}`], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: 'pipe',
   })
-  if (taggedCommit) {
-    return taggedCommit
+  if (taggedResult.status === 0) {
+    const taggedCommit = taggedResult.stdout.trim()
+    if (taggedCommit) {
+      return taggedCommit
+    }
   }
 
   return run('git', ['rev-parse', 'HEAD'], { capture: true, dryRun }) || 'HEAD'

@@ -1,8 +1,10 @@
 export const sessionToggleVisualState = (sessionActive, pendingTarget = null) => {
-  const active = typeof pendingTarget === 'boolean' ? pendingTarget : Boolean(sessionActive)
+  const active = Boolean(sessionActive)
+  const pending = typeof pendingTarget === 'boolean' && pendingTarget !== active
   return {
     active,
+    pending,
     className: active ? 'on' : 'off',
-    label: `VPN ${active ? 'On' : 'Off'}`,
+    label: pending ? `VPN ${pendingTarget ? 'Starting' : 'Stopping'}` : `VPN ${active ? 'On' : 'Off'}`,
   }
 }

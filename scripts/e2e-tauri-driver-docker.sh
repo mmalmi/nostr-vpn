@@ -14,6 +14,7 @@ docker run --rm \
   --name "$IMAGE_NAME-run" \
   --cap-add=NET_ADMIN \
   --device=/dev/net/tun \
+  -e TAURI_E2E_SCENARIO \
   -v "$ROOT_DIR:/work" \
   -w /work \
   "$IMAGE_NAME" \

@@ -11,6 +11,32 @@ declare const __APP_VERSION__: string
 const isTauriRuntime = () =>
   typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 
+const WEB_API_BASE = String(import.meta.env.VITE_NVPN_API_BASE ?? '').trim()
+
+const isWebApiRuntime = () =>
+  typeof window !== 'undefined' && !isTauriRuntime() && WEB_API_BASE.length > 0
+
+const requestWebApi = async (command: string, payload?: unknown) => {
+  const response = await fetch(
+    `${WEB_API_BASE.replace(/\/$/, '')}/${command}`,
+    payload === undefined
+      ? { method: 'POST' }
+      : {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        },
+  )
+  const text = await response.text()
+  const data = text ? JSON.parse(text) : null
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed (${response.status})`)
+  }
+  return data
+}
+
 const composeMagicDnsName = (alias: string, suffix: string) =>
   suffix.trim().length > 0 ? `${alias}.${suffix}` : alias
 
@@ -329,11 +355,17 @@ const asResult = async () => {
 }
 
 export const tick = () =>
-  isTauriRuntime() ? invoke<UiState>('tick') : asResult()
+  isTauriRuntime()
+    ? invoke<UiState>('tick')
+    : isWebApiRuntime()
+      ? requestWebApi('tick')
+      : asResult()
 
 export const connectSession = () =>
   isTauriRuntime()
     ? invoke<UiState>('connect_session')
+    : isWebApiRuntime()
+      ? requestWebApi('connect_session')
     : (() => {
         if (mockRequiresServiceSetup()) {
           throw new Error('Install background service to turn VPN on from the app')
@@ -370,6 +402,8 @@ export const connectSession = () =>
 export const disconnectSession = () =>
   isTauriRuntime()
     ? invoke<UiState>('disconnect_session')
+    : isWebApiRuntime()
+      ? requestWebApi('disconnect_session')
     : (() => {
         mockState.sessionActive = false
         mockState.daemonRunning = true
@@ -399,16 +433,22 @@ export const disconnectSession = () =>
 export const installCli = () =>
   isTauriRuntime()
     ? invoke<UiState>('install_cli')
+    : isWebApiRuntime()
+      ? requestWebApi('install_cli')
     : asResult()
 
 export const uninstallCli = () =>
   isTauriRuntime()
     ? invoke<UiState>('uninstall_cli')
+    : isWebApiRuntime()
+      ? requestWebApi('uninstall_cli')
     : asResult()
 
 export const installSystemService = () =>
   isTauriRuntime()
     ? invoke<UiState>('install_system_service')
+    : isWebApiRuntime()
+      ? requestWebApi('install_system_service')
     : (() => {
         mockState.serviceInstalled = true
         mockState.serviceDisabled = false
@@ -422,6 +462,8 @@ export const installSystemService = () =>
 export const enableSystemService = () =>
   isTauriRuntime()
     ? invoke<UiState>('enable_system_service')
+    : isWebApiRuntime()
+      ? requestWebApi('enable_system_service')
     : (() => {
         mockState.serviceInstalled = true
         mockState.serviceDisabled = false
@@ -435,6 +477,8 @@ export const enableSystemService = () =>
 export const disableSystemService = () =>
   isTauriRuntime()
     ? invoke<UiState>('disable_system_service')
+    : isWebApiRuntime()
+      ? requestWebApi('disable_system_service')
     : (() => {
         mockState.serviceInstalled = true
         mockState.serviceDisabled = true
@@ -450,6 +494,8 @@ export const disableSystemService = () =>
 export const uninstallSystemService = () =>
   isTauriRuntime()
     ? invoke<UiState>('uninstall_system_service')
+    : isWebApiRuntime()
+      ? requestWebApi('uninstall_system_service')
     : (() => {
         mockState.serviceInstalled = false
         mockState.serviceDisabled = false
@@ -465,6 +511,8 @@ export const uninstallSystemService = () =>
 export const addNetwork = (name: string) =>
   isTauriRuntime()
     ? invoke<UiState>('add_network', { name })
+    : isWebApiRuntime()
+      ? requestWebApi('add_network', { name })
     : (() => {
         const index = mockState.networks.length + 1
         const normalized = name.trim() || `Network ${index}`
@@ -487,6 +535,8 @@ export const addNetwork = (name: string) =>
 export const renameNetwork = (networkId: string, name: string) =>
   isTauriRuntime()
     ? invoke<UiState>('rename_network', { networkId, name })
+    : isWebApiRuntime()
+      ? requestWebApi('rename_network', { networkId, name })
     : (() => {
         mockState.networks = mockState.networks.map((network) =>
           network.id === networkId
@@ -499,6 +549,8 @@ export const renameNetwork = (networkId: string, name: string) =>
 export const setNetworkMeshId = (networkId: string, meshId: string) =>
   isTauriRuntime()
     ? invoke<UiState>('set_network_mesh_id', { networkId, meshId })
+    : isWebApiRuntime()
+      ? requestWebApi('set_network_mesh_id', { networkId, meshId })
     : (() => {
         mockState.networks = mockState.networks.map((network) =>
           network.id === networkId
@@ -511,6 +563,8 @@ export const setNetworkMeshId = (networkId: string, meshId: string) =>
 export const removeNetwork = (networkId: string) =>
   isTauriRuntime()
     ? invoke<UiState>('remove_network', { networkId })
+    : isWebApiRuntime()
+      ? requestWebApi('remove_network', { networkId })
     : (() => {
         if (mockState.networks.length <= 1) {
           return asResult()
@@ -527,6 +581,8 @@ export const removeNetwork = (networkId: string) =>
 export const setNetworkEnabled = (networkId: string, enabled: boolean) =>
   isTauriRuntime()
     ? invoke<UiState>('set_network_enabled', { networkId, enabled })
+    : isWebApiRuntime()
+      ? requestWebApi('set_network_enabled', { networkId, enabled })
     : (() => {
         if (enabled) {
           activateMockNetwork(networkId)
@@ -537,6 +593,8 @@ export const setNetworkEnabled = (networkId: string, enabled: boolean) =>
 export const setNetworkJoinRequestsEnabled = (networkId: string, enabled: boolean) =>
   isTauriRuntime()
     ? invoke<UiState>('set_network_join_requests_enabled', { networkId, enabled })
+    : isWebApiRuntime()
+      ? requestWebApi('set_network_join_requests_enabled', { networkId, enabled })
     : (() => {
         mockState.networks = mockState.networks.map((network) =>
           network.id === networkId
@@ -549,6 +607,8 @@ export const setNetworkJoinRequestsEnabled = (networkId: string, enabled: boolea
 export const requestNetworkJoin = (networkId: string) =>
   isTauriRuntime()
     ? invoke<UiState>('request_network_join', { networkId })
+    : isWebApiRuntime()
+      ? requestWebApi('request_network_join', { networkId })
     : (() => {
         mockState.networks = mockState.networks.map((network) => {
           if (network.id !== networkId || !network.inviteInviterNpub) {
@@ -608,6 +668,8 @@ const upsertMockParticipant = (networkId: string, npub: string, alias = '') => {
 export const addParticipant = (networkId: string, npub: string, alias = '') =>
   isTauriRuntime()
     ? invoke<UiState>('add_participant', { networkId, npub, alias: alias.trim() || null })
+    : isWebApiRuntime()
+      ? requestWebApi('add_participant', { networkId, npub, alias: alias.trim() || null })
     : (() => {
         upsertMockParticipant(networkId, npub, alias)
         return asResult()
@@ -616,6 +678,8 @@ export const addParticipant = (networkId: string, npub: string, alias = '') =>
 export const addAdmin = (networkId: string, npub: string) =>
   isTauriRuntime()
     ? invoke<UiState>('add_admin', { networkId, npub })
+    : isWebApiRuntime()
+      ? requestWebApi('add_admin', { networkId, npub })
     : (() => {
         upsertMockParticipant(networkId, npub)
         mockState.networks = mockState.networks.map((network) =>
@@ -633,6 +697,8 @@ export const addAdmin = (networkId: string, npub: string) =>
 export const importNetworkInvite = (invite: string) =>
   isTauriRuntime()
     ? invoke<UiState>('import_network_invite', { invite })
+    : isWebApiRuntime()
+      ? requestWebApi('import_network_invite', { invite })
     : (() => {
         const parsed = decodeInvitePayload(invite) as MockNetworkInvite
         const activeNetwork = mockActiveNetwork()
@@ -713,6 +779,8 @@ export const importNetworkInvite = (invite: string) =>
 export const startLanPairing = () =>
   isTauriRuntime()
     ? invoke<UiState>('start_lan_pairing')
+    : isWebApiRuntime()
+      ? requestWebApi('start_lan_pairing')
     : (() => {
         mockLanPairingEndsAt = Date.now() + 15 * 60 * 1000
         mockState.lanPeers = defaultMockLanPeers()
@@ -722,6 +790,8 @@ export const startLanPairing = () =>
 export const stopLanPairing = () =>
   isTauriRuntime()
     ? invoke<UiState>('stop_lan_pairing')
+    : isWebApiRuntime()
+      ? requestWebApi('stop_lan_pairing')
     : (() => {
         mockLanPairingEndsAt = null
         mockState.lanPeers = []
@@ -731,6 +801,8 @@ export const stopLanPairing = () =>
 export const removeParticipant = (networkId: string, npub: string) =>
   isTauriRuntime()
     ? invoke<UiState>('remove_participant', { networkId, npub })
+    : isWebApiRuntime()
+      ? requestWebApi('remove_participant', { networkId, npub })
     : (() => {
         mockState.networks = mockState.networks.map((network) => {
           if (network.id !== networkId) {
@@ -754,6 +826,8 @@ export const removeParticipant = (networkId: string, npub: string) =>
 export const removeAdmin = (networkId: string, npub: string) =>
   isTauriRuntime()
     ? invoke<UiState>('remove_admin', { networkId, npub })
+    : isWebApiRuntime()
+      ? requestWebApi('remove_admin', { networkId, npub })
     : (() => {
         mockState.networks = mockState.networks.map((network) => {
           if (network.id !== networkId || network.adminNpubs.length <= 1) {
@@ -771,6 +845,8 @@ export const removeAdmin = (networkId: string, npub: string) =>
 export const acceptJoinRequest = (networkId: string, requesterNpub: string) =>
   isTauriRuntime()
     ? invoke<UiState>('accept_join_request', { networkId, requesterNpub })
+    : isWebApiRuntime()
+      ? requestWebApi('accept_join_request', { networkId, requesterNpub })
     : (() => {
         upsertMockParticipant(networkId, requesterNpub)
         mockState.networks = mockState.networks.map((network) =>
@@ -790,6 +866,8 @@ export const acceptJoinRequest = (networkId: string, requesterNpub: string) =>
 export const setParticipantAlias = (npub: string, alias: string) =>
   isTauriRuntime()
     ? invoke<UiState>('set_participant_alias', { npub, alias })
+    : isWebApiRuntime()
+      ? requestWebApi('set_participant_alias', { npub, alias })
     : (() => {
         const normalized = normalizeAlias(alias)
         mockState.networks = mockState.networks.map((network) => ({
@@ -813,6 +891,8 @@ export const setParticipantAlias = (npub: string, alias: string) =>
 export const addRelay = (relay: string) =>
   isTauriRuntime()
     ? invoke<UiState>('add_relay', { relay })
+    : isWebApiRuntime()
+      ? requestWebApi('add_relay', { relay })
     : (() => {
         if (!mockState.relays.some((entry) => entry.url === relay)) {
           mockState.relays.push({ url: relay, state: 'unknown', statusText: 'not checked' })
@@ -824,6 +904,8 @@ export const addRelay = (relay: string) =>
 export const removeRelay = (relay: string) =>
   isTauriRuntime()
     ? invoke<UiState>('remove_relay', { relay })
+    : isWebApiRuntime()
+      ? requestWebApi('remove_relay', { relay })
     : (() => {
         if (mockState.relays.length > 1) {
           mockState.relays = mockState.relays.filter((entry) => entry.url !== relay)
@@ -835,6 +917,8 @@ export const removeRelay = (relay: string) =>
 export const updateSettings = (patch: SettingsPatch) =>
   isTauriRuntime()
     ? invoke<UiState>('update_settings', { patch })
+    : isWebApiRuntime()
+      ? requestWebApi('update_settings', patch)
     : (() => {
         if (patch.nodeName !== undefined) {
           mockState.nodeName = patch.nodeName

@@ -6076,6 +6076,8 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let mut announce_interval =
         tokio::time::interval(Duration::from_secs(args.announce_interval_secs.max(5)));
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut control_interval = tokio::time::interval(Duration::from_millis(100));
+    control_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut reconnect_interval = tokio::time::interval(Duration::from_secs(1));
@@ -6141,6 +6143,406 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
             }
             _ = &mut terminate_wait => {
                 break;
+            }
+            _ = control_interval.tick() => {
+                let Some(request) = take_daemon_control_request(&config_path) else {
+                    continue;
+                };
+                eprintln!("daemon: handling control request {}", request.as_str());
+                let control_result = match request {
+                    DaemonControlRequest::Stop => break,
+                    DaemonControlRequest::Pause => {
+                        let was_session_active =
+                            daemon_session_active(session_enabled, expected_peers);
+                        let join_requests_active = app.join_requests_enabled();
+                        let had_relay_connection = relay_connected;
+                        session_enabled = false;
+                        reconnect_attempt = 0;
+                        reconnect_due = Instant::now();
+                        presence = PeerPresenceBook::default();
+                        relay_sessions.clear();
+                        standby_relay_sessions.clear();
+                        relay_failures.clear();
+                        relay_provider_verifications.clear();
+                        pending_relay_requests.clear();
+                        outbound_announces.clear();
+                        last_nat_punch_attempt = None;
+                        if !join_requests_active {
+                            relay_connected = false;
+                        }
+
+                        let mut control_result = Ok(());
+                        if let Err(error) = apply_presence_runtime_update(
+                            &app,
+                            own_pubkey.as_deref(),
+                            &presence,
+                            &relay_sessions,
+                            &mut path_book,
+                            unix_timestamp(),
+                            &mut tunnel_runtime,
+                            magic_dns_runtime.as_ref(),
+                        ) {
+                            session_status = format!("Pause failed ({error})");
+                        } else {
+                            session_status = daemon_session_idle_status(
+                                session_enabled,
+                                expected_peers,
+                                join_requests_active,
+                            )
+                            .to_string();
+                            if let Err(error) = persist_daemon_runtime_state(
+                                &state_file,
+                                &app,
+                                session_enabled,
+                                expected_peers,
+                                &presence,
+                                &tunnel_runtime,
+                                &session_status,
+                                relay_connected,
+                                &network_snapshot.summary(network_changed_at, captive_portal),
+                                &port_mapping_runtime.status(),
+                                &relay_operator_runtime,
+                            ) {
+                                control_result = Err(anyhow!(
+                                    "failed to persist daemon state while pausing: {error}"
+                                ));
+                            }
+                        }
+
+                        if had_relay_connection && was_session_active {
+                            let _ = client
+                                .publish(SignalPayload::Disconnect {
+                                    node_id: app.node.id.clone(),
+                                })
+                                .await;
+                        }
+                        if !join_requests_active {
+                            client.disconnect().await;
+                        }
+                        port_mapping_runtime.stop().await;
+                        public_signal_endpoint = None;
+                        control_result
+                    }
+                    DaemonControlRequest::Resume => {
+                        let mut control_result = Ok(());
+                        if !session_enabled {
+                            session_enabled = true;
+                            relay_connected = false;
+                            reconnect_attempt = 0;
+                            reconnect_due = Instant::now();
+                            let _restored_peer_cache = if daemon_session_active(
+                                session_enabled,
+                                expected_peers,
+                            ) {
+                                match restore_daemon_peer_cache(
+                                    DaemonPeerCacheRestore {
+                                        path: &peer_cache_file,
+                                        app: &app,
+                                        network_id: &network_id,
+                                        own_pubkey: own_pubkey.as_deref(),
+                                        now: unix_timestamp(),
+                                        announce_interval_secs: args.announce_interval_secs,
+                                    },
+                                    &mut presence,
+                                    &mut path_book,
+                                ) {
+                                    Ok(restored) => restored,
+                                    Err(error) => {
+                                        eprintln!(
+                                            "daemon: failed to restore peer cache on resume: {error}"
+                                        );
+                                        false
+                                    }
+                                }
+                            } else {
+                                false
+                            };
+                            if let Err(error) = apply_presence_runtime_update(
+                                &app,
+                                own_pubkey.as_deref(),
+                                &presence,
+                                &relay_sessions,
+                                &mut path_book,
+                                unix_timestamp(),
+                                &mut tunnel_runtime,
+                                magic_dns_runtime.as_ref(),
+                            ) {
+                                session_status = format!("Resume failed ({error})");
+                            } else if daemon_session_active(session_enabled, expected_peers) {
+                                session_status = "Resuming".to_string();
+                                if let Err(error) = persist_daemon_runtime_state(
+                                    &state_file,
+                                    &app,
+                                    session_enabled,
+                                    expected_peers,
+                                    &presence,
+                                    &tunnel_runtime,
+                                    &session_status,
+                                    relay_connected,
+                                    &network_snapshot.summary(network_changed_at, captive_portal),
+                                    &port_mapping_runtime.status(),
+                                    &relay_operator_runtime,
+                                ) {
+                                    control_result = Err(anyhow!(
+                                        "failed to persist daemon state while resuming: {error}"
+                                    ));
+                                }
+                                let runtime_listen_port = tunnel_runtime
+                                    .active_listen_port
+                                    .unwrap_or(app.node.listen_port);
+                                refresh_public_signal_endpoint_with_port_mapping(
+                                    &app,
+                                    &network_snapshot,
+                                    runtime_listen_port,
+                                    &mut port_mapping_runtime,
+                                    &mut public_signal_endpoint,
+                                )
+                                .await;
+                            } else {
+                                port_mapping_runtime.stop().await;
+                                public_signal_endpoint = None;
+                                session_status = daemon_session_idle_status(
+                                    session_enabled,
+                                    expected_peers,
+                                    app.join_requests_enabled(),
+                                )
+                                .to_string();
+                                if let Err(error) = persist_daemon_runtime_state(
+                                    &state_file,
+                                    &app,
+                                    session_enabled,
+                                    expected_peers,
+                                    &presence,
+                                    &tunnel_runtime,
+                                    &session_status,
+                                    relay_connected,
+                                    &network_snapshot.summary(network_changed_at, captive_portal),
+                                    &port_mapping_runtime.status(),
+                                    &relay_operator_runtime,
+                                ) {
+                                    control_result = Err(anyhow!(
+                                        "failed to persist daemon state while resuming: {error}"
+                                    ));
+                                }
+                            }
+                        }
+                        control_result
+                    }
+                    DaemonControlRequest::Reload => {
+                        match update_daemon_config_from_staged_request(&config_path) {
+                            Ok(staged_config_applied) => {
+                                match load_config_with_overrides(
+                                    &config_path,
+                                    network_override.clone(),
+                                    participants_override.clone(),
+                                ) {
+                                    Ok((reloaded_app, reloaded_network_id)) => {
+                                        let reload = build_daemon_reload_config(
+                                            reloaded_app,
+                                            reloaded_network_id,
+                                            &args.relay,
+                                        );
+                                        let configured_set = reload
+                                            .configured_participants
+                                            .iter()
+                                            .cloned()
+                                            .collect::<HashSet<_>>();
+                                        app = reload.app;
+                                        network_id = reload.network_id;
+                                        expected_peers = reload.expected_peers;
+                                        own_pubkey = reload.own_pubkey;
+                                        relays = reload.relays;
+
+                                        presence.retain_participants(&configured_set);
+                                        path_book.retain_participants(&configured_set);
+                                        outbound_announces.retain_participants(&configured_set);
+                                        outbound_announces.clear();
+                                        last_nat_punch_attempt = None;
+                                        client.disconnect().await;
+                                        match NostrSignalingClient::from_secret_key_with_networks(
+                                            &app.nostr.secret_key,
+                                            signaling_networks_for_app(&app),
+                                        ) {
+                                            Ok(new_client) => {
+                                                client = new_client;
+                                                let join_requests_active = app.join_requests_enabled();
+                                                let session_active =
+                                                    daemon_session_active(session_enabled, expected_peers);
+                                                if relay_session_active(
+                                                    session_enabled,
+                                                    expected_peers,
+                                                    join_requests_active,
+                                                ) {
+                                                    match client.connect(&relays).await {
+                                                        Ok(()) => {
+                                                            relay_connected = true;
+                                                            reconnect_attempt = 0;
+                                                            reconnect_due = Instant::now();
+                                                            if let Err(error) =
+                                                                publish_active_network_roster(
+                                                                    &client,
+                                                                    &app,
+                                                                    None,
+                                                                )
+                                                                .await
+                                                            {
+                                                                eprintln!(
+                                                                    "daemon: roster publish failed after config reload: {error}"
+                                                                );
+                                                            }
+                                                            session_status = if session_active {
+                                                                "Config reloaded".to_string()
+                                                            } else {
+                                                                daemon_session_idle_status(
+                                                                    session_enabled,
+                                                                    expected_peers,
+                                                                    join_requests_active,
+                                                                )
+                                                                .to_string()
+                                                            };
+                                                            if session_active {
+                                                                if let Err(error) = publish_private_announce_to_known_peers(
+                                                                    &client,
+                                                                    &app,
+                                                                    own_pubkey.as_deref(),
+                                                                    &presence,
+                                                                    &tunnel_runtime,
+                                                                    public_signal_endpoint.as_ref(),
+                                                                    &relay_sessions,
+                                                                    &mut outbound_announces,
+                                                                ).await {
+                                                                    session_status = format!(
+                                                                        "Config reloaded; private announce failed ({})",
+                                                                        error
+                                                                    );
+                                                                }
+                                                                if let Err(error) = client.publish(SignalPayload::Hello).await {
+                                                                    session_status = format!(
+                                                                        "Config reloaded; hello publish failed ({})",
+                                                                        error
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(error) => {
+                                                            relay_connected = false;
+                                                            reconnect_attempt = reconnect_attempt.saturating_add(1);
+                                                            let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
+                                                            reconnect_due = Instant::now() + delay;
+                                                            session_status = format!(
+                                                                "Config reloaded; relay reconnect failed (retry in {}s: {})",
+                                                                delay.as_secs(),
+                                                                error
+                                                            );
+                                                        }
+                                                    }
+                                                } else {
+                                                    relay_connected = false;
+                                                    reconnect_attempt = 0;
+                                                    reconnect_due = Instant::now();
+                                                    port_mapping_runtime.stop().await;
+                                                    public_signal_endpoint = None;
+                                                    session_status = if session_enabled {
+                                                        daemon_session_idle_status(
+                                                            session_enabled,
+                                                            expected_peers,
+                                                            join_requests_active,
+                                                        )
+                                                        .to_string()
+                                                    } else {
+                                                        "Config reloaded (paused)".to_string()
+                                                    };
+                                                }
+                                            }
+                                            Err(error) => {
+                                                session_status = format!(
+                                                    "Config reload failed (signal client init): {}",
+                                                    error
+                                                );
+                                            }
+                                        }
+
+                                        if let Err(error) = apply_presence_runtime_update(
+                                            &app,
+                                            own_pubkey.as_deref(),
+                                            &presence,
+                                            &relay_sessions,
+                                            &mut path_book,
+                                            unix_timestamp(),
+                                            &mut tunnel_runtime,
+                                            magic_dns_runtime.as_ref(),
+                                        ) {
+                                            session_status = format!(
+                                                "Config reloaded; tunnel update failed ({})",
+                                                error
+                                            );
+                                        } else if daemon_session_active(session_enabled, expected_peers) {
+                                            let runtime_listen_port = tunnel_runtime
+                                                .active_listen_port
+                                                .unwrap_or(app.node.listen_port);
+                                            refresh_public_signal_endpoint_with_port_mapping(
+                                                &app,
+                                                &network_snapshot,
+                                                runtime_listen_port,
+                                                &mut port_mapping_runtime,
+                                                &mut public_signal_endpoint,
+                                            )
+                                            .await;
+                                        }
+                                        Ok(())
+                                    }
+                                    Err(error) => {
+                                        session_status = if staged_config_applied {
+                                            format!("Config apply failed (reload: {error})")
+                                        } else {
+                                            format!("Config reload failed ({error})")
+                                        };
+                                        Err(error)
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                session_status = format!("Config apply failed ({error})");
+                                Err(error)
+                            }
+                        }
+                    }
+                };
+                if let Err(error) = sync_local_relay_operator(
+                    &config_path,
+                    &app,
+                    &relays,
+                    public_signal_endpoint.as_ref(),
+                    &mut relay_operator_process,
+                    &mut relay_operator_runtime,
+                ) {
+                    eprintln!("relay operator: sync failed after control request: {error}");
+                }
+                let persist_result = persist_daemon_runtime_state(
+                    &state_file,
+                    &app,
+                    session_enabled,
+                    expected_peers,
+                    &presence,
+                    &tunnel_runtime,
+                    &session_status,
+                    relay_connected,
+                    &network_snapshot.summary(network_changed_at, captive_portal),
+                    &port_mapping_runtime.status(),
+                    &relay_operator_runtime,
+                )
+                .map_err(|error| anyhow!("failed to persist daemon state after control request: {error}"));
+                let control_result = control_result.and(persist_result);
+                match &control_result {
+                    Ok(()) => eprintln!("daemon: control request {} completed", request.as_str()),
+                    Err(error) => {
+                        eprintln!(
+                            "daemon: control request {} failed: {error}",
+                            request.as_str()
+                        );
+                    }
+                }
+                let _ = write_daemon_control_result(&config_path, request, control_result);
             }
             _ = reconnect_interval.tick() => {
                 let join_requests_active = app.join_requests_enabled();
@@ -6540,343 +6942,6 @@ async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     }
                 }
 
-                if let Some(request) = take_daemon_control_request(&config_path) {
-                    eprintln!("daemon: handling control request {}", request.as_str());
-                    let control_result = match request {
-                        DaemonControlRequest::Stop => break,
-                        DaemonControlRequest::Pause => {
-                            let was_session_active =
-                                daemon_session_active(session_enabled, expected_peers);
-                            if relay_connected && was_session_active {
-                                let _ = client
-                                    .publish(SignalPayload::Disconnect {
-                                        node_id: app.node.id.clone(),
-                                    })
-                                    .await;
-                            }
-                            session_enabled = false;
-                            let join_requests_active = app.join_requests_enabled();
-                            if !join_requests_active {
-                                client.disconnect().await;
-                                relay_connected = false;
-                            }
-                            reconnect_attempt = 0;
-                            reconnect_due = Instant::now();
-                            port_mapping_runtime.stop().await;
-                            public_signal_endpoint = None;
-                            presence = PeerPresenceBook::default();
-                            relay_sessions.clear();
-                            standby_relay_sessions.clear();
-                            relay_failures.clear();
-                            relay_provider_verifications.clear();
-                            pending_relay_requests.clear();
-                            outbound_announces.clear();
-                            last_nat_punch_attempt = None;
-                            if let Err(error) = apply_presence_runtime_update(
-                                &app,
-                                own_pubkey.as_deref(),
-                                &presence,
-                                &relay_sessions,
-                                &mut path_book,
-                                unix_timestamp(),
-                                &mut tunnel_runtime,
-                                magic_dns_runtime.as_ref(),
-                            ) {
-                                session_status = format!("Pause failed ({error})");
-                            } else {
-                                session_status = daemon_session_idle_status(
-                                    session_enabled,
-                                    expected_peers,
-                                    join_requests_active,
-                                )
-                                .to_string();
-                            }
-                            Ok(())
-                        }
-                        DaemonControlRequest::Resume => {
-                            if !session_enabled {
-                                session_enabled = true;
-                                relay_connected = false;
-                                reconnect_attempt = 0;
-                                reconnect_due = Instant::now();
-                                let _restored_peer_cache = if daemon_session_active(
-                                    session_enabled,
-                                    expected_peers,
-                                ) {
-                                    match restore_daemon_peer_cache(
-                                        DaemonPeerCacheRestore {
-                                            path: &peer_cache_file,
-                                            app: &app,
-                                            network_id: &network_id,
-                                            own_pubkey: own_pubkey.as_deref(),
-                                            now: unix_timestamp(),
-                                            announce_interval_secs: args.announce_interval_secs,
-                                        },
-                                        &mut presence,
-                                        &mut path_book,
-                                    ) {
-                                        Ok(restored) => restored,
-                                        Err(error) => {
-                                            eprintln!("daemon: failed to restore peer cache on resume: {error}");
-                                            false
-                                        }
-                                    }
-                                } else {
-                                    false
-                                };
-                                if let Err(error) = apply_presence_runtime_update(
-                                    &app,
-                                    own_pubkey.as_deref(),
-                                    &presence,
-                                    &relay_sessions,
-                                    &mut path_book,
-                                    unix_timestamp(),
-                                    &mut tunnel_runtime,
-                                    magic_dns_runtime.as_ref(),
-                                ) {
-                                    session_status = format!("Resume failed ({error})");
-                                } else if daemon_session_active(session_enabled, expected_peers) {
-                                    let runtime_listen_port = tunnel_runtime
-                                        .active_listen_port
-                                        .unwrap_or(app.node.listen_port);
-                                    refresh_public_signal_endpoint_with_port_mapping(
-                                        &app,
-                                        &network_snapshot,
-                                        runtime_listen_port,
-                                        &mut port_mapping_runtime,
-                                        &mut public_signal_endpoint,
-                                    )
-                                    .await;
-                                    session_status = "Resuming".to_string();
-                                } else {
-                                    port_mapping_runtime.stop().await;
-                                    public_signal_endpoint = None;
-                                    session_status = daemon_session_idle_status(
-                                        session_enabled,
-                                        expected_peers,
-                                        app.join_requests_enabled(),
-                                    )
-                                    .to_string();
-                                }
-                            }
-                            Ok(())
-                        }
-                        DaemonControlRequest::Reload => {
-                            match update_daemon_config_from_staged_request(&config_path) {
-                                Ok(staged_config_applied) => {
-                            match load_config_with_overrides(
-                                &config_path,
-                                network_override.clone(),
-                                participants_override.clone(),
-                            ) {
-                                Ok((reloaded_app, reloaded_network_id)) => {
-                                    let reload = build_daemon_reload_config(
-                                        reloaded_app,
-                                        reloaded_network_id,
-                                        &args.relay,
-                                    );
-                                    let configured_set = reload
-                                        .configured_participants
-                                        .iter()
-                                        .cloned()
-                                        .collect::<HashSet<_>>();
-                                    app = reload.app;
-                                    network_id = reload.network_id;
-                                    expected_peers = reload.expected_peers;
-                                    own_pubkey = reload.own_pubkey;
-                                    relays = reload.relays;
-
-                                    presence.retain_participants(&configured_set);
-                                    path_book.retain_participants(&configured_set);
-                                    outbound_announces.retain_participants(&configured_set);
-                                    outbound_announces.clear();
-                                    last_nat_punch_attempt = None;
-                                    client.disconnect().await;
-                                    match NostrSignalingClient::from_secret_key_with_networks(
-                                        &app.nostr.secret_key,
-                                        signaling_networks_for_app(&app),
-                                    ) {
-                                        Ok(new_client) => {
-                                            client = new_client;
-                                            let join_requests_active = app.join_requests_enabled();
-                                            let session_active =
-                                                daemon_session_active(session_enabled, expected_peers);
-                                            if relay_session_active(
-                                                session_enabled,
-                                                expected_peers,
-                                                join_requests_active,
-                                            ) {
-                                                match client.connect(&relays).await {
-                                                    Ok(()) => {
-                                                        relay_connected = true;
-                                                        reconnect_attempt = 0;
-                                                        reconnect_due = Instant::now();
-                                                        if let Err(error) =
-                                                            publish_active_network_roster(
-                                                                &client,
-                                                                &app,
-                                                                None,
-                                                            )
-                                                            .await
-                                                        {
-                                                            eprintln!(
-                                                                "daemon: roster publish failed after config reload: {error}"
-                                                            );
-                                                        }
-                                                        session_status = if session_active {
-                                                            "Config reloaded".to_string()
-                                                        } else {
-                                                            daemon_session_idle_status(
-                                                                session_enabled,
-                                                                expected_peers,
-                                                                join_requests_active,
-                                                            )
-                                                            .to_string()
-                                                        };
-                                                        if session_active {
-                                                            if let Err(error) = publish_private_announce_to_known_peers(
-                                                                &client,
-                                                                &app,
-                                                                own_pubkey.as_deref(),
-                                                                &presence,
-                                                                &tunnel_runtime,
-                                                                public_signal_endpoint.as_ref(),
-                                                                &relay_sessions,
-                                                                &mut outbound_announces,
-                                                            ).await {
-                                                                session_status = format!(
-                                                                    "Config reloaded; private announce failed ({})",
-                                                                    error
-                                                                );
-                                                            }
-                                                            if let Err(error) = client.publish(SignalPayload::Hello).await {
-                                                                session_status = format!(
-                                                                    "Config reloaded; hello publish failed ({})",
-                                                                    error
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                    Err(error) => {
-                                                        relay_connected = false;
-                                                        reconnect_attempt = reconnect_attempt.saturating_add(1);
-                                                        let delay = daemon_reconnect_backoff_delay(reconnect_attempt);
-                                                        reconnect_due = Instant::now() + delay;
-                                                        session_status = format!(
-                                                            "Config reloaded; relay reconnect failed (retry in {}s: {})",
-                                                            delay.as_secs(),
-                                                            error
-                                                        );
-                                                    }
-                                                }
-                                            } else {
-                                                relay_connected = false;
-                                                reconnect_attempt = 0;
-                                                reconnect_due = Instant::now();
-                                                port_mapping_runtime.stop().await;
-                                                public_signal_endpoint = None;
-                                                session_status = if session_enabled {
-                                                    daemon_session_idle_status(
-                                                        session_enabled,
-                                                        expected_peers,
-                                                        join_requests_active,
-                                                    )
-                                                    .to_string()
-                                                } else {
-                                                    "Config reloaded (paused)".to_string()
-                                                };
-                                            }
-                                        }
-                                        Err(error) => {
-                                            session_status = format!(
-                                                "Config reload failed (signal client init): {}",
-                                                error
-                                            );
-                                        }
-                                    }
-
-                                    if let Err(error) = apply_presence_runtime_update(
-                                        &app,
-                                        own_pubkey.as_deref(),
-                                        &presence,
-                                        &relay_sessions,
-                                        &mut path_book,
-                                        unix_timestamp(),
-                                        &mut tunnel_runtime,
-                                        magic_dns_runtime.as_ref(),
-                                    ) {
-                                        session_status = format!(
-                                            "Config reloaded; tunnel update failed ({})",
-                                            error
-                                        );
-                                    } else if daemon_session_active(session_enabled, expected_peers) {
-                                        let runtime_listen_port = tunnel_runtime
-                                            .active_listen_port
-                                            .unwrap_or(app.node.listen_port);
-                                        refresh_public_signal_endpoint_with_port_mapping(
-                                            &app,
-                                            &network_snapshot,
-                                            runtime_listen_port,
-                                            &mut port_mapping_runtime,
-                                            &mut public_signal_endpoint,
-                                        )
-                                        .await;
-                                    }
-                                    Ok(())
-                                }
-                                Err(error) => {
-                                    session_status = if staged_config_applied {
-                                        format!("Config apply failed (reload: {error})")
-                                    } else {
-                                        format!("Config reload failed ({error})")
-                                    };
-                                    Err(error)
-                                }
-                            }
-                                }
-                                Err(error) => {
-                                    session_status = format!("Config apply failed ({error})");
-                                    Err(error)
-                                }
-                            }
-                        }
-                    };
-                    if let Err(error) = sync_local_relay_operator(
-                        &config_path,
-                        &app,
-                        &relays,
-                        public_signal_endpoint.as_ref(),
-                        &mut relay_operator_process,
-                        &mut relay_operator_runtime,
-                    ) {
-                        eprintln!("relay operator: sync failed after control request: {error}");
-                    }
-                    let persist_result = persist_daemon_runtime_state(
-                        &state_file,
-                        &app,
-                        session_enabled,
-                        expected_peers,
-                        &presence,
-                        &tunnel_runtime,
-                        &session_status,
-                        relay_connected,
-                        &network_snapshot.summary(network_changed_at, captive_portal),
-                        &port_mapping_runtime.status(),
-                        &relay_operator_runtime,
-                    )
-                    .map_err(|error| anyhow!("failed to persist daemon state after control request: {error}"));
-                    let control_result = control_result.and(persist_result);
-                    match &control_result {
-                        Ok(()) => eprintln!("daemon: control request {} completed", request.as_str()),
-                        Err(error) => {
-                            eprintln!(
-                                "daemon: control request {} failed: {error}",
-                                request.as_str()
-                            );
-                        }
-                    }
-                    let _ = write_daemon_control_result(&config_path, request, control_result);
-                }
                 if let Some((executable, launched_fingerprint)) =
                     supervised_service_executable.as_ref()
                 {

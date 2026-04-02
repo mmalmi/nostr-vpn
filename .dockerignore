@@ -7,3 +7,6 @@ dist
 crates/nostr-vpn-gui/src-tauri/gen/android/.gradle
 crates/nostr-vpn-gui/src-tauri/gen/android/app/build
 crates/nostr-vpn-gui/src-tauri/gen/apple/build
+crates/nostr-vpn-gui/node_modules
+crates/nostr-vpn-gui/dist
+umbrel/.data
