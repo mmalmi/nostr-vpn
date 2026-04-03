@@ -1,24 +1,30 @@
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
-use std::os::fd::{FromRawFd, RawFd};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::runtime::Handle;
 use tokio::sync::watch;
-use tokio::task::JoinHandle;
 
+use crate::android_session_runtime::{
+    build_peer_announcement, configured_recipients, detect_runtime_primary_ipv4,
+    expected_peer_count, local_interface_address_for_tunnel, local_signal_endpoint,
+    note_successful_runtime_paths, open_mobile_tun_io, planned_tunnel_peers,
+    publish_hello_best_effort, publish_private_announce_best_effort,
+    route_targets_for_tunnel_peers, runtime_local_signal_endpoint, should_retry_tun_io,
+    signal_payload_kind, signaling_networks_for_app, strip_cidr, tunnel_fingerprint,
+    unix_timestamp,
+};
 use crate::android_vpn::{AndroidVpnExt, StartVpnArgs};
 use crate::mobile_wg::{MobileWireGuardRuntime, PeerRuntimeStatus, WireGuardPeerConfig};
 use crate::{DaemonPeerState, DaemonRuntimeState, PEER_ONLINE_GRACE_SECS};
-use nostr_vpn_core::config::{
-    AppConfig, DEFAULT_RELAYS, maybe_autoconfigure_node, normalize_advertised_route,
-};
+use nostr_vpn_core::config::{AppConfig, maybe_autoconfigure_node};
 use nostr_vpn_core::control::{PeerAnnouncement, select_peer_endpoint};
 use nostr_vpn_core::paths::PeerPathBook;
 use nostr_vpn_core::presence::PeerPresenceBook;
-use nostr_vpn_core::signaling::{NostrSignalingClient, SignalPayload, SignalingNetwork};
+use nostr_vpn_core::signaling::{NostrSignalingClient, SignalPayload};
 
 const ANDROID_TUN_MTU: u16 = 1_280;
 const ANDROID_SESSION_STATUS_WAITING: &str = "Waiting for participants";
@@ -723,6 +729,9 @@ fn build_runtime_state(
     DaemonRuntimeState {
         updated_at: unix_timestamp(),
         binary_version: env!("CARGO_PKG_VERSION").to_string(),
+        local_endpoint: config.node.endpoint.clone(),
+        advertised_endpoint: config.node.endpoint.clone(),
+        listen_port: config.node.listen_port,
         session_active: true,
         relay_connected,
         session_status: if expected_peers == 0 {
@@ -1129,72 +1138,6 @@ fn note_successful_runtime_paths(
         );
         let _ = presence.announcement_for(&status.participant_pubkey);
     }
-}
-
-fn strip_cidr(value: &str) -> &str {
-    value.split('/').next().unwrap_or(value)
-}
-
-fn open_mobile_tun_io(tun_fd: RawFd) -> Result<MobileTunIo> {
-    configure_tun_fd(tun_fd).context("failed to configure android tun fd")?;
-
-    let writer = unsafe { std::fs::File::from_raw_fd(tun_fd) };
-    let reader = writer
-        .try_clone()
-        .context("failed to duplicate android tun fd")?;
-
-    Ok(MobileTunIo {
-        reader: tokio::fs::File::from_std(reader),
-        writer: tokio::fs::File::from_std(writer),
-    })
-}
-
-fn configure_tun_fd(tun_fd: RawFd) -> Result<()> {
-    let flags = unsafe { libc::fcntl(tun_fd, libc::F_GETFL) };
-    if flags < 0 {
-        return Err(anyhow!(
-            "failed to read tun fd flags: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    if flags & libc::O_NONBLOCK == 0 {
-        return Ok(());
-    }
-
-    let updated_flags = flags & !libc::O_NONBLOCK;
-    let result = unsafe { libc::fcntl(tun_fd, libc::F_SETFL, updated_flags) };
-    if result < 0 {
-        return Err(anyhow!(
-            "failed to clear O_NONBLOCK on tun fd: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-
-    Ok(())
-}
-
-fn should_retry_tun_io(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
-    )
-}
-
-fn signal_payload_kind(payload: &SignalPayload) -> &'static str {
-    match payload {
-        SignalPayload::Hello => "hello",
-        SignalPayload::Announce(_) => "announce",
-        SignalPayload::Roster(_) => "roster",
-        SignalPayload::Disconnect { .. } => "disconnect",
-        SignalPayload::JoinRequest { .. } => "join-request",
-    }
-}
-
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
