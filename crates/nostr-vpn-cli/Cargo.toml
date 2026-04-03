@@ -17,6 +17,7 @@ tokio.workspace = true
 toml.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
+nostr-sdk.workspace = true
 
 nostr-vpn-core = { path = "../nostr-vpn-core" }
 crab_nat = "0.7"
