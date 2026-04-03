@@ -55,6 +55,14 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
     }
     let mut relay_connected = true;
 
+    refresh_public_signal_endpoint_with_port_mapping(
+        &app,
+        &network_snapshot,
+        app.node.listen_port,
+        &mut port_mapping_runtime,
+        &mut public_signal_endpoint,
+    )
+    .await;
     apply_presence_runtime_update(
         &app,
         own_pubkey.as_deref(),
@@ -66,17 +74,6 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
         magic_dns_runtime.as_ref(),
     )
     .context("failed to initialize tunnel runtime")?;
-    let runtime_listen_port = tunnel_runtime
-        .active_listen_port
-        .unwrap_or(app.node.listen_port);
-    refresh_public_signal_endpoint_with_port_mapping(
-        &app,
-        &network_snapshot,
-        runtime_listen_port,
-        &mut port_mapping_runtime,
-        &mut public_signal_endpoint,
-    )
-    .await;
     let _ = client.publish(SignalPayload::Hello).await;
 
     println!(
@@ -625,6 +622,16 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let mut service_client = RelayServiceClient::from_secret_key(&app.nostr.secret_key)?;
     let mut relay_service_connected = false;
 
+    if daemon_session_active(true, expected_peers) {
+        refresh_public_signal_endpoint_with_port_mapping(
+            &app,
+            &network_snapshot,
+            app.node.listen_port,
+            &mut port_mapping_runtime,
+            &mut public_signal_endpoint,
+        )
+        .await;
+    }
     let restored_peer_cache = if daemon_session_active(true, expected_peers) {
         match restore_daemon_peer_cache(
             DaemonPeerCacheRestore {
@@ -659,19 +666,6 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
         magic_dns_runtime.as_ref(),
     )
     .context("failed to initialize tunnel runtime")?;
-    let runtime_listen_port = tunnel_runtime
-        .active_listen_port
-        .unwrap_or(app.node.listen_port);
-    if daemon_session_active(true, expected_peers) {
-        refresh_public_signal_endpoint_with_port_mapping(
-            &app,
-            &network_snapshot,
-            runtime_listen_port,
-            &mut port_mapping_runtime,
-            &mut public_signal_endpoint,
-        )
-        .await;
-    }
     sync_local_relay_operator(
         &config_path,
         &app,
