@@ -97,20 +97,17 @@ use windows_service::service_dispatcher;
 
 #[cfg(test)]
 pub(crate) use crate::config_bootstrap::default_cli_install_path;
+#[cfg(target_os = "windows")]
+pub(crate) use crate::config_bootstrap::windows_service_install_config_path;
 pub(crate) use crate::config_bootstrap::{
     apply_config_file, apply_participants_override, default_config_path, default_tunnel_iface,
     init_config, install_cli, load_or_default_config, print_version, resolve_relays, uninstall_cli,
-};
-#[cfg(target_os = "windows")]
-pub(crate) use crate::config_bootstrap::{
-    windows_installed_service_config_path, windows_service_install_config_path,
 };
 pub(crate) use crate::daemon_runtime::*;
 use crate::diagnostics::{
     PortMappingRuntime, build_health_issues, capture_network_snapshot, detect_captive_portal,
     run_netcheck_report, write_doctor_bundle,
 };
-#[cfg(target_os = "macos")]
 #[cfg(test)]
 use crate::network_signaling::NETWORK_INVITE_PREFIX;
 use crate::network_signaling::{
@@ -1585,7 +1582,11 @@ fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
     {
         routes.retain(|route| route != "::/0");
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(all(
+        not(target_os = "linux"),
+        not(target_os = "macos"),
+        not(target_os = "windows")
+    ))]
     {
         routes.retain(|route| !is_default_exit_node_route(route));
     }
@@ -3952,6 +3953,33 @@ fn fallback_public_signal_endpoint(
     })
 }
 
+fn restored_public_signal_endpoint_from_state(
+    state: Option<&DaemonRuntimeState>,
+    listen_port: u16,
+) -> Option<DiscoveredPublicSignalEndpoint> {
+    let state = state?;
+    let endpoint = state.advertised_endpoint.trim();
+    if endpoint.is_empty() || endpoint_is_local_only(endpoint) {
+        return None;
+    }
+
+    let stored_listen_port = if state.listen_port == 0 {
+        listen_port
+    } else {
+        state.listen_port
+    };
+    let previous = DiscoveredPublicSignalEndpoint {
+        listen_port: stored_listen_port,
+        endpoint: endpoint.to_string(),
+    };
+
+    if stored_listen_port == listen_port {
+        Some(previous)
+    } else {
+        fallback_public_signal_endpoint(Some(&previous), listen_port)
+    }
+}
+
 fn sync_public_signal_endpoint_from_mapping_or_stun(
     app: &AppConfig,
     listen_port: u16,
@@ -4115,7 +4143,11 @@ fn platform_supports_exit_node_client() -> bool {
     {
         true
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        true
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         false
     }
@@ -5343,7 +5375,6 @@ fn build_runtime_magic_dns_records(
     records
 }
 
-#[cfg(any(test, not(target_os = "windows")))]
 fn route_targets_for_tunnel_peers(peers: &[TunnelPeer]) -> Vec<String> {
     let mut route_targets = peers
         .iter()
@@ -6251,6 +6282,11 @@ fn wait_for_socket(path: &str) -> Result<()> {
     Err(anyhow!("timed out waiting for uapi socket at {path}"))
 }
 
+#[cfg(target_os = "windows")]
+fn wait_for_socket(_path: &str) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(all(not(unix), not(target_os = "windows")))]
 fn wait_for_socket(path: &str) -> Result<()> {
     Err(anyhow!(
@@ -6380,7 +6416,7 @@ fn parse_wg_peer_status(response: &str) -> HashMap<String, WireGuardPeerStatus> 
     peers
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn run_checked(command: &mut ProcessCommand) -> Result<()> {
     let display = format!("{command:?}");
     let output = command

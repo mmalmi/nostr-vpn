@@ -591,7 +591,17 @@ fn runtime_effective_advertised_routes_filter_default_exit_routes_by_platform() 
         vec!["10.55.0.0/24".to_string(), "0.0.0.0/0".to_string()]
     );
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    assert_eq!(
+        effective,
+        vec![
+            "10.55.0.0/24".to_string(),
+            "0.0.0.0/0".to_string(),
+            "::/0".to_string(),
+        ]
+    );
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     assert_eq!(effective, vec!["10.55.0.0/24".to_string()]);
 }
 
@@ -624,7 +634,10 @@ fn selected_exit_node_participant_tracks_supported_platforms() {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     assert_eq!(selected.as_deref(), Some(participant.as_str()));
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    assert_eq!(selected.as_deref(), Some(participant.as_str()));
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     assert!(selected.is_none());
 }
 
@@ -897,6 +910,37 @@ fn fallback_public_signal_endpoint_rejects_mismatched_listen_port() {
 }
 
 #[test]
+fn restored_public_signal_endpoint_keeps_exact_previous_public_mapping() {
+    let state = DaemonRuntimeState {
+        advertised_endpoint: "198.51.100.20:40787".to_string(),
+        listen_port: 51820,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        restored_public_signal_endpoint_from_state(Some(&state), 51820),
+        Some(DiscoveredPublicSignalEndpoint {
+            listen_port: 51820,
+            endpoint: "198.51.100.20:40787".to_string(),
+        })
+    );
+}
+
+#[test]
+fn restored_public_signal_endpoint_normalizes_when_listen_port_changes() {
+    let state = DaemonRuntimeState {
+        advertised_endpoint: "198.51.100.20:40787".to_string(),
+        listen_port: 51820,
+        ..Default::default()
+    };
+
+    assert_eq!(
+        restored_public_signal_endpoint_from_state(Some(&state), 52000),
+        None
+    );
+}
+
+#[test]
 fn peer_announcement_includes_effective_advertised_routes() {
     let mut config = AppConfig::generated();
     config.node.advertise_exit_node = true;
@@ -1005,7 +1049,16 @@ fn planned_tunnel_peers_assign_selected_exit_node_default_route() {
             "10.60.0.0/24".to_string(),
         ]
     );
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    assert_eq!(
+        exit_peer.peer.allowed_ips,
+        vec![
+            "10.44.0.2/32".to_string(),
+            "0.0.0.0/0".to_string(),
+            "10.60.0.0/24".to_string(),
+        ]
+    );
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     assert_eq!(
         exit_peer.peer.allowed_ips,
         vec!["10.44.0.2/32".to_string(), "10.60.0.0/24".to_string()]
