@@ -1,11 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::net::{IpAddr, UdpSocket};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use nostr_sdk::prelude::{Keys, PublicKey, ToBech32};
-use sha2::{Digest, Sha256};
+use nostr_sdk::prelude::{Keys, ToBech32};
 
 pub use crate::config_magic_dns::{
     default_magic_dns_label_for_pubkey, default_node_name_for_hostname_or_pubkey,
@@ -28,8 +26,20 @@ use crate::network_roster::{
     normalize_outbound_join_request, normalize_shared_roster_participants,
 };
 use crate::network_routes::is_exit_node_route;
+use crate::config_defaults::{
+    current_unix_timestamp, default_autoconnect, default_close_to_tray_on_close,
+    default_endpoint, default_launch_on_startup, default_lan_discovery_enabled,
+    default_listen_for_join_requests, default_listen_port, default_nat_discovery_timeout_secs,
+    default_nat_enabled, default_nat_stun_servers, default_network_enabled, default_network_id,
+    default_node_id, default_provide_nat_assist, default_relays, default_relay_for_others,
+    default_tunnel_ip, default_use_public_relay_fallback, generate_nostr_identity, is_true,
+    is_zero, npub_for_pubkey_hex, uses_default_network_id,
+};
+pub use crate::config_defaults::{
+    derive_network_id_from_participants, maybe_autoconfigure_node, needs_endpoint_autoconfig,
+    needs_tunnel_ip_autoconfig, normalize_nostr_pubkey, normalize_runtime_network_id,
+};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::crypto::generate_keypair;
 
@@ -62,29 +72,6 @@ impl Default for NostrConfig {
             public_key,
         }
     }
-}
-
-fn default_relays() -> Vec<String> {
-    DEFAULT_RELAYS
-        .iter()
-        .map(|relay| relay.to_string())
-        .collect()
-}
-
-fn default_nat_enabled() -> bool {
-    true
-}
-
-fn default_nat_stun_servers() -> Vec<String> {
-    vec![
-        "stun:stun.iris.to:3478".to_string(),
-        "stun:stun.l.google.com:19302".to_string(),
-        "stun:stun.cloudflare.com:3478".to_string(),
-    ]
-}
-
-const fn default_nat_discovery_timeout_secs() -> u64 {
-    2
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,8 +190,6 @@ pub struct SharedNetworkRoster {
     pub updated_at: u64,
     pub signed_by: String,
 }
-
-const LEGACY_NETWORK_ID_COMPAT_PREFIX: &str = "nostr-vpn:";
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -1264,177 +1249,4 @@ impl AppConfig {
     }
 }
 
-pub fn derive_network_id_from_participants(participants: &[String]) -> String {
-    let mut normalized: Vec<String> = participants.to_vec();
-    normalized.sort();
-    normalized.dedup();
-
-    let mut hasher = Sha256::new();
-    for participant in normalized {
-        hasher.update(participant.as_bytes());
-        hasher.update(b"\n");
-    }
-
-    let digest = hasher.finalize();
-    hex::encode(digest)[..16].to_string()
-}
-
-pub fn normalize_runtime_network_id(value: &str) -> String {
-    let trimmed = value.trim();
-    trimmed
-        .strip_prefix(LEGACY_NETWORK_ID_COMPAT_PREFIX)
-        .unwrap_or(trimmed)
-        .to_string()
-}
-
-pub fn normalize_nostr_pubkey(value: &str) -> Result<String> {
-    PublicKey::parse(value)
-        .map(|public_key| public_key.to_hex())
-        .map_err(|error| anyhow::anyhow!("invalid participant pubkey '{value}': {error}"))
-}
-
-pub fn maybe_autoconfigure_node(config: &mut AppConfig) {
-    config.ensure_defaults();
-
-    if needs_endpoint_autoconfig(&config.node.endpoint)
-        && let Some(ip) = detect_primary_ipv4()
-    {
-        config.node.endpoint = format!("{ip}:{}", config.node.listen_port);
-    }
-
-    let network_id = config.effective_network_id();
-    if needs_tunnel_ip_autoconfig(&config.node.tunnel_ip)
-        && let Ok(own_pubkey) = config.own_nostr_pubkey_hex()
-        && let Some(tunnel_ip) = derive_mesh_tunnel_ip(&network_id, &own_pubkey)
-    {
-        config.node.tunnel_ip = tunnel_ip;
-    }
-}
-
-pub fn needs_endpoint_autoconfig(endpoint: &str) -> bool {
-    let value = endpoint.trim();
-    if value.is_empty() {
-        return true;
-    }
-
-    let host = value
-        .rsplit_once(':')
-        .map_or(value, |(host, _port)| host)
-        .trim()
-        .trim_start_matches('[')
-        .trim_end_matches(']');
-
-    matches!(host, "127.0.0.1" | "0.0.0.0" | "localhost" | "::1")
-}
-
-pub fn needs_tunnel_ip_autoconfig(tunnel_ip: &str) -> bool {
-    let value = tunnel_ip.trim();
-    value.is_empty() || value == "10.44.0.1/32"
-}
-
-fn detect_primary_ipv4() -> Option<IpAddr> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("1.1.1.1:80").ok()?;
-    let ip = socket.local_addr().ok()?.ip();
-    if ip.is_ipv4() { Some(ip) } else { None }
-}
-
-fn generate_nostr_identity() -> (String, String) {
-    let keys = Keys::generate();
-
-    let secret_key = keys
-        .secret_key()
-        .to_bech32()
-        .unwrap_or_else(|_| keys.secret_key().to_secret_hex());
-
-    let public_key = keys
-        .public_key()
-        .to_bech32()
-        .unwrap_or_else(|_| keys.public_key().to_hex());
-
-    (secret_key, public_key)
-}
-
-fn default_network_id() -> String {
-    "nostr-vpn".to_string()
-}
-
-fn uses_default_network_id(value: &str) -> bool {
-    value.trim().is_empty() || value.trim() == "nostr-vpn"
-}
-
-const fn default_network_enabled() -> bool {
-    true
-}
-
-const fn default_listen_for_join_requests() -> bool {
-    true
-}
-
-const fn is_true(value: &bool) -> bool {
-    *value
-}
-
-const fn default_use_public_relay_fallback() -> bool {
-    true
-}
-
-const fn default_relay_for_others() -> bool {
-    false
-}
-
-const fn default_provide_nat_assist() -> bool {
-    false
-}
-
-const fn default_lan_discovery_enabled() -> bool {
-    true
-}
-
-const fn default_launch_on_startup() -> bool {
-    true
-}
-
-const fn default_autoconnect() -> bool {
-    true
-}
-
-const fn default_close_to_tray_on_close() -> bool {
-    true
-}
-
-fn default_node_id() -> String {
-    Uuid::new_v4().to_string()
-}
-
-fn default_endpoint() -> String {
-    "127.0.0.1:51820".to_string()
-}
-
-fn default_tunnel_ip() -> String {
-    "10.44.0.1/32".to_string()
-}
-
-const fn default_listen_port() -> u16 {
-    51820
-}
-
-fn npub_for_pubkey_hex(pubkey_hex: &str) -> String {
-    PublicKey::from_hex(pubkey_hex)
-        .ok()
-        .and_then(|public_key| public_key.to_bech32().ok())
-        .unwrap_or_else(|| pubkey_hex.to_string())
-}
-
 const MAX_SHARED_ROSTER_FUTURE_SECS: u64 = 600;
-
-fn current_unix_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
-}
-
-fn is_zero(value: &u64) -> bool {
-    *value == 0
-}
