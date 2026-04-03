@@ -3020,7 +3020,10 @@ impl CliTunnelRuntime {
             for planned in &planned_peers {
                 path_book.note_selected(&planned.participant, &planned.endpoint, now);
             }
-            self.last_fingerprint = Some(tunnel_runtime_fingerprint(&applied_fingerprint, &route_targets));
+            self.last_fingerprint = Some(tunnel_runtime_fingerprint(
+                &applied_fingerprint,
+                &route_targets,
+            ));
             Ok(())
         }
     }
@@ -3633,9 +3636,8 @@ fn utun_interface_candidates(preferred: &str) -> Vec<String> {
             && suffix.chars().all(|ch| ch.is_ascii_digit())
             && let Ok(base) = suffix.parse::<u16>()
         {
-            candidates.extend((0u16..16u16).map(|offset| {
-                format!("utun{}", base.saturating_add(offset))
-            }));
+            candidates
+                .extend((0u16..16u16).map(|offset| format!("utun{}", base.saturating_add(offset))));
         }
         candidates.dedup();
         return candidates;
@@ -3680,8 +3682,7 @@ fn detect_macos_actual_tunnel_iface(
         .into_iter()
         .filter(|iface| iface.starts_with("utun"))
         .filter(|iface| {
-            before_sockets
-                .is_none_or(|before| !before.iter().any(|existing| existing == iface))
+            before_sockets.is_none_or(|before| !before.iter().any(|existing| existing == iface))
         })
         .collect::<Vec<_>>();
 
@@ -3707,8 +3708,7 @@ fn detect_macos_actual_tunnel_iface(
         .into_iter()
         .filter(|iface| iface.starts_with("utun"))
         .filter(|iface| {
-            before_ifaces
-                .is_none_or(|before| !before.iter().any(|existing| existing == iface))
+            before_ifaces.is_none_or(|before| !before.iter().any(|existing| existing == iface))
         })
         .collect::<Vec<_>>();
     iface_candidates.sort_by_key(|iface| macos_utun_sort_key(iface));
@@ -5393,6 +5393,10 @@ fn selected_exit_node_ready_for_default_route(
         return false;
     };
 
+    let Some(announcement) = peer_announcements.get(&participant) else {
+        return false;
+    };
+
     let Some(planned) = planned_peers
         .iter()
         .find(|planned| planned.participant == participant)
@@ -5405,8 +5409,19 @@ fn selected_exit_node_ready_for_default_route(
         return false;
     };
 
+    let own_local_endpoints = runtime_local_signal_endpoints(app, app.node.listen_port);
     peer_has_recent_handshake(runtime_peer)
-        && runtime_peer.endpoint.as_deref() == Some(planned.endpoint.as_str())
+        && runtime_peer
+            .endpoint
+            .as_deref()
+            .is_some_and(|runtime_endpoint| {
+                !runtime_endpoint_requires_refresh(
+                    runtime_endpoint,
+                    &planned.endpoint,
+                    announcement,
+                    &own_local_endpoints,
+                )
+            })
 }
 
 fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {
