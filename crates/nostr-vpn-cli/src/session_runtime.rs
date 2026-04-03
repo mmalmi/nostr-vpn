@@ -271,7 +271,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     eprintln!("tunnel: peer heartbeat failed after network refresh: {error}");
                 }
                 if relay_connected
-                    && let Err(error) = publish_private_announce_to_active_peers(
+                    && let Err(error) = publish_private_announce_to_known_peers(
                         &client,
                         &app,
                         own_pubkey.as_deref(),
@@ -283,7 +283,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     )
                     .await
                 {
-                    eprintln!("signal: active peer announce refresh failed after network change: {error}");
+                    eprintln!("signal: known peer announce refresh failed after network change: {error}");
                 }
                 if relay_connected
                     && let Err(error) = client.publish(SignalPayload::Hello).await
@@ -1065,7 +1065,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     eprintln!("tunnel: peer heartbeat failed after network refresh: {error}");
                 }
                 if relay_connected
-                    && let Err(error) = publish_private_announce_to_active_peers(
+                    && let Err(error) = publish_private_announce_to_known_peers(
                         &client,
                         &app,
                         own_pubkey.as_deref(),
@@ -1077,7 +1077,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     )
                     .await
                 {
-                    eprintln!("signal: active peer announce refresh failed after network change: {error}");
+                    eprintln!("signal: known peer announce refresh failed after network change: {error}");
                 }
                 if relay_connected
                     && let Err(error) = client.publish(SignalPayload::Hello).await

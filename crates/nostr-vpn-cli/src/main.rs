@@ -3249,9 +3249,18 @@ impl CliTunnelRuntime {
 
     #[cfg(target_os = "macos")]
     fn reconcile_macos_endpoint_bypass_routes(&mut self, routes: &[MacosEndpointBypassRoute]) {
+        let existing = self
+            .endpoint_bypass_routes
+            .iter()
+            .cloned()
+            .collect::<HashSet<_>>();
         let desired = routes
             .iter()
             .map(|route| route.target.clone())
+            .collect::<HashSet<_>>();
+        let mut applied = desired
+            .intersection(&existing)
+            .cloned()
             .collect::<HashSet<_>>();
 
         let stale = self
@@ -3267,15 +3276,20 @@ impl CliTunnelRuntime {
         }
 
         for route in routes {
+            if existing.contains(&route.target) {
+                continue;
+            }
             if let Err(error) = apply_macos_endpoint_bypass_route(route) {
                 eprintln!(
                     "tunnel: failed to install macOS endpoint bypass route {}: {}",
                     route.target, error
                 );
+                continue;
             }
+            applied.insert(route.target.clone());
         }
 
-        self.endpoint_bypass_routes = desired.into_iter().collect();
+        self.endpoint_bypass_routes = applied.into_iter().collect();
         self.endpoint_bypass_routes.sort();
     }
 
@@ -5238,9 +5252,13 @@ fn selected_exit_node_ready_for_default_route(
         return false;
     };
 
-    runtime_peers
-        .and_then(|peers| peers.get(&planned.peer.pubkey_hex))
-        .is_some_and(peer_has_recent_handshake)
+    let Some(runtime_peer) = runtime_peers.and_then(|peers| peers.get(&planned.peer.pubkey_hex))
+    else {
+        return false;
+    };
+
+    peer_has_recent_handshake(runtime_peer)
+        && runtime_peer.endpoint.as_deref() == Some(planned.endpoint.as_str())
 }
 
 fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {

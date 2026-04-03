@@ -3891,10 +3891,10 @@ mod tests {
     #[test]
     fn ui_state_reports_service_binary_version() {
         let mut backend = test_backend(&"44".repeat(32));
-        backend.service_binary_version = "0.3.4".to_string();
+        backend.service_binary_version = env!("CARGO_PKG_VERSION").to_string();
         let state = backend.ui_state();
 
-        assert_eq!(state.service_binary_version, "0.3.4");
+        assert_eq!(state.service_binary_version, env!("CARGO_PKG_VERSION"));
     }
 
     #[test]

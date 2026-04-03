@@ -174,7 +174,7 @@ fn windows_apply_config_uses_installed_enabled_service() {
         label: "NvpnService".to_string(),
         plist_path: "NvpnService".to_string(),
         binary_path: r"C:\Program Files\Nostr VPN\nvpn.exe".to_string(),
-        binary_version: "0.3.4".to_string(),
+        binary_version: env!("CARGO_PKG_VERSION").to_string(),
     };
     assert!(windows_should_apply_config_via_service(&enabled_service));
 
