@@ -10,7 +10,7 @@ impl NvpnBackend {
             .config
             .own_nostr_pubkey_hex()
             .map(|hex| to_npub(&hex))
-            .unwrap_or_else(|| self.config.nostr.public_key.clone());
+            .unwrap_or_else(|_| self.config.nostr.public_key.clone());
         let node_name = self.config.node_name.clone();
         let endpoint = self.config.node.endpoint.clone();
         let invite = active_network_invite_code(&self.config)?;
