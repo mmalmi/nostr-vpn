@@ -13,6 +13,8 @@ mod ios_packet_tunnel;
 #[cfg(target_os = "ios")]
 mod ios_vpn;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
+mod mobile_runtime_state;
+#[cfg(any(target_os = "android", target_os = "ios", test))]
 mod mobile_wg;
 mod path_resolution;
 mod peer_state;
