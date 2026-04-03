@@ -136,9 +136,7 @@ pub(super) fn macos_default_route() -> Result<MacosRouteSpec> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn macos_ipconfig_ipv4_for_interface(iface: &str) -> Result<Option<Ipv4Addr>> {
-    match command_stdout_checked(
-        ProcessCommand::new("ipconfig").arg("getifaddr").arg(iface),
-    ) {
+    match command_stdout_checked(ProcessCommand::new("ipconfig").arg("getifaddr").arg(iface)) {
         Ok(output) => Ok(output.trim().parse::<Ipv4Addr>().ok()),
         Err(error) => {
             if error.to_string().to_ascii_lowercase().contains("not found") {
@@ -162,9 +160,8 @@ pub(crate) fn macos_ipconfig_router_for_interface(iface: &str) -> Result<Option<
         return Ok(Some(router));
     }
 
-    let output = command_stdout_checked(
-        ProcessCommand::new("ipconfig").arg("getpacket").arg(iface),
-    )?;
+    let output =
+        command_stdout_checked(ProcessCommand::new("ipconfig").arg("getpacket").arg(iface))?;
     Ok(macos_ipconfig_router_from_output(&output))
 }
 
@@ -374,6 +371,34 @@ pub(crate) fn macos_direct_route_args(action: &str, target: &str, iface: &str) -
     ]
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_gateway_route_args(action: &str, target: &str, gateway: &str) -> Vec<String> {
+    let target_ip = strip_cidr(target);
+    let is_host = target.ends_with("/32") || !target.contains('/');
+
+    let mut args = vec!["-n".to_string(), action.to_string()];
+    if is_host {
+        args.push("-host".to_string());
+        args.push(target_ip.to_string());
+    } else if target == "0.0.0.0/0" {
+        args.push("default".to_string());
+    } else {
+        args.push("-net".to_string());
+        args.push(target.to_string());
+    }
+    args.push(gateway.to_string());
+    args
+}
+
+#[cfg(test)]
+pub(crate) fn macos_gateway_route_args_for_test(
+    action: &str,
+    target: &str,
+    gateway: &str,
+) -> Vec<String> {
+    macos_gateway_route_args(action, target, gateway)
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn apply_macos_default_route(
     gateway: Option<&str>,
@@ -411,11 +436,9 @@ pub(super) fn apply_macos_default_route(
 #[cfg(target_os = "macos")]
 pub(super) fn delete_macos_default_route_for_interface(iface: &str) -> Result<()> {
     let mut failures = Vec::new();
-    for target in std::iter::once("0.0.0.0/0").chain(
-        macos_tunnel_default_route_targets()
-            .iter()
-            .copied(),
-    ) {
+    for target in
+        std::iter::once("0.0.0.0/0").chain(macos_tunnel_default_route_targets().iter().copied())
+    {
         if let Err(error) = delete_macos_route_spec(target, Some(iface))
             && !crate::daemon_runtime::macos_route_delete_error_is_absent(&error.to_string())
         {
@@ -468,20 +491,20 @@ pub(super) fn apply_macos_route_spec(
     let is_host = target.ends_with("/32") || !target.contains('/');
 
     let mut add = ProcessCommand::new("route");
-    add.arg("-n").arg("add");
-    if let Some(ifscope) = ifscope {
-        add.arg("-ifscope").arg(ifscope);
-    }
-    if is_host {
-        add.arg("-host").arg(target_ip);
-    } else if target == "0.0.0.0/0" {
-        add.arg("default");
-    } else {
-        add.arg("-net").arg(target);
-    }
     if let Some(gateway) = gateway {
-        add.arg(gateway);
+        add.args(macos_gateway_route_args("add", target, gateway));
     } else {
+        add.arg("-n").arg("add");
+        if let Some(ifscope) = ifscope {
+            add.arg("-ifscope").arg(ifscope);
+        }
+        if is_host {
+            add.arg("-host").arg(target_ip);
+        } else if target == "0.0.0.0/0" {
+            add.arg("default");
+        } else {
+            add.arg("-net").arg(target);
+        }
         let iface = ifscope.ok_or_else(|| anyhow!("missing interface for direct route"))?;
         add.arg("-interface").arg(iface);
     }
@@ -490,20 +513,20 @@ pub(super) fn apply_macos_route_spec(
         Ok(()) => Ok(()),
         Err(_) => {
             let mut change = ProcessCommand::new("route");
-            change.arg("-n").arg("change");
-            if let Some(ifscope) = ifscope {
-                change.arg("-ifscope").arg(ifscope);
-            }
-            if is_host {
-                change.arg("-host").arg(target_ip);
-            } else if target == "0.0.0.0/0" {
-                change.arg("default");
-            } else {
-                change.arg("-net").arg(target);
-            }
             if let Some(gateway) = gateway {
-                change.arg(gateway);
+                change.args(macos_gateway_route_args("change", target, gateway));
             } else {
+                change.arg("-n").arg("change");
+                if let Some(ifscope) = ifscope {
+                    change.arg("-ifscope").arg(ifscope);
+                }
+                if is_host {
+                    change.arg("-host").arg(target_ip);
+                } else if target == "0.0.0.0/0" {
+                    change.arg("default");
+                } else {
+                    change.arg("-net").arg(target);
+                }
                 let iface = ifscope.ok_or_else(|| anyhow!("missing interface for direct route"))?;
                 change.arg("-interface").arg(iface);
             }

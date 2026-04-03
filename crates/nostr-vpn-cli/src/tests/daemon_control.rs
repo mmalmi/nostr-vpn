@@ -255,13 +255,15 @@ Destination        Gateway            Flags               Netif Expire\n\
 128/1              link#13            UCS                 utun5\n\
 "
     ));
-    assert!(!crate::macos_network::macos_has_tunnel_split_default_routes(
-        "Routing tables\n\
+    assert!(
+        !crate::macos_network::macos_has_tunnel_split_default_routes(
+            "Routing tables\n\
 Internet:\n\
 Destination        Gateway            Flags               Netif Expire\n\
 default            192.168.64.1       UGScg                 en0\n\
 "
-    ));
+        )
+    );
 }
 
 #[test]
@@ -296,6 +298,37 @@ fn macos_direct_route_args_use_bsd_iface_form() {
             "203.0.113.8/32".to_string(),
             "-iface".to_string(),
             "utun100".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn macos_gateway_route_args_install_global_host_routes() {
+    assert_eq!(
+        crate::macos_network::macos_gateway_route_args_for_test(
+            "add",
+            "65.109.48.91/32",
+            "192.168.64.1",
+        ),
+        vec![
+            "-n".to_string(),
+            "add".to_string(),
+            "-host".to_string(),
+            "65.109.48.91".to_string(),
+            "192.168.64.1".to_string(),
+        ]
+    );
+    assert_eq!(
+        crate::macos_network::macos_gateway_route_args_for_test(
+            "change",
+            "0.0.0.0/0",
+            "192.168.64.1",
+        ),
+        vec![
+            "-n".to_string(),
+            "change".to_string(),
+            "default".to_string(),
+            "192.168.64.1".to_string(),
         ]
     );
 }
