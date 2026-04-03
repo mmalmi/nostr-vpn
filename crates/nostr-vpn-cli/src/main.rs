@@ -2776,21 +2776,21 @@ impl CliTunnelRuntime {
             &local_address,
             &peers,
         );
-        let needs_endpoint_refresh = runtime_peer_endpoints_require_refresh(
-            &planned_peers,
-            peer_announcements,
-            runtime_peers.as_ref(),
-            &own_local_endpoints,
-        );
-        if self.last_fingerprint.as_deref() == Some(fingerprint.as_str())
-            && self.is_running()
-            && !needs_endpoint_refresh
-        {
-            return Ok(());
-        }
-
         #[cfg(target_os = "windows")]
         {
+            let needs_endpoint_refresh = runtime_peer_endpoints_require_refresh(
+                &planned_peers,
+                peer_announcements,
+                runtime_peers.as_ref(),
+                &own_local_endpoints,
+            );
+            if self.last_fingerprint.as_deref() == Some(fingerprint.as_str())
+                && self.is_running()
+                && !needs_endpoint_refresh
+            {
+                return Ok(());
+            }
+
             self.apply_windows_runtime(app, &local_address, &peers)?;
             let applied_fingerprint = tunnel_fingerprint(
                 &self.iface,
@@ -2808,6 +2808,12 @@ impl CliTunnelRuntime {
 
         #[cfg(not(target_os = "windows"))]
         {
+            let needs_endpoint_refresh = runtime_peer_endpoints_require_refresh(
+                &planned_peers,
+                peer_announcements,
+                runtime_peers.as_ref(),
+                &own_local_endpoints,
+            );
             let route_targets = route_targets_for_planned_tunnel_peers(
                 app,
                 own_pubkey,
@@ -2815,6 +2821,13 @@ impl CliTunnelRuntime {
                 &planned_peers,
                 runtime_peers.as_ref(),
             );
+            let runtime_fingerprint = tunnel_runtime_fingerprint(&fingerprint, &route_targets);
+            if self.last_fingerprint.as_deref() == Some(runtime_fingerprint.as_str())
+                && self.is_running()
+                && !needs_endpoint_refresh
+            {
+                return Ok(());
+            }
             #[cfg(target_os = "macos")]
             eprintln!(
                 "tunnel: planned macOS route targets [{}]",
@@ -2978,7 +2991,7 @@ impl CliTunnelRuntime {
             for planned in &planned_peers {
                 path_book.note_selected(&planned.participant, &planned.endpoint, now);
             }
-            self.last_fingerprint = Some(applied_fingerprint);
+            self.last_fingerprint = Some(tunnel_runtime_fingerprint(&applied_fingerprint, &route_targets));
             Ok(())
         }
     }
@@ -5368,6 +5381,12 @@ fn tunnel_fingerprint(
         "{iface}|{private_key}|{listen_port}|{local_address}|{}",
         peer_entries.join(";")
     )
+}
+
+fn tunnel_runtime_fingerprint(base: &str, route_targets: &[String]) -> String {
+    let mut route_entries = route_targets.to_vec();
+    route_entries.sort();
+    format!("{base}|routes={}", route_entries.join(","))
 }
 
 async fn start_session(args: StartArgs) -> Result<()> {

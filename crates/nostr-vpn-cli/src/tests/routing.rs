@@ -273,6 +273,18 @@ fn route_targets_detect_when_endpoint_bypass_is_required() {
 }
 
 #[test]
+fn tunnel_runtime_fingerprint_changes_when_route_targets_change() {
+    let base = "iface|key|51820|10.44.0.1/32|peer";
+    let direct_only = vec!["10.44.0.2/32".to_string()];
+    let with_exit = vec!["0.0.0.0/0".to_string(), "10.44.0.2/32".to_string()];
+
+    assert_ne!(
+        tunnel_runtime_fingerprint(base, &direct_only),
+        tunnel_runtime_fingerprint(base, &with_exit)
+    );
+}
+
+#[test]
 fn stun_host_port_supports_default_and_explicit_ports() {
     assert_eq!(
         stun_host_port("stun:stun.iris.to"),
