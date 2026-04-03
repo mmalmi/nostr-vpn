@@ -95,6 +95,7 @@ use crate::diagnostics::{
     PortMappingRuntime, build_health_issues, capture_network_snapshot, detect_captive_portal,
     run_netcheck_report, write_doctor_bundle,
 };
+#[cfg(target_os = "macos")]
 #[cfg(test)]
 use crate::network_signaling::NETWORK_INVITE_PREFIX;
 use crate::network_signaling::{
@@ -4206,35 +4207,6 @@ fn network_probe_timeout(app: &AppConfig) -> Duration {
     Duration::from_secs(app.nat.discovery_timeout_secs.max(2))
 }
 
-#[cfg(test)]
-fn build_peer_announcement(
-    app: &AppConfig,
-    listen_port: u16,
-    public_endpoint: Option<&str>,
-) -> PeerAnnouncement {
-    let local_endpoint = local_signal_endpoint(app, listen_port);
-    let public_endpoint = public_endpoint
-        .map(str::to_string)
-        .filter(|value| value != &local_endpoint);
-    let endpoint = public_endpoint
-        .clone()
-        .unwrap_or_else(|| local_endpoint.clone());
-
-    PeerAnnouncement {
-        node_id: app.node.id.clone(),
-        public_key: app.node.public_key.clone(),
-        endpoint,
-        local_endpoint: Some(local_endpoint),
-        public_endpoint,
-        relay_endpoint: None,
-        relay_pubkey: None,
-        relay_expires_at: None,
-        tunnel_ip: app.node.tunnel_ip.clone(),
-        advertised_routes: runtime_effective_advertised_routes(app),
-        timestamp: unix_timestamp(),
-    }
-}
-
 fn build_explicit_peer_announcement(
     node_id: String,
     public_key: String,
@@ -5125,28 +5097,6 @@ fn select_local_signal_endpoint_for_peer(
         .cloned()
 }
 
-#[cfg(test)]
-fn planned_tunnel_peers(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    path_book: &mut PeerPathBook,
-    own_local_endpoint: Option<&str>,
-    now: u64,
-) -> Result<Vec<PlannedTunnelPeer>> {
-    let own_local_endpoints = own_local_endpoint
-        .map(|value| vec![value.to_string()])
-        .unwrap_or_default();
-    planned_tunnel_peers_for_local_endpoints(
-        app,
-        own_pubkey,
-        peer_announcements,
-        path_book,
-        &own_local_endpoints,
-        now,
-    )
-}
-
 fn planned_tunnel_peers_for_local_endpoints(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -5303,17 +5253,6 @@ fn peer_endpoint_requires_public_signal(
     endpoint_is_local_only(selected_endpoint)
 }
 
-#[cfg(test)]
-fn nat_punch_targets(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    listen_port: u16,
-) -> Vec<SocketAddr> {
-    let own_local_endpoints = runtime_local_signal_endpoints(app, listen_port);
-    nat_punch_targets_for_local_endpoints(app, own_pubkey, peer_announcements, &own_local_endpoints)
-}
-
 fn pending_nat_punch_targets(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -5329,76 +5268,6 @@ fn pending_nat_punch_targets(
         runtime_peers,
         &own_local_endpoints,
     )
-}
-
-#[cfg(test)]
-fn nat_punch_targets_for_local_endpoint(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    own_local_endpoint: &str,
-) -> Vec<SocketAddr> {
-    nat_punch_targets_for_local_endpoints(
-        app,
-        own_pubkey,
-        peer_announcements,
-        &[own_local_endpoint.to_string()],
-    )
-}
-
-#[cfg(test)]
-fn pending_nat_punch_targets_for_local_endpoint(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
-    own_local_endpoint: &str,
-) -> Vec<SocketAddr> {
-    pending_nat_punch_targets_for_local_endpoints(
-        app,
-        own_pubkey,
-        peer_announcements,
-        runtime_peers,
-        &[own_local_endpoint.to_string()],
-    )
-}
-
-#[cfg(test)]
-fn nat_punch_targets_for_local_endpoints(
-    app: &AppConfig,
-    own_pubkey: Option<&str>,
-    peer_announcements: &HashMap<String, PeerAnnouncement>,
-    own_local_endpoints: &[String],
-) -> Vec<SocketAddr> {
-    let mut targets = app
-        .participant_pubkeys_hex()
-        .iter()
-        .filter(|participant| Some(participant.as_str()) != own_pubkey)
-        .filter_map(|participant| peer_announcements.get(participant))
-        .filter_map(|announcement| {
-            let selected_endpoint =
-                select_peer_endpoint_from_local_endpoints(announcement, own_local_endpoints);
-            if peer_endpoint_requires_public_signal(
-                app,
-                announcement,
-                &selected_endpoint,
-                own_local_endpoints,
-            ) {
-                return None;
-            }
-
-            if own_local_endpoints.iter().any(|own_local_endpoint| {
-                endpoints_share_local_only_ipv4_subnet(&selected_endpoint, own_local_endpoint)
-            }) {
-                return None;
-            }
-
-            selected_endpoint.parse::<SocketAddr>().ok()
-        })
-        .collect::<Vec<_>>();
-    targets.sort_unstable();
-    targets.dedup();
-    targets
 }
 
 fn pending_nat_punch_targets_for_local_endpoints(
@@ -12064,21 +11933,6 @@ fn delete_linux_endpoint_bypass_route(target: &str) -> Result<()> {
     )
 }
 
-#[cfg(test)]
-fn macos_route_get_spec_from_output(output: &str) -> Option<MacosRouteSpec> {
-    macos_network::macos_route_get_spec_from_output(output)
-}
-
-#[cfg(test)]
-fn macos_default_routes_from_netstat(output: &str) -> Vec<MacosRouteSpec> {
-    macos_network::macos_default_routes_from_netstat(output)
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn macos_underlay_default_route_from_routes(routes: &[MacosRouteSpec]) -> Option<MacosRouteSpec> {
-    macos_network::macos_underlay_default_route_from_routes(routes)
-}
-
 #[cfg(target_os = "macos")]
 fn macos_default_route() -> Result<MacosRouteSpec> {
     macos_network::macos_default_route()
@@ -12087,6 +11941,11 @@ fn macos_default_route() -> Result<MacosRouteSpec> {
 #[cfg(target_os = "macos")]
 fn macos_default_routes() -> Result<Vec<MacosRouteSpec>> {
     macos_network::macos_default_routes()
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_underlay_default_route_from_routes(routes: &[MacosRouteSpec]) -> Option<MacosRouteSpec> {
+    macos_network::macos_underlay_default_route_from_routes(routes)
 }
 
 #[cfg(target_os = "macos")]
@@ -12122,11 +11981,6 @@ fn apply_macos_default_route(gateway: Option<&str>, ifscope: Option<&str>) -> Re
 #[cfg(target_os = "macos")]
 fn delete_macos_default_route_for_interface(iface: &str) -> Result<()> {
     macos_network::delete_macos_default_route_for_interface(iface)
-}
-
-#[cfg(test)]
-fn macos_ifconfig_has_ipv4(output: &str, needle: Ipv4Addr) -> bool {
-    macos_network::macos_ifconfig_has_ipv4(output, needle)
 }
 
 #[cfg(target_os = "macos")]
@@ -12648,119 +12502,22 @@ fn run_checked(command: &mut ProcessCommand) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-    use std::path::Path;
-
-    use crate::{Cli, PeerAnnouncement};
+    pub(super) use support::{control_daemon_request_for_test, local_endpoints, sample_peer_announcement};
 
     mod config_cache;
     mod daemon_control;
+    mod cli_smoke;
     mod peer_runtime;
     mod routing;
     mod runtime_misc;
     mod service_cli;
-
-    fn sample_peer_announcement(public_key: String) -> PeerAnnouncement {
-        PeerAnnouncement {
-            node_id: "peer-a".to_string(),
-            public_key,
-            endpoint: "203.0.113.20:51820".to_string(),
-            local_endpoint: Some("192.168.1.20:51820".to_string()),
-            public_endpoint: Some("203.0.113.20:51820".to_string()),
-            relay_endpoint: None,
-            relay_pubkey: None,
-            relay_expires_at: None,
-            tunnel_ip: "10.44.0.2/32".to_string(),
-            advertised_routes: Vec::new(),
-            timestamp: 1,
-        }
-    }
-
-    fn local_endpoints(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| (*value).to_string()).collect()
-    }
-
-    #[test]
-    fn clap_binary_name_is_nvpn() {
-        let command = Cli::command();
-        assert_eq!(command.get_name(), "nvpn");
-    }
-
-    #[test]
-    fn clap_includes_tailscale_style_commands() {
-        let command = Cli::command();
-        for name in [
-            "start",
-            "stop",
-            "repair-network",
-            "reload",
-            "pause",
-            "resume",
-            "up",
-            "connect",
-            "down",
-            "status",
-            "set",
-            "ping",
-            "netcheck",
-            "doctor",
-            "ip",
-            "whois",
-            "nat-discover",
-            "hole-punch",
-            "install-cli",
-            "uninstall-cli",
-            "service",
-            "version",
-        ] {
-            assert!(
-                command
-                    .get_subcommands()
-                    .any(|subcommand| subcommand.get_name() == name),
-                "missing subcommand {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn clap_set_supports_autoconnect_flag() {
-        let command = Cli::command();
-        let set = command
-            .get_subcommands()
-            .find(|subcommand| subcommand.get_name() == "set")
-            .expect("set subcommand exists");
-        assert!(
-            set.get_arguments()
-                .any(|argument| argument.get_long() == Some("autoconnect")),
-            "missing --autoconnect on set command"
-        );
-    }
-
-    #[test]
-    fn clap_set_supports_route_advertisement_flags() {
-        let command = Cli::command();
-        let set = command
-            .get_subcommands()
-            .find(|subcommand| subcommand.get_name() == "set")
-            .expect("set subcommand exists");
-        assert!(
-            set.get_arguments()
-                .any(|argument| argument.get_long() == Some("advertise-routes")),
-            "missing --advertise-routes on set command"
-        );
-        assert!(
-            set.get_arguments()
-                .any(|argument| argument.get_long() == Some("advertise-exit-node")),
-            "missing --advertise-exit-node on set command"
-        );
-        assert!(
-            set.get_arguments()
-                .any(|argument| argument.get_long() == Some("exit-node")),
-            "missing --exit-node on set command"
-        );
-    }
-
-    fn control_daemon_request_for_test(config: &Path, request: super::DaemonControlRequest) {
-        super::write_daemon_control_request(config, request).expect("write control request");
-    }
+    pub(crate) mod support;
 }
+
+#[cfg(test)]
+pub(crate) use tests::support::{
+    build_peer_announcement, macos_default_routes_from_netstat, macos_ifconfig_has_ipv4,
+    macos_route_get_spec_from_output, nat_punch_targets, nat_punch_targets_for_local_endpoints,
+    nat_punch_targets_for_local_endpoint, pending_nat_punch_targets_for_local_endpoint,
+    planned_tunnel_peers,
+};
