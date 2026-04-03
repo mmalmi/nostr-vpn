@@ -442,6 +442,7 @@ fn nat_punch_targets_keep_stale_exit_peer_even_when_another_peer_is_online() {
     config.nat.enabled = true;
     config.node.endpoint = "198.19.241.3:51820".to_string();
     config.networks[0].participants = vec![online.clone(), stale.clone()];
+    config.exit_node = stale.clone();
 
     let online_keys = generate_keypair();
     let stale_keys = generate_keypair();
@@ -500,16 +501,16 @@ fn nat_punch_targets_keep_stale_exit_peer_even_when_another_peer_is_online() {
         ),
     ]);
 
-    assert_eq!(
+    assert!(
         pending_nat_punch_targets_for_local_endpoint(
             &config,
             None,
             &announcements,
             Some(&runtime_peers),
             "198.19.241.3:51820",
-        ),
-        vec!["203.0.113.21:51820".parse().expect("socket addr")],
-        "a reachable peer should not suppress NAT punching for a stale exit peer"
+        )
+        .is_empty(),
+        "a selected exit peer on a public endpoint should not tear the tunnel down for NAT punching"
     );
 }
 

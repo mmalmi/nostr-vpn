@@ -5090,6 +5090,7 @@ fn pending_nat_punch_targets_for_local_endpoints(
     runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
     own_local_endpoints: &[String],
 ) -> Vec<SocketAddr> {
+    let selected_exit_node = selected_exit_node_participant(app, own_pubkey, peer_announcements);
     let mut targets = app
         .participant_pubkeys_hex()
         .iter()
@@ -5110,6 +5111,12 @@ fn pending_nat_punch_targets_for_local_endpoints(
                 &selected_endpoint,
                 own_local_endpoints,
             ) {
+                return None;
+            }
+
+            if selected_exit_node.as_deref() == Some(participant.as_str())
+                && !endpoint_is_local_only(&selected_endpoint)
+            {
                 return None;
             }
 
