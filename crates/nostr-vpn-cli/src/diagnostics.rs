@@ -20,6 +20,11 @@ use self::probes::{
 };
 #[cfg(test)]
 use self::probes::{CaptivePortalEndpoint, parse_http_response};
+#[cfg(target_os = "macos")]
+use crate::macos_network::{
+    macos_default_routes, macos_ipconfig_ipv4_for_interface, macos_ipconfig_router_for_interface,
+    macos_underlay_default_route_from_routes, macos_underlay_default_route_from_system,
+};
 use crate::{DaemonPeerState, DaemonStatus, discover_public_udp_endpoint_via_stun, unix_timestamp};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -76,6 +81,17 @@ impl NetworkSnapshot {
 }
 
 pub(crate) fn capture_network_snapshot() -> NetworkSnapshot {
+    #[cfg(target_os = "macos")]
+    {
+        let snapshot = capture_macos_network_snapshot();
+        if snapshot.default_interface.is_some()
+            || snapshot.primary_ipv4.is_some()
+            || snapshot.gateway_ipv4.is_some()
+        {
+            return snapshot;
+        }
+    }
+
     let mut snapshot = NetworkSnapshot::default();
     let Ok(interface) = get_default_interface() else {
         return snapshot;
@@ -96,6 +112,39 @@ pub(crate) fn capture_network_snapshot() -> NetworkSnapshot {
         snapshot.gateway_ipv4 = gateway.ipv4.first().copied();
         snapshot.gateway_ipv6 = gateway.ipv6.first().copied();
     }
+
+    snapshot
+}
+
+#[cfg(target_os = "macos")]
+fn capture_macos_network_snapshot() -> NetworkSnapshot {
+    let mut snapshot = NetworkSnapshot::default();
+
+    let underlay = macos_default_routes()
+        .ok()
+        .and_then(|routes| {
+            macos_underlay_default_route_from_routes(&routes)
+                .or_else(|| macos_underlay_default_route_from_system().ok().flatten())
+        })
+        .or_else(|| macos_underlay_default_route_from_system().ok().flatten());
+
+    let Some(underlay) = underlay else {
+        return snapshot;
+    };
+
+    snapshot.default_interface = Some(underlay.interface.clone());
+    snapshot.primary_ipv4 = macos_ipconfig_ipv4_for_interface(&underlay.interface)
+        .ok()
+        .flatten();
+    snapshot.gateway_ipv4 = underlay
+        .gateway
+        .as_deref()
+        .and_then(|value| value.parse::<Ipv4Addr>().ok())
+        .or_else(|| {
+            macos_ipconfig_router_for_interface(&underlay.interface)
+                .ok()
+                .flatten()
+        });
 
     snapshot
 }

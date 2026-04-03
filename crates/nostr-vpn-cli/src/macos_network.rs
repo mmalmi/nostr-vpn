@@ -65,6 +65,35 @@ pub(super) fn macos_underlay_default_route_from_routes(
         .cloned()
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_interface_names_from_ifconfig_list(output: &str) -> Vec<String> {
+    output
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_ipconfig_router_from_output(output: &str) -> Option<Ipv4Addr> {
+    for line in output.lines().map(str::trim) {
+        let value = if let Some(value) = line.strip_prefix("router (ip):") {
+            value.trim()
+        } else if let Some(value) = line.strip_prefix("router (ip_mult):") {
+            value.trim().trim_start_matches('{').trim_end_matches('}')
+        } else {
+            continue;
+        };
+
+        if let Ok(router) = value.parse::<Ipv4Addr>() {
+            return Some(router);
+        }
+    }
+
+    None
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn macos_default_route() -> Result<MacosRouteSpec> {
     let output = command_stdout_checked(
@@ -75,6 +104,85 @@ pub(super) fn macos_default_route() -> Result<MacosRouteSpec> {
     )?;
     macos_route_get_spec_from_output(&output)
         .ok_or_else(|| anyhow!("failed to resolve macOS default route"))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_ipconfig_ipv4_for_interface(iface: &str) -> Result<Option<Ipv4Addr>> {
+    match command_stdout_checked(
+        ProcessCommand::new("ipconfig").arg("getifaddr").arg(iface),
+    ) {
+        Ok(output) => Ok(output.trim().parse::<Ipv4Addr>().ok()),
+        Err(error) => {
+            if error.to_string().to_ascii_lowercase().contains("not found") {
+                Ok(None)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_ipconfig_router_for_interface(iface: &str) -> Result<Option<Ipv4Addr>> {
+    if let Ok(output) = command_stdout_checked(
+        ProcessCommand::new("ipconfig")
+            .arg("getoption")
+            .arg(iface)
+            .arg("router"),
+    ) && let Ok(router) = output.trim().parse::<Ipv4Addr>()
+    {
+        return Ok(Some(router));
+    }
+
+    let output = command_stdout_checked(
+        ProcessCommand::new("ipconfig").arg("getpacket").arg(iface),
+    )?;
+    Ok(macos_ipconfig_router_from_output(&output))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_underlay_default_route_from_system() -> Result<Option<MacosRouteSpec>> {
+    let output = command_stdout_checked(ProcessCommand::new("ifconfig").arg("-l"))?;
+    for iface in macos_interface_names_from_ifconfig_list(&output) {
+        if iface.starts_with("utun")
+            || iface.starts_with("bridge")
+            || iface == "lo0"
+            || iface == "gif0"
+            || iface == "stf0"
+            || iface == "anpi0"
+        {
+            continue;
+        }
+
+        let Some(_ipv4) = macos_ipconfig_ipv4_for_interface(&iface)? else {
+            continue;
+        };
+        let Some(router) = macos_ipconfig_router_for_interface(&iface)? else {
+            continue;
+        };
+
+        return Ok(Some(MacosRouteSpec {
+            gateway: Some(router.to_string()),
+            interface: iface,
+        }));
+    }
+
+    Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_tunnel_interfaces_with_ipv4(tunnel_ip: Ipv4Addr) -> Result<Vec<String>> {
+    let output = command_stdout_checked(ProcessCommand::new("ifconfig").arg("-l"))?;
+    let mut matches = Vec::new();
+    for iface in macos_interface_names_from_ifconfig_list(&output) {
+        if !iface.starts_with("utun") {
+            continue;
+        }
+        if macos_iface_has_ipv4_address(&iface, tunnel_ip)? {
+            matches.push(iface);
+        }
+    }
+    Ok(matches)
 }
 
 #[cfg(target_os = "macos")]

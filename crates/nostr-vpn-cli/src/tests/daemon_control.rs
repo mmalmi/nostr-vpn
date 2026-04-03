@@ -282,6 +282,32 @@ fn macos_direct_route_args_use_bsd_iface_form() {
 }
 
 #[test]
+fn macos_interface_names_from_ifconfig_list_parses_interfaces() {
+    assert_eq!(
+        crate::macos_network::macos_interface_names_from_ifconfig_list(
+            "lo0 gif0 stf0 anpi0 en0 en1 utun0 utun100\n"
+        ),
+        vec![
+            "lo0", "gif0", "stf0", "anpi0", "en0", "en1", "utun0", "utun100"
+        ]
+    );
+}
+
+#[test]
+fn macos_ipconfig_router_from_output_parses_ip_and_ip_mult_formats() {
+    assert_eq!(
+        crate::macos_network::macos_ipconfig_router_from_output("router (ip): 192.168.64.1\n"),
+        Some("192.168.64.1".parse().unwrap())
+    );
+    assert_eq!(
+        crate::macos_network::macos_ipconfig_router_from_output(
+            "router (ip_mult): {192.168.64.1}\n"
+        ),
+        Some("192.168.64.1".parse().unwrap())
+    );
+}
+
+#[test]
 fn macos_ifconfig_has_ipv4_matches_exact_interface_address() {
     let output = "utun5: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380\n\
 \tinet 10.44.10.23 --> 10.44.10.23 netmask 0xffffffff\n\

@@ -6,6 +6,10 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
     }
 
     let config_path = args.config.unwrap_or_else(default_config_path);
+    #[cfg(target_os = "macos")]
+    if let Err(error) = repair_saved_network_state(&config_path) {
+        eprintln!("connect: failed to repair saved macOS network state: {error}");
+    }
     let (app, network_id) =
         load_config_with_overrides(&config_path, args.network_id, args.participants)?;
     let configured_participants = app.participant_pubkeys_hex();
@@ -533,6 +537,10 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
 
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
     ensure_no_other_daemon_processes_for_config(&config_path, std::process::id())?;
+    #[cfg(target_os = "macos")]
+    if let Err(error) = repair_saved_network_state(&config_path) {
+        eprintln!("daemon: failed to repair saved macOS network state: {error}");
+    }
     let network_override = args.network_id.clone();
     let participants_override = args.participants.clone();
     let (mut app, mut network_id) = load_config_with_overrides(

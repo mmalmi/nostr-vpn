@@ -785,16 +785,17 @@ pub(crate) fn repair_legacy_macos_network_state(config_path: &Path) -> Result<bo
 
     if let Ok(tunnel_ip) = strip_cidr(&app.node.tunnel_ip).parse::<Ipv4Addr>() {
         let default_routes = macos_default_routes()?;
-        let underlay_default = macos_underlay_default_route_from_routes(&default_routes);
+        let underlay_default = macos_underlay_default_route_from_routes(&default_routes)
+            .or_else(|| crate::macos_network::macos_underlay_default_route_from_system().ok().flatten());
         let mut tunnel_default_ifaces = Vec::new();
 
-        for route in default_routes {
+        for route in &default_routes {
             if !route.interface.starts_with("utun") {
                 continue;
             }
 
             match macos_iface_has_ipv4_address(&route.interface, tunnel_ip) {
-                Ok(true) => tunnel_default_ifaces.push(route.interface),
+                Ok(true) => tunnel_default_ifaces.push(route.interface.clone()),
                 Ok(false) => {}
                 Err(error) => {
                     eprintln!(
@@ -805,6 +806,16 @@ pub(crate) fn repair_legacy_macos_network_state(config_path: &Path) -> Result<bo
             }
         }
 
+        if tunnel_default_ifaces.is_empty() {
+            tunnel_default_ifaces = crate::macos_network::macos_tunnel_interfaces_with_ipv4(tunnel_ip)?;
+        }
+        tunnel_default_ifaces.sort();
+        tunnel_default_ifaces.dedup();
+
+        let should_restore_underlay_default = default_routes.is_empty()
+            || default_routes
+                .iter()
+                .all(|route| route.interface.starts_with("utun"));
         if let Some(underlay_default) = underlay_default {
             for iface in tunnel_default_ifaces {
                 match delete_macos_default_route_for_interface(&iface) {
@@ -818,9 +829,10 @@ pub(crate) fn repair_legacy_macos_network_state(config_path: &Path) -> Result<bo
                 }
             }
 
-            if repaired {
+            if repaired || should_restore_underlay_default {
                 restore_macos_default_route(&underlay_default)
                     .context("failed to restore legacy macOS default route")?;
+                repaired = true;
             }
         }
     }
