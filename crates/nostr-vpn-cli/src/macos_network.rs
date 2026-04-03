@@ -164,6 +164,11 @@ pub(super) fn restore_macos_default_route(route: &MacosRouteSpec) -> Result<()> 
     apply_macos_default_route(route.gateway.as_deref(), Some(route.interface.as_str()))
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_tunnel_default_route_targets() -> &'static [&'static str] {
+    &["0.0.0.0/1", "128.0.0.0/1"]
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn apply_macos_default_route(
     gateway: Option<&str>,
@@ -173,27 +178,26 @@ pub(super) fn apply_macos_default_route(
         let _ = delete_macos_default_route_for_interface(ifscope);
     }
 
+    if gateway.is_none() {
+        let iface = ifscope.ok_or_else(|| anyhow!("missing interface for direct default route"))?;
+        for target in macos_tunnel_default_route_targets() {
+            apply_macos_route_spec(target, None, Some(iface)).with_context(|| {
+                format!("failed to install macOS split default route {target} on {iface}")
+            })?;
+        }
+        return Ok(());
+    }
+
     let mut change = ProcessCommand::new("route");
     change.arg("-n").arg("change").arg("default");
-    if let Some(gateway) = gateway {
-        change.arg(gateway);
-    } else {
-        let iface = ifscope.ok_or_else(|| anyhow!("missing interface for direct default route"))?;
-        change.arg("-interface").arg(iface);
-    }
+    change.arg(gateway.expect("gateway checked above"));
 
     match run_checked(&mut change) {
         Ok(()) => Ok(()),
         Err(_) => {
             let mut add = ProcessCommand::new("route");
             add.arg("-n").arg("add").arg("default");
-            if let Some(gateway) = gateway {
-                add.arg(gateway);
-            } else {
-                let iface =
-                    ifscope.ok_or_else(|| anyhow!("missing interface for direct default route"))?;
-                add.arg("-interface").arg(iface);
-            }
+            add.arg(gateway.expect("gateway checked above"));
             run_checked(&mut add)
         }
     }
@@ -201,14 +205,24 @@ pub(super) fn apply_macos_default_route(
 
 #[cfg(target_os = "macos")]
 pub(super) fn delete_macos_default_route_for_interface(iface: &str) -> Result<()> {
-    run_checked(
-        ProcessCommand::new("route")
-            .arg("-n")
-            .arg("delete")
-            .arg("-ifscope")
-            .arg(iface)
-            .arg("default"),
-    )
+    let mut failures = Vec::new();
+    for target in std::iter::once("0.0.0.0/0").chain(
+        macos_tunnel_default_route_targets()
+            .iter()
+            .copied(),
+    ) {
+        if let Err(error) = delete_macos_route_spec(target, Some(iface))
+            && !crate::daemon_runtime::macos_route_delete_error_is_absent(&error.to_string())
+        {
+            failures.push(format!("remove {target} on {iface}: {error}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
+    }
 }
 
 pub(super) fn macos_ifconfig_has_ipv4(output: &str, needle: Ipv4Addr) -> bool {
@@ -277,6 +291,27 @@ pub(super) fn apply_macos_route_spec(
             run_checked(&mut change)
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn delete_macos_route_spec(target: &str, ifscope: Option<&str>) -> Result<()> {
+    let target_ip = strip_cidr(target);
+    let is_host = target.ends_with("/32") || !target.contains('/');
+
+    let mut delete = ProcessCommand::new("route");
+    delete.arg("-n").arg("delete");
+    if let Some(ifscope) = ifscope {
+        delete.arg("-ifscope").arg(ifscope);
+    }
+    if is_host {
+        delete.arg("-host").arg(target_ip);
+    } else if target == "0.0.0.0/0" {
+        delete.arg("default");
+    } else {
+        delete.arg("-net").arg(target);
+    }
+
+    run_checked(&mut delete)
 }
 
 #[cfg(target_os = "macos")]

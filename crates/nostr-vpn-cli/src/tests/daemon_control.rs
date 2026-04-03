@@ -197,6 +197,9 @@ fn macos_route_delete_error_is_absent_matches_missing_route_output() {
         "command failed: route -n delete -ifscope utun100 default\nstdout: not in table\nstderr:"
     ));
     assert!(macos_route_delete_error_is_absent(
+        "command failed: route -n delete -ifscope utun100 -net 0.0.0.0/1\nstdout: route: bad interface name\nstderr:"
+    ));
+    assert!(macos_route_delete_error_is_absent(
         "command failed: route -n delete -host 203.0.113.8\nstdout:\nstderr: route: writing to routing socket: No such process"
     ));
     assert!(!macos_route_delete_error_is_absent(
@@ -239,6 +242,14 @@ default            link#26            UCSIg           bridge100      !\n",
             gateway: Some("192.168.64.1".to_string()),
             interface: "en0".to_string(),
         })
+    );
+}
+
+#[test]
+fn macos_tunnel_default_route_targets_use_split_defaults() {
+    assert_eq!(
+        crate::macos_network::macos_tunnel_default_route_targets(),
+        &["0.0.0.0/1", "128.0.0.0/1"]
     );
 }
 
