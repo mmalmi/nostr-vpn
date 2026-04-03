@@ -1,18 +1,42 @@
 use super::*;
 
 impl NvpnBackend {
-    pub(crate) fn add_network(&mut self, name: &str) -> Result<()> {
-        self.config.add_network(name);
+    fn persist_config_with_defaults(&mut self) -> Result<PersistConfigOutcome> {
         self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
+        self.persist_config()
+    }
 
-        self.ensure_peer_status_entries();
+    fn finish_config_mutation(
+        &mut self,
+        persist_outcome: PersistConfigOutcome,
+        ensure_peers: bool,
+        ensure_relays: bool,
+        reload_live_process: bool,
+    ) -> Result<()> {
+        if ensure_peers {
+            self.ensure_peer_status_entries();
+        }
+        if ensure_relays {
+            self.ensure_relay_status_entries();
+        }
         if persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_if_running()?;
+            if reload_live_process {
+                if self.daemon_running {
+                    self.reload_daemon_process()?;
+                }
+            } else {
+                self.reload_daemon_if_running()?;
+            }
         }
         self.sync_daemon_state();
+        Ok(())
+    }
 
+    pub(crate) fn add_network(&mut self, name: &str) -> Result<()> {
+        self.config.add_network(name);
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, true, false, false)?;
         Ok(())
     }
 
@@ -31,49 +55,30 @@ impl NvpnBackend {
             .ok_or_else(|| anyhow!("network not found"))?;
 
         self.config.set_network_mesh_id(network_id, mesh_id)?;
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
+        let persist_outcome = self.persist_config_with_defaults()?;
 
         if is_active_network {
-            self.ensure_peer_status_entries();
-            if persist_outcome.needs_explicit_daemon_reload() {
-                self.reload_daemon_if_running()?;
-            }
+            self.finish_config_mutation(persist_outcome, true, false, false)?;
             if self.daemon_running {
                 self.session_status = "Mesh ID updated and applied.".to_string();
             }
+        } else {
+            self.finish_config_mutation(persist_outcome, false, false, false)?;
         }
-
-        self.sync_daemon_state();
         Ok(())
     }
 
     pub(crate) fn remove_network(&mut self, network_id: &str) -> Result<()> {
         self.config.remove_network(network_id)?;
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
-        if persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_if_running()?;
-        }
-        self.sync_daemon_state();
-
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, true, false, false)?;
         Ok(())
     }
 
     pub(crate) fn set_network_enabled(&mut self, network_id: &str, enabled: bool) -> Result<()> {
         self.config.set_network_enabled(network_id, enabled)?;
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        if persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_if_running()?;
-        }
-        self.sync_daemon_state();
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, false, false, false)?;
         Ok(())
     }
 
@@ -109,18 +114,11 @@ impl NvpnBackend {
         }
         self.peer_status.entry(normalized).or_default();
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
+        let persist_outcome = self.persist_config_with_defaults()?;
         if self.daemon_running {
-            if persist_outcome.needs_explicit_daemon_reload() {
-                self.reload_daemon_process()?;
-            }
             self.session_status = "Participant saved and applied.".to_string();
         }
-        self.sync_daemon_state();
+        self.finish_config_mutation(persist_outcome, true, false, true)?;
 
         Ok(())
     }
@@ -130,18 +128,11 @@ impl NvpnBackend {
         let normalized = self.config.add_admin_to_network(network_id, npub)?;
         self.peer_status.entry(normalized).or_default();
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
+        let persist_outcome = self.persist_config_with_defaults()?;
         if self.daemon_running {
-            if persist_outcome.needs_explicit_daemon_reload() {
-                self.reload_daemon_process()?;
-            }
             self.session_status = "Admin saved and applied.".to_string();
         }
-        self.sync_daemon_state();
+        self.finish_config_mutation(persist_outcome, true, false, true)?;
 
         Ok(())
     }
@@ -153,16 +144,8 @@ impl NvpnBackend {
         let normalized_inviter = normalize_nostr_pubkey(&invite.inviter_npub)?;
         self.peer_status.entry(normalized_inviter).or_default();
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
-        self.ensure_relay_status_entries();
-        if persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_if_running()?;
-        }
-        self.sync_daemon_state();
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, true, true, false)?;
         self.session_status = if self.daemon_running {
             format!("Invite imported and applied for {}.", invite.network_name)
         } else {
@@ -201,18 +184,11 @@ impl NvpnBackend {
                 .retain(|request| request.requester != normalized);
         }
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
+        let persist_outcome = self.persist_config_with_defaults()?;
         if self.daemon_running {
-            if persist_outcome.needs_explicit_daemon_reload() {
-                self.reload_daemon_process()?;
-            }
             self.session_status = "Participant removed and applied.".to_string();
         }
-        self.sync_daemon_state();
+        self.finish_config_mutation(persist_outcome, true, false, true)?;
 
         Ok(())
     }
@@ -223,18 +199,11 @@ impl NvpnBackend {
         self.config
             .remove_admin_from_network(network_id, &normalized)?;
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
+        let persist_outcome = self.persist_config_with_defaults()?;
         if self.daemon_running {
-            if persist_outcome.needs_explicit_daemon_reload() {
-                self.reload_daemon_process()?;
-            }
             self.session_status = "Admin removed and applied.".to_string();
         }
-        self.sync_daemon_state();
+        self.finish_config_mutation(persist_outcome, true, false, true)?;
 
         Ok(())
     }
@@ -362,15 +331,8 @@ impl NvpnBackend {
         }
         self.peer_status.entry(requester).or_default();
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_peer_status_entries();
-        if self.daemon_running && persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_process()?;
-        }
-        self.sync_daemon_state();
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, true, false, true)?;
 
         let connect_error = if should_connect_session {
             self.connect_session().err().map(|error| error.to_string())
@@ -415,15 +377,8 @@ impl NvpnBackend {
         }
 
         self.config.nostr.relays.push(relay.to_string());
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_relay_status_entries();
-        if persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_if_running()?;
-        }
-        self.sync_daemon_state();
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, false, true, false)?;
 
         Ok(())
     }
@@ -440,15 +395,8 @@ impl NvpnBackend {
             return Ok(());
         }
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
-
-        self.ensure_relay_status_entries();
-        if persist_outcome.needs_explicit_daemon_reload() {
-            self.reload_daemon_if_running()?;
-        }
-        self.sync_daemon_state();
+        let persist_outcome = self.persist_config_with_defaults()?;
+        self.finish_config_mutation(persist_outcome, false, true, false)?;
 
         Ok(())
     }
@@ -526,14 +474,11 @@ impl NvpnBackend {
             self.config.close_to_tray_on_close = close_to_tray_on_close;
         }
 
-        self.config.ensure_defaults();
-        maybe_autoconfigure_node(&mut self.config);
-        let persist_outcome = self.persist_config()?;
+        let persist_outcome = self.persist_config_with_defaults()?;
 
         if restart_required && persist_outcome.needs_explicit_daemon_reload() {
             self.reload_daemon_if_running()?;
         }
-
         self.sync_daemon_state();
         Ok(())
     }
