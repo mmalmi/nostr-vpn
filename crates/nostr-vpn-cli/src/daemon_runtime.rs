@@ -774,6 +774,8 @@ pub(crate) fn macos_route_delete_error_is_absent(message: &str) -> bool {
     lower.contains("not in table")
         || lower.contains("no such process")
         || lower.contains("no such route")
+        || lower.contains("bad interface name")
+        || lower.contains("not a network interface")
 }
 
 #[cfg(target_os = "macos")]
