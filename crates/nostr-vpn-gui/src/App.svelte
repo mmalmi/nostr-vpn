@@ -32,10 +32,6 @@
   import { nodeNameDnsPreview } from './lib/node-name.js'
   import {
     activeNetwork,
-    exitNodeAvailabilityClass,
-    exitNodeAvailabilityText,
-    exitNodeCandidates,
-    filteredExitNodeCandidates,
     formatCountdown,
     healthBadgeClass,
     healthSummaryText,
@@ -46,24 +42,19 @@
     inactiveNetworks,
     networkAdminSummary,
     networkPeerSummary,
-    offerExitNodeStatusText,
     onlineDeviceSummary,
     participantBadgeClass,
     participantPresenceBadgeText,
     participantTrafficText,
     participantTransportBadgeText,
     platformLabel,
-    publicRelayFallbackStatusText,
-    relayFallbackSummaryText,
-    routingModeStatusText,
-    routingSectionMetaText,
-    selectedExitNodeStatusText,
     serviceLifecycleBadgeClass,
     serviceLifecycleBadgeText,
     serviceMetaText,
     short,
   } from './lib/app-view'
   import PublicServicesPanel from './PublicServicesPanel.svelte'
+  import RoutingPanel from './RoutingPanel.svelte'
   import SavedNetworksPanel from './SavedNetworksPanel.svelte'
   import ServiceActionPanel from './ServiceActionPanel.svelte'
   import {
@@ -1186,6 +1177,11 @@
     relayInput = ''
   }
 
+  function onAdvertisedRoutesInput(value: string) {
+    advertisedRoutesDraft = value
+    debounce('advertisedRoutes', () => onUpdateSettings({ advertisedRoutes: advertisedRoutesDraft }))
+  }
+
   async function onUpdateSettings(patch: SettingsPatch) {
     await runAction(() => updateSettings(patch))
   }
@@ -1785,101 +1781,14 @@
 
     </section>
 
-    <section class="panel exit-node-panel">
-      <div class="section-title-row">
-        <div>
-          <div class="panel-kicker">Routing</div>
-          <h2>Routing & Sharing</h2>
-        </div>
-        <div class="section-meta">{routingSectionMetaText(state)}</div>
-      </div>
-
-      <div class="field-grid">
-        <div class="field-panel">
-          <div class="field-label">Current Mode</div>
-          <div class="config-path">{routingModeStatusText(state)}</div>
-        </div>
-
-        <div class="field-panel">
-          <label class="toggle-row">
-            <input
-              type="checkbox"
-              checked={state.advertiseExitNode}
-              on:change={(event) =>
-                onUpdateSettings({
-                  advertiseExitNode: (event.currentTarget as HTMLInputElement).checked,
-                })}
-            />
-            <div>Advertise this device as a private exit node</div>
-          </label>
-          <div class="config-path settings-note">{offerExitNodeStatusText(state)}</div>
-        </div>
-
-        <label class="field-span">
-          <span>Advertised Routes</span>
-          <input
-            class="text-input"
-            placeholder="10.0.0.0/24, 192.168.0.0/24"
-            bind:value={advertisedRoutesDraft}
-            on:input={() =>
-              debounce('advertisedRoutes', () =>
-                onUpdateSettings({ advertisedRoutes: advertisedRoutesDraft }))}
-          />
-          <div class="config-path">{additionalRoutesStatusText(state)}</div>
-        </label>
-
-        <div class="field-span field-panel exit-node-panel-body">
-          <div class="field-label">Use A Peer Exit Node</div>
-          <div class="config-path">{selectedExitNodeStatusText(state)}</div>
-          <input
-            class="text-input"
-            placeholder="Search peers by alias, npub, or tunnel IP"
-            data-testid="exit-node-search"
-            bind:value={exitNodeSearch}
-          />
-          <div class="exit-node-list" data-testid="exit-node-select">
-            <button
-              class={`exit-node-card ${!state.exitNode ? 'selected' : ''}`}
-              type="button"
-              on:click={() => onSelectExitNode('')}
-            >
-              <div class="row spread">
-                <div class="item-title">No exit node</div>
-                <span class="badge muted">Direct mesh</span>
-              </div>
-              <div class="item-sub">Keep default-route traffic off peer relays and use mesh routing only.</div>
-            </button>
-
-            {#each filteredExitNodeCandidates(state, exitNodeSearch) as participant}
-              <button
-                class={`exit-node-card ${
-                  state.exitNode === participant.npub ? 'selected' : ''
-                } ${!participant.offersExitNode ? 'disabled' : ''}`}
-                type="button"
-                on:click={() => onSelectExitNode(participant.npub)}
-                disabled={!participant.offersExitNode}
-              >
-                <div class="row spread">
-                  <div class="item-title">
-                    {participant.magicDnsName || participant.magicDnsAlias || participant.npub}
-                  </div>
-                  <span class={`badge ${exitNodeAvailabilityClass(participant)}`}>
-                    {exitNodeAvailabilityText(participant)}
-                  </span>
-                </div>
-                <div class="item-sub">
-                  {participant.npub} | {participant.statusText} | {participant.lastSignalText} | {participant.tunnelIp}
-                </div>
-              </button>
-            {/each}
-
-            {#if filteredExitNodeCandidates(state, exitNodeSearch).length === 0}
-              <div class="config-path">No peers match that search.</div>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </section>
+    <RoutingPanel
+      {state}
+      {advertisedRoutesDraft}
+      bind:exitNodeSearch
+      {onAdvertisedRoutesInput}
+      {onUpdateSettings}
+      {onSelectExitNode}
+    />
 
     <SavedNetworksPanel
       bind:newNetworkName
