@@ -186,6 +186,20 @@ pub(crate) fn macos_tunnel_interfaces_with_ipv4(tunnel_ip: Ipv4Addr) -> Result<V
 }
 
 #[cfg(target_os = "macos")]
+pub(crate) fn ensure_macos_underlay_default_route() -> Result<bool> {
+    let default_routes = macos_default_routes()?;
+    if macos_underlay_default_route_from_routes(&default_routes).is_some() {
+        return Ok(false);
+    }
+
+    let Some(underlay) = macos_underlay_default_route_from_system()? else {
+        return Ok(false);
+    };
+    restore_macos_default_route(&underlay)?;
+    Ok(true)
+}
+
+#[cfg(target_os = "macos")]
 pub(super) fn macos_default_routes() -> Result<Vec<MacosRouteSpec>> {
     let output = command_stdout_checked(
         ProcessCommand::new("netstat")

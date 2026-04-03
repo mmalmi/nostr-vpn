@@ -10,6 +10,12 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
     if let Err(error) = repair_saved_network_state(&config_path) {
         eprintln!("connect: failed to repair saved macOS network state: {error}");
     }
+    #[cfg(target_os = "macos")]
+    match crate::macos_network::ensure_macos_underlay_default_route() {
+        Ok(true) => eprintln!("connect: restored missing macOS underlay default route"),
+        Ok(false) => {}
+        Err(error) => eprintln!("connect: failed to ensure macOS underlay default route: {error}"),
+    }
     let (app, network_id) =
         load_config_with_overrides(&config_path, args.network_id, args.participants)?;
     let configured_participants = app.participant_pubkeys_hex();
@@ -193,6 +199,14 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                 }
             }
             _ = network_interval.tick() => {
+                #[cfg(target_os = "macos")]
+                match crate::macos_network::ensure_macos_underlay_default_route() {
+                    Ok(true) => eprintln!("connect: restored missing macOS underlay default route"),
+                    Ok(false) => {}
+                    Err(error) => eprintln!(
+                        "connect: failed to ensure macOS underlay default route: {error}"
+                    ),
+                }
                 let latest_snapshot = capture_network_snapshot();
                 let runtime_listen_port =
                     tunnel_runtime.active_listen_port.unwrap_or(app.node.listen_port);
@@ -540,6 +554,12 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
     #[cfg(target_os = "macos")]
     if let Err(error) = repair_saved_network_state(&config_path) {
         eprintln!("daemon: failed to repair saved macOS network state: {error}");
+    }
+    #[cfg(target_os = "macos")]
+    match crate::macos_network::ensure_macos_underlay_default_route() {
+        Ok(true) => eprintln!("daemon: restored missing macOS underlay default route"),
+        Ok(false) => {}
+        Err(error) => eprintln!("daemon: failed to ensure macOS underlay default route: {error}"),
     }
     let network_override = args.network_id.clone();
     let participants_override = args.participants.clone();
@@ -962,6 +982,14 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 }
             }
             _ = network_interval.tick() => {
+                #[cfg(target_os = "macos")]
+                match crate::macos_network::ensure_macos_underlay_default_route() {
+                    Ok(true) => eprintln!("daemon: restored missing macOS underlay default route"),
+                    Ok(false) => {}
+                    Err(error) => eprintln!(
+                        "daemon: failed to ensure macOS underlay default route: {error}"
+                    ),
+                }
                 let latest_snapshot = capture_network_snapshot();
                 let runtime_listen_port =
                     tunnel_runtime.active_listen_port.unwrap_or(app.node.listen_port);
