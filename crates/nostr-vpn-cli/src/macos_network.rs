@@ -202,8 +202,12 @@ pub(super) fn apply_macos_default_route(
 
     if gateway.is_none() {
         let iface = ifscope.ok_or_else(|| anyhow!("missing interface for direct default route"))?;
-        return apply_macos_route_spec("0.0.0.0/0", None, Some(iface))
-            .with_context(|| format!("failed to install macOS default route on {iface}"));
+        for target in macos_tunnel_default_route_targets() {
+            apply_macos_route_spec(target, None, Some(iface)).with_context(|| {
+                format!("failed to install macOS default route target {target} on {iface}")
+            })?;
+        }
+        return Ok(());
     }
 
     let mut change = ProcessCommand::new("route");
