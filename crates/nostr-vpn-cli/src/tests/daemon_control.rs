@@ -314,6 +314,17 @@ fn daemon_pid_scan_matches_processes_for_config() {
 }
 
 #[test]
+fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
+    let config_path = Path::new("/root/.config/nvpn/config.toml");
+    let ps = "2433278 bash -c set -e; nohup /root/nostr-vpn-current/target/debug/nvpn daemon --config /root/.config/nvpn/config.toml --iface utun100 >/root/.config/nvpn/launch.out 2>&1 </dev/null & sleep 5\n\
+2433301 /root/nostr-vpn-current/target/debug/nvpn daemon --config /root/.config/nvpn/config.toml --iface utun100 --announce-interval-secs 20\n";
+
+    let pids = daemon_pids_from_ps_output(ps, config_path);
+
+    assert_eq!(pids, vec![2433301]);
+}
+
+#[test]
 fn relay_operator_advertise_host_prefers_public_signal_endpoint() {
     let mut config = AppConfig::generated();
     config.node.endpoint = "192.168.1.40:51820".to_string();

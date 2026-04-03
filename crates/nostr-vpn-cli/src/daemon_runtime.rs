@@ -1379,9 +1379,45 @@ pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Res
 
 pub(crate) fn daemon_command_matches_config(command: &str, config_path: &Path) -> bool {
     let config_text = config_path.display().to_string();
-    command.contains(" daemon ")
+    let Some((prefix, _)) = command.split_once(" daemon ") else {
+        return false;
+    };
+
+    daemon_command_has_nvpn_executable_prefix(prefix)
+        && !daemon_command_prefix_looks_like_shell_wrapper(prefix)
+        && command.contains(" daemon ")
         && command.contains("--config")
         && command.contains(config_text.as_str())
+}
+
+fn daemon_command_has_nvpn_executable_prefix(prefix: &str) -> bool {
+    let trimmed = prefix.trim().trim_matches(|ch| ch == '"' || ch == '\'');
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let normalized = trimmed.replace('\\', "/");
+    normalized == "nvpn"
+        || normalized.ends_with("/nvpn")
+        || normalized.eq_ignore_ascii_case("nvpn.exe")
+        || normalized.to_ascii_lowercase().ends_with("/nvpn.exe")
+}
+
+fn daemon_command_prefix_looks_like_shell_wrapper(prefix: &str) -> bool {
+    let trimmed = prefix.trim_start();
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("bash ")
+        || lower.starts_with("sh ")
+        || lower.starts_with("zsh ")
+        || lower.starts_with("dash ")
+        || lower.starts_with("fish ")
+        || lower.starts_with("cmd ")
+        || lower.starts_with("powershell ")
+        || lower.starts_with("pwsh ")
+        || trimmed.contains(" -c ")
+        || trimmed.contains(';')
+        || trimmed.contains("&&")
+        || trimmed.contains("||")
 }
 
 #[cfg(any(target_os = "windows", test))]
