@@ -55,7 +55,7 @@ pub(crate) fn macos_has_underlay_default_route(output: &str) -> bool {
     macos_underlay_default_route_from_routes(&macos_default_routes_from_netstat(output)).is_some()
 }
 
-#[cfg(test)]
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_has_tunnel_split_default_routes(output: &str) -> bool {
     output.lines().map(str::trim).any(|line| {
         let tokens = line.split_whitespace().collect::<Vec<_>>();
@@ -233,7 +233,7 @@ pub(crate) fn ensure_macos_underlay_default_route() -> Result<bool> {
             .arg("-f")
             .arg("inet"),
     )?;
-    if macos_has_underlay_default_route(&output) {
+    if macos_has_underlay_default_route(&output) || macos_has_tunnel_split_default_routes(&output) {
         return Ok(false);
     }
 
@@ -260,7 +260,9 @@ pub(crate) fn ensure_macos_underlay_default_route() -> Result<bool> {
             .arg("-f")
             .arg("inet"),
     )?;
-    if macos_has_underlay_default_route(&refreshed_output) {
+    if macos_has_underlay_default_route(&refreshed_output)
+        || macos_has_tunnel_split_default_routes(&refreshed_output)
+    {
         return Ok(true);
     }
 
