@@ -203,13 +203,22 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
             }
             _ = network_interval.tick() => {
                 #[cfg(target_os = "macos")]
-                match crate::macos_network::ensure_macos_underlay_default_route() {
-                    Ok(true) => eprintln!("connect: restored missing macOS underlay default route"),
-                    Ok(false) => {}
-                    Err(error) => eprintln!(
-                        "connect: failed to ensure macOS underlay default route: {error}"
-                    ),
-                }
+                let underlay_repaired =
+                    match crate::macos_network::ensure_macos_underlay_default_route() {
+                        Ok(true) => {
+                            eprintln!("connect: restored missing macOS underlay default route");
+                            true
+                        }
+                        Ok(false) => false,
+                        Err(error) => {
+                            eprintln!(
+                                "connect: failed to ensure macOS underlay default route: {error}"
+                            );
+                            false
+                        }
+                    };
+                #[cfg(not(target_os = "macos"))]
+                let underlay_repaired = false;
                 let latest_snapshot = crate::diagnostics::prefer_nonempty_network_snapshot(
                     &network_snapshot,
                     capture_network_snapshot(),
@@ -218,7 +227,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     tunnel_runtime.active_listen_port.unwrap_or(app.node.listen_port);
                 let network_changed = latest_snapshot.changed_since(&network_snapshot);
                 let endpoint_changed = if network_changed {
-                    network_snapshot = latest_snapshot;
+                    network_snapshot = latest_snapshot.clone();
                     println!("connect: network change detected; refreshing paths");
                     refresh_public_signal_endpoint_with_port_mapping(
                         &app,
@@ -254,11 +263,15 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     }
                 };
 
-                if !network_changed && !endpoint_changed {
+                if !network_changed && !endpoint_changed && !underlay_repaired {
                     continue;
                 }
 
-                if network_changed {
+                if network_changed || underlay_repaired {
+                    network_snapshot = latest_snapshot;
+                    if network_changed {
+                        println!("connect: network change detected; refreshing paths");
+                    }
                     last_nat_punch_attempt = None;
                     if let Err(error) = apply_presence_runtime_update(
                         &app,
@@ -989,13 +1002,22 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
             }
             _ = network_interval.tick() => {
                 #[cfg(target_os = "macos")]
-                match crate::macos_network::ensure_macos_underlay_default_route() {
-                    Ok(true) => eprintln!("daemon: restored missing macOS underlay default route"),
-                    Ok(false) => {}
-                    Err(error) => eprintln!(
-                        "daemon: failed to ensure macOS underlay default route: {error}"
-                    ),
-                }
+                let underlay_repaired =
+                    match crate::macos_network::ensure_macos_underlay_default_route() {
+                        Ok(true) => {
+                            eprintln!("daemon: restored missing macOS underlay default route");
+                            true
+                        }
+                        Ok(false) => false,
+                        Err(error) => {
+                            eprintln!(
+                                "daemon: failed to ensure macOS underlay default route: {error}"
+                            );
+                            false
+                        }
+                    };
+                #[cfg(not(target_os = "macos"))]
+                let underlay_repaired = false;
                 let latest_snapshot = crate::diagnostics::prefer_nonempty_network_snapshot(
                     &network_snapshot,
                     capture_network_snapshot(),
@@ -1005,7 +1027,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 let session_active = daemon_session_active(session_enabled, expected_peers);
                 let network_changed = latest_snapshot.changed_since(&network_snapshot);
                 let endpoint_changed = if network_changed {
-                    network_snapshot = latest_snapshot;
+                    network_snapshot = latest_snapshot.clone();
                     network_changed_at = Some(unix_timestamp());
                     captive_portal = detect_captive_portal(timeout).await;
                     if session_active {
@@ -1048,12 +1070,19 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     false
                 };
 
-                if !network_changed && !endpoint_changed {
+                if !network_changed && !endpoint_changed && !underlay_repaired {
                     continue;
                 }
 
-                if network_changed {
-                    eprintln!("daemon: network change detected; refreshing peer paths");
+                if network_changed || underlay_repaired {
+                    if network_changed {
+                        network_snapshot = latest_snapshot;
+                        network_changed_at = Some(unix_timestamp());
+                        eprintln!("daemon: network change detected; refreshing peer paths");
+                    } else {
+                        network_snapshot = latest_snapshot;
+                        eprintln!("daemon: refreshing tunnel after macOS underlay repair");
+                    }
                     last_nat_punch_attempt = None;
                     match apply_presence_runtime_update(
                         &app,
