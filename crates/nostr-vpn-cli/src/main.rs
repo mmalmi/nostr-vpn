@@ -3982,7 +3982,9 @@ fn discover_public_signal_endpoint(
             continue;
         };
 
-        match discover_public_udp_endpoint(reflector_addr, listen_port, timeout) {
+        match discover_public_endpoint_with_bind_fallback(listen_port, |port| {
+            discover_public_udp_endpoint(reflector_addr, port, timeout)
+        }) {
             Ok(endpoint) => {
                 eprintln!("nat: discovered public endpoint via reflector {reflector}: {endpoint}");
                 return Some(endpoint);
@@ -4003,7 +4005,9 @@ fn discover_public_signal_endpoint(
     }
 
     for server in &app.nat.stun_servers {
-        match discover_public_udp_endpoint_via_stun(server, listen_port, timeout) {
+        match discover_public_endpoint_with_bind_fallback(listen_port, |port| {
+            discover_public_udp_endpoint_via_stun(server, port, timeout)
+        }) {
             Ok(endpoint) => {
                 eprintln!("nat: discovered public endpoint via STUN {server}: {endpoint}");
                 return Some(endpoint);
@@ -4015,6 +4019,31 @@ fn discover_public_signal_endpoint(
     }
 
     None
+}
+
+fn discover_public_endpoint_with_bind_fallback<F>(listen_port: u16, mut discover: F) -> Result<String>
+where
+    F: FnMut(u16) -> Result<String>,
+{
+    match discover(listen_port) {
+        Ok(endpoint) => Ok(endpoint),
+        Err(error) => {
+            let error_text = error.to_string();
+            if listen_port == 0 || !public_endpoint_discovery_bind_conflict(&error_text) {
+                return Err(error);
+            }
+
+            let endpoint = discover(0)?;
+            Ok(endpoint_with_listen_port(&endpoint, listen_port))
+        }
+    }
+}
+
+fn public_endpoint_discovery_bind_conflict(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    is_resource_busy_message(message)
+        || lower.contains("failed to bind udp stun socket")
+        || lower.contains("failed to bind udp discovery socket")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

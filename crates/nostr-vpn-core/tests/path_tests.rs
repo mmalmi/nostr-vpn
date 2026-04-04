@@ -165,3 +165,20 @@ fn cached_endpoint_survives_flap_until_pruned() {
         .expect("fallback endpoint after prune");
     assert_eq!(fallback, "192.168.1.20:51820");
 }
+
+#[test]
+fn fresh_public_signal_replaces_observed_same_host_different_port() {
+    let mut paths = PeerPathBook::default();
+    let original = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 10);
+    paths.refresh_from_announcement("peer-a", &original, 10);
+    paths.note_selected("peer-a", "203.0.113.20:40001", 10);
+    paths.note_success("peer-a", "203.0.113.20:40001", 11);
+
+    let updated = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 20);
+    paths.refresh_from_announcement("peer-a", &updated, 20);
+
+    let selected = paths
+        .select_endpoint("peer-a", &updated, Some("10.0.0.33:51820"), 21, 5)
+        .expect("updated public endpoint");
+    assert_eq!(selected, "203.0.113.20:51820");
+}

@@ -58,6 +58,37 @@ fn endpoint_listen_port_rewrite_updates_socket_port() {
 }
 
 #[test]
+fn public_endpoint_discovery_bind_conflict_matches_discovery_bind_errors() {
+    assert!(public_endpoint_discovery_bind_conflict(
+        "failed to bind udp stun socket on 0.0.0.0:51820"
+    ));
+    assert!(public_endpoint_discovery_bind_conflict(
+        "failed to bind udp discovery socket on 0.0.0.0:51820"
+    ));
+    assert!(public_endpoint_discovery_bind_conflict(
+        "Address already in use"
+    ));
+    assert!(!public_endpoint_discovery_bind_conflict("timed out waiting for stun response"));
+}
+
+#[test]
+fn public_endpoint_discovery_falls_back_to_host_inference_when_port_bind_is_busy() {
+    let mut calls = Vec::new();
+    let endpoint = discover_public_endpoint_with_bind_fallback(58686, |port| {
+        calls.push(port);
+        match port {
+            58686 => Err(anyhow!("failed to bind udp stun socket on 0.0.0.0:58686")),
+            0 => Ok("89.27.103.157:41829".to_string()),
+            other => Err(anyhow!("unexpected port {other}")),
+        }
+    })
+    .expect("fallback endpoint");
+
+    assert_eq!(calls, vec![58686, 0]);
+    assert_eq!(endpoint, "89.27.103.157:58686");
+}
+
+#[test]
 fn local_interface_address_for_tunnel_preserves_host_prefix() {
     assert_eq!(
         local_interface_address_for_tunnel("10.44.0.1/32"),

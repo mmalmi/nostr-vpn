@@ -85,17 +85,21 @@ impl PeerPathBook {
         let participant = participant.into();
         let state = self.peers.entry(participant).or_default();
         let mut changed = false;
-        let announced_relay_endpoints = announcement
-            .relay_endpoint
-            .as_deref()
-            .filter(|endpoint| !endpoint.trim().is_empty())
-            .into_iter()
-            .map(str::to_string)
+        let announced_endpoints = announcement_endpoints(announcement);
+        let announced_relay_endpoints = announced_endpoints
+            .iter()
+            .filter(|(_, source)| matches!(source, PeerPathSource::Relay))
+            .map(|(endpoint, _)| endpoint.clone())
             .collect::<HashSet<_>>();
 
         let before = state.endpoints.len();
         state.endpoints.retain(|endpoint, tracked| {
-            tracked.source != PeerPathSource::Relay || announced_relay_endpoints.contains(endpoint)
+            (tracked.source != PeerPathSource::Relay || announced_relay_endpoints.contains(endpoint))
+                && !observed_endpoint_superseded_by_announcement(
+                    endpoint,
+                    tracked,
+                    &announced_endpoints,
+                )
         });
         if state.endpoints.len() != before {
             changed = true;
@@ -107,7 +111,7 @@ impl PeerPathBook {
             changed = true;
         }
 
-        for (endpoint, source) in announcement_endpoints(announcement) {
+        for (endpoint, source) in announced_endpoints {
             let entry = state
                 .endpoints
                 .entry(endpoint)
@@ -404,6 +408,34 @@ fn announcement_endpoints(announcement: &PeerAnnouncement) -> Vec<(String, PeerP
     }
 
     endpoints
+}
+
+fn observed_endpoint_superseded_by_announcement(
+    endpoint: &str,
+    tracked: &TrackedPeerPath,
+    announced_endpoints: &[(String, PeerPathSource)],
+) -> bool {
+    if tracked.source != PeerPathSource::Observed || endpoint_is_local_only(endpoint) {
+        return false;
+    }
+
+    let Some(observed_host) = endpoint_host(endpoint) else {
+        return false;
+    };
+
+    announced_endpoints.iter().any(|(announced_endpoint, announced_source)| {
+        !matches!(announced_source, PeerPathSource::Observed)
+            && !endpoint_is_local_only(announced_endpoint)
+            && endpoint != announced_endpoint
+            && endpoint_host(announced_endpoint).as_deref() == Some(observed_host.as_str())
+    })
+}
+
+fn endpoint_host(endpoint: &str) -> Option<String> {
+    endpoint
+        .parse::<std::net::SocketAddr>()
+        .ok()
+        .map(|addr| addr.ip().to_string())
 }
 
 fn candidate_rank(
