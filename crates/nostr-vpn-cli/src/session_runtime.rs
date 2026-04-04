@@ -272,6 +272,9 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     if network_changed {
                         println!("connect: network change detected; refreshing paths");
                     }
+                    if underlay_repaired {
+                        tunnel_runtime.last_fingerprint = None;
+                    }
                     last_nat_punch_attempt = None;
                     if let Err(error) = apply_presence_runtime_update(
                         &app,
@@ -1082,6 +1085,9 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     } else {
                         network_snapshot = latest_snapshot;
                         eprintln!("daemon: refreshing tunnel after macOS underlay repair");
+                    }
+                    if underlay_repaired {
+                        tunnel_runtime.last_fingerprint = None;
                     }
                     last_nat_punch_attempt = None;
                     match apply_presence_runtime_update(
