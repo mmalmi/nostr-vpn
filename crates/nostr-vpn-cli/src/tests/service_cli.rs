@@ -132,6 +132,46 @@ fn macos_service_activation_enables_before_bootstrap() {
 }
 
 #[test]
+fn macos_stop_daemon_hint_prefers_launchd_guidance_for_service_pid() {
+    let status = ServiceStatusView {
+        supported: true,
+        installed: true,
+        disabled: false,
+        loaded: true,
+        running: true,
+        pid: Some(4242),
+        label: "to.nostrvpn.nvpn".to_string(),
+        plist_path: "/Library/LaunchDaemons/to.nostrvpn.nvpn.plist".to_string(),
+        binary_path: "/Applications/Nostr VPN.app/Contents/MacOS/nvpn".to_string(),
+        binary_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+
+    let hint = crate::macos_stop_daemon_hint_from_service_status(&status, &[4242])
+        .expect("launchd-managed service should produce a hint");
+    assert!(hint.contains("launchd service to.nostrvpn.nvpn"));
+    assert!(hint.contains("service disable"));
+    assert!(hint.contains("service enable"));
+}
+
+#[test]
+fn macos_stop_daemon_hint_ignores_non_service_pid() {
+    let status = ServiceStatusView {
+        supported: true,
+        installed: true,
+        disabled: false,
+        loaded: true,
+        running: true,
+        pid: Some(4242),
+        label: "to.nostrvpn.nvpn".to_string(),
+        plist_path: "/Library/LaunchDaemons/to.nostrvpn.nvpn.plist".to_string(),
+        binary_path: "/Applications/Nostr VPN.app/Contents/MacOS/nvpn".to_string(),
+        binary_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+
+    assert!(crate::macos_stop_daemon_hint_from_service_status(&status, &[31337]).is_none());
+}
+
+#[test]
 fn linux_service_unit_runs_service_supervised_daemon() {
     let unit = crate::linux_service_unit_content(
         Path::new("/usr/local/bin/nvpn"),

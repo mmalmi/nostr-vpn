@@ -5873,11 +5873,7 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
 
     let remaining = daemon_candidate_pids(&config_path, current_pid)?;
     if !remaining.is_empty() {
-        let hint = if requested_control_stop {
-            "daemon ignored local stop request; likely an older daemon binary is still running. perform one elevated stop (e.g. sudo nvpn stop --force --config <config>) to migrate"
-        } else {
-            "try --force"
-        };
+        let hint = stop_daemon_remaining_hint(&config_path, &remaining, requested_control_stop);
         return Err(anyhow!(
             "failed to stop daemon(s) for {}; remaining pid(s): {}; {hint}",
             config_path.display(),
@@ -5890,6 +5886,49 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
     }
 
     finish_stop_daemon(&config_path, &status, true)
+}
+
+fn stop_daemon_remaining_hint(
+    config_path: &Path,
+    remaining: &[u32],
+    requested_control_stop: bool,
+) -> String {
+    #[cfg(target_os = "macos")]
+    if let Ok(service_status) = service_management::query_service_status(config_path)
+        && let Some(hint) = macos_stop_daemon_hint_from_service_status(&service_status, remaining)
+    {
+        return hint;
+    }
+
+    if requested_control_stop {
+        "daemon ignored local stop request; likely an older daemon binary is still running. perform one elevated stop (e.g. sudo nvpn stop --force --config <config>) to migrate".to_string()
+    } else {
+        "try --force".to_string()
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_stop_daemon_hint_from_service_status(
+    service_status: &ServiceStatusView,
+    remaining: &[u32],
+) -> Option<String> {
+    if !(service_status.supported
+        && service_status.installed
+        && service_status.loaded
+        && service_status.running)
+    {
+        return None;
+    }
+
+    let pid = service_status.pid?;
+    if !remaining.contains(&pid) {
+        return None;
+    }
+
+    Some(format!(
+        "daemon is managed by launchd service {}; it may be getting restarted automatically. use sudo nvpn service disable --config <config> to stop it completely, or sudo nvpn service enable --config <config> to restart it onto the current binary",
+        service_status.label
+    ))
 }
 
 fn finish_stop_daemon(config_path: &Path, status: &DaemonStatus, was_running: bool) -> Result<()> {

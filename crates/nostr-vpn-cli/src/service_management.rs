@@ -97,11 +97,11 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
 }
 
 fn service_uninstall(args: ServiceUninstallArgs) -> Result<()> {
-    let config_path = args.config.unwrap_or_else(default_config_path);
+    let _config_path = args.config.unwrap_or_else(default_config_path);
 
     #[cfg(target_os = "macos")]
     {
-        macos_service::macos_uninstall_service(&config_path)
+        macos_service::macos_uninstall_service(&_config_path)
     }
 
     #[cfg(target_os = "linux")]
@@ -123,11 +123,11 @@ fn service_uninstall(args: ServiceUninstallArgs) -> Result<()> {
 }
 
 fn service_enable(args: ServiceControlArgs) -> Result<()> {
-    let config_path = args.config.unwrap_or_else(default_config_path);
+    let _config_path = args.config.unwrap_or_else(default_config_path);
 
     #[cfg(target_os = "macos")]
     {
-        macos_service::macos_enable_service(&config_path)
+        macos_service::macos_enable_service(&_config_path)
     }
 
     #[cfg(target_os = "windows")]
@@ -144,11 +144,11 @@ fn service_enable(args: ServiceControlArgs) -> Result<()> {
 }
 
 fn service_disable(args: ServiceControlArgs) -> Result<()> {
-    let config_path = args.config.unwrap_or_else(default_config_path);
+    let _config_path = args.config.unwrap_or_else(default_config_path);
 
     #[cfg(target_os = "macos")]
     {
-        macos_service::macos_disable_service(&config_path)
+        macos_service::macos_disable_service(&_config_path)
     }
 
     #[cfg(target_os = "windows")]
@@ -165,8 +165,8 @@ fn service_disable(args: ServiceControlArgs) -> Result<()> {
 }
 
 fn service_status(args: ServiceStatusArgs) -> Result<()> {
-    let config_path = args.config.unwrap_or_else(default_config_path);
-    let status = query_service_status(&config_path)?;
+    let _config_path = args.config.unwrap_or_else(default_config_path);
+    let status = query_service_status(&_config_path)?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&status)?);
@@ -197,11 +197,11 @@ fn service_status(args: ServiceStatusArgs) -> Result<()> {
     Ok(())
 }
 
-fn query_service_status(config_path: &Path) -> Result<ServiceStatusView> {
+pub(crate) fn query_service_status(_config_path: &Path) -> Result<ServiceStatusView> {
     #[cfg(target_os = "macos")]
     {
-        let plist_path = macos_service::macos_service_plist_path(config_path);
-        let label = macos_service::macos_service_label(config_path);
+        let plist_path = macos_service::macos_service_plist_path(_config_path);
+        let label = macos_service::macos_service_label(_config_path);
         let installed = plist_path.exists();
         if !installed {
             return Ok(ServiceStatusView {
@@ -218,11 +218,11 @@ fn query_service_status(config_path: &Path) -> Result<ServiceStatusView> {
             });
         }
 
-        let disabled = macos_service::macos_service_disabled(config_path).unwrap_or(false);
+        let disabled = macos_service::macos_service_disabled(_config_path).unwrap_or(false);
         let (loaded, running, pid) = if disabled {
             (false, false, None)
         } else {
-            match macos_service::macos_service_print(config_path) {
+            match macos_service::macos_service_print(_config_path) {
                 Ok(output) => (
                     true,
                     macos_service::macos_service_print_is_running(&output),
