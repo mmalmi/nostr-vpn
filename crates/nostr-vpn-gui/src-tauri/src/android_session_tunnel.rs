@@ -2,15 +2,15 @@ use std::collections::HashMap;
 use std::net::{Ipv4Addr, UdpSocket};
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
+use crate::DaemonRuntimeState;
 use crate::android_session_runtime::{open_mobile_tun_io, should_retry_tun_io, unix_timestamp};
 use crate::android_vpn::{AndroidVpnExt, StartVpnArgs};
 use crate::mobile_runtime_state::build_mobile_runtime_state;
 use crate::mobile_wg::{MobileWireGuardRuntime, PeerRuntimeStatus, WireGuardPeerConfig};
-use crate::DaemonRuntimeState;
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::paths::PeerPathBook;
 use nostr_vpn_core::presence::PeerPresenceBook;
@@ -21,9 +21,9 @@ use super::android_session_planning::{
     publish_private_announce_best_effort, route_targets_for_tunnel_peers, tunnel_fingerprint,
 };
 use super::{
+    ANDROID_SESSION_STATUS_WAITING, ANDROID_TIMER_INTERVAL_MILLIS, ANDROID_TUN_MTU,
     ActiveTunnelTask, AndroidSessionSnapshot, PlannedTunnelPeer, ReconcileSession,
-    ReconcileTunnelState, TunnelTaskState, ANDROID_SESSION_STATUS_WAITING,
-    ANDROID_TIMER_INTERVAL_MILLIS, ANDROID_TUN_MTU,
+    ReconcileTunnelState, TunnelTaskState,
 };
 
 pub(super) async fn reconcile_tunnel(

@@ -3,18 +3,18 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use nostr_vpn_core::config::{normalize_advertised_route, AppConfig, DEFAULT_RELAYS};
-use nostr_vpn_core::control::{select_peer_endpoint, PeerAnnouncement};
+use nostr_vpn_core::config::{AppConfig, DEFAULT_RELAYS, normalize_advertised_route};
+use nostr_vpn_core::control::{PeerAnnouncement, select_peer_endpoint};
 use nostr_vpn_core::paths::PeerPathBook;
 use nostr_vpn_core::presence::PeerPresenceBook;
 use nostr_vpn_core::signaling::{NostrSignalingClient, SignalPayload, SignalingNetwork};
 
-use crate::android_session_runtime::{strip_cidr, unix_timestamp};
 use crate::PEER_ONLINE_GRACE_SECS;
+use crate::android_session_runtime::{strip_cidr, unix_timestamp};
 
 use super::{
-    ActiveTunnelTask, PlannedTunnelPeer, TunnelPeer, ANDROID_PUBLISH_TIMEOUT_SECS,
-    ANDROID_SIGNAL_STALE_AFTER_SECS,
+    ANDROID_PUBLISH_TIMEOUT_SECS, ANDROID_SIGNAL_STALE_AFTER_SECS, ActiveTunnelTask,
+    PlannedTunnelPeer, TunnelPeer,
 };
 
 pub(super) fn signaling_networks_for_app(app: &AppConfig) -> Vec<SignalingNetwork> {

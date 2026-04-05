@@ -157,6 +157,7 @@ export interface UiState {
   sessionStatus: string
   appVersion: string
   daemonBinaryVersion: string
+  serviceBinaryVersion: string
   configPath: string
   ownNpub: string
   ownPubkeyHex: string

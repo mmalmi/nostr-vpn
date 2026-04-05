@@ -313,7 +313,6 @@ async function main() {
     ])
 
     await typeInto(REQUESTER_DRIVER_BASE, requesterSessionId, '[data-testid="invite-input"]', invite)
-    await clickSelector(REQUESTER_DRIVER_BASE, requesterSessionId, '[data-testid="invite-import"]')
 
     await waitForSelectorText(
       REQUESTER_DRIVER_BASE,

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::net::SocketAddr;
 use tokio::runtime::Handle;
 use tokio::sync::watch;
@@ -14,11 +14,11 @@ mod android_session_tunnel;
 use android_session_planning::*;
 use android_session_tunnel::*;
 
+use crate::DaemonRuntimeState;
 use crate::android_session_runtime::{signal_payload_kind, unix_timestamp};
 use crate::android_vpn::AndroidVpnExt;
 use crate::mobile_wg::PeerRuntimeStatus;
-use crate::DaemonRuntimeState;
-use nostr_vpn_core::config::{maybe_autoconfigure_node, AppConfig};
+use nostr_vpn_core::config::{AppConfig, maybe_autoconfigure_node};
 use nostr_vpn_core::paths::PeerPathBook;
 use nostr_vpn_core::presence::PeerPresenceBook;
 use nostr_vpn_core::signaling::{NostrSignalingClient, SignalPayload};
