@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
   import { dispatchBootReady, waitForNextPaint } from './lib/boot.js'
@@ -28,6 +28,7 @@
     networkPeerSummary,
   } from './lib/app-view'
   import ActiveNetworkPanel from './ActiveNetworkPanel.svelte'
+  import AppBootstrap from './AppBootstrap.svelte'
   import HeroStatusPanel from './HeroStatusPanel.svelte'
   import AdvancedPanels from './AdvancedPanels.svelte'
   import InviteShareSection from './InviteShareSection.svelte'
@@ -109,8 +110,6 @@
   let autostartUpdating = false
 
   const debouncers = new Map<string, number>()
-  let pollHandle: number | null = null
-  let lanPairingTickHandle: number | null = null
   let copiedHandle: number | null = null
   let deepLinkUnlisten: (() => void) | null = null
   let refreshInFlight = false
@@ -908,43 +907,8 @@
     await copyText(state.activeNetworkInvite, 'invite')
   }
 
-  onMount(() => {
-    lanPairingTickHandle = window.setInterval(tickLanPairingCountdown, 1000)
-
-    void (async () => {
-      await waitForNextPaint(window)
-      if (appDisposed) {
-        return
-      }
-
-      await refresh()
-      if (appDisposed) {
-        return
-      }
-
-      await initializeDeepLinkHandling()
-      if (appDisposed) {
-        return
-      }
-
-      markBootReady()
-      await refreshAutostart()
-      if (appDisposed) {
-        return
-      }
-
-      pollHandle = window.setInterval(refresh, 1500)
-    })()
-  })
-
   onDestroy(() => {
     appDisposed = true
-    if (pollHandle) {
-      window.clearInterval(pollHandle)
-    }
-    if (lanPairingTickHandle) {
-      window.clearInterval(lanPairingTickHandle)
-    }
     if (copiedHandle) {
       window.clearTimeout(copiedHandle)
     }
@@ -956,6 +920,15 @@
     }
   })
 </script>
+
+<AppBootstrap
+  {waitForNextPaint}
+  {refresh}
+  {initializeDeepLinkHandling}
+  {markBootReady}
+  {refreshAutostart}
+  {tickLanPairingCountdown}
+/>
 
 <main class="app-shell">
   <div class="drag-padding drag-padding-top" data-tauri-drag-region aria-hidden="true"></div>
