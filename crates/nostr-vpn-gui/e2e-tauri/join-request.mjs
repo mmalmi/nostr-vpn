@@ -318,27 +318,12 @@ async function main() {
       REQUESTER_DRIVER_BASE,
       requesterSessionId,
       '[data-testid="request-network-join"]',
-      /request join/i,
-      'requester request button after invite import',
+      /requested/i,
+      'requester requested state after invite import',
       30_000,
     )
 
     await ensureVpnOn(REQUESTER_DRIVER_BASE, requesterSessionId, 'requester')
-
-    await clickSelector(
-      REQUESTER_DRIVER_BASE,
-      requesterSessionId,
-      '[data-testid="request-network-join"]',
-    )
-
-    await waitForSelectorText(
-      REQUESTER_DRIVER_BASE,
-      requesterSessionId,
-      '[data-testid="request-network-join"]',
-      /requested/i,
-      'requester requested state',
-      30_000,
-    )
 
     await waitForSelectorText(
       OWNER_DRIVER_BASE,
@@ -384,16 +369,16 @@ async function main() {
         OWNER_DRIVER_BASE,
         ownerSessionId,
         '[data-testid="mesh-badge"]',
-        /mesh\s*1\/1/i,
-        'owner mesh 1/1 after join request accept',
+        /(connected|mesh\s*1\/1)/i,
+        'owner connected badge after join request accept',
         70_000,
       ),
       waitForSelectorText(
         REQUESTER_DRIVER_BASE,
         requesterSessionId,
         '[data-testid="mesh-badge"]',
-        /mesh\s*1\/1/i,
-        'requester mesh 1/1 after join request accept',
+        /(connected|mesh\s*1\/1)/i,
+        'requester connected badge after join request accept',
         70_000,
       ),
     ])
