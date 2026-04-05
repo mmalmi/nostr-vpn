@@ -5989,6 +5989,41 @@ fn reload_daemon(args: ReloadArgs) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn daemon_control_ack_timeout(request: DaemonControlRequest) -> Duration {
+    if matches!(
+        request,
+        DaemonControlRequest::Pause | DaemonControlRequest::Resume
+    ) {
+        #[cfg(target_os = "macos")]
+        {
+            return Duration::from_secs(10);
+        }
+    }
+
+    Duration::from_secs(3)
+}
+
+pub(crate) fn daemon_control_session_transition_timeout(
+    request: DaemonControlRequest,
+) -> Duration {
+    if matches!(
+        request,
+        DaemonControlRequest::Pause | DaemonControlRequest::Resume
+    ) {
+        #[cfg(target_os = "macos")]
+        {
+            return Duration::from_secs(30);
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            return Duration::from_secs(2);
+        }
+    }
+
+    Duration::ZERO
+}
+
 fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let status = daemon_status(&config_path)?;
@@ -5998,11 +6033,14 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
     }
 
     write_daemon_control_request(&config_path, request)?;
-    let ack_result = wait_for_daemon_control_ack(&config_path, Duration::from_secs(3));
+    let ack_result = wait_for_daemon_control_ack(&config_path, daemon_control_ack_timeout(request));
     match request {
         DaemonControlRequest::Pause => {
-            let session_result =
-                wait_for_daemon_session_active(&config_path, false, Duration::from_secs(2));
+            let session_result = wait_for_daemon_session_active(
+                &config_path,
+                false,
+                daemon_control_session_transition_timeout(request),
+            );
             match (ack_result, session_result) {
                 (Ok(()), Ok(())) | (Err(_), Ok(())) => {}
                 (Ok(()), Err(error)) => return Err(error),
@@ -6010,8 +6048,11 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
             }
         }
         DaemonControlRequest::Resume => {
-            let session_result =
-                wait_for_daemon_session_active(&config_path, true, Duration::from_secs(2));
+            let session_result = wait_for_daemon_session_active(
+                &config_path,
+                true,
+                daemon_control_session_transition_timeout(request),
+            );
             match (ack_result, session_result) {
                 (Ok(()), Ok(())) | (Err(_), Ok(())) => {}
                 (Ok(()), Err(error)) => return Err(error),

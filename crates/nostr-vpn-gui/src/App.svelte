@@ -10,6 +10,7 @@
   import {
     serviceRepairErrorText,
     serviceRepairRecommended,
+    serviceRepairRetryRecovered,
     serviceRepairRetryRecommended,
   } from './lib/service-repair.js'
   import { parseAppDeepLink } from './lib/deep-link-actions.js'
@@ -185,6 +186,9 @@
     refreshInFlight = true
     try {
       state = await tick()
+      if (serviceRepairRetryRecovered(error, state)) {
+        error = ''
+      }
       initializeDraftsOnce()
       syncDraftsFromState()
     } catch (err) {
@@ -511,6 +515,9 @@
       serviceActionStatus = ''
       try {
         state = await tick()
+        if (serviceRepairRetryRecovered(error, state)) {
+          error = ''
+        }
         initializeDraftsOnce()
         syncDraftsFromState()
       } catch {

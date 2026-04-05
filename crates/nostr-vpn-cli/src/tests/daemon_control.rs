@@ -899,3 +899,35 @@ fn daemon_control_timeout_errors_use_generic_service_wording() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn daemon_control_wait_timeouts_allow_longer_mac_recovery_windows() {
+    assert_eq!(
+        crate::daemon_control_ack_timeout(crate::DaemonControlRequest::Reload),
+        Duration::from_secs(3)
+    );
+    assert_eq!(
+        crate::daemon_control_session_transition_timeout(crate::DaemonControlRequest::Reload),
+        Duration::ZERO
+    );
+
+    if cfg!(target_os = "macos") {
+        assert_eq!(
+            crate::daemon_control_ack_timeout(crate::DaemonControlRequest::Resume),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            crate::daemon_control_session_transition_timeout(crate::DaemonControlRequest::Resume),
+            Duration::from_secs(30)
+        );
+    } else {
+        assert_eq!(
+            crate::daemon_control_ack_timeout(crate::DaemonControlRequest::Resume),
+            Duration::from_secs(3)
+        );
+        assert_eq!(
+            crate::daemon_control_session_transition_timeout(crate::DaemonControlRequest::Resume),
+            Duration::from_secs(2)
+        );
+    }
+}

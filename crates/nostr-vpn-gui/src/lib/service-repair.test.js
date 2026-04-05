@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   serviceRepairErrorText,
   serviceRepairRecommended,
+  serviceRepairRetryRecovered,
   serviceRepairRetryRecommended,
 } from './service-repair.js'
 
@@ -54,6 +55,32 @@ test('serviceRepairRetryRecommended only triggers on explicit daemon control err
     true
   )
   assert.equal(serviceRepairRetryRecommended(''), false)
+})
+
+test('serviceRepairRetryRecovered clears timeout errors once the daemon is active again', () => {
+  assert.equal(
+    serviceRepairRetryRecovered(
+      'daemon did not report result for resume request within 3s',
+      {
+        ...currentServiceState,
+        daemonRunning: true,
+        sessionActive: true,
+      }
+    ),
+    true
+  )
+
+  assert.equal(
+    serviceRepairRetryRecovered(
+      'daemon did not report result for resume request within 3s',
+      {
+        ...currentServiceState,
+        daemonRunning: true,
+        sessionActive: false,
+      }
+    ),
+    false
+  )
 })
 
 test('serviceRepairRecommended ignores daemon control errors when no service is installed', () => {
