@@ -31,8 +31,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as ProcessCommand, Stdio};
-#[cfg(target_os = "windows")]
+#[cfg(test)]
+use std::sync::Mutex;
+#[cfg(any(target_os = "windows", test))]
 use std::sync::OnceLock;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -5827,6 +5831,57 @@ fn tunnel_runtime_fingerprint(base: &str, route_targets: &[String]) -> String {
     let mut route_entries = route_targets.to_vec();
     route_entries.sort();
     format!("{base}|routes={}", route_entries.join(","))
+}
+
+#[cfg(test)]
+const TEST_MACOS_EUID_SENTINEL: u32 = u32::MAX;
+#[cfg(test)]
+static TEST_MACOS_EUID_OVERRIDE: AtomicU32 = AtomicU32::new(TEST_MACOS_EUID_SENTINEL);
+#[cfg(test)]
+static TEST_MACOS_EUID_OVERRIDE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(test)]
+pub(crate) fn macos_euid_override_lock_for_test() -> &'static Mutex<()> {
+    TEST_MACOS_EUID_OVERRIDE_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+pub(crate) fn set_macos_euid_override_for_test(value: Option<u32>) {
+    TEST_MACOS_EUID_OVERRIDE.store(value.unwrap_or(TEST_MACOS_EUID_SENTINEL), Ordering::Relaxed);
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_effective_uid() -> u32 {
+    #[cfg(test)]
+    {
+        let override_uid = TEST_MACOS_EUID_OVERRIDE.load(Ordering::Relaxed);
+        if override_uid != TEST_MACOS_EUID_SENTINEL {
+            return override_uid;
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { libc::geteuid() as u32 }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        0
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn ensure_macos_connect_privileges(config_path: &Path) -> Result<()> {
+    if macos_effective_uid() == 0 {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "macOS tunnel setup requires admin privileges (did you run with sudo?); run `sudo nvpn start --connect --config {}` for a one-off session or `sudo nvpn service install --config {}` to use the launchd service",
+        config_path.display(),
+        config_path.display()
+    ))
 }
 
 async fn start_session(args: StartArgs) -> Result<()> {

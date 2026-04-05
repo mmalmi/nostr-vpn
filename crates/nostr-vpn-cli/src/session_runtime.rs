@@ -19,6 +19,8 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
     }
 
     let config_path = args.config.unwrap_or_else(default_config_path);
+    #[cfg(any(target_os = "macos", test))]
+    crate::ensure_macos_connect_privileges(&config_path)?;
     #[cfg(target_os = "macos")]
     if let Err(error) = repair_saved_network_state(&config_path) {
         eprintln!("connect: failed to repair saved macOS network state: {error}");
@@ -585,6 +587,8 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
     }
 
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
+    #[cfg(any(target_os = "macos", test))]
+    crate::ensure_macos_connect_privileges(&config_path)?;
     ensure_no_other_daemon_processes_for_config(&config_path, std::process::id())?;
     #[cfg(target_os = "macos")]
     if let Err(error) = repair_saved_network_state(&config_path) {

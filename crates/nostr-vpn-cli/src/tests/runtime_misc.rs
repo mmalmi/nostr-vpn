@@ -1,5 +1,6 @@
 use crate::*;
 use nostr_vpn_core::signaling::SignalPayload;
+use std::path::Path;
 
 #[test]
 fn daemon_session_requires_remote_participants_to_be_active() {
@@ -134,4 +135,35 @@ fn macos_underlay_repair_resets_tunnel_runtime() {
     assert!(runtime.last_fingerprint.is_none());
     assert!(runtime.active_listen_port.is_none());
     assert!(!runtime.is_running());
+}
+
+#[test]
+fn macos_connect_privilege_preflight_requires_admin_when_euid_is_not_root() {
+    let _guard = crate::macos_euid_override_lock_for_test()
+        .lock()
+        .expect("macos euid test lock");
+    crate::set_macos_euid_override_for_test(Some(501));
+
+    let error = crate::ensure_macos_connect_privileges(Path::new("/tmp/nvpn.toml"))
+        .expect_err("non-root macOS preflight should fail");
+    let message = error.to_string();
+    assert!(message.contains("admin privileges"));
+    assert!(message.contains("did you run with sudo?"));
+    assert!(message.contains("sudo nvpn start --connect"));
+    assert!(message.contains("sudo nvpn service install"));
+
+    crate::set_macos_euid_override_for_test(None);
+}
+
+#[test]
+fn macos_connect_privilege_preflight_allows_root() {
+    let _guard = crate::macos_euid_override_lock_for_test()
+        .lock()
+        .expect("macos euid test lock");
+    crate::set_macos_euid_override_for_test(Some(0));
+
+    crate::ensure_macos_connect_privileges(Path::new("/tmp/nvpn.toml"))
+        .expect("root macOS preflight should pass");
+
+    crate::set_macos_euid_override_for_test(None);
 }

@@ -27,6 +27,9 @@ netdev = "0.40"
 [target.'cfg(unix)'.dependencies]
 boringtun = { workspace = true, features = ["device"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "windows")'.dependencies]
 boringtun.workspace = true
 nostr-vpn-wintun = { path = "../nostr-vpn-wintun" }

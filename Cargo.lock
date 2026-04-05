@@ -3421,6 +3421,7 @@ dependencies = [
  "dirs 6.0.0",
  "hex",
  "igd-next",
+ "libc",
  "netdev",
  "nostr-sdk",
  "nostr-vpn-core",
