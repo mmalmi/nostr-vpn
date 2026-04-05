@@ -150,8 +150,8 @@ fn save_serializes_user_facing_pubkeys_as_npubs() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex;
-    config.exit_node = peer_hex.clone();
     set_default_network_participants(&mut config, vec![peer_hex.clone()]);
+    config.exit_node = peer_hex.clone();
     config.ensure_defaults();
 
     let path = unique_temp_config_path("save-serializes-user-facing-pubkeys");
@@ -175,8 +175,8 @@ fn save_and_load_round_trip_keeps_runtime_pubkeys_normalized() {
     let mut config = AppConfig::generated();
     config.nostr.secret_key = own.secret_key().to_secret_hex();
     config.nostr.public_key = own_hex.clone();
-    config.exit_node = peer_hex.clone();
     set_default_network_participants(&mut config, vec![peer_hex.clone()]);
+    config.exit_node = peer_hex.clone();
     config.ensure_defaults();
 
     let path = unique_temp_config_path("save-load-roundtrip");

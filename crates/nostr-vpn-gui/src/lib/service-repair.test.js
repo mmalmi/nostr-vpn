@@ -6,6 +6,7 @@ import {
   serviceRepairRecommended,
   serviceRepairRetryRecovered,
   serviceRepairRetryRecommended,
+  serviceRepairSettled,
 } from './service-repair.js'
 
 const currentServiceState = {
@@ -121,6 +122,33 @@ test('serviceRepairRecommended detects daemon and app version mismatch at startu
 
 test('serviceRepairRecommended ignores stale daemon metadata once the installed service binary matches the app', () => {
   assert.equal(serviceRepairRecommended('', matchingServiceWithStaleDaemonState), false)
+})
+
+test('serviceRepairSettled only returns true once the installed service is enabled and matches the app version', () => {
+  assert.equal(serviceRepairSettled(currentServiceState), true)
+  assert.equal(
+    serviceRepairSettled({
+      ...currentServiceState,
+      serviceRunning: false,
+      daemonRunning: true,
+    }),
+    true
+  )
+  assert.equal(serviceRepairSettled(installedServiceState), false)
+  assert.equal(
+    serviceRepairSettled({
+      ...currentServiceState,
+      serviceDisabled: true,
+    }),
+    false
+  )
+  assert.equal(
+    serviceRepairSettled({
+      ...currentServiceState,
+      serviceInstalled: false,
+    }),
+    false
+  )
 })
 
 test('serviceRepairErrorText surfaces a generic timeout message for non-stale daemon control errors', () => {

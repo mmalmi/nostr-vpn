@@ -19,6 +19,7 @@
   export let copiedValue: 'pubkey' | 'meshId' | 'invite' | 'peerNpub' | null = null
   export let vpnControlSupported = false
   export let serviceSetupRequired = false
+  export let sessionToggleDisabled = false
   export let onToggleSession: () => Promise<void>
   export let copyPubkey: () => Promise<void>
   export let onUpdateSettings: (patch: SettingsPatch) => Promise<void>
@@ -61,6 +62,7 @@
           aria-label="Toggle VPN session"
           data-testid="session-toggle"
           on:click={() => onToggleSession()}
+          disabled={sessionToggleDisabled}
         >
           <span class="session-switch-track" aria-hidden="true">
             <span class="session-switch-thumb"></span>

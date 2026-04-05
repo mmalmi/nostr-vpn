@@ -443,6 +443,7 @@ impl AppConfig {
 
         self.ensure_single_active_network();
         self.derive_default_network_ids();
+        self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
     }
 
@@ -636,6 +637,7 @@ impl AppConfig {
             first_network.enabled = true;
         }
 
+        self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
         Ok(())
     }
@@ -786,6 +788,7 @@ impl AppConfig {
         }
 
         self.note_network_roster_local_change(network_id)?;
+        self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
         Ok(normalized)
     }
@@ -816,6 +819,7 @@ impl AppConfig {
         }
 
         self.note_network_roster_local_change(network_id)?;
+        self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
         Ok(())
     }
@@ -840,6 +844,7 @@ impl AppConfig {
             }
         }
         self.note_network_roster_local_change(network_id)?;
+        self.normalize_selected_exit_node();
         Ok(normalized)
     }
 
@@ -867,6 +872,7 @@ impl AppConfig {
             }
         }
         self.note_network_roster_local_change(network_id)?;
+        self.normalize_selected_exit_node();
         Ok(())
     }
 
@@ -1057,6 +1063,7 @@ impl AppConfig {
                 normalized_alias,
             );
         }
+        self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
         Ok(true)
     }
@@ -1178,6 +1185,20 @@ impl AppConfig {
             final_aliases.insert(participant_npub, alias);
         }
         self.peer_aliases = final_aliases;
+    }
+
+    fn normalize_selected_exit_node(&mut self) {
+        if self.exit_node.is_empty() {
+            return;
+        }
+
+        if !self
+            .active_network_signal_pubkeys_hex()
+            .iter()
+            .any(|participant| participant == &self.exit_node)
+        {
+            self.exit_node.clear();
+        }
     }
 
     fn preferred_self_magic_dns_label(&self) -> Option<String> {

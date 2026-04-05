@@ -50,6 +50,7 @@
       <input
         class="text-input alias-input"
         value={participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias}
+        disabled={!networkLocalIsAdmin}
         on:input={(event) =>
           onParticipantAliasInput(
             participant.npub,

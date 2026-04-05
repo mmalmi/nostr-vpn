@@ -82,11 +82,25 @@ fn exit_node_normalizes_from_npub() {
     let peer_npub = peer.public_key().to_bech32().expect("peer npub");
 
     let mut config = AppConfig::generated();
+    set_default_network_participants(&mut config, vec![peer_hex.clone()]);
     config.exit_node = peer_npub;
 
     config.ensure_defaults();
 
     assert_eq!(config.exit_node, peer_hex);
+}
+
+#[test]
+fn stale_exit_node_is_cleared_when_not_in_active_network_roster() {
+    let peer = Keys::generate();
+    let peer_npub = peer.public_key().to_bech32().expect("peer npub");
+
+    let mut config = AppConfig::generated();
+    config.exit_node = peer_npub;
+
+    config.ensure_defaults();
+
+    assert!(config.exit_node.is_empty());
 }
 
 #[test]
@@ -321,6 +335,40 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
         config.peer_alias(&member_hex).as_deref(),
         Some("alice-phone")
     );
+}
+
+#[test]
+fn apply_admin_signed_shared_roster_clears_removed_exit_node() {
+    let own = Keys::generate();
+    let current_admin = Keys::generate();
+    let removed_exit = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let current_admin_hex = current_admin.public_key().to_hex();
+    let removed_exit_hex = removed_exit.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks[0].network_id = "mesh-home".to_string();
+    config.networks[0].admins = vec![current_admin_hex.clone()];
+    config.networks[0].participants = vec![current_admin_hex.clone(), removed_exit_hex.clone()];
+    config.exit_node = removed_exit_hex.clone();
+    config.ensure_defaults();
+
+    let changed = config
+        .apply_admin_signed_shared_roster(
+            "mesh-home",
+            "Home",
+            vec![current_admin_hex.clone(), own_hex],
+            vec![current_admin_hex.clone()],
+            std::collections::HashMap::new(),
+            1_726_000_000,
+            &current_admin_hex,
+        )
+        .expect("apply shared roster");
+
+    assert!(changed);
+    assert!(config.exit_node.is_empty());
 }
 
 #[test]

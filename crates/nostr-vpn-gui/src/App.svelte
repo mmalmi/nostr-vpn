@@ -12,6 +12,7 @@
     serviceRepairRecommended,
     serviceRepairRetryRecovered,
     serviceRepairRetryRecommended,
+    serviceRepairSettled,
   } from './lib/service-repair.js'
   import { parseAppDeepLink } from './lib/deep-link-actions.js'
   import {
@@ -84,6 +85,7 @@
   let error = ''
   let cliActionStatus = ''
   let serviceActionStatus = ''
+  let serviceActionInFlight = false
   let copiedValue: 'pubkey' | 'meshId' | 'invite' | 'peerNpub' | null = null
   let copiedPeerNpub: string | null = null
 
@@ -132,6 +134,8 @@
   const processedDeepLinks = new Set<string>()
 
   const NETWORK_MESH_ID_IDLE_COMMIT_MS = 5000
+  const SERVICE_ACTION_SETTLE_POLL_MS = 500
+  const SERVICE_ACTION_SETTLE_TIMEOUT_MS = 15000
 
   $: serviceInstallRecommended = !!state?.serviceSupported && !state.serviceInstalled
   $: serviceEnableRecommended =
@@ -148,6 +152,7 @@
       state &&
       serviceRepairPromptRecommended &&
       !actionInFlight &&
+      !serviceActionInFlight &&
       !refreshInFlight &&
       !serviceRepairPromptInFlight &&
       !appDisposed
@@ -178,18 +183,28 @@
     lanPairingDisplayRemainingSecs = 0
   }
 
+  function applyUiState(nextState: UiState) {
+    state = nextState
+    if (serviceRepairRetryRecovered(error, nextState)) {
+      error = ''
+    }
+    initializeDraftsOnce()
+    syncDraftsFromState()
+  }
+
+  function sleepMs(ms: number) {
+    return new Promise<void>((resolve) => {
+      window.setTimeout(resolve, ms)
+    })
+  }
+
   async function refresh() {
     if (refreshInFlight || actionInFlight) {
       return
     }
     refreshInFlight = true
     try {
-      state = await tick()
-      if (serviceRepairRetryRecovered(error, state)) {
-        error = ''
-      }
-      initializeDraftsOnce()
-      syncDraftsFromState()
+      applyUiState(await tick())
     } catch (err) {
       error = String(err)
     } finally {
@@ -225,6 +240,7 @@
       !state ||
       !serviceRepairRecommended(error, state) ||
       serviceRepairPromptInFlight ||
+      serviceActionInFlight ||
       actionInFlight ||
       refreshInFlight
     ) {
@@ -504,21 +520,14 @@
     }
     actionInFlight = true
     try {
-      state = await action()
+      applyUiState(await action())
       error = ''
-      initializeDraftsOnce()
-      syncDraftsFromState()
     } catch (err) {
       error = String(err)
       cliActionStatus = ''
       serviceActionStatus = ''
       try {
-        state = await tick()
-        if (serviceRepairRetryRecovered(error, state)) {
-          error = ''
-        }
-        initializeDraftsOnce()
-        syncDraftsFromState()
+        applyUiState(await tick())
       } catch {
         // Keep the original action error if state refresh also fails.
       }
@@ -528,7 +537,7 @@
   }
 
   async function onToggleSession() {
-    if (!state) {
+    if (!state || serviceActionInFlight) {
       return
     }
 
@@ -559,31 +568,82 @@
     }
   }
 
-  async function onInstallSystemService(connectAfter = false) {
-    const wasInstalled = !!state?.serviceInstalled
-    await runAction(installSystemService)
-    if (!error) {
-      serviceActionStatus = wasInstalled
-        ? 'System service reinstalled and started'
-        : 'System service installed and started'
-    } else if (!wasInstalled && state?.serviceInstalled) {
-      error = ''
-      serviceActionStatus = state.serviceRunning
-        ? 'System service installed and started'
-        : 'System service installed'
+  async function runServiceAction(progressText: string, action: () => Promise<void>) {
+    serviceActionInFlight = true
+    serviceActionStatus = progressText
+    error = ''
+    try {
+      await action()
+    } finally {
+      serviceActionInFlight = false
     }
-    if (connectAfter && !error && state && !state.sessionActive) {
-      await runAction(connectSession)
-      if (!error) {
-        serviceActionStatus = state.sessionActive
-          ? wasInstalled
-            ? 'System service reinstalled and VPN started'
-            : 'System service installed and VPN started'
-          : wasInstalled
-            ? 'System service reinstalled'
-            : 'System service installed'
+  }
+
+  async function waitForServiceActionSettlement() {
+    if (!state?.serviceSupported) {
+      return true
+    }
+
+    if (serviceRepairSettled(state)) {
+      return true
+    }
+
+    const deadline = Date.now() + SERVICE_ACTION_SETTLE_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      await sleepMs(SERVICE_ACTION_SETTLE_POLL_MS)
+      try {
+        const snapshot = await tick()
+        applyUiState(snapshot)
+        if (serviceRepairSettled(snapshot)) {
+          return true
+        }
+      } catch {
+        // Allow launchd / daemon restart to settle before surfacing a hard error.
       }
     }
+
+    return !!state && serviceRepairSettled(state)
+  }
+
+  async function onInstallSystemService(connectAfter = false) {
+    const wasInstalled = !!state?.serviceInstalled
+    await runServiceAction(
+      wasInstalled ? 'Reinstalling background service...' : 'Installing background service...',
+      async () => {
+        await runAction(installSystemService)
+        const settled = state?.serviceInstalled ? await waitForServiceActionSettlement() : false
+
+        if (!error) {
+          serviceActionStatus = settled
+            ? wasInstalled
+              ? 'System service reinstalled and started'
+              : 'System service installed and started'
+            : wasInstalled
+              ? 'System service reinstalled. Waiting for launchd...'
+              : 'System service installed. Waiting for launchd...'
+        } else if (state?.serviceInstalled && settled) {
+          error = ''
+          serviceActionStatus =
+            wasInstalled ? 'System service reinstalled and started' : 'System service installed and started'
+        }
+
+        if (connectAfter && !error && settled && state && !state.sessionActive) {
+          serviceActionStatus = wasInstalled
+            ? 'System service reinstalled. Starting VPN...'
+            : 'System service installed. Starting VPN...'
+          await runAction(connectSession)
+          if (!error) {
+            serviceActionStatus = state.sessionActive
+              ? wasInstalled
+                ? 'System service reinstalled and VPN started'
+                : 'System service installed and VPN started'
+              : wasInstalled
+                ? 'System service reinstalled'
+                : 'System service installed'
+          }
+        }
+      },
+    )
   }
 
   async function onRepairSystemService(connectAfter = false) {
@@ -592,40 +652,52 @@
 
   async function onEnableSystemService(connectAfter = false) {
     const wasDisabled = !!state?.serviceDisabled
-    await runAction(enableSystemService)
-    if (!error) {
-      serviceActionStatus = 'System service enabled and started'
-    } else if (wasDisabled && state && !state.serviceDisabled) {
-      error = ''
-      serviceActionStatus = state.serviceRunning
-        ? 'System service enabled and started'
-        : 'System service enabled'
-    }
-    if (connectAfter && !error && state && !state.sessionActive) {
-      await runAction(connectSession)
-    }
+    await runServiceAction('Enabling background service...', async () => {
+      await runAction(enableSystemService)
+      const settled = state?.serviceInstalled ? await waitForServiceActionSettlement() : false
+
+      if (!error) {
+        serviceActionStatus = settled
+          ? 'System service enabled and started'
+          : 'System service enabled. Waiting for launchd...'
+      } else if (wasDisabled && state && !state.serviceDisabled && settled) {
+        error = ''
+        serviceActionStatus = state.serviceRunning
+          ? 'System service enabled and started'
+          : 'System service enabled'
+      }
+
+      if (connectAfter && !error && settled && state && !state.sessionActive) {
+        serviceActionStatus = 'System service enabled. Starting VPN...'
+        await runAction(connectSession)
+      }
+    })
   }
 
   async function onDisableSystemService() {
     const wasEnabled = !!state?.serviceInstalled && !state?.serviceDisabled
-    await runAction(disableSystemService)
-    if (!error) {
-      serviceActionStatus = 'System service disabled'
-    } else if (wasEnabled && state?.serviceDisabled) {
-      error = ''
-      serviceActionStatus = 'System service disabled'
-    }
+    await runServiceAction('Disabling background service...', async () => {
+      await runAction(disableSystemService)
+      if (!error) {
+        serviceActionStatus = 'System service disabled'
+      } else if (wasEnabled && state?.serviceDisabled) {
+        error = ''
+        serviceActionStatus = 'System service disabled'
+      }
+    })
   }
 
   async function onUninstallSystemService() {
     const wasInstalled = !!state?.serviceInstalled
-    await runAction(uninstallSystemService)
-    if (!error) {
-      serviceActionStatus = 'System service removed'
-    } else if (wasInstalled && state && !state.serviceInstalled) {
-      error = ''
-      serviceActionStatus = 'System service removed'
-    }
+    await runServiceAction('Removing background service...', async () => {
+      await runAction(uninstallSystemService)
+      if (!error) {
+        serviceActionStatus = 'System service removed'
+      } else if (wasInstalled && state && !state.serviceInstalled) {
+        error = ''
+        serviceActionStatus = 'System service removed'
+      }
+    })
   }
 
   async function onAddNetwork() {
@@ -946,6 +1018,7 @@
     {copiedValue}
     {vpnControlSupported}
     {serviceSetupRequired}
+    sessionToggleDisabled={actionInFlight || serviceActionInFlight}
     {onToggleSession}
     {copyPubkey}
     {onUpdateSettings}
@@ -960,16 +1033,17 @@
   <!-- data-testid="participant-toggle-admin" -->
   <!-- data-testid="participant-remove" -->
 
-  {#if serviceRepairErrorText(error, state)}
+  {#if !serviceActionInFlight && serviceRepairErrorText(error, state)}
     <section class="panel error">{serviceRepairErrorText(error, state)}</section>
   {/if}
 
   {#if state}
     {@const activeNetworkView = activeNetwork(state)}
 
-    {#if serviceInstallRecommended || serviceEnableRecommended || serviceRepairPromptRecommended}
+    {#if serviceInstallRecommended || serviceEnableRecommended || serviceRepairPromptRecommended || serviceActionInFlight}
       <ServiceActionPanel
         {state}
+        {serviceActionInFlight}
         {serviceActionStatus}
         {serviceEnableRecommended}
         {serviceRepairPromptRecommended}

@@ -70,6 +70,7 @@
           class="text-input active-network-name-input"
           data-testid="network-name-input"
           value={networkNameDrafts[activeNetworkView.id] ?? activeNetworkView.name}
+          disabled={!activeNetworkView.localIsAdmin}
           on:input={(event) =>
             onNetworkNameInput(activeNetworkView.id, (event.currentTarget as HTMLInputElement).value)}
         />
@@ -83,6 +84,7 @@
               networkIdDrafts[activeNetworkView.id] ?? '',
               activeNetworkView.networkId,
             )}
+            disabled={!activeNetworkView.localIsAdmin}
             on:input={(event) =>
               onNetworkMeshIdInput(activeNetworkView.id, (event.currentTarget as HTMLInputElement).value)}
             on:blur={(event) =>
@@ -105,6 +107,11 @@
         <div class={`config-path ${meshIdDraftError(activeNetworkView.id) ? 'mesh-id-note-error' : ''}`}>
           {meshIdHelperText(activeNetworkView.id, activeNetworkView.networkId)}
         </div>
+        {#if !activeNetworkView.localIsAdmin}
+          <div class="config-path">
+            Only admins can rename this network, change its Mesh ID, or rename participants.
+          </div>
+        {/if}
       </div>
       <div class="config-path">{networkPeerSummary(activeNetworkView)}</div>
       <div class="config-path">
@@ -238,6 +245,7 @@
                 class="text-input alias-input"
                 value={participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias}
                 data-testid="participant-alias-input"
+                disabled={!activeNetworkView.localIsAdmin}
                 on:input={(event) =>
                   onParticipantAliasInput(
                     participant.npub,

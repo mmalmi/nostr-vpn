@@ -26,6 +26,22 @@ const installedServiceBinaryVersion = (state) => {
   return String(state?.daemonBinaryVersion ?? '').trim()
 }
 
+export const serviceRepairSettled = (state) => {
+  if (!state?.serviceSupported) {
+    return true
+  }
+
+  if (!state.serviceInstalled || state.serviceDisabled) {
+    return false
+  }
+
+  if (!state.serviceRunning && !state.daemonRunning) {
+    return false
+  }
+
+  return !serviceBinaryVersionMismatch(state)
+}
+
 const serviceBinaryVersionMismatch = (state) => {
   if (
     !state?.serviceSupported ||

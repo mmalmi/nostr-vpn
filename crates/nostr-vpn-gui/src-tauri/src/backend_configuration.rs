@@ -41,6 +41,7 @@ impl NvpnBackend {
     }
 
     pub(crate) fn rename_network(&mut self, network_id: &str, name: &str) -> Result<()> {
+        self.ensure_network_admin(network_id)?;
         self.config.rename_network(network_id, name)?;
         let _ = self.persist_config()?;
         self.sync_daemon_state();
@@ -48,6 +49,7 @@ impl NvpnBackend {
     }
 
     pub(crate) fn set_network_mesh_id(&mut self, network_id: &str, mesh_id: &str) -> Result<()> {
+        self.ensure_network_admin(network_id)?;
         let is_active_network = self
             .config
             .network_by_id(network_id)
@@ -88,6 +90,30 @@ impl NvpnBackend {
             return Ok(());
         }
         Err(anyhow!("only network admins can manage members"))
+    }
+
+    fn ensure_participant_admin(&self, participant: &str) -> Result<()> {
+        let normalized = normalize_nostr_pubkey(participant)?;
+        let own_pubkey = self.config.own_nostr_pubkey_hex()?;
+        let mut matched_network = false;
+
+        for network in &self.config.networks {
+            let contains_participant = network.participants.iter().any(|configured| configured == &normalized)
+                || network.admins.iter().any(|configured| configured == &normalized);
+            if !contains_participant {
+                continue;
+            }
+            matched_network = true;
+            if self.config.is_network_admin(&network.id, &own_pubkey) {
+                return Ok(());
+            }
+        }
+
+        if matched_network {
+            Err(anyhow!("only network admins can rename participants"))
+        } else {
+            Err(anyhow!("participant is not configured"))
+        }
     }
 
     pub(crate) fn add_participant(
@@ -485,6 +511,7 @@ impl NvpnBackend {
     }
 
     pub(crate) fn set_participant_alias(&mut self, npub: &str, alias: &str) -> Result<()> {
+        self.ensure_participant_admin(npub)?;
         self.config.set_peer_alias(npub, alias)?;
         let persist_outcome = self.persist_config()?;
         if persist_outcome.needs_explicit_daemon_reload() {

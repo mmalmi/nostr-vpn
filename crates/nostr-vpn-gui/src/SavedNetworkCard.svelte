@@ -91,6 +91,7 @@
           class="text-input active-network-name-input"
           data-testid="network-name-input"
           value={networkNameDrafts[network.id] ?? network.name}
+          disabled={!network.localIsAdmin}
           on:input={(event) =>
             onNetworkNameInput(network.id, (event.currentTarget as HTMLInputElement).value)}
         />
@@ -100,6 +101,7 @@
           class={`text-input network-mesh-id-input ${meshIdDraftError(network.id) ? 'text-input-invalid' : ''}`}
           data-testid="saved-network-mesh-id-input"
           value={formatMeshIdDraftForDisplay(networkIdDrafts[network.id] ?? '', network.networkId)}
+          disabled={!network.localIsAdmin}
           on:input={(event) =>
             onNetworkMeshIdInput(network.id, (event.currentTarget as HTMLInputElement).value)}
           on:blur={(event) =>
@@ -112,6 +114,11 @@
       <div class={`config-path ${meshIdDraftError(network.id) ? 'mesh-id-note-error' : ''}`}>
         {meshIdHelperText(network.id, network.networkId)}
       </div>
+      {#if !network.localIsAdmin}
+        <div class="config-path">
+          Only admins can rename this network, change its Mesh ID, or rename participants.
+        </div>
+      {/if}
       <div class="config-path saved-network-note">
         Activate this saved network when you want to switch the current mesh to it.
       </div>

@@ -11,6 +11,7 @@
   export let serviceRepairPromptRecommended = false
   export let serviceRepairRetryAfterInstall = false
   export let serviceEnableRecommended = false
+  export let serviceActionInFlight = false
   export let serviceActionStatus = ''
   export let onInstallSystemService: (connectAfter?: boolean) => Promise<void>
   export let onRepairSystemService: (connectAfter?: boolean) => Promise<void>
@@ -43,14 +44,18 @@
 
   <div class="service-panel-copy">
     <div class="service-panel-title">
-      {serviceRepairPromptRecommended
+      {serviceActionInFlight
+        ? 'Updating the background service'
+        : serviceRepairPromptRecommended
         ? 'Reinstall the service to finish this app update'
         : serviceSetupRequired
           ? 'Install once for reliable background VPN'
           : 'Enable the service to keep VPN control out of the GUI process'}
     </div>
     <div class="service-panel-text">
-      {serviceRepairPromptRecommended
+      {serviceActionInFlight
+        ? 'Waiting for the service install or launchd restart to finish. This panel will update automatically when the new daemon is ready.'
+        : serviceRepairPromptRecommended
         ? 'The running background service looks older than this app. Reinstall it once so the daemon matches the current version.'
         : 'Required for background startup, resilient reconnects, and avoiding repeated admin prompts.'}
     </div>
@@ -74,6 +79,7 @@
           : serviceEnableRecommended
             ? onEnableSystemService()
             : onInstallSystemService(serviceSetupRequired)}
+      disabled={serviceActionInFlight}
     >
       {serviceRepairPromptRecommended
         ? serviceRepairRetryAfterInstall && !state.sessionActive
@@ -86,7 +92,12 @@
             : 'Install service'}
     </button>
     {#if state.serviceEnablementSupported && state.serviceInstalled && !state.serviceDisabled}
-      <button class="btn ghost" data-testid="disable-service-btn" on:click={onDisableSystemService}>
+      <button
+        class="btn ghost"
+        data-testid="disable-service-btn"
+        on:click={onDisableSystemService}
+        disabled={serviceActionInFlight}
+      >
         Disable service
       </button>
     {/if}
@@ -94,7 +105,7 @@
       class="btn ghost"
       data-testid="uninstall-service-btn"
       on:click={onUninstallSystemService}
-      disabled={!state.serviceInstalled}
+      disabled={!state.serviceInstalled || serviceActionInFlight}
     >
       Uninstall
     </button>
