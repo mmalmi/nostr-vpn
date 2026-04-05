@@ -318,6 +318,23 @@ async function main() {
       REQUESTER_DRIVER_BASE,
       requesterSessionId,
       '[data-testid="request-network-join"]',
+      /request join/i,
+      'requester request button after invite import',
+      30_000,
+    )
+
+    await ensureVpnOn(REQUESTER_DRIVER_BASE, requesterSessionId, 'requester')
+
+    await clickSelector(
+      REQUESTER_DRIVER_BASE,
+      requesterSessionId,
+      '[data-testid="request-network-join"]',
+    )
+
+    await waitForSelectorText(
+      REQUESTER_DRIVER_BASE,
+      requesterSessionId,
+      '[data-testid="request-network-join"]',
       /requested/i,
       'requester requested state after invite import',
       30_000,
