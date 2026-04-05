@@ -7,6 +7,8 @@ use crate::control::{
     select_peer_endpoint_from_local_endpoints,
 };
 
+const OBSERVED_PUBLIC_ENDPOINT_STICKY_SECS: u64 = 180;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 enum PeerPathSource {
     Local,
@@ -103,6 +105,7 @@ impl PeerPathBook {
                     endpoint,
                     tracked,
                     &announced_endpoints,
+                    seen_at,
                 )
         });
         if state.endpoints.len() != before {
@@ -418,16 +421,18 @@ fn observed_endpoint_superseded_by_announcement(
     endpoint: &str,
     tracked: &TrackedPeerPath,
     announced_endpoints: &[(String, PeerPathSource)],
+    seen_at: u64,
 ) -> bool {
     if tracked.source != PeerPathSource::Observed || endpoint_is_local_only(endpoint) {
         return false;
     }
 
-    // Keep previously selected/successful observed public ports alongside
-    // later announcements from the same host. Endpoint-dependent NATs can map
-    // different destinations to different public ports, so replacing a known
-    // working observed port with the newly announced port can break reconnects.
-    if tracked.last_selected_at.is_some() || tracked.last_success_at.is_some() {
+    // Keep previously successful observed public ports alongside later
+    // announcements from the same host, but only while that observed port was
+    // proven recently enough to still be a credible direct path.
+    if tracked.last_success_at.is_some_and(|success_at| {
+        seen_at.saturating_sub(success_at) <= OBSERVED_PUBLIC_ENDPOINT_STICKY_SECS
+    }) {
         return false;
     }
 

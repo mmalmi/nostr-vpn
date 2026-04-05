@@ -184,6 +184,24 @@ fn fresh_public_signal_keeps_observed_same_host_different_port_with_recent_succe
 }
 
 #[test]
+fn fresh_public_signal_replaces_observed_same_host_different_port_after_stale_success() {
+    let mut paths = PeerPathBook::default();
+    let original = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 10);
+    paths.refresh_from_announcement("peer-a", &original, 10);
+    paths.note_selected("peer-a", "203.0.113.20:40001", 10);
+    paths.note_success("peer-a", "203.0.113.20:40001", 11);
+    paths.note_selected("peer-a", "203.0.113.20:40001", 200);
+
+    let updated = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 220);
+    paths.refresh_from_announcement("peer-a", &updated, 220);
+
+    let selected = paths
+        .select_endpoint("peer-a", &updated, Some("10.0.0.33:51820"), 221, 5)
+        .expect("updated public endpoint after stale success");
+    assert_eq!(selected, "203.0.113.20:51820");
+}
+
+#[test]
 fn clear_drops_cached_peer_paths() {
     let mut paths = PeerPathBook::default();
     let announcement = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 10);
