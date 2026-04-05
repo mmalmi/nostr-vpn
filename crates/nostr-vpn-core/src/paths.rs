@@ -76,6 +76,10 @@ pub struct PeerPathBook {
 }
 
 impl PeerPathBook {
+    pub fn clear(&mut self) {
+        self.peers.clear();
+    }
+
     pub fn refresh_from_announcement(
         &mut self,
         participant: impl Into<String>,

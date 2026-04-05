@@ -167,7 +167,7 @@ fn cached_endpoint_survives_flap_until_pruned() {
 }
 
 #[test]
-fn fresh_public_signal_replaces_observed_same_host_different_port() {
+fn fresh_public_signal_keeps_observed_same_host_different_port_with_recent_success() {
     let mut paths = PeerPathBook::default();
     let original = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 10);
     paths.refresh_from_announcement("peer-a", &original, 10);
@@ -180,5 +180,28 @@ fn fresh_public_signal_replaces_observed_same_host_different_port() {
     let selected = paths
         .select_endpoint("peer-a", &updated, Some("10.0.0.33:51820"), 21, 5)
         .expect("updated public endpoint");
+    assert_eq!(selected, "203.0.113.20:40001");
+}
+
+#[test]
+fn clear_drops_cached_peer_paths() {
+    let mut paths = PeerPathBook::default();
+    let announcement = announcement("203.0.113.20:51820", None, Some("203.0.113.20:51820"), 10);
+    paths.refresh_from_announcement("peer-a", &announcement, 10);
+    paths.note_selected("peer-a", "203.0.113.20:40001", 10);
+    paths.note_success("peer-a", "203.0.113.20:40001", 11);
+
+    paths.clear();
+
+    let selected = paths
+        .select_endpoint("peer-a", &announcement, None, 12, 5)
+        .expect("announced endpoint after clear");
     assert_eq!(selected, "203.0.113.20:51820");
+    assert!(!paths.endpoint_has_recent_success_for_local_endpoints(
+        "peer-a",
+        "203.0.113.20:40001",
+        &[],
+        12,
+        30,
+    ));
 }

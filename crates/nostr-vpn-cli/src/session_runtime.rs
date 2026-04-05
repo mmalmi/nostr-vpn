@@ -1247,6 +1247,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             port_mapping_runtime.stop().await;
                             public_signal_endpoint = None;
                             presence = PeerPresenceBook::default();
+                            path_book.clear();
                             relay_sessions.clear();
                             standby_relay_sessions.clear();
                             relay_failures.clear();
