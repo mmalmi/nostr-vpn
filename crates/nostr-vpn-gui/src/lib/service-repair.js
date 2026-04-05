@@ -67,7 +67,9 @@ export const serviceRepairRecommended = (error, state) => {
 export const serviceRepairRetryRecommended = (error) => unresponsiveServiceError(error)
 
 export const serviceRepairRetryRecovered = (error, state) =>
-  unresponsiveServiceError(error) && !!state?.daemonRunning && !!state?.sessionActive
+  unresponsiveServiceError(error) &&
+  !!state?.daemonRunning &&
+  (!!state?.sessionActive || !!state?.serviceRunning)
 
 export const serviceRepairErrorText = (error, state) => {
   const normalized = normalizedError(error)

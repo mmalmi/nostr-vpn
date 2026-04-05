@@ -76,6 +76,20 @@ test('serviceRepairRetryRecovered clears timeout errors once the daemon is activ
       {
         ...currentServiceState,
         daemonRunning: true,
+        serviceRunning: true,
+        sessionActive: false,
+      }
+    ),
+    true
+  )
+
+  assert.equal(
+    serviceRepairRetryRecovered(
+      'daemon did not report result for resume request within 3s',
+      {
+        ...currentServiceState,
+        daemonRunning: true,
+        serviceRunning: false,
         sessionActive: false,
       }
     ),
