@@ -5242,6 +5242,7 @@ fn pending_nat_punch_targets(
     app: &AppConfig,
     own_pubkey: Option<&str>,
     peer_announcements: &HashMap<String, PeerAnnouncement>,
+    path_book: &PeerPathBook,
     runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
     listen_port: u16,
 ) -> Vec<SocketAddr> {
@@ -5250,6 +5251,7 @@ fn pending_nat_punch_targets(
         app,
         own_pubkey,
         peer_announcements,
+        path_book,
         runtime_peers,
         &own_local_endpoints,
     )
@@ -5259,27 +5261,42 @@ fn pending_nat_punch_targets_for_local_endpoints(
     app: &AppConfig,
     own_pubkey: Option<&str>,
     peer_announcements: &HashMap<String, PeerAnnouncement>,
+    path_book: &PeerPathBook,
     runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
     own_local_endpoints: &[String],
 ) -> Vec<SocketAddr> {
     let selected_exit_node = selected_exit_node_participant(app, own_pubkey, peer_announcements);
+    let now = unix_timestamp();
     let mut targets = app
         .participant_pubkeys_hex()
         .iter()
         .filter(|participant| Some(participant.as_str()) != own_pubkey)
         .filter_map(|participant| {
             let announcement = peer_announcements.get(participant)?;
+            let effective_announcement = announcement.without_expired_relay(now);
             if peer_runtime_lookup(announcement, runtime_peers)
                 .is_some_and(peer_has_recent_handshake)
             {
                 return None;
             }
 
-            let selected_endpoint =
-                select_peer_endpoint_from_local_endpoints(announcement, own_local_endpoints);
+            let selected_endpoint = path_book
+                .select_endpoint_for_local_endpoints(
+                    participant,
+                    &effective_announcement,
+                    own_local_endpoints,
+                    now,
+                    PEER_PATH_RETRY_AFTER_SECS,
+                )
+                .unwrap_or_else(|| {
+                    select_peer_endpoint_from_local_endpoints(
+                        &effective_announcement,
+                        own_local_endpoints,
+                    )
+                });
             if peer_endpoint_requires_public_signal(
                 app,
-                announcement,
+                &effective_announcement,
                 &selected_endpoint,
                 own_local_endpoints,
             ) {
@@ -5376,6 +5393,7 @@ fn maybe_run_nat_punch(
         app,
         own_pubkey,
         peer_announcements,
+        path_book,
         runtime_peers.as_ref(),
         listen_port,
     );
@@ -6696,5 +6714,5 @@ pub(crate) use tests::support::{
     build_peer_announcement, macos_default_routes_from_netstat, macos_ifconfig_has_ipv4,
     macos_route_get_spec_from_output, nat_punch_targets, nat_punch_targets_for_local_endpoint,
     nat_punch_targets_for_local_endpoints, pending_nat_punch_targets_for_local_endpoint,
-    planned_tunnel_peers,
+    pending_nat_punch_targets_for_local_endpoint_with_paths, planned_tunnel_peers,
 };

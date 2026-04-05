@@ -108,10 +108,29 @@ pub(crate) fn pending_nat_punch_targets_for_local_endpoint(
     runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
     own_local_endpoint: &str,
 ) -> Vec<SocketAddr> {
+    pending_nat_punch_targets_for_local_endpoint_with_paths(
+        app,
+        own_pubkey,
+        peer_announcements,
+        &PeerPathBook::default(),
+        runtime_peers,
+        own_local_endpoint,
+    )
+}
+
+pub(crate) fn pending_nat_punch_targets_for_local_endpoint_with_paths(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    peer_announcements: &HashMap<String, PeerAnnouncement>,
+    path_book: &PeerPathBook,
+    runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
+    own_local_endpoint: &str,
+) -> Vec<SocketAddr> {
     pending_nat_punch_targets_for_local_endpoints(
         app,
         own_pubkey,
         peer_announcements,
+        path_book,
         runtime_peers,
         &[own_local_endpoint.to_string()],
     )
@@ -161,28 +180,43 @@ pub(crate) fn pending_nat_punch_targets_for_local_endpoints(
     app: &AppConfig,
     own_pubkey: Option<&str>,
     peer_announcements: &HashMap<String, PeerAnnouncement>,
+    path_book: &PeerPathBook,
     runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
     own_local_endpoints: &[String],
 ) -> Vec<SocketAddr> {
     let selected_exit_node =
         crate::selected_exit_node_participant(app, own_pubkey, peer_announcements);
+    let now = crate::unix_timestamp();
     let mut targets = app
         .participant_pubkeys_hex()
         .iter()
         .filter(|participant| Some(participant.as_str()) != own_pubkey)
         .filter_map(|participant| {
             let announcement = peer_announcements.get(participant)?;
+            let effective_announcement = announcement.without_expired_relay(now);
             if crate::peer_runtime_lookup(announcement, runtime_peers)
                 .is_some_and(crate::peer_has_recent_handshake)
             {
                 return None;
             }
 
-            let selected_endpoint =
-                crate::select_peer_endpoint_from_local_endpoints(announcement, own_local_endpoints);
+            let selected_endpoint = path_book
+                .select_endpoint_for_local_endpoints(
+                    participant,
+                    &effective_announcement,
+                    own_local_endpoints,
+                    now,
+                    crate::PEER_PATH_RETRY_AFTER_SECS,
+                )
+                .unwrap_or_else(|| {
+                    crate::select_peer_endpoint_from_local_endpoints(
+                        &effective_announcement,
+                        own_local_endpoints,
+                    )
+                });
             if crate::peer_endpoint_requires_public_signal(
                 app,
-                announcement,
+                &effective_announcement,
                 &selected_endpoint,
                 own_local_endpoints,
             ) {

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 
 use crate::*;
+use crate::pending_nat_punch_targets_for_local_endpoint_with_paths;
 
 use nostr_vpn_core::crypto::generate_keypair;
 use nostr_vpn_core::paths::PeerPathBook;
@@ -511,6 +512,51 @@ fn nat_punch_targets_keep_stale_exit_peer_even_when_another_peer_is_online() {
         )
         .is_empty(),
         "a selected exit peer on a public endpoint should not tear the tunnel down for NAT punching"
+    );
+}
+
+#[test]
+fn pending_nat_punch_targets_prefer_recently_selected_observed_public_endpoint() {
+    let now = unix_timestamp();
+    let mut config = AppConfig::generated();
+    let participant = "11".repeat(32);
+    config.nat.enabled = true;
+    config.node.endpoint = "198.19.241.3:51820".to_string();
+    config.networks[0].participants = vec![participant.clone()];
+
+    let peer_keys = generate_keypair();
+    let announcement = PeerAnnouncement {
+        node_id: "peer-observed".to_string(),
+        public_key: peer_keys.public_key.clone(),
+        endpoint: "203.0.113.21:51820".to_string(),
+        local_endpoint: None,
+        public_endpoint: Some("203.0.113.21:51820".to_string()),
+        relay_endpoint: None,
+        relay_pubkey: None,
+        relay_expires_at: None,
+        tunnel_ip: "10.44.0.3/32".to_string(),
+        advertised_routes: Vec::new(),
+        timestamp: now,
+    };
+    let announcements = HashMap::from([(participant.clone(), announcement.clone())]);
+    let mut path_book = PeerPathBook::default();
+    path_book.refresh_from_announcement(participant.clone(), &announcement, now);
+    path_book.note_selected(participant.clone(), "203.0.113.21:33063", now);
+
+    let targets = pending_nat_punch_targets_for_local_endpoint_with_paths(
+        &config,
+        None,
+        &announcements,
+        &path_book,
+        None,
+        "198.19.241.3:51820",
+    );
+
+    assert_eq!(
+        targets,
+        vec!["203.0.113.21:33063"
+            .parse::<SocketAddr>()
+            .expect("observed socket addr")]
     );
 }
 
