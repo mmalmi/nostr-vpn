@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.6 - 2026-04-06
+
+Changes since `v0.3.4` on 2026-04-02.
+
+### Added
+
+- A leaner invite bootstrap flow where QR codes carry only mesh/bootstrap metadata and the rest of the network state is fetched over signed Nostr roster updates.
+- New Docker end-to-end coverage for NAT private-to-public reachability and selected-exit-node routing through a dedicated exit-node topology.
+
+### Changed
+
+- Shared participant aliases are now treated as roster state and republished by admins, so renames propagate across peers instead of remaining local-only.
+- Desktop invite onboarding is split into a dedicated import panel, and the request-join flow now matches the backend’s automatic join-request behavior after invite import.
+- Partial-mesh desktop status wording now favors explicit mesh counts over vague “connecting” copy, and service mismatch prompts show the exact app/service versions involved.
+
+### Fixed
+
+- Exit-node reconnects now recover from stale public endpoint state and still keep punching the selected exit peer when direct WireGuard paths need to be refreshed.
+- macOS underlay repair now restarts the tunnel cleanly after network recovery instead of trying to reuse a broken in-memory tunnel handle.
+- Desktop background-service timeout warnings now clear once the service actually recovers, instead of lingering after a successful reinstall or restart.
+- Non-admin devices can no longer edit shared network identity fields in the GUI, reducing accidental roster drift and local/shared state confusion.
+- Docker and Tauri end-to-end lanes now reflect the real join-request and mesh-ready UI states again, restoring full release-path coverage.
+
 ## 0.3.4 - 2026-04-02
 
 Changes since `v0.3.3` on 2026-04-01.
