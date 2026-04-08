@@ -482,6 +482,17 @@ fn daemon_pid_scan_matches_processes_for_config() {
 }
 
 #[test]
+fn daemon_pid_scan_ignores_exiting_processes_for_config() {
+    let config_path = Path::new("/Users/sirius/Library/Application Support/nvpn/config.toml");
+    let ps = "  42063 UNE /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n\
+              97597 Ss /Applications/Nostr VPN.app/Contents/MacOS/nvpn daemon --config /Users/sirius/Library/Application Support/nvpn/config.toml --iface utun100\n";
+
+    let pids = daemon_pids_from_ps_output(ps, config_path);
+
+    assert_eq!(pids, vec![97597]);
+}
+
+#[test]
 fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
     let config_path = Path::new("/root/.config/nvpn/config.toml");
     let ps = "2433278 bash -c set -e; nohup /root/nostr-vpn-current/target/debug/nvpn daemon --config /root/.config/nvpn/config.toml --iface utun100 >/root/.config/nvpn/launch.out 2>&1 </dev/null & sleep 5\n\
@@ -643,6 +654,13 @@ fn daemon_pid_scan_excludes_current_pid_when_filtering_duplicates() {
     let mut pids = daemon_pids_from_ps_output(ps, config_path);
     pids.retain(|pid| *pid != 97597);
     assert_eq!(pids, vec![42063]);
+}
+
+#[test]
+fn unix_process_stat_treats_exiting_and_dead_states_as_not_running() {
+    assert!(crate::unix_process_stat_counts_as_running("Ss"));
+    assert!(!crate::unix_process_stat_counts_as_running("UNE"));
+    assert!(!crate::unix_process_stat_counts_as_running("Z"));
 }
 
 #[test]

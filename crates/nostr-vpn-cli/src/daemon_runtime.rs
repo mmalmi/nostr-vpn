@@ -1237,7 +1237,7 @@ pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) 
         .arg("-p")
         .arg(pid.to_string())
         .arg("-o")
-        .arg("command=")
+        .arg("stat=,command=")
         .output();
     let Ok(output) = output else {
         return false;
@@ -1246,7 +1246,7 @@ pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) 
         return false;
     }
 
-    daemon_command_matches_config(&String::from_utf8_lossy(&output.stdout), config_path)
+    daemon_pids_from_ps_output(&String::from_utf8_lossy(&output.stdout), config_path).contains(&pid)
 }
 
 #[cfg(windows)]
@@ -1264,7 +1264,7 @@ pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
     let output = ProcessCommand::new("ps")
         .arg("ax")
         .arg("-o")
-        .arg("pid=,command=")
+        .arg("pid=,stat=,command=")
         .output();
     let Ok(output) = output else {
         return Vec::new();
@@ -1311,16 +1311,32 @@ pub(crate) fn daemon_pids_from_ps_output(ps_output: &str, config_path: &Path) ->
             continue;
         }
 
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let mut parts = trimmed.split_whitespace();
         let Some(pid_text) = parts.next() else {
             continue;
         };
-        let Some(command) = parts.next() else {
+        let Some(second) = parts.next() else {
             continue;
         };
         let Ok(pid) = pid_text.parse::<u32>() else {
             continue;
         };
+
+        let (stat, command) = if unix_ps_field_looks_like_stat(second) {
+            let Some((_, command)) = trimmed
+                .split_once(second)
+                .map(|(prefix, suffix)| (prefix, suffix.trim_start()))
+            else {
+                continue;
+            };
+            (second, command)
+        } else {
+            ("", trimmed[pid_text.len()..].trim_start())
+        };
+
+        if !unix_process_stat_counts_as_running(stat) {
+            continue;
+        }
 
         if daemon_command_matches_config(command, config_path) {
             pids.push(pid);
@@ -1330,6 +1346,31 @@ pub(crate) fn daemon_pids_from_ps_output(ps_output: &str, config_path: &Path) ->
     pids.sort_unstable();
     pids.dedup();
     pids
+}
+
+#[cfg(any(unix, test))]
+pub(crate) fn unix_process_stat_counts_as_running(stat: &str) -> bool {
+    let trimmed = stat.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let state = trimmed.chars().next().unwrap_or_default();
+    if matches!(state, 'Z' | 'X') {
+        return false;
+    }
+
+    !trimmed.contains('E')
+}
+
+#[cfg(any(unix, test))]
+fn unix_ps_field_looks_like_stat(field: &str) -> bool {
+    let trimmed = field.trim();
+    !trimmed.is_empty()
+        && trimmed.len() <= 8
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic() || matches!(ch, '<' | '>' | '+' | '-' | '|' | ':'))
 }
 
 #[cfg(any(target_os = "windows", test))]
