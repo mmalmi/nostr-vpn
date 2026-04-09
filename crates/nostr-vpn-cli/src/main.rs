@@ -18,6 +18,7 @@ mod windows_tunnel;
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs;
 use std::fs::OpenOptions;
 #[cfg(any(target_os = "macos", test))]
@@ -78,7 +79,8 @@ use nostr_vpn_core::platform_paths::{
 };
 use nostr_vpn_core::presence::PeerPresenceBook;
 use nostr_vpn_core::relay::{
-    RelayAllocationGranted, RelayAllocationRejected, RelayAllocationRequest, RelayProbeRequest,
+    RelayAllocationGranted, RelayAllocationRejected, RelayAllocationRequest, RelayOperatorState,
+    RelayProbeRequest, ServiceOperatorState,
 };
 use nostr_vpn_core::service_signaling::{RelayServiceClient, ServicePayload};
 use nostr_vpn_core::signaling::{
@@ -307,6 +309,8 @@ enum Command {
     Down(DownArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
+    /// Show relay operator stats from the local state file.
+    Stats(StatsArgs),
     /// Update persisted node/network settings.
     Set(SetArgs),
     /// Emit an `nvpn://invite/...` code for the active network.
@@ -628,6 +632,16 @@ struct StatusArgs {
     relay: Vec<String>,
     #[arg(long, default_value_t = 2)]
     discover_secs: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct StatsArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    #[arg(long)]
+    state_file: Option<PathBuf>,
     #[arg(long)]
     json: bool,
 }
@@ -1138,6 +1152,23 @@ async fn run_command(command: Command) -> Result<()> {
                         );
                     }
                 }
+            }
+        }
+        Command::Stats(args) => {
+            let config_path = args.config.unwrap_or_else(default_config_path);
+            let state_file = resolve_stats_state_file_path(args.state_file, &config_path)?;
+            let state = load_service_operator_state(&state_file)?;
+
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "state_file": state_file,
+                        "stats": state,
+                    }))?
+                );
+            } else {
+                print!("{}", render_service_operator_stats(&state_file, &state));
             }
         }
         Command::Set(args) => {
@@ -1676,6 +1707,243 @@ struct DaemonRuntimeState {
     nat_assist_running: bool,
     #[serde(default)]
     nat_assist_status: String,
+}
+
+fn load_service_operator_state(path: &Path) -> Result<ServiceOperatorState> {
+    let raw = fs::read(path)
+        .with_context(|| format!("failed to read relay stats state {}", path.display()))?;
+    parse_service_operator_state(&raw)
+        .with_context(|| format!("failed to parse relay stats state {}", path.display()))
+}
+
+fn parse_service_operator_state(raw: &[u8]) -> Result<ServiceOperatorState, serde_json::Error> {
+    match serde_json::from_slice::<ServiceOperatorState>(raw) {
+        Ok(state)
+            if state.relay.is_some()
+                || state.nat_assist.is_some()
+                || !state.operator_pubkey.trim().is_empty() =>
+        {
+            Ok(state)
+        }
+        Err(service_error) => match serde_json::from_slice::<RelayOperatorState>(raw) {
+            Ok(relay_state) => Ok(ServiceOperatorState {
+                updated_at: relay_state.updated_at,
+                operator_pubkey: relay_state.relay_pubkey.clone(),
+                relay: Some(relay_state),
+                nat_assist: None,
+            }),
+            Err(_) => Err(service_error),
+        },
+        Ok(_) => match serde_json::from_slice::<RelayOperatorState>(raw) {
+            Ok(relay_state) => Ok(ServiceOperatorState {
+                updated_at: relay_state.updated_at,
+                operator_pubkey: relay_state.relay_pubkey.clone(),
+                relay: Some(relay_state),
+                nat_assist: None,
+            }),
+            Err(service_error) => Err(service_error),
+        },
+    }
+}
+
+fn stats_state_file_candidates(config_path: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![relay_operator_state_file_path(config_path)];
+    if let Some(config_dir) = dirs::config_dir() {
+        candidates.push(config_dir.join("nvpn").join("relay.operator.json"));
+    }
+    #[cfg(target_os = "linux")]
+    candidates.push(PathBuf::from("/var/lib/nvpn-udp-relay/relay.operator.json"));
+    candidates.dedup();
+    candidates
+}
+
+fn resolve_stats_state_file_path(
+    explicit_state_file: Option<PathBuf>,
+    config_path: &Path,
+) -> Result<PathBuf> {
+    if let Some(path) = explicit_state_file {
+        return Ok(path);
+    }
+
+    let candidates = stats_state_file_candidates(config_path);
+    if let Some(path) = candidates.iter().find(|path| path.exists()) {
+        return Ok(path.clone());
+    }
+
+    Err(anyhow!(
+        "relay stats state file not found; checked {}",
+        candidates
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
+fn render_service_operator_stats(state_file: &Path, state: &ServiceOperatorState) -> String {
+    let mut output = String::new();
+    let now = unix_timestamp();
+
+    let _ = writeln!(output, "state_file: {}", state_file.display());
+    let _ = writeln!(
+        output,
+        "updated: {}",
+        format_relative_timestamp(state.updated_at, now)
+    );
+    if !state.operator_pubkey.trim().is_empty() {
+        let _ = writeln!(output, "operator_pubkey: {}", state.operator_pubkey);
+    }
+
+    if let Some(relay) = state.relay.as_ref() {
+        let _ = writeln!(output, "relay: enabled");
+        if !relay.advertised_endpoint.trim().is_empty() {
+            let _ = writeln!(output, "relay_endpoint: {}", relay.advertised_endpoint);
+        }
+        let _ = writeln!(
+            output,
+            "total_sessions_served: {}",
+            relay.total_sessions_served
+        );
+        let _ = writeln!(output, "unique_peers_served: {}", relay.unique_peer_count);
+        let _ = writeln!(output, "active_sessions: {}", relay.active_sessions.len());
+        let _ = writeln!(
+            output,
+            "total_forwarded: {} ({} B)",
+            format_human_bytes(relay.total_forwarded_bytes),
+            relay.total_forwarded_bytes
+        );
+        let _ = writeln!(
+            output,
+            "current_forward_rate: {}/s",
+            format_human_bytes(relay.current_forward_bps)
+        );
+
+        for session in &relay.active_sessions {
+            let total_forwarded = session
+                .bytes_from_requester
+                .saturating_add(session.bytes_from_target);
+            let _ = writeln!(
+                output,
+                "session {}: {} -> {} forwarded={} expires_in={}",
+                session.request_id,
+                abbreviate_id(&session.requester_pubkey),
+                abbreviate_id(&session.target_pubkey),
+                format_human_bytes(total_forwarded),
+                format_remaining_secs(session.expires_at.saturating_sub(now))
+            );
+        }
+    } else {
+        let _ = writeln!(output, "relay: disabled");
+    }
+
+    if let Some(nat_assist) = state.nat_assist.as_ref() {
+        let _ = writeln!(output, "nat_assist: enabled");
+        if !nat_assist.advertised_endpoint.trim().is_empty() {
+            let _ = writeln!(
+                output,
+                "nat_assist_endpoint: {}",
+                nat_assist.advertised_endpoint
+            );
+        }
+        let _ = writeln!(
+            output,
+            "nat_assist_unique_clients: {}",
+            nat_assist.unique_client_count
+        );
+        let _ = writeln!(
+            output,
+            "nat_assist_discovery_requests: {}",
+            nat_assist.total_discovery_requests
+        );
+        let _ = writeln!(
+            output,
+            "nat_assist_punch_requests: {}",
+            nat_assist.total_punch_requests
+        );
+        let _ = writeln!(
+            output,
+            "nat_assist_request_rate: {} req/s",
+            nat_assist.current_request_bps
+        );
+    } else {
+        let _ = writeln!(output, "nat_assist: disabled");
+    }
+
+    output
+}
+
+fn format_human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+
+    if bytes < 1024 {
+        return format!("{bytes} B");
+    }
+
+    let mut value = bytes as f64;
+    let mut unit_index = 0;
+    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+
+    if value >= 10.0 {
+        format!("{value:.1} {}", UNITS[unit_index])
+    } else {
+        format!("{value:.2} {}", UNITS[unit_index])
+    }
+}
+
+fn format_relative_timestamp(timestamp: u64, now: u64) -> String {
+    if timestamp == 0 {
+        return "unknown".to_string();
+    }
+
+    format!(
+        "{} (unix {})",
+        format_elapsed_secs(now.saturating_sub(timestamp)),
+        timestamp
+    )
+}
+
+fn format_elapsed_secs(secs: u64) -> String {
+    if secs < 60 {
+        return format!("{secs}s ago");
+    }
+    if secs < 3600 {
+        return format!("{}m ago", secs / 60);
+    }
+    if secs < 86_400 {
+        return format!("{}h ago", secs / 3600);
+    }
+    format!("{}d ago", secs / 86_400)
+}
+
+fn format_remaining_secs(secs: u64) -> String {
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    if secs < 3600 {
+        return format!("{}m", secs / 60);
+    }
+    if secs < 86_400 {
+        return format!("{}h", secs / 3600);
+    }
+    format!("{}d", secs / 86_400)
+}
+
+fn abbreviate_id(value: &str) -> String {
+    const HEAD_LEN: usize = 8;
+    const TAIL_LEN: usize = 8;
+
+    if value.len() <= HEAD_LEN + TAIL_LEN + 1 {
+        return value.to_string();
+    }
+
+    format!(
+        "{}..{}",
+        &value[..HEAD_LEN],
+        &value[value.len().saturating_sub(TAIL_LEN)..]
+    )
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -5330,6 +5598,9 @@ fn pending_nat_punch_targets_for_local_endpoints(
     own_local_endpoints: &[String],
 ) -> Vec<SocketAddr> {
     let now = unix_timestamp();
+    let route_assignments = advertised_route_assignments(app, own_pubkey, peer_announcements);
+    let mesh_has_recent_handshake_peer =
+        mesh_has_recent_handshake_peer(app, own_pubkey, peer_announcements, runtime_peers);
     let mut targets = app
         .participant_pubkeys_hex()
         .iter()
@@ -5339,6 +5610,14 @@ fn pending_nat_punch_targets_for_local_endpoints(
             let effective_announcement = announcement.without_expired_relay(now);
             if peer_runtime_lookup(announcement, runtime_peers)
                 .is_some_and(peer_has_recent_handshake)
+            {
+                return None;
+            }
+
+            if mesh_has_recent_handshake_peer
+                && !route_assignments
+                    .get(participant)
+                    .is_some_and(|routes| !routes.is_empty())
             {
                 return None;
             }
@@ -5393,6 +5672,21 @@ fn nat_punch_fingerprint(targets: &[SocketAddr], listen_port: u16) -> Option<Str
             .collect::<Vec<_>>()
             .join(";")
     ))
+}
+
+fn mesh_has_recent_handshake_peer(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    peer_announcements: &HashMap<String, PeerAnnouncement>,
+    runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
+) -> bool {
+    app.participant_pubkeys_hex()
+        .iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .filter_map(|participant| peer_announcements.get(participant))
+        .any(|announcement| {
+            peer_runtime_lookup(announcement, runtime_peers).is_some_and(peer_has_recent_handshake)
+        })
 }
 
 fn hole_punch_with_retry(listen_port: u16, target: SocketAddr) -> Result<()> {
@@ -6831,5 +7125,6 @@ mod tests {
     mod routing;
     mod runtime_misc;
     mod service_cli;
+    mod stats_cli;
     pub(crate) mod support;
 }
