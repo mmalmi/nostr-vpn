@@ -5615,9 +5615,9 @@ fn pending_nat_punch_targets_for_local_endpoints(
             }
 
             if mesh_has_recent_handshake_peer
-                && !route_assignments
+                && route_assignments
                     .get(participant)
-                    .is_some_and(|routes| !routes.is_empty())
+                    .is_none_or(|routes| routes.is_empty())
             {
                 return None;
             }

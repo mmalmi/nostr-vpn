@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.9 - 2026-04-09
+
+Changes since `v0.3.8` on 2026-04-08.
+
+### Added
+
+- A new `nvpn stats` CLI command for inspecting relay-operator state files in either human-readable or JSON form.
+- A path-maintenance architecture note describing the staged move from disruptive same-port NAT recovery toward a more stable transport manager.
+
+### Fixed
+
+- Same-port NAT recovery on Unix now avoids disruptive punching for unrelated stale peers when the mesh already has another healthy peer, reducing unnecessary tunnel churn.
+
 ## 0.3.7 - 2026-04-08
 
 Changes since `v0.3.6` on 2026-04-06.
