@@ -148,6 +148,12 @@ export function describeAsset(name) {
   return name
 }
 
+export function androidReleaseAssetName(tag, { extension = 'apk', signed = true } = {}) {
+  const normalizedTag = normalizeTag(tag)
+  const suffix = signed ? '' : '-unsigned'
+  return `nostr-vpn-${normalizedTag}-android-arm64${suffix}.${extension}`
+}
+
 export function buildReleaseManifest({ tag, commit, createdAt, assetPaths }) {
   const normalizedTag = normalizeTag(tag)
   const assets = [...assetPaths]

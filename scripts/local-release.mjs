@@ -18,6 +18,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import {
+  androidReleaseAssetName,
   autoDetectWindowsVmName,
   buildReleaseManifest,
   normalizeTag,
@@ -62,6 +63,7 @@ Build locally-available release artifacts, stage a hashtree release directory, a
 
 Options:
   --publish                 Publish the staged release tree with htree
+  --publish-zapstore       Publish the built Android APK to Zapstore
   --dry-run                 Print the plan without running build or publish commands
   --skip-verify            Skip fmt/clippy/test verification
   --tag <tag>              Release tag (defaults to workspace version, for example v0.2.27)
@@ -81,6 +83,7 @@ function parseArgs(argv) {
   const options = {
     dryRun: false,
     publish: false,
+    publishZapstore: false,
     skipVerify: false,
     releaseTree: null,
     stageDir: null,
@@ -103,6 +106,9 @@ function parseArgs(argv) {
         break
       case '--dry-run':
         options.dryRun = true
+        break
+      case '--publish-zapstore':
+        options.publishZapstore = true
         break
       case '--skip-verify':
         options.skipVerify = true
@@ -725,16 +731,21 @@ storeFile=${keystorePath}
       throw new Error('Expected Android APK/AAB outputs were not produced.')
     }
 
-    const suffix = wroteKeyProperties ? '' : '-unsigned'
-    const apkDest = join(distDir, `nostr-vpn-${tag}-android-arm64${suffix}.apk`)
-    const aabDest = join(distDir, `nostr-vpn-${tag}-android-arm64${suffix}.aab`)
+    const apkDest = join(
+      distDir,
+      androidReleaseAssetName(tag, { extension: 'apk', signed: hasSigning }),
+    )
+    const aabDest = join(
+      distDir,
+      androidReleaseAssetName(tag, { extension: 'aab', signed: hasSigning }),
+    )
     if (!dryRun) {
       copyFileSync(apkPath, apkDest)
       copyFileSync(aabPath, aabDest)
     }
 
     builtLines.push(
-      wroteKeyProperties
+      hasSigning
         ? 'Built signed Android arm64 APK/AAB locally.'
         : 'Built unsigned Android arm64 APK/AAB locally.',
     )
@@ -746,6 +757,43 @@ storeFile=${keystorePath}
       rmSync(tempKeystorePath, { force: true })
     }
   }
+}
+
+function findSignedAndroidApkPath(tag) {
+  const signedApkPath = join(distDir, androidReleaseAssetName(tag, { extension: 'apk' }))
+  if (existsSync(signedApkPath)) {
+    return signedApkPath
+  }
+
+  const unsignedApkPath = join(
+    distDir,
+    androidReleaseAssetName(tag, { extension: 'apk', signed: false }),
+  )
+  if (existsSync(unsignedApkPath)) {
+    throw new Error(
+      `Cannot publish ${basename(unsignedApkPath)} to Zapstore because it is unsigned. Configure Android signing and rebuild the Android release artifact first.`,
+    )
+  }
+
+  throw new Error(
+    `Cannot publish to Zapstore because ${basename(signedApkPath)} was not found in dist. Include the Android release build in this run or provide the signed artifact first.`,
+  )
+}
+
+function publishAndroidToZapstore({ env, tag, dryRun, builtLines }) {
+  const apkPath = dryRun
+    ? join(distDir, androidReleaseAssetName(tag, { extension: 'apk' }))
+    : findSignedAndroidApkPath(tag)
+
+  run('bash', [join(repoRoot, 'scripts', 'publish-zapstore-android.sh')], {
+    env: {
+      ...env,
+      APK_PATH: apkPath,
+    },
+    dryRun,
+  })
+
+  builtLines.push(`Published Android arm64 APK ${basename(apkPath)} to Zapstore.`)
 }
 
 function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, allowUnsignedMacos }) {
@@ -983,9 +1031,13 @@ function main() {
   const builtLines = []
   const skippedLines = []
   const allowUnsignedMacos = options.allowUnsignedMacos || envFlagEnabled(env.NVPN_ALLOW_UNSIGNED_MACOS)
+  const publishZapstore = options.publishZapstore || envFlagEnabled(env.NVPN_PUBLISH_ZAPSTORE)
 
   console.log(`Release tag: ${tag}`)
   console.log(`Release tree: ${releaseTree}`)
+  if (publishZapstore) {
+    console.log('Zapstore publishing enabled for the signed Android APK.')
+  }
   if (loadedPaths.length > 0) {
     console.log(`Loaded env files: ${loadedPaths.join(', ')}`)
   }
@@ -1059,6 +1111,15 @@ function main() {
     console.log(`Published ${tag} to ${releaseTree} via ${cid}`)
   } else {
     console.log(`Staged release at ${stageDir}`)
+  }
+
+  if (publishZapstore) {
+    publishAndroidToZapstore({
+      env,
+      tag,
+      dryRun: options.dryRun,
+      builtLines,
+    })
   }
 }
 

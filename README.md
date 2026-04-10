@@ -117,7 +117,7 @@ Additional automation:
 - `.github/workflows/windows-smoke.yml` can manually build the Windows CLI and GUI on `windows-latest`
 - `.github/workflows/release.yml` publishes Apple Silicon macOS, Windows x64, and Android arm64 APK/AAB app artifacts, plus CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
 - `scripts/publish-zapstore-android.sh` builds a signed Android APK locally and publishes it with `zsp` using `zapstore.yaml`
-- `scripts/local-release.mjs` builds whatever this machine can produce locally, stages a hashtree-style release directory, and can publish it to `releases/nostr-vpn`
+- `scripts/local-release.mjs` builds whatever this machine can produce locally, stages a hashtree-style release directory, can publish it to `releases/nostr-vpn`, and can hand the signed Android APK off to Zapstore
 
 ### Local release
 
@@ -125,8 +125,10 @@ Typical flow:
 
 ```bash
 cp .env.release.example .env.release.local
+cp .env.zapstore.example .env.zapstore.local
 $EDITOR .env.release.local
-node scripts/local-release.mjs --publish
+$EDITOR .env.zapstore.local
+node scripts/local-release.mjs --publish --publish-zapstore
 ```
 
 Notes:
@@ -135,6 +137,7 @@ Notes:
 - the script auto-loads `.env.release.local` and `.env.zapstore.local` when present
 - shell environment variables override values from those files
 - on Apple Silicon macOS it can build the macOS app/CLI locally, Android APK/AAB when the Android toolchain is configured, and Windows artifacts through a running Parallels VM
+- add `--publish-zapstore` or set `NVPN_PUBLISH_ZAPSTORE=1` when the release should also publish the signed Android APK to Zapstore
 - Windows VM selection can be forced with `NVPN_WINDOWS_VM_NAME`; otherwise the script auto-detects a single running Windows guest
 - by default it runs the same frontend build, `cargo fmt --check`, `cargo clippy`, and `cargo test` verification steps as the release workflow
 - omit `--publish` if you only want staged release metadata under the local temp directory
@@ -143,7 +146,7 @@ Notes:
 
 The repo includes a committed [`zapstore.yaml`](zapstore.yaml) plus a local-only env template in `.env.zapstore.example`.
 
-Typical local flow:
+Android-only local flow:
 
 ```bash
 cp .env.zapstore.example .env.zapstore.local
@@ -153,6 +156,7 @@ $EDITOR .env.zapstore.local
 
 Notes:
 
+- the main release flow can reuse an already-built signed APK via `node scripts/local-release.mjs --publish --publish-zapstore`
 - the publish script reads signing config from the shell environment or `.env.zapstore.local`
 - it stops with a clear error if no signing env is present
 - set either `SIGN_WITH` directly or `NOSTR_KEY_PATH` for the Nostr signer
@@ -160,6 +164,7 @@ Notes:
 - if the keystore path does not exist yet, the script creates it locally
 - the first publish path also uses `nak` to send the signed APK certificate proof to `wss://relay.zapstore.dev`
 - Android signing secrets are written only to a temporary `key.properties` file during the build and then removed
+- the script defaults to non-interactive `zsp` publishing; set `ZSP_AUTO_CONFIRM=0` or `ZSP_SKIP_PREVIEW=0` if you explicitly want the interactive prompts back
 - set `SKIP_PUBLISH=1` to stop after the local signed APK build and validation steps
 - set `INSTALL_ON_DEVICE=1` to install the APK over `adb`
 - set `CAPTURE_SCREENSHOT=1` to save a screenshot to `artifacts/android/nostr-vpn-home.png`

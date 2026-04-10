@@ -7,6 +7,7 @@ ANDROID_DIR="${REPO_ROOT}/crates/nostr-vpn-gui/src-tauri/gen/android"
 KEY_PROPERTIES_PATH="${ANDROID_DIR}/key.properties"
 ZAPSTORE_ENV_FILE="${REPO_ROOT}/.env.zapstore.local"
 ZAPSTORE_CONFIG="${ZAPSTORE_CONFIG:-${REPO_ROOT}/zapstore.yaml}"
+APK_PATH="${APK_PATH:-}"
 
 if [ -f "${ZAPSTORE_ENV_FILE}" ]; then
   set -a
@@ -26,6 +27,8 @@ KEYSTORE_DNAME="${KEYSTORE_DNAME:-CN=Nostr VPN, OU=Mobile, O=Iris, L=Helsinki, S
 NOSTR_KEY_PATH="${NOSTR_KEY_PATH:-}"
 ZAPSTORE_CHANNEL="${ZAPSTORE_CHANNEL:-main}"
 ZSP_EXTRA_FLAGS="${ZSP_EXTRA_FLAGS:-}"
+ZSP_AUTO_CONFIRM="${ZSP_AUTO_CONFIRM:-1}"
+ZSP_SKIP_PREVIEW="${ZSP_SKIP_PREVIEW:-1}"
 INSTALL_ON_DEVICE="${INSTALL_ON_DEVICE:-0}"
 CAPTURE_SCREENSHOT="${CAPTURE_SCREENSHOT:-0}"
 SCREENSHOT_PATH="${SCREENSHOT_PATH:-${REPO_ROOT}/artifacts/android/nostr-vpn-home.png}"
@@ -65,11 +68,14 @@ cleanup() {
 trap cleanup EXIT
 
 require_cmd keytool
-require_cmd pnpm
-require_cmd rustup
 require_cmd zsp
 if [ "${LINK_SIGNING_CERT}" = "1" ]; then
   require_cmd nak
+fi
+
+if [ -z "${APK_PATH}" ]; then
+  require_cmd pnpm
+  require_cmd rustup
 fi
 
 if [ "${INSTALL_ON_DEVICE}" = "1" ] || [ "${CAPTURE_SCREENSHOT}" = "1" ]; then
@@ -164,20 +170,22 @@ fi
 
 ANDROID_KEY_ALIAS="${ANDROID_KEY_ALIAS:-${DEFAULT_ANDROID_KEY_ALIAS}}"
 
-cat > "${KEY_PROPERTIES_PATH}" <<EOF
+if [ -z "${APK_PATH}" ]; then
+  cat > "${KEY_PROPERTIES_PATH}" <<EOF
 storePassword=${ANDROID_KEYSTORE_PASSWORD}
 keyPassword=${ANDROID_KEY_PASSWORD}
 keyAlias=${ANDROID_KEY_ALIAS}
 storeFile=${ANDROID_KEYSTORE_PATH}
 EOF
 
-pnpm --store-dir "${PNPM_STORE_DIR}" --dir "${REPO_ROOT}/crates/nostr-vpn-gui" install --frozen-lockfile
-pnpm --dir "${REPO_ROOT}/crates/nostr-vpn-gui" exec tauri android build --target aarch64 --apk --ci
+  pnpm --store-dir "${PNPM_STORE_DIR}" --dir "${REPO_ROOT}/crates/nostr-vpn-gui" install --frozen-lockfile
+  pnpm --dir "${REPO_ROOT}/crates/nostr-vpn-gui" exec tauri android build --target aarch64 --apk --ci
 
-APK_PATH="$(find "${ANDROID_DIR}/app/build/outputs/apk/universal/release" -maxdepth 1 -name '*.apk' -print -quit)"
+  APK_PATH="$(find "${ANDROID_DIR}/app/build/outputs/apk/universal/release" -maxdepth 1 -name '*.apk' -print -quit)"
+fi
 
-if [ -z "${APK_PATH}" ]; then
-  echo "Android release APK was not produced." >&2
+if [ -z "${APK_PATH}" ] || [ ! -f "${APK_PATH}" ]; then
+  echo "Android release APK was not found: ${APK_PATH:-<unset>}" >&2
   exit 1
 fi
 
@@ -217,10 +225,16 @@ if [ "${CAPTURE_SCREENSHOT}" = "1" ]; then
 fi
 
 if [ "${SKIP_PUBLISH}" != "1" ]; then
+  ZSP_PUBLISH_ARGS=(publish "${ZAPSTORE_CONFIG}" --channel "${ZAPSTORE_CHANNEL}")
+  if [ "${ZSP_AUTO_CONFIRM}" = "1" ]; then
+    ZSP_PUBLISH_ARGS+=(-y)
+  fi
+  if [ "${ZSP_SKIP_PREVIEW}" = "1" ]; then
+    ZSP_PUBLISH_ARGS+=(--skip-preview)
+  fi
   if [ -n "${ZSP_EXTRA_FLAGS}" ]; then
     IFS=' ' read -r -a ZSP_EXTRA_FLAGS_ARRAY <<< "${ZSP_EXTRA_FLAGS}"
-    zsp publish "${ZAPSTORE_CONFIG}" --channel "${ZAPSTORE_CHANNEL}" "${ZSP_EXTRA_FLAGS_ARRAY[@]}"
-  else
-    zsp publish "${ZAPSTORE_CONFIG}" --channel "${ZAPSTORE_CHANNEL}"
+    ZSP_PUBLISH_ARGS+=("${ZSP_EXTRA_FLAGS_ARRAY[@]}")
   fi
+  zsp "${ZSP_PUBLISH_ARGS[@]}"
 fi

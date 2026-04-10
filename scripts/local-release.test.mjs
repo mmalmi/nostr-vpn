@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import {
+  androidReleaseAssetName,
   autoDetectWindowsVmName,
   buildReleaseManifest,
   describeAsset,
@@ -79,6 +80,14 @@ test('describeAsset maps release filenames to readable labels', () => {
   assert.equal(
     describeAsset('nvpn-v0.2.27-aarch64-pc-windows-msvc.zip'),
     'Windows ARM64 CLI',
+  )
+})
+
+test('androidReleaseAssetName formats signed and unsigned Android asset names', () => {
+  assert.equal(androidReleaseAssetName('0.3.9'), 'nostr-vpn-v0.3.9-android-arm64.apk')
+  assert.equal(
+    androidReleaseAssetName('v0.3.9', { extension: 'aab', signed: false }),
+    'nostr-vpn-v0.3.9-android-arm64-unsigned.aab',
   )
 })
 
