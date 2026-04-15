@@ -257,6 +257,9 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                 let endpoint_changed = if network_changed {
                     network_snapshot = latest_snapshot.clone();
                     println!("connect: network change detected; refreshing paths");
+                    // A moved network invalidates the previous public endpoint; keep
+                    // probing for a fresh one instead of reusing the stale address.
+                    public_signal_endpoint = None;
                     refresh_public_signal_endpoint_with_port_mapping(
                         &app,
                         &network_snapshot,
@@ -316,6 +319,16 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     ) {
                         eprintln!("connect: tunnel refresh after network change failed: {error}");
                     }
+                }
+                if network_changed {
+                    if relay_connected {
+                        println!("connect: reconnecting relays after network change");
+                    }
+                    client.disconnect().await;
+                    relay_connected = false;
+                    reconnect_attempt = 0;
+                    reconnect_due = Instant::now();
+                    outbound_announces.clear();
                 }
 
                 let peer_announcements = direct_peer_announcements(&presence, relay_connected);
@@ -1065,6 +1078,9 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     network_changed_at = Some(unix_timestamp());
                     captive_portal = detect_captive_portal(timeout).await;
                     if session_active {
+                        // A moved network invalidates the previous public endpoint; keep
+                        // probing for a fresh one instead of reusing the stale address.
+                        public_signal_endpoint = None;
                         refresh_public_signal_endpoint_with_port_mapping(
                             &app,
                             &network_snapshot,
@@ -1149,6 +1165,25 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                 format!("Network change refresh failed ({error})");
                         }
                     }
+                }
+                if network_changed
+                    && relay_session_active(
+                        session_enabled,
+                        expected_peers,
+                        app.join_requests_enabled(),
+                    )
+                {
+                    if relay_connected {
+                        eprintln!("daemon: reconnecting relays after network change");
+                    }
+                    client.disconnect().await;
+                    service_client.disconnect().await;
+                    relay_connected = false;
+                    relay_service_connected = false;
+                    reconnect_attempt = 0;
+                    reconnect_due = Instant::now();
+                    outbound_announces.clear();
+                    session_status = "Reconnecting relays after network change".to_string();
                 }
 
                 if !daemon_session_active(session_enabled, expected_peers) {
