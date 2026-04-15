@@ -457,6 +457,7 @@ pub(crate) fn is_mesh_complete(connected: usize, expected: usize) -> bool {
     expected > 0 && connected >= expected
 }
 
+#[cfg(any(not(target_os = "windows"), test))]
 pub(crate) fn config_path_from_roots(
     app_config_dir: Option<&Path>,
     dirs_config_dir: Option<&Path>,

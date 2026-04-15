@@ -52,13 +52,15 @@ pub(crate) use gui_launch::{
 };
 #[cfg(test)]
 pub(crate) use path_resolution::cli_binary_installed_at;
+#[cfg(any(not(target_os = "windows"), test))]
+pub(crate) use path_resolution::config_path_from_roots;
 #[allow(unused_imports)]
 pub(crate) use path_resolution::{
     bundled_nvpn_candidate_paths, cli_binary_installed, compact_age_text, compact_remaining_text,
-    config_path_from_roots, current_target_triple, current_unix_timestamp, default_config_path,
-    epoch_secs_to_system_time, expected_peer_count, extract_json_document,
-    is_already_running_message, is_mesh_complete, is_not_running_message, join_request_age_text,
-    network_device_count, network_online_device_count, nvpn_binary_name, nvpn_binary_stem,
+    current_target_triple, current_unix_timestamp, default_config_path, epoch_secs_to_system_time,
+    expected_peer_count, extract_json_document, is_already_running_message, is_mesh_complete,
+    is_not_running_message, join_request_age_text, network_device_count,
+    network_online_device_count, nvpn_binary_name, nvpn_binary_stem,
     nvpn_bundled_binary_candidates, nvpn_sidecar_binary_name, requires_admin_privileges,
     resolve_backend_config_path, resolve_nvpn_cli_path, service_state_refresh_due, shorten_middle,
     validate_nvpn_binary,
