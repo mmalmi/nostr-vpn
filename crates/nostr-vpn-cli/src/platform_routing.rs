@@ -2,14 +2,18 @@
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::ToSocketAddrs;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use anyhow::{Context, Result, anyhow};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use netdev::get_interfaces;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use netdev::interface::interface::Interface as NetworkInterface;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 use nostr_vpn_core::config::AppConfig;
 
 #[cfg(target_os = "macos")]
@@ -18,7 +22,10 @@ use crate::MacosExitNodeRuntime;
 use crate::MacosRouteSpec;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::TunnelPeer;
-use crate::{run_checked, strip_cidr};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::run_checked;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+use crate::strip_cidr;
 
 #[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
