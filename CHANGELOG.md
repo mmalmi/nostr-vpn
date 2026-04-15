@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.10 - 2026-04-15
+
+Changes since `v0.3.9` on 2026-04-09.
+
+### Fixed
+
+- Session reconnect logic now drops stale public signaling endpoints after a network change and reconnects relays so roaming between networks recovers cleanly instead of continuing to announce obsolete addresses.
+
 ## 0.3.9 - 2026-04-09
 
 Changes since `v0.3.8` on 2026-04-08.
