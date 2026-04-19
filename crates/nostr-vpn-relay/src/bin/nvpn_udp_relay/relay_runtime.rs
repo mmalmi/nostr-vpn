@@ -115,7 +115,7 @@ impl RelayRuntimeState {
             let bytes_delta = self
                 .total_forwarded_bytes
                 .saturating_sub(self.last_rate_sample_bytes);
-            self.current_forward_bps = bytes_delta / elapsed;
+            self.current_forward_bps = bytes_delta.checked_div(elapsed).unwrap_or(0);
             self.last_rate_sample_at = now;
             self.last_rate_sample_bytes = self.total_forwarded_bytes;
         } else if self.last_rate_sample_at == 0 {
@@ -218,7 +218,7 @@ impl NatAssistRuntimeState {
         let elapsed = now.saturating_sub(self.last_rate_sample_at);
         if elapsed > 0 {
             let requests_delta = total_requests.saturating_sub(self.last_rate_sample_requests);
-            self.current_request_bps = requests_delta / elapsed;
+            self.current_request_bps = requests_delta.checked_div(elapsed).unwrap_or(0);
             self.last_rate_sample_at = now;
             self.last_rate_sample_requests = total_requests;
         } else if self.last_rate_sample_at == 0 {
