@@ -253,35 +253,33 @@ async fn handle_socket(socket: WebSocket, state: Arc<RelayState>) {
                         let _ = tx.send(ok_msg.to_string()).await;
                     }
                 }
-                "REQ" => {
-                    if parsed.len() >= 3 {
-                        let sub_id = parsed[1].as_str().unwrap_or_default().to_string();
-                        let mut filters = Vec::new();
+                "REQ" if parsed.len() >= 3 => {
+                    let sub_id = parsed[1].as_str().unwrap_or_default().to_string();
+                    let mut filters = Vec::new();
 
-                        for raw_filter in parsed.iter().skip(2) {
-                            if let Ok(filter) =
-                                serde_json::from_value::<NostrFilter>(raw_filter.clone())
-                            {
-                                filters.push(filter);
-                            }
+                    for raw_filter in parsed.iter().skip(2) {
+                        if let Ok(filter) =
+                            serde_json::from_value::<NostrFilter>(raw_filter.clone())
+                        {
+                            filters.push(filter);
                         }
-
-                        let events = state.events.read().await;
-                        for event in events.iter() {
-                            if filters.iter().any(|f| f.matches(event)) {
-                                let event_msg = serde_json::json!(["EVENT", &sub_id, event]);
-                                let _ = tx.send(event_msg.to_string()).await;
-                            }
-                        }
-
-                        let eose = serde_json::json!(["EOSE", &sub_id]);
-                        let _ = tx.send(eose.to_string()).await;
-
-                        subscriptions
-                            .write()
-                            .await
-                            .insert(sub_id, Subscription { filters });
                     }
+
+                    let events = state.events.read().await;
+                    for event in events.iter() {
+                        if filters.iter().any(|f| f.matches(event)) {
+                            let event_msg = serde_json::json!(["EVENT", &sub_id, event]);
+                            let _ = tx.send(event_msg.to_string()).await;
+                        }
+                    }
+
+                    let eose = serde_json::json!(["EOSE", &sub_id]);
+                    let _ = tx.send(eose.to_string()).await;
+
+                    subscriptions
+                        .write()
+                        .await
+                        .insert(sub_id, Subscription { filters });
                 }
                 "CLOSE" => {
                     if parsed.len() >= 2

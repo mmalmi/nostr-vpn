@@ -520,10 +520,15 @@ function psQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`
 }
 
+function encodePowerShellScript(script) {
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
 function runWindowsPowerShell(vmName, script, { capture = false, dryRun = false } = {}) {
+  const encoded = encodePowerShellScript(script)
   return run(
     'prlctl',
-    ['exec', vmName, '--current-user', 'powershell.exe', '-NoProfile', '-Command', script],
+    ['exec', vmName, '--current-user', 'powershell.exe', '-NoProfile', '-EncodedCommand', encoded],
     { capture, dryRun },
   )
 }
@@ -680,6 +685,9 @@ function buildAndroidArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines })
   }
 
   const androidDir = join(guiRoot, 'src-tauri', 'gen', 'android')
+  const aclManifestPath = join(guiRoot, 'src-tauri', 'gen', 'schemas', 'acl-manifests.json')
+  const originalAclManifest =
+    !dryRun && existsSync(aclManifestPath) ? readFileSync(aclManifestPath, 'utf8') : null
   const keyPropertiesPath = join(androidDir, 'key.properties')
   const tempKeystorePath = join(androidDir, 'upload-keystore.jks')
   let wroteKeyProperties = false
@@ -750,6 +758,9 @@ storeFile=${keystorePath}
         : 'Built unsigned Android arm64 APK/AAB locally.',
     )
   } finally {
+    if (originalAclManifest != null && existsSync(aclManifestPath)) {
+      writeFileSync(aclManifestPath, originalAclManifest)
+    }
     if (wroteKeyProperties && existsSync(keyPropertiesPath)) {
       rmSync(keyPropertiesPath, { force: true })
     }
