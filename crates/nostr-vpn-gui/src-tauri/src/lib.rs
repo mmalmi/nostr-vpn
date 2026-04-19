@@ -52,7 +52,7 @@ pub(crate) use gui_launch::{
 };
 #[cfg(test)]
 pub(crate) use path_resolution::cli_binary_installed_at;
-#[cfg(any(not(target_os = "windows"), test))]
+#[cfg(test)]
 pub(crate) use path_resolution::config_path_from_roots;
 #[allow(unused_imports)]
 pub(crate) use path_resolution::{
