@@ -185,8 +185,8 @@ pub(crate) fn pending_nat_punch_targets_for_local_endpoints(
     own_local_endpoints: &[String],
 ) -> Vec<SocketAddr> {
     let now = crate::unix_timestamp();
-    let route_assignments =
-        crate::advertised_route_assignments(app, own_pubkey, peer_announcements);
+    let selected_exit_node =
+        crate::selected_exit_node_participant(app, own_pubkey, peer_announcements);
     let mesh_has_recent_handshake_peer =
         crate::mesh_has_recent_handshake_peer(app, own_pubkey, peer_announcements, runtime_peers);
     let mut targets = app
@@ -203,9 +203,10 @@ pub(crate) fn pending_nat_punch_targets_for_local_endpoints(
             }
 
             if mesh_has_recent_handshake_peer
-                && route_assignments
-                    .get(participant)
-                    .is_none_or(|routes| routes.is_empty())
+                && !crate::stale_peer_requires_disruptive_nat_punch(
+                    participant,
+                    selected_exit_node.as_deref(),
+                )
             {
                 return None;
             }

@@ -184,6 +184,10 @@ fn linux_service_unit_runs_service_supervised_daemon() {
     assert!(unit.contains("ExecStart=\"/usr/local/bin/nvpn\" daemon --service --config"));
     assert!(unit.contains("--iface \"nvpn\""));
     assert!(unit.contains("--announce-interval-secs 20"));
+    assert!(unit.contains("StandardOutput=append:/home/sirius/.local/state/nvpn/daemon.log"));
+    assert!(unit.contains("StandardError=append:/home/sirius/.local/state/nvpn/daemon.log"));
+    assert!(!unit.contains("StandardOutput=append:\""));
+    assert!(!unit.contains("StandardError=append:\""));
 }
 
 #[test]

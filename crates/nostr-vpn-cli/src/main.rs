@@ -122,22 +122,20 @@ use crate::network_signaling::{
     parse_network_invite, publish_active_network_roster, publish_announcement,
     update_active_network_roster,
 };
-#[cfg(any(test, not(target_os = "windows")))]
 pub(crate) use crate::platform_routing::*;
 pub(crate) use crate::relay_runtime::*;
 #[cfg(test)]
 pub(crate) use crate::service_management::parse_nonzero_pid;
-#[cfg(any(target_os = "windows", test))]
-pub(crate) use crate::service_management::windows_should_apply_config_via_service;
 #[cfg(test)]
 pub(crate) use crate::service_management::{
     linux_service_executable_path_from_unit_contents, linux_service_status_from_show_output,
     linux_service_unit_content,
 };
-#[cfg(test)]
+#[cfg(any(target_os = "windows", test))]
 pub(crate) use crate::service_management::{
     windows_service_bin_path, windows_service_binary_path_from_sc_qc_output,
     windows_service_disabled_from_qc_output, windows_service_status_from_query_output,
+    windows_should_apply_config_via_service,
 };
 #[cfg(any(target_os = "macos", test))]
 pub(crate) use crate::service_management::{xml_escape, xml_unescape};
@@ -1631,11 +1629,7 @@ fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
     routes
 }
 
-#[cfg(all(
-    not(target_os = "linux"),
-    not(target_os = "macos"),
-    not(target_os = "windows")
-))]
+#[cfg_attr(any(target_os = "linux", target_os = "macos"), allow(dead_code))]
 fn is_default_exit_node_route(route: &str) -> bool {
     matches!(route, "0.0.0.0/0" | "::/0")
 }
@@ -5604,7 +5598,7 @@ fn pending_nat_punch_targets_for_local_endpoints(
     own_local_endpoints: &[String],
 ) -> Vec<SocketAddr> {
     let now = unix_timestamp();
-    let route_assignments = advertised_route_assignments(app, own_pubkey, peer_announcements);
+    let selected_exit_node = selected_exit_node_participant(app, own_pubkey, peer_announcements);
     let mesh_has_recent_handshake_peer =
         mesh_has_recent_handshake_peer(app, own_pubkey, peer_announcements, runtime_peers);
     let mut targets = app
@@ -5621,9 +5615,10 @@ fn pending_nat_punch_targets_for_local_endpoints(
             }
 
             if mesh_has_recent_handshake_peer
-                && route_assignments
-                    .get(participant)
-                    .is_none_or(|routes| routes.is_empty())
+                && !stale_peer_requires_disruptive_nat_punch(
+                    participant,
+                    selected_exit_node.as_deref(),
+                )
             {
                 return None;
             }
@@ -5663,6 +5658,17 @@ fn pending_nat_punch_targets_for_local_endpoints(
     targets.sort_unstable();
     targets.dedup();
     targets
+}
+
+fn stale_peer_requires_disruptive_nat_punch(
+    participant: &str,
+    selected_exit_node: Option<&str>,
+) -> bool {
+    // Same-port punching currently rebuilds the whole Unix tunnel, so once the mesh
+    // already has a healthy peer we only keep that disruptive recovery path for the
+    // selected exit peer. Non-exit route peers can recover in the background without
+    // stalling unrelated direct traffic.
+    selected_exit_node == Some(participant)
 }
 
 fn nat_punch_fingerprint(targets: &[SocketAddr], listen_port: u16) -> Option<String> {
@@ -5888,7 +5894,6 @@ fn build_runtime_magic_dns_records(
     records
 }
 
-#[cfg(any(test, not(target_os = "windows")))]
 fn route_targets_for_tunnel_peers(peers: &[TunnelPeer]) -> Vec<String> {
     let mut route_targets = peers
         .iter()
@@ -5899,7 +5904,6 @@ fn route_targets_for_tunnel_peers(peers: &[TunnelPeer]) -> Vec<String> {
     route_targets
 }
 
-#[cfg(any(test, not(target_os = "windows")))]
 fn route_targets_for_planned_tunnel_peers(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -6133,7 +6137,6 @@ fn tunnel_fingerprint(
     )
 }
 
-#[cfg(any(test, not(target_os = "windows")))]
 fn tunnel_runtime_fingerprint(base: &str, route_targets: &[String]) -> String {
     let mut route_entries = route_targets.to_vec();
     route_entries.sort();
@@ -6959,6 +6962,11 @@ fn wait_for_socket(path: &str) -> Result<()> {
     Err(anyhow!("timed out waiting for uapi socket at {path}"))
 }
 
+#[cfg(target_os = "windows")]
+fn wait_for_socket(_path: &str) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(all(not(unix), not(target_os = "windows")))]
 fn wait_for_socket(path: &str) -> Result<()> {
     Err(anyhow!(
@@ -7088,7 +7096,7 @@ fn parse_wg_peer_status(response: &str) -> HashMap<String, WireGuardPeerStatus> 
     peers
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn run_checked(command: &mut ProcessCommand) -> Result<()> {
     let display = format!("{command:?}");
     let output = command

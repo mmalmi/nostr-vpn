@@ -496,7 +496,7 @@ pub(crate) fn linux_service_unit_content(
     let exec = systemd_quote(&executable.display().to_string());
     let config = systemd_quote(&config_path.display().to_string());
     let iface = systemd_quote(iface);
-    let log = systemd_quote(&log_path.display().to_string());
+    let log = log_path.display().to_string();
     format!(
         "[Unit]\nDescription=Nostr VPN daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart={exec} daemon --service --config {config} --iface {iface} --announce-interval-secs {announce_interval_secs}\nRestart=always\nRestartSec=3\nStandardOutput=append:{log}\nStandardError=append:{log}\n\n[Install]\nWantedBy=multi-user.target\n"
     )

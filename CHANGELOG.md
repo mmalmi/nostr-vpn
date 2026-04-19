@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.11 - 2026-04-19
+
+Changes since `v0.3.10` on 2026-04-15.
+
+### Fixed
+
+- Same-port NAT recovery now skips disruptive local-endpoint punching for stale non-exit routed peers once another mesh peer is healthy, so working direct traffic stays up while the selected exit peer still gets aggressive recovery.
+- Linux systemd service units now write daemon logs with unquoted `append:` targets, which restores `StandardOutput` and `StandardError` log redirection for the supervised daemon.
+
 ## 0.3.10 - 2026-04-15
 
 Changes since `v0.3.9` on 2026-04-09.
