@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.12 - 2026-04-19
+
+Changes since `v0.3.11` on 2026-04-19.
+
+### Fixed
+
+- GitHub's Ubuntu `clippy` lane now passes again after tightening the local Nostr relay test helper and relay operator rate-sampling code for current Rust lint behavior.
+- Local release automation now runs Windows guest PowerShell via encoded commands and restores the tracked Android ACL manifest after builds, avoiding quoting breakage and dirty release worktrees.
+
 ## 0.3.11 - 2026-04-19
 
 Changes since `v0.3.10` on 2026-04-15.
