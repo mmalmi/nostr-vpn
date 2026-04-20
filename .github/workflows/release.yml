@@ -215,6 +215,7 @@ jobs:
       macos_signed: ${{ steps.macos_release_status.outputs.signed }}
       macos_notarized: ${{ steps.macos_release_status.outputs.notarized }}
       macos_artifact_published: ${{ steps.macos_release_status.outputs.artifact_published }}
+      macos_artifact_skip_reason: ${{ steps.macos_release_status.outputs.artifact_skip_reason }}
     env:
       MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
       MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
@@ -378,19 +379,34 @@ jobs:
           NOTARIZE_ZIP="$RUNNER_TEMP/nvpn-notarize.zip"
           ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${NOTARIZE_ZIP}"
 
+          set +e
           SUBMIT_OUTPUT="$(xcrun notarytool submit "${NOTARIZE_ZIP}" \
             --apple-id "${MACOS_NOTARIZE_APPLE_ID}" \
             --password "${MACOS_NOTARIZE_APP_PASSWORD}" \
             --team-id "${MACOS_NOTARIZE_TEAM_ID}" \
             --wait \
-            --output-format json)"
+            --output-format json 2>&1)"
+          submit_status=$?
+          set -e
 
           echo "${SUBMIT_OUTPUT}"
+
+          if [ "${submit_status}" -ne 0 ]; then
+            failure_reason="macos-notarization-submit-failed"
+            if printf '%s' "${SUBMIT_OUTPUT}" | grep -Fq 'A required agreement is missing or has expired'; then
+              failure_reason="apple-developer-agreement-inactive"
+              echo "::warning::Apple rejected notarization because the Developer Program agreement for team ${MACOS_NOTARIZE_TEAM_ID} is missing or expired."
+            fi
+            echo "failure_reason=${failure_reason}" >> "${GITHUB_OUTPUT}"
+            exit 1
+          fi
 
           SUBMISSION_ID="$(printf '%s' "${SUBMIT_OUTPUT}" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
           SUBMISSION_STATUS="$(printf '%s' "${SUBMIT_OUTPUT}" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
 
           if [ "${SUBMISSION_STATUS}" != "Accepted" ]; then
+            failure_reason="macos-notarization-status-$(printf '%s' "${SUBMISSION_STATUS:-unknown}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
+            echo "failure_reason=${failure_reason}" >> "${GITHUB_OUTPUT}"
             echo "Notarization status was '${SUBMISSION_STATUS}' (expected 'Accepted')."
             if [ -n "${SUBMISSION_ID}" ]; then
               xcrun notarytool log "${SUBMISSION_ID}" \
@@ -415,10 +431,12 @@ jobs:
           BUILD_OUTCOME: ${{ steps.build_macos_app_bundle.outcome }}
           SIGN_OUTCOME: ${{ steps.code_sign_macos_app.outcome }}
           NOTARIZE_OUTCOME: ${{ steps.notarize_macos_app.outcome }}
+          NOTARIZE_FAILURE_REASON: ${{ steps.notarize_macos_app.outputs.failure_reason }}
         run: |
           signed=false
           notarized=false
           artifact_published=false
+          artifact_skip_reason=
 
           if [ "${SIGN_OUTCOME}" = "success" ]; then
             signed=true
@@ -436,14 +454,23 @@ jobs:
           echo "artifact_published=${artifact_published}" >> "${GITHUB_OUTPUT}"
 
           if [ "${PUBLISH_READY}" != "true" ]; then
+            artifact_skip_reason="macos-release-secrets-missing"
             echo "::warning::Skipping macOS desktop artifact because signing/notarization secrets are not fully configured."
           elif [ "${BUILD_OUTCOME}" != "success" ]; then
+            artifact_skip_reason="macos-app-build-failed"
             echo "::warning::Skipping macOS desktop artifact because the macOS app bundle failed to build."
           elif [ "${signed}" != "true" ]; then
+            artifact_skip_reason="macos-code-signing-failed"
             echo "::warning::Skipping macOS desktop artifact because code signing failed."
           elif [ "${notarized}" != "true" ]; then
-            echo "::warning::Skipping macOS desktop artifact because notarization failed."
+            artifact_skip_reason="${NOTARIZE_FAILURE_REASON:-macos-notarization-failed}"
+            if [ "${artifact_skip_reason}" = "apple-developer-agreement-inactive" ]; then
+              echo "::warning::Skipping macOS desktop artifact because the Apple Developer agreement for notarization is missing or expired."
+            else
+              echo "::warning::Skipping macOS desktop artifact because notarization failed."
+            fi
           fi
+          echo "artifact_skip_reason=${artifact_skip_reason}" >> "${GITHUB_OUTPUT}"
 
       - name: Package macOS artifacts
         if: ${{ steps.macos_release_status.outputs.artifact_published == 'true' }}
@@ -857,6 +884,7 @@ jobs:
     name: Create GitHub Release
     if: ${{ always() && needs.verify.result == 'success' && needs.build-cli.result == 'success' }}
     needs:
+      - verify
       - build-cli
       - build-macos-app
       - build-linux-app
@@ -886,6 +914,7 @@ jobs:
           MACOS_SIGNED: ${{ needs.build-macos-app.outputs.macos_signed }}
           MACOS_NOTARIZED: ${{ needs.build-macos-app.outputs.macos_notarized }}
           MACOS_ARTIFACT_PUBLISHED: ${{ needs.build-macos-app.outputs.macos_artifact_published }}
+          MACOS_ARTIFACT_SKIP_REASON: ${{ needs.build-macos-app.outputs.macos_artifact_skip_reason }}
         run: |
           {
             echo "## Downloads"
@@ -907,7 +936,23 @@ jobs:
             fi
             echo
             if [ "${MACOS_ARTIFACT_PUBLISHED}" != "true" ]; then
-              echo "> Note: The macOS desktop app is not included in this GitHub release because Apple signing/notarization did not complete."
+              case "${MACOS_ARTIFACT_SKIP_REASON}" in
+                apple-developer-agreement-inactive)
+                  echo "> Note: The macOS desktop app is not included in this GitHub release because the Apple Developer agreement for notarization is missing or expired."
+                  ;;
+                macos-release-secrets-missing)
+                  echo "> Note: The macOS desktop app is not included in this GitHub release because the macOS signing/notarization secrets are not fully configured."
+                  ;;
+                macos-app-build-failed)
+                  echo "> Note: The macOS desktop app is not included in this GitHub release because the macOS app build failed."
+                  ;;
+                macos-code-signing-failed)
+                  echo "> Note: The macOS desktop app is not included in this GitHub release because macOS code signing failed."
+                  ;;
+                *)
+                  echo "> Note: The macOS desktop app is not included in this GitHub release because the macOS notarization step failed."
+                  ;;
+              esac
               echo "> If you only need macOS today, use the CLI tarball below or build from source."
               echo
             fi
@@ -923,8 +968,6 @@ jobs:
               echo "> Note: The Linux desktop app is not included in this GitHub release because the Linux build did not complete."
               echo
             fi
-            echo "Prebuilt Intel macOS release artifacts have been sunset. Intel Mac users should build from source or use an older release."
-            echo
             echo "### Headless CLI downloads"
             echo "- [macOS Apple Silicon CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-aarch64-apple-darwin.tar.gz)"
             echo "- [Windows x86_64 CLI](https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}/nvpn-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip)"
@@ -938,7 +981,7 @@ jobs:
             echo '  Linux/x86_64) ASSET=nvpn-x86_64-unknown-linux-musl.tar.gz ;;'
             echo '  Linux/aarch64|Linux/arm64) ASSET=nvpn-aarch64-unknown-linux-musl.tar.gz ;;'
             echo '  Darwin/x86_64)'
-            echo '    echo "Prebuilt Intel macOS releases have been sunset. Build from source or use an older release." >&2'
+            echo '    echo "No GitHub CLI tarball is published for Intel macOS. Build from source instead." >&2'
             echo '    exit 1'
             echo '    ;;'
             echo '  *)'
@@ -965,7 +1008,7 @@ jobs:
             echo 'tar -xzf nvpn-*.tar.gz && cd nvpn && ./install.sh'
             echo '```'
             echo
-            echo 'On Intel macOS, install from source instead:'
+            echo 'For Intel macOS, build/install from source instead:'
             echo '```bash'
             echo "cargo install --git https://github.com/${RELEASE_REPOSITORY} --locked --bin nvpn nostr-vpn-cli"
             echo '```'
