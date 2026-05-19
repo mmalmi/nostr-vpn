@@ -22,6 +22,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         Arc::new(RwLock::new(app))
     }
@@ -117,14 +118,14 @@
         )
     }
 
-    #[test]
-    fn mobile_inbound_roster_requires_signed_event() {
+    #[tokio::test]
+    async fn mobile_inbound_roster_requires_signed_event() {
         let admin_hex = Keys::generate().public_key().to_hex();
         let app = mobile_app_with_admin(admin_hex);
         let dirty = AtomicBool::new(false);
 
         let error = apply_mobile_roster(&app, &dirty, None, None)
-            .expect_err("unsigned mobile roster frame must be rejected");
+            .await.expect_err("unsigned mobile roster frame must be rejected");
 
         assert!(
             error.to_string().contains("missing signed roster event"),
@@ -133,8 +134,8 @@
         assert!(!dirty.load(Ordering::Relaxed));
     }
 
-    #[test]
-    fn mobile_inbound_roster_ignores_non_admin_event_author() {
+    #[tokio::test]
+    async fn mobile_inbound_roster_ignores_non_admin_event_author() {
         let known_admin = Keys::generate();
         let outsider = Keys::generate();
         let member_hex = Keys::generate().public_key().to_hex();
@@ -156,7 +157,7 @@
         .expect("sign roster");
 
         let updated = apply_mobile_roster(&app, &dirty, None, Some(&signed))
-            .expect("valid event from non-admin author should be ignored");
+            .await.expect("valid event from non-admin author should be ignored");
 
         assert!(updated.is_none());
         assert!(!dirty.load(Ordering::Relaxed));
@@ -191,7 +192,7 @@
         .expect("sign roster");
 
         let updated = apply_mobile_roster(&app, &dirty, None, Some(&signed))
-            .expect("valid admin roster applies");
+            .await.expect("valid admin roster applies");
 
         assert!(updated.is_some());
         assert!(dirty.load(Ordering::Relaxed));
@@ -271,6 +272,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
 
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
@@ -328,6 +330,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.set_internet_source(nostr_vpn_core::config::InternetSource::Direct);
 
@@ -360,6 +363,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.exit_node = peer.to_string();
 
@@ -535,6 +539,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.set_peer_alias(peer, "fixture-peer")
             .expect("peer alias");
@@ -865,6 +870,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.fips_peer_endpoints
             .insert(peer.to_string(), vec!["192.168.50.10:51820".to_string()]);
@@ -912,6 +918,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.fips_peer_endpoints
             .insert(admin.clone(), vec!["192.168.50.10:51820".to_string()]);

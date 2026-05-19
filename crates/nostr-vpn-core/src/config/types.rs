@@ -506,6 +506,10 @@ pub struct NetworkConfig {
     pub shared_roster_updated_at: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shared_roster_signed_by: String,
+    /// Set when the chain-anchored admin set diverged from a local admin
+    /// update. Quarantined networks stop accepting roster updates.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chain_quarantine_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -576,6 +580,7 @@ impl Default for AppConfig {
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,
                 shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
             }],
             node_name: default_node_name(),
             lan_discovery_enabled: default_lan_discovery_enabled(),

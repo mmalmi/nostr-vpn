@@ -35,6 +35,8 @@ fn participants_override_targets_the_active_network() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
+            chain_quarantine_reason: String::new(),
         },
         NetworkConfig {
             id: "work".to_string(),
@@ -52,6 +54,8 @@ fn participants_override_targets_the_active_network() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
+            chain_quarantine_reason: String::new(),
         },
     ];
     config.ensure_defaults();
@@ -508,6 +512,8 @@ fn config_overrides_set_the_active_network_mesh_id() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
+            chain_quarantine_reason: String::new(),
         },
         NetworkConfig {
             id: "work".to_string(),
@@ -525,6 +531,8 @@ fn config_overrides_set_the_active_network_mesh_id() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
+            chain_quarantine_reason: String::new(),
         },
     ];
     config.ensure_defaults();

@@ -143,4 +143,3 @@ pub fn unblind_and_verify_stage1_response(
         sender_sum,
     })
 }
-

@@ -86,4 +86,3 @@ async fn test_wallet_activity_pending_send_syncs_to_complete_without_saga() {
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].status, CashuWalletActivityStatus::Complete);
 }
-

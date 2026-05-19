@@ -862,7 +862,6 @@ impl BridgeError {
     }
 }
 
-
 mod unblind;
 pub use unblind::unblind_and_verify_stage1_response;
 

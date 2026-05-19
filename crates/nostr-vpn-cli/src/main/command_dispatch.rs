@@ -138,6 +138,14 @@ async fn run_command(command: Command) -> Result<()> {
                 );
             }
         }
+        Command::VerifyNetworkName(args) => {
+            let config_path = args.config.unwrap_or_else(default_config_path);
+            let app = load_or_default_config(&config_path)?;
+            let network_id = args
+                .network_id
+                .unwrap_or_else(|| app.effective_network_id());
+            run_verify_network_name(&app, &network_id, args.json).await?;
+        }
         Command::Status(args) => {
             let include_join_request = args.include_join_request;
             let config_path = args.config.unwrap_or_else(default_config_path);
@@ -199,6 +207,8 @@ async fn run_command(command: Command) -> Result<()> {
                     (peers, expected, 0, None, "config")
                 };
 
+            let network_anchor = network_anchor_status(&app, &network_id);
+
             if args.json {
                 let endpoint = status_endpoint(&app, &daemon);
                 let listen_port = status_listen_port(&app, &daemon);
@@ -231,6 +241,7 @@ async fn run_command(command: Command) -> Result<()> {
                     serde_json::to_string_pretty(&json!({
                         "status_source": status_source,
                         "network_id": network_id,
+                        "network_anchor": network_anchor,
                         "device_id": app.nostr.public_key.clone(),
                         "magic_dns_suffix": app.magic_dns_suffix,
                         "autoconnect": app.autoconnect,
@@ -277,6 +288,9 @@ async fn run_command(command: Command) -> Result<()> {
                 let endpoint = status_endpoint(&app, &daemon);
                 let listen_port = status_listen_port(&app, &daemon);
                 println!("network: {network_id}");
+                if let Some(anchor) = &network_anchor {
+                    println!("network_anchor: {anchor}");
+                }
                 println!("device_id={}", app.nostr.public_key);
                 println!("magic_dns_suffix: {}", app.magic_dns_suffix);
                 println!("autoconnect: {}", app.autoconnect);
@@ -815,3 +829,119 @@ fn status_json_peers(
         None => serde_json::json!(configured_peers),
     }
 }
+async fn run_verify_network_name(app: &AppConfig, network_id: &str, json: bool) -> Result<()> {
+    let Some(id) = nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(network_id)
+    else {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "network_id": network_id,
+                    "verdict": "not-namecoin-anchored",
+                }))?
+            );
+        } else {
+            println!("network_id={network_id}");
+            println!("verdict: not-namecoin-anchored");
+        }
+        return Ok(());
+    };
+
+    let local_admins = app
+        .network_admin_pubkeys_hex(network_id)
+        .unwrap_or_default();
+    let local_admins_canonical = local_admins
+        .iter()
+        .filter_map(|admin| {
+            nostr_vpn_core::namecoin_name_verify::canonicalize_admin_hex(admin).ok()
+        })
+        .collect::<Vec<_>>();
+
+    let chain = match nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id).await {
+        Ok(chain) => chain,
+        Err(error) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "network_id": id.display(),
+                        "verdict": "resolve-error",
+                        "error": error.to_string(),
+                        "local_admins": local_admins_canonical,
+                    }))?
+                );
+            } else {
+                println!("network_id={}", id.display());
+                println!("verdict: resolve-error");
+                println!("error: {error:#}");
+                if !local_admins_canonical.is_empty() {
+                    println!("local_admins:");
+                    for admin in &local_admins_canonical {
+                        println!("  {admin}");
+                    }
+                }
+            }
+            return Ok(());
+        }
+    };
+
+    let verdict = nostr_vpn_core::namecoin_name_verify::verify_admins_against_chain(
+        &local_admins_canonical,
+        &chain,
+    );
+
+    if json {
+        let verdict_string = match &verdict {
+            Ok(()) => "ok".to_string(),
+            Err(error) => format!("mismatch: {error}"),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "network_id": id.display(),
+                "chain_network_name": chain.network_name_hint,
+                "chain_admins": chain.admins,
+                "local_admins": local_admins_canonical,
+                "verdict": verdict_string,
+            }))?
+        );
+    } else {
+        println!("network_id={}", id.display());
+        if let Some(name) = &chain.network_name_hint {
+            println!("chain_network_name: {name}");
+        }
+        println!("chain_admins:");
+        for admin in &chain.admins {
+            println!("  {admin}");
+        }
+        println!("local_admins:");
+        for admin in &local_admins_canonical {
+            println!("  {admin}");
+        }
+        match &verdict {
+            Ok(()) => println!("verdict: ok"),
+            Err(error) => println!("verdict: mismatch ({error})"),
+        }
+    }
+
+    Ok(())
+}
+
+/// Format the network anchor line surfaced by `nvpn status`. Returns `None`
+/// for ordinary (non-Namecoin) network ids.
+fn network_anchor_status(app: &AppConfig, network_id: &str) -> Option<String> {
+    let parsed = nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(network_id)?;
+    let quarantine = app
+        .network_by_id(network_id)
+        .map(|network| network.chain_quarantine_reason.clone())
+        .unwrap_or_default();
+    if quarantine.is_empty() {
+        Some(format!("{} \u{2713} verified-on-import", parsed.display()))
+    } else {
+        Some(format!(
+            "{} \u{2717} quarantined ({quarantine})",
+            parsed.display()
+        ))
+    }
+}
+

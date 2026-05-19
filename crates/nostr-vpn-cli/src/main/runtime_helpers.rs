@@ -193,7 +193,7 @@ fn persist_inbound_join_request(
     }
 }
 
-fn persist_shared_network_roster(
+async fn persist_shared_network_roster(
     app: &mut AppConfig,
     config_path: &Path,
     signed_roster: Option<&SignedRoster>,
@@ -201,8 +201,30 @@ fn persist_shared_network_roster(
 ) -> Result<Option<String>> {
     let signed_roster =
         signed_roster.ok_or_else(|| anyhow!("FIPS roster frame is missing signed roster event"))?;
-    let changed = app.apply_verified_admin_signed_shared_roster(signed_roster)?;
     let apply_network_id = signed_roster.network_id()?;
+    let chain = if let Some(id) =
+        nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(&apply_network_id)
+    {
+        match nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id).await {
+            Ok(record) => Some(record),
+            Err(error) => {
+                let reason = format!(
+                    "chain anchor {} could not be resolved: {error}",
+                    id.display()
+                );
+                app.quarantine_network(&apply_network_id, &reason);
+                let _ = app.save(config_path);
+                *vpn_status = format!("Roster update for {} ignored: {reason}", id.display());
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
+    let changed = app.apply_verified_admin_signed_shared_roster_with_chain(
+        signed_roster,
+        chain.as_ref(),
+    )?;
     if signed_roster_is_current_for_app(app, &apply_network_id, signed_roster) {
         upsert_signed_roster(
             &signed_rosters_file_path(config_path),
@@ -210,6 +232,13 @@ fn persist_shared_network_roster(
         )?;
     }
     if !changed {
+        if let Some(network) = app.network_by_id(&apply_network_id)
+            && !network.chain_quarantine_reason.is_empty()
+        {
+            let reason = network.chain_quarantine_reason.clone();
+            let _ = app.save(config_path);
+            *vpn_status = format!("Network {apply_network_id} quarantined: {reason}");
+        }
         return Ok(None);
     }
 
@@ -343,7 +372,9 @@ async fn drain_fips_mesh_events(
                 config_path,
                 signed_roster.as_deref(),
                 vpn_status,
-            ) {
+            )
+            .await
+            {
                 Ok(Some(_)) => drained.roster_changed = true,
                 Ok(None) => {}
                 Err(error) => {

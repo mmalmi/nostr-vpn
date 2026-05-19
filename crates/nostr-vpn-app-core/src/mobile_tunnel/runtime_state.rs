@@ -1,17 +1,47 @@
-fn apply_mobile_roster(
+async fn apply_mobile_roster(
     app_config: &Arc<RwLock<AppConfig>>,
     app_config_dirty: &AtomicBool,
     config_path: Option<&Path>,
     signed_roster: Option<&SignedRoster>,
 ) -> Result<Option<MobileTunnelConfig>> {
+    let signed_roster =
+        signed_roster.ok_or_else(|| anyhow!("FIPS roster frame is missing signed roster event"))?;
+    let apply_network_id = signed_roster.network_id()?;
+    let chain = if let Some(id) =
+        nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(&apply_network_id)
+    {
+        match nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id).await {
+            Ok(record) => Some(record),
+            Err(error) => {
+                mobile_debug_log(format!(
+                    "mobile: refusing roster update for chain-anchored {} ({error:#})",
+                    id.display()
+                ));
+                let mut app = app_config
+                    .write()
+                    .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+                app.quarantine_network(
+                    &apply_network_id,
+                    &format!("chain anchor {} unreachable: {error}", id.display()),
+                );
+                if let Some(config_path) = config_path {
+                    let _ = app.save(config_path);
+                }
+                app_config_dirty.store(true, Ordering::Relaxed);
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
     let mut app = app_config
         .write()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
     app.ensure_defaults();
-    let signed_roster =
-        signed_roster.ok_or_else(|| anyhow!("FIPS roster frame is missing signed roster event"))?;
-    let changed = app.apply_verified_admin_signed_shared_roster(signed_roster)?;
-    let apply_network_id = signed_roster.network_id()?;
+    let changed = app.apply_verified_admin_signed_shared_roster_with_chain(
+        signed_roster,
+        chain.as_ref(),
+    )?;
     if let Some(config_path) = config_path
         && mobile_signed_roster_is_current_for_app(&app, &apply_network_id, signed_roster)
         && let Err(error) = upsert_signed_roster(
@@ -25,6 +55,18 @@ fn apply_mobile_roster(
         tracing::warn!(?error, "mobile: signed roster artifact save failed");
     }
     if !changed {
+        if let Some(network) = app.network_by_id(&apply_network_id)
+            && !network.chain_quarantine_reason.is_empty()
+        {
+            mobile_debug_log(format!(
+                "mobile: roster update ignored, network {apply_network_id} is quarantined ({})",
+                network.chain_quarantine_reason
+            ));
+            if let Some(config_path) = config_path {
+                let _ = app.save(config_path);
+            }
+            app_config_dirty.store(true, Ordering::Relaxed);
+        }
         return Ok(None);
     }
     maybe_autoconfigure_node(&mut app);
