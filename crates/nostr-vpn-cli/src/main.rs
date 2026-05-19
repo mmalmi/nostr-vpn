@@ -242,6 +242,10 @@ enum Command {
     CreateInvite(CreateInviteArgs),
     /// Import an `nvpn://invite/...` code into the active network config.
     ImportInvite(ImportInviteArgs),
+    /// Verify a Namecoin-anchored network id against its chain record. Use
+    /// this to sanity-check that the local admin list still matches the
+    /// chain anchor (typically the active network's `network_id`).
+    VerifyNetworkName(VerifyNetworkNameArgs),
     /// Broadcast the active network's invite over LAN multicast so nearby
     /// devices running `nvpn discover` can pair without copy/pasting a code.
     /// Runs in the foreground; Ctrl-C stops broadcasting.
@@ -609,6 +613,22 @@ struct ImportInviteArgs {
     invite: String,
     #[arg(long)]
     json: bool,
+    /// Bypass Namecoin (`.bit`/`d/`) chain admin verification. Only for
+    /// testing against networks whose admin list is not anchored on chain
+    /// yet; production imports should leave this off.
+    #[arg(long)]
+    insecure_skip_name_verify: bool,
+}
+
+#[derive(Debug, Args)]
+struct VerifyNetworkNameArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Network id to verify. Defaults to the active network's id.
+    #[arg(long)]
+    network_id: Option<String>,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -878,6 +898,8 @@ async fn run_command(command: Command) -> Result<()> {
                     (peers, expected, 0, false, "config")
                 };
 
+            let network_anchor = network_anchor_status(&app, &network_id);
+
             if args.json {
                 let endpoint = status_endpoint(&app, &daemon);
                 let listen_port = status_listen_port(&app, &daemon);
@@ -886,6 +908,7 @@ async fn run_command(command: Command) -> Result<()> {
                     serde_json::to_string_pretty(&json!({
                         "status_source": status_source,
                         "network_id": network_id,
+                        "network_anchor": network_anchor,
                         "magic_dns_suffix": app.magic_dns_suffix,
                         "autoconnect": app.autoconnect,
                         "node_id": app.node.id,
@@ -915,6 +938,9 @@ async fn run_command(command: Command) -> Result<()> {
                 let endpoint = status_endpoint(&app, &daemon);
                 let listen_port = status_listen_port(&app, &daemon);
                 println!("network: {network_id}");
+                if let Some(anchor) = &network_anchor {
+                    println!("network_anchor: {anchor}");
+                }
                 println!("magic_dns_suffix: {}", app.magic_dns_suffix);
                 println!("autoconnect: {}", app.autoconnect);
                 println!("node: {}", app.node.id);
@@ -1139,6 +1165,10 @@ async fn run_command(command: Command) -> Result<()> {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let mut app = load_or_default_config(&config_path)?;
             let invite = parse_network_invite(&args.invite)?;
+
+            let verification_status =
+                verify_invite_against_namecoin(&invite, args.insecure_skip_name_verify).await?;
+
             apply_network_invite_to_active_network(&mut app, &invite)?;
             let join_request_queued = queue_active_network_join_request(&mut app)?;
             app.ensure_defaults();
@@ -1147,13 +1177,31 @@ async fn run_command(command: Command) -> Result<()> {
             maybe_reload_running_daemon(&config_path);
 
             if args.json {
-                println!("{}", serde_json::to_string_pretty(&app)?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "saved": config_path.display().to_string(),
+                        "network_id": app.effective_network_id(),
+                        "invite_imported": app.active_network().name,
+                        "join_request_queued": join_request_queued,
+                        "namecoin_verification": verification_status,
+                    }))?
+                );
             } else {
                 println!("saved {}", config_path.display());
                 println!("network_id={}", app.effective_network_id());
                 println!("invite_imported={}", app.active_network().name);
                 println!("join_request_queued={join_request_queued}");
+                println!("namecoin_verification={}", verification_status);
             }
+        }
+        Command::VerifyNetworkName(args) => {
+            let config_path = args.config.unwrap_or_else(default_config_path);
+            let app = load_or_default_config(&config_path)?;
+            let network_id = args
+                .network_id
+                .unwrap_or_else(|| app.effective_network_id());
+            run_verify_network_name(&app, &network_id, args.json).await?;
         }
         Command::InviteBroadcast(args) => {
             run_invite_broadcast(args)?;
@@ -2540,7 +2588,7 @@ fn persist_inbound_join_request(
     }
 }
 
-fn persist_shared_network_roster(
+async fn persist_shared_network_roster(
     app: &mut AppConfig,
     config_path: &Path,
     sender_pubkey: &str,
@@ -2548,7 +2596,30 @@ fn persist_shared_network_roster(
     roster: &NetworkRoster,
     vpn_status: &mut String,
 ) -> Result<Option<String>> {
-    let changed = app.apply_admin_signed_shared_roster(
+    // For Namecoin-anchored networks, fetch the chain admin set up front so
+    // the apply step can refuse mismatched updates (and quarantine the
+    // network) without ever touching the on-disk roster.
+    let chain = if let Some(id) =
+        nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(network_id)
+    {
+        match nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id).await {
+            Ok(record) => Some(record),
+            Err(error) => {
+                let reason = format!(
+                    "chain anchor {} could not be resolved: {error}",
+                    id.display()
+                );
+                app.quarantine_network(network_id, &reason);
+                let _ = app.save(config_path);
+                *vpn_status = format!("Roster update for {} ignored: {reason}", id.display());
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
+
+    let changed = app.apply_admin_signed_shared_roster_with_chain(
         network_id,
         &roster.network_name,
         roster.participants.clone(),
@@ -2556,8 +2627,16 @@ fn persist_shared_network_roster(
         roster.aliases.clone(),
         roster.signed_at,
         sender_pubkey,
+        chain.as_ref(),
     )?;
     if !changed {
+        if let Some(network) = app.network_by_id(network_id)
+            && !network.chain_quarantine_reason.is_empty()
+        {
+            let reason = network.chain_quarantine_reason.clone();
+            let _ = app.save(config_path);
+            *vpn_status = format!("Network {network_id} quarantined: {reason}");
+        }
         return Ok(None);
     }
 
@@ -2577,7 +2656,7 @@ fn persist_shared_network_roster(
 }
 
 #[cfg(feature = "embedded-fips")]
-fn drain_fips_mesh_events(
+async fn drain_fips_mesh_events(
     runtime: &mut crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &mut AppConfig,
     config_path: &Path,
@@ -2621,7 +2700,9 @@ fn drain_fips_mesh_events(
                 &network_id,
                 &roster,
                 vpn_status,
-            ) {
+            )
+            .await
+            {
                 Ok(Some(_)) => roster_changed = true,
                 Ok(None) => {}
                 Err(error) => {
@@ -3582,6 +3663,185 @@ fn daemon_status_json_value(status: &DaemonStatus) -> serde_json::Value {
         "state_file": status.state_file,
         "state": visible_daemon_state_for_status(status.running, status.state.as_ref()),
     })
+}
+
+/// Result code for the Namecoin verification step printed by `import-invite`
+/// and `verify-network-name`. Stored as a string in JSON output for stable
+/// scripting consumption.
+fn namecoin_status_string(
+    verdict: &nostr_vpn_core::namecoin_name_verify::NamecoinNetworkId,
+    skipped: bool,
+) -> String {
+    if skipped {
+        format!("skipped (insecure) {}", verdict.display())
+    } else {
+        format!("verified {}", verdict.display())
+    }
+}
+
+/// Verify the invite's admin list against the chain anchor when the invite's
+/// `network_id` is a Namecoin name. Returns a status string suitable for the
+/// status output (`"verified d/acmevpn"`, `"skipped (insecure) d/acmevpn"`,
+/// or `"not-namecoin-anchored"`).
+async fn verify_invite_against_namecoin(
+    invite: &nostr_vpn_core::invite::NetworkInvite,
+    insecure_skip: bool,
+) -> Result<String> {
+    let Some(id) =
+        nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(&invite.network_id)
+    else {
+        return Ok("not-namecoin-anchored".to_string());
+    };
+
+    if insecure_skip {
+        eprintln!(
+            "warning: --insecure-skip-name-verify bypasses chain admin verification for {}",
+            id.display()
+        );
+        return Ok(namecoin_status_string(&id, true));
+    }
+
+    let chain = nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to resolve Namecoin anchor {}; re-run with --insecure-skip-name-verify only if you trust the invite out-of-band",
+                id.display()
+            )
+        })?;
+
+    let invite_admin_hex = invite
+        .admins
+        .iter()
+        .map(|admin| nostr_vpn_core::namecoin_name_verify::canonicalize_admin_hex(admin))
+        .collect::<Result<Vec<_>>>()
+        .context("normalising invite admin pubkeys")?;
+
+    nostr_vpn_core::namecoin_name_verify::verify_admins_against_chain(&invite_admin_hex, &chain)
+        .with_context(|| {
+            format!(
+                "invite admin set does not match chain anchor {}; refusing import",
+                id.display()
+            )
+        })?;
+
+    Ok(namecoin_status_string(&id, false))
+}
+
+async fn run_verify_network_name(app: &AppConfig, network_id: &str, json: bool) -> Result<()> {
+    let Some(id) = nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(network_id)
+    else {
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "network_id": network_id,
+                    "verdict": "not-namecoin-anchored",
+                }))?
+            );
+        } else {
+            println!("network_id={network_id}");
+            println!("verdict: not-namecoin-anchored");
+        }
+        return Ok(());
+    };
+
+    let local_admins = app
+        .network_admin_pubkeys_hex(network_id)
+        .unwrap_or_default();
+    let local_admins_canonical = local_admins
+        .iter()
+        .filter_map(|admin| {
+            nostr_vpn_core::namecoin_name_verify::canonicalize_admin_hex(admin).ok()
+        })
+        .collect::<Vec<_>>();
+
+    let chain = match nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id).await {
+        Ok(chain) => chain,
+        Err(error) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "network_id": id.display(),
+                        "verdict": "resolve-error",
+                        "error": error.to_string(),
+                        "local_admins": local_admins_canonical,
+                    }))?
+                );
+            } else {
+                println!("network_id={}", id.display());
+                println!("verdict: resolve-error");
+                println!("error: {error:#}");
+                if !local_admins_canonical.is_empty() {
+                    println!("local_admins:");
+                    for admin in &local_admins_canonical {
+                        println!("  {admin}");
+                    }
+                }
+            }
+            return Ok(());
+        }
+    };
+
+    let verdict = nostr_vpn_core::namecoin_name_verify::verify_admins_against_chain(
+        &local_admins_canonical,
+        &chain,
+    );
+
+    if json {
+        let verdict_string = match &verdict {
+            Ok(()) => "ok".to_string(),
+            Err(error) => format!("mismatch: {error}"),
+        };
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "network_id": id.display(),
+                "chain_network_name": chain.network_name_hint,
+                "chain_admins": chain.admins,
+                "local_admins": local_admins_canonical,
+                "verdict": verdict_string,
+            }))?
+        );
+    } else {
+        println!("network_id={}", id.display());
+        if let Some(name) = &chain.network_name_hint {
+            println!("chain_network_name: {name}");
+        }
+        println!("chain_admins:");
+        for admin in &chain.admins {
+            println!("  {admin}");
+        }
+        println!("local_admins:");
+        for admin in &local_admins_canonical {
+            println!("  {admin}");
+        }
+        match &verdict {
+            Ok(()) => println!("verdict: ok"),
+            Err(error) => println!("verdict: mismatch ({error})"),
+        }
+    }
+
+    Ok(())
+}
+
+/// Format the network anchor line surfaced by `nvpn status`. Returns `None`
+/// for ordinary (non-Namecoin) network ids.
+fn network_anchor_status(app: &AppConfig, network_id: &str) -> Option<String> {
+    let parsed = nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(network_id)?;
+    let quarantine = app
+        .network_by_id(network_id)
+        .map(|network| network.chain_quarantine_reason.clone())
+        .unwrap_or_default();
+    if quarantine.is_empty() {
+        Some(format!("{} \u{2713} verified-on-import", parsed.display()))
+    } else {
+        Some(format!(
+            "{} \u{2717} quarantined ({quarantine})",
+            parsed.display()
+        ))
+    }
 }
 
 fn status_endpoint(app: &AppConfig, daemon: &DaemonStatus) -> String {

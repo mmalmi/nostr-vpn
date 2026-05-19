@@ -39,6 +39,9 @@ socket2 = "0.6"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.28"
+tokio-rustls = { version = "0.26", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+webpki-roots = "0.26"
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

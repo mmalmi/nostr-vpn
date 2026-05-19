@@ -30,5 +30,8 @@ hickory-proto.workspace = true
 hostname.workspace = true
 netdev.workspace = true
 socket2.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]

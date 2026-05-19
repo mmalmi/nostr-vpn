@@ -598,6 +598,12 @@ pub struct NetworkConfig {
     pub shared_roster_updated_at: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shared_roster_signed_by: String,
+    /// Set when the chain-anchored admin set diverged from a local admin
+    /// update. Quarantined networks stop accepting roster updates and surface
+    /// loudly in status output; clear by resolving the chain mismatch and
+    /// calling [`AppConfig::clear_network_chain_quarantine`].
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chain_quarantine_reason: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -654,6 +660,7 @@ impl Default for AppConfig {
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,
                 shared_roster_signed_by: String::new(),
+                chain_quarantine_reason: String::new(),
             }],
             node_name: default_node_name(),
             lan_discovery_enabled: default_lan_discovery_enabled(),
@@ -1059,6 +1066,7 @@ impl AppConfig {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         });
         let _ = self.note_network_roster_local_change(&id);
         id
@@ -1593,6 +1601,91 @@ impl AppConfig {
         self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
         Ok(true)
+    }
+
+    /// Apply an admin-signed roster, but first verify the proposed admin set
+    /// is a subset of the supplied chain anchor when the network is
+    /// Namecoin-anchored (`network_id` of the form `d/<name>`).
+    ///
+    /// When the chain record is `None` and the id IS Namecoin-anchored, this
+    /// method refuses to apply (caller failed to resolve the chain — fail
+    /// closed). When the id is NOT Namecoin-anchored, the chain record is
+    /// ignored. On mismatch the network is quarantined and the new roster is
+    /// NOT applied.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_admin_signed_shared_roster_with_chain(
+        &mut self,
+        network_id: &str,
+        network_name: &str,
+        participants: Vec<String>,
+        admins: Vec<String>,
+        aliases: HashMap<String, String>,
+        signed_at: u64,
+        signed_by: &str,
+        chain: Option<&crate::namecoin_name_verify::ChainNetworkRecord>,
+    ) -> Result<bool> {
+        let namecoin_id = crate::namecoin_name_verify::parse_namecoin_network_id(network_id);
+
+        if let Some(namecoin_id) = namecoin_id.as_ref() {
+            let chain = chain.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "refusing to apply roster for chain-anchored network {} without a chain record",
+                    namecoin_id.display()
+                )
+            })?;
+            if let Err(error) =
+                crate::namecoin_name_verify::verify_admins_against_chain(&admins, chain)
+            {
+                let reason = format!(
+                    "admin set diverged from chain anchor {}: {error}",
+                    namecoin_id.display()
+                );
+                self.quarantine_network(network_id, &reason);
+                return Ok(false);
+            }
+        }
+
+        self.apply_admin_signed_shared_roster(
+            network_id,
+            network_name,
+            participants,
+            admins,
+            aliases,
+            signed_at,
+            signed_by,
+        )
+    }
+
+    /// Mark a network as quarantined. Idempotent; later calls overwrite the
+    /// reason but preserve the quarantine state. Returns `true` if a network
+    /// matched.
+    pub fn quarantine_network(&mut self, network_id: &str, reason: &str) -> bool {
+        let normalized = normalize_runtime_network_id(network_id);
+        let Some(network) = self
+            .networks
+            .iter_mut()
+            .find(|network| normalize_runtime_network_id(&network.network_id) == normalized)
+        else {
+            return false;
+        };
+        network.chain_quarantine_reason = reason.trim().to_string();
+        true
+    }
+
+    /// Clear the chain-quarantine state for a network (e.g. after an operator
+    /// has reconciled local admins against the chain by hand).
+    pub fn clear_network_chain_quarantine(&mut self, network_id: &str) -> bool {
+        let normalized = normalize_runtime_network_id(network_id);
+        let Some(network) = self
+            .networks
+            .iter_mut()
+            .find(|network| normalize_runtime_network_id(&network.network_id) == normalized)
+        else {
+            return false;
+        };
+        let was_set = !network.chain_quarantine_reason.is_empty();
+        network.chain_quarantine_reason.clear();
+        was_set
     }
 
     pub fn mesh_members_pubkeys(&self) -> Vec<String> {

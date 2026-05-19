@@ -2591,15 +2591,18 @@ dependencies = [
  "hostname",
  "netdev",
  "nostr-sdk 0.35.0",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
  "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-rustls",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
