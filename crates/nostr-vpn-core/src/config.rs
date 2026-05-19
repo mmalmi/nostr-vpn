@@ -21,6 +21,11 @@ pub use crate::network_routes::{
     exit_node_default_routes, normalize_advertised_route, normalize_advertised_routes,
 };
 
+pub use crate::config_defaults::{
+    ResolvedParticipant, maybe_autoconfigure_node, needs_endpoint_autoconfig,
+    needs_tunnel_ip_autoconfig, normalize_nostr_pubkey, normalize_runtime_network_id,
+    resolve_participant_string,
+};
 use crate::config_defaults::{
     current_unix_timestamp, default_autoconnect, default_close_to_tray_on_close, default_endpoint,
     default_fips_advertise_endpoint, default_lan_discovery_enabled, default_launch_on_startup,
@@ -28,10 +33,6 @@ use crate::config_defaults::{
     default_nat_enabled, default_nat_stun_servers, default_network_enabled, default_network_id,
     default_node_id, default_relays, default_tunnel_ip, generate_nostr_identity, is_true, is_zero,
     needs_generated_network_id, npub_for_pubkey_hex,
-};
-pub use crate::config_defaults::{
-    maybe_autoconfigure_node, needs_endpoint_autoconfig, needs_tunnel_ip_autoconfig,
-    normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 use crate::config_magic_dns::{
     default_magic_dns_suffix, default_network_entry_id, default_network_name, default_node_name,
@@ -142,6 +143,56 @@ pub struct AppConfig {
     pub nostr: NostrConfig,
     #[serde(default)]
     pub node: NodeConfig,
+    #[serde(default)]
+    pub namecoin: NamecoinConfig,
+}
+
+/// Configuration for the Namecoin `.bit` alias resolver.
+///
+/// `enabled = true` keeps things turned on by default; users that want the
+/// daemon to refuse all `.bit` lookups can set `enabled = false`. All other
+/// fields fall back to safe defaults if omitted, so existing configs keep
+/// loading unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamecoinConfig {
+    #[serde(default = "default_namecoin_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_namecoin_electrumx_servers")]
+    pub electrumx_servers: Vec<String>,
+    #[serde(default = "default_namecoin_resolution_timeout_secs")]
+    pub resolution_timeout_secs: u64,
+    #[serde(default = "default_namecoin_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for NamecoinConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_namecoin_enabled(),
+            electrumx_servers: default_namecoin_electrumx_servers(),
+            resolution_timeout_secs: default_namecoin_resolution_timeout_secs(),
+            cache_ttl_secs: default_namecoin_cache_ttl_secs(),
+        }
+    }
+}
+
+pub(crate) fn default_namecoin_enabled() -> bool {
+    true
+}
+
+pub(crate) fn default_namecoin_electrumx_servers() -> Vec<String> {
+    vec![
+        "electrum-nmc.le-space.de:50002".to_string(),
+        "nmc.bitcoins.sk:50002".to_string(),
+    ]
+}
+
+pub(crate) const fn default_namecoin_resolution_timeout_secs() -> u64 {
+    5
+}
+
+pub(crate) const fn default_namecoin_cache_ttl_secs() -> u64 {
+    300
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -598,6 +649,11 @@ pub struct NetworkConfig {
     pub shared_roster_updated_at: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shared_roster_signed_by: String,
+    /// Optional human-readable aliases (e.g. `.bit` names) for participants.
+    /// Keyed by canonical hex pubkey. Populated when a participant is added
+    /// using a `.bit` alias; surfaced in `status`/`ip`/`whois` output.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub aliases: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -654,6 +710,7 @@ impl Default for AppConfig {
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,
                 shared_roster_signed_by: String::new(),
+                aliases: HashMap::new(),
             }],
             node_name: default_node_name(),
             lan_discovery_enabled: default_lan_discovery_enabled(),
@@ -673,6 +730,7 @@ impl Default for AppConfig {
             nat: NatConfig::default(),
             nostr: NostrConfig::default(),
             node: NodeConfig::default(),
+            namecoin: NamecoinConfig::default(),
         };
         config.ensure_defaults();
         config
@@ -1059,6 +1117,7 @@ impl AppConfig {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: HashMap::new(),
         });
         let _ = self.note_network_roster_local_change(&id);
         id

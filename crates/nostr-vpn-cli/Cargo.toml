@@ -29,6 +29,8 @@ tracing.workspace = true
 nostr-sdk.workspace = true
 
 nostr-vpn-core.workspace = true
+nostr-vpn-namecoin.workspace = true
+async-trait.workspace = true
 crab_nat = "0.7"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev.workspace = true

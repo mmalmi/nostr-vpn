@@ -506,6 +506,7 @@ fn active_network_helpers_ignore_inactive_networks() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         },
         NetworkConfig {
             id: "network-2".to_string(),
@@ -520,6 +521,7 @@ fn active_network_helpers_ignore_inactive_networks() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         },
     ];
     config.ensure_defaults();

@@ -30,6 +30,48 @@ pub fn normalize_nostr_pubkey(value: &str) -> Result<String> {
         .map_err(|error| anyhow::anyhow!("invalid participant pubkey '{value}': {error}"))
 }
 
+/// Outcome of resolving a CLI participant string: the canonical hex pubkey
+/// plus the alias (if the user typed a `.bit` name) so callers can preserve
+/// it for later display in `status`/`ip`/`whois` output.
+#[derive(Debug, Clone)]
+pub struct ResolvedParticipant {
+    pub hex_pubkey: String,
+    pub alias: Option<String>,
+}
+
+/// Async sibling of [`normalize_nostr_pubkey`] that additionally accepts
+/// `.bit` aliases. Inputs that are already valid npub/hex are returned
+/// unchanged (modulo canonicalization) without touching the resolver, so
+/// existing call sites that never use aliases pay no network cost.
+pub async fn resolve_participant_string<R>(
+    value: &str,
+    resolver: Option<&R>,
+) -> Result<ResolvedParticipant>
+where
+    R: nostr_vpn_namecoin::NamecoinResolver + ?Sized,
+{
+    if let Some(alias) = nostr_vpn_namecoin::parse_bit_alias(value) {
+        let resolver = resolver.ok_or_else(|| {
+            anyhow::anyhow!("namecoin resolver disabled; cannot resolve '.bit' alias '{value}'")
+        })?;
+        let hex = resolver
+            .resolve_nostr_pubkey(&alias)
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to resolve '{value}': {error}"))?;
+        let normalized = normalize_nostr_pubkey(&hex)?;
+        return Ok(ResolvedParticipant {
+            hex_pubkey: normalized,
+            alias: Some(alias.to_string()),
+        });
+    }
+
+    let normalized = normalize_nostr_pubkey(value)?;
+    Ok(ResolvedParticipant {
+        hex_pubkey: normalized,
+        alias: None,
+    })
+}
+
 pub(crate) fn default_nat_enabled() -> bool {
     true
 }

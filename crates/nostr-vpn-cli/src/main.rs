@@ -7,6 +7,7 @@ mod fips_private_mesh;
 mod macos_network;
 #[cfg(any(target_os = "macos", test))]
 mod macos_service;
+mod namecoin_resolver;
 mod network_signaling;
 #[cfg(all(
     feature = "embedded-fips",
@@ -784,7 +785,7 @@ async fn run_command(command: Command) -> Result<()> {
             participants,
         } => {
             let path = config.unwrap_or_else(default_config_path);
-            init_config(&path, force, participants)?;
+            init_config(&path, force, participants).await?;
         }
         Command::Version(args) => {
             print_version(args)?;
@@ -825,7 +826,8 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Status(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+                load_config_with_overrides_async(&config_path, args.network_id, args.participants)
+                    .await?;
             let daemon = daemon_status(&config_path)?;
 
             let daemon_peers: Option<Vec<DaemonPeerState>> = if daemon.running {
@@ -1104,7 +1106,13 @@ async fn run_command(command: Command) -> Result<()> {
             if !args.fips_peer_endpoints.is_empty() {
                 app.fips_peer_endpoints = parse_fips_peer_endpoint_args(&args.fips_peer_endpoints)?;
             }
-            apply_participants_override(&mut app, args.participants)?;
+            let resolver = namecoin_resolver::ResolverHandle::from_config(&app)?;
+            config_bootstrap::apply_participants_override_async(
+                &mut app,
+                args.participants,
+                resolver.as_ref(),
+            )
+            .await?;
             app.ensure_defaults();
             maybe_autoconfigure_node(&mut app);
             app.save(&config_path)?;
@@ -1176,7 +1184,8 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Ping(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+                load_config_with_overrides_async(&config_path, args.network_id, args.participants)
+                    .await?;
             let peers = configured_fips_peer_announcements(&app, &network_id);
 
             let target = resolve_ping_target(&args.target, &peers).ok_or_else(|| {
@@ -1191,7 +1200,8 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Ip(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+                load_config_with_overrides_async(&config_path, args.network_id, args.participants)
+                    .await?;
 
             if !args.peer {
                 let tunnel_ip = runtime_local_tunnel_ip(&app, &network_id);
@@ -1221,7 +1231,8 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Whois(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+                load_config_with_overrides_async(&config_path, args.network_id, args.participants)
+                    .await?;
             let peers = configured_fips_peer_announcements(&app, &network_id);
 
             let found = peers
@@ -1238,11 +1249,23 @@ async fn run_command(command: Command) -> Result<()> {
                 return Err(anyhow!("no peer found for '{}'", args.query));
             };
 
+            let alias = app
+                .network_by_id(&network_id)
+                .and_then(|network| network.aliases.get(&peer.public_key).cloned());
             if args.json {
-                println!("{}", serde_json::to_string_pretty(&peer)?);
+                let mut value = serde_json::to_value(&peer)?;
+                if let Some(alias) = alias.clone()
+                    && let serde_json::Value::Object(map) = &mut value
+                {
+                    map.insert("bit_alias".to_string(), serde_json::Value::String(alias));
+                }
+                println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
                 println!("node_id={}", peer.node_id);
                 println!("public_key={}", peer.public_key);
+                if let Some(alias) = alias {
+                    println!("bit_alias={alias}");
+                }
                 println!("tunnel_ip={}", peer.tunnel_ip);
                 println!("endpoint={}", peer.endpoint);
                 println!("timestamp={}", peer.timestamp);
@@ -2053,6 +2076,24 @@ fn load_config_with_overrides(
 ) -> Result<(AppConfig, String)> {
     let mut app = load_or_default_config(path)?;
     apply_participants_override(&mut app, participants)?;
+    if let Some(network_id) = network_id {
+        app.set_active_network_id(&network_id)?;
+    }
+    maybe_autoconfigure_node(&mut app);
+
+    let network_id = app.effective_network_id();
+    Ok((app, network_id))
+}
+
+async fn load_config_with_overrides_async(
+    path: &Path,
+    network_id: Option<String>,
+    participants: Vec<String>,
+) -> Result<(AppConfig, String)> {
+    let mut app = load_or_default_config(path)?;
+    let resolver = namecoin_resolver::ResolverHandle::from_config(&app)?;
+    config_bootstrap::apply_participants_override_async(&mut app, participants, resolver.as_ref())
+        .await?;
     if let Some(network_id) = network_id {
         app.set_active_network_id(&network_id)?;
     }
@@ -3190,11 +3231,12 @@ pub(crate) fn ensure_macos_connect_privileges(config_path: &Path) -> Result<()> 
 
 async fn start_session(args: StartArgs) -> Result<()> {
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
-    let (app, _network_id) = load_config_with_overrides(
+    let (app, _network_id) = load_config_with_overrides_async(
         &config_path,
         args.network_id.clone(),
         args.participants.clone(),
-    )?;
+    )
+    .await?;
 
     let should_connect = if args.connect {
         true
@@ -3646,7 +3688,7 @@ fn format_health_severity(severity: HealthSeverity) -> &'static str {
 async fn run_doctor(args: DoctorArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let (app, network_id) =
-        load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+        load_config_with_overrides_async(&config_path, args.network_id, args.participants).await?;
     let daemon = daemon_status(&config_path)?;
     let netcheck = run_netcheck_report(&app, args.timeout_secs).await;
 
@@ -4132,6 +4174,7 @@ mod tests {
     mod cli_smoke;
     mod config_cache;
     mod daemon_control;
+    mod namecoin_aliases;
     mod runtime_misc;
     mod service_cli;
     pub(crate) mod support;

@@ -4,6 +4,7 @@ members = [
   "crates/nostr-vpn-app-core/uniffi-bindgen",
   "crates/nostr-vpn-core",
   "crates/nostr-vpn-cli",
+  "crates/nostr-vpn-namecoin",
   "crates/nostr-vpn-web",
   "crates/nostr-vpn-wintun",
 ]
@@ -46,6 +47,7 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.35", default-features = false, features = ["nip44"] }
 nostr-vpn-core = { version = "4.0.37", path = "crates/nostr-vpn-core" }
+nostr-vpn-namecoin = { version = "4.0.37", path = "crates/nostr-vpn-namecoin" }
 nostr-vpn-wintun = { version = "4.0.37", path = "crates/nostr-vpn-wintun" }
 
 [workspace.lints.clippy]
