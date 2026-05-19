@@ -711,7 +711,9 @@ where
             request.expiry_unix,
             &request.keyset_info_json,
             request.max_amount_per_output,
-            request.route_capacity_sat.map(|capacity| unit.capacity_from_sat(capacity)),
+            request
+                .route_capacity_sat
+                .map(|capacity| unit.capacity_from_sat(capacity)),
             async_networking,
         )
         .await?;

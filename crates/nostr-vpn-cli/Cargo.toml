@@ -51,6 +51,7 @@ cashu = { workspace = true, optional = true }
 cdk-spilman = { workspace = true, optional = true }
 
 nostr-vpn-core = { workspace = true, features = ["control-pubsub", "secure-dns", "updater"] }
+nostr-vpn-namecoin.workspace = true
 crab_nat = { package = "nvpn-crab-nat", version = "=0.7.6" }
 igd-next = { package = "nvpn-igd-next", version = "=0.16.2", features = ["aio_tokio"] }
 netdev.workspace = true

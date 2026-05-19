@@ -561,12 +561,14 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     DaemonControlRequest::Reload => {
                         match update_daemon_config_from_staged_request(&config_path) {
                             Ok(staged_config_applied) => {
-                                match load_config_with_overrides(
+                                match load_config_with_overrides_async(
                                     &config_path,
                                     network_override.clone(),
                                     participants_override.clone(),
                                     ConfigLoadMode::Persist,
-                                ) {
+                                )
+                                .await
+                                {
                                     Ok((mut reloaded_app, reloaded_network_id)) => {
                                         reloaded_app.pending_nostr_join_request =
                                             app.pending_nostr_join_request.clone();

@@ -509,7 +509,7 @@ pub fn signed_roster_control_frame(signed_roster: SignedRoster) -> FipsControlFr
         network_name: String::new(),
         devices: Vec::new(),
         admins: Vec::new(),
-        aliases: HashMap::new(),
+        aliases: Default::default(),
         signed_at: signed_roster.signed_at(),
     });
     FipsControlFrame::Roster {

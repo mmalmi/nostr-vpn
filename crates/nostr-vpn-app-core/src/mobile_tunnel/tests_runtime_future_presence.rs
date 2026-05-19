@@ -20,6 +20,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: Default::default(),
         }];
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);

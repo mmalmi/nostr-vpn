@@ -413,7 +413,7 @@
                 network_name: "Removal test".into(),
                 devices: Vec::new(),
                 admins: vec![alice_pubkey.clone()],
-                aliases: HashMap::new(),
+                aliases: Default::default(),
                 signed_at: now,
             },
             &alice_keys,

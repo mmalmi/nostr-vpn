@@ -15,7 +15,7 @@ fn test_join_roster() -> (JoinRosterControl, String) {
             network_name: "Home".to_string(),
             devices: vec![admin.public_key().to_hex()],
             admins: vec![admin.public_key().to_hex()],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: 42,
         },
         &admin,

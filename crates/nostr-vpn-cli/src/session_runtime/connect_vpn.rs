@@ -16,12 +16,12 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     crate::linux_host_network::initialize().await?;
-    let (mut app, mut network_id) = load_config_with_overrides(
+    let (mut app, mut network_id) = load_config_with_overrides_async(
         &config_path,
         args.network_id,
         args.devices,
         ConfigLoadMode::Persist,
-    )?;
+    ).await?;
     #[cfg(target_os = "linux")]
     crate::linux_exit_intent::update(&app, true)?;
     let configured_participants = app.participant_pubkeys_hex();

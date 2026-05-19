@@ -105,12 +105,12 @@ mod daemon_commands_tests {
 
 async fn start_session(args: StartArgs) -> Result<()> {
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
-    let (app, _network_id) = load_config_with_overrides(
+    let (app, _network_id) = load_config_with_overrides_async(
         &config_path,
         args.network_id.clone(),
         args.devices.clone(),
         ConfigLoadMode::Persist,
-    )?;
+    ).await?;
     if args.connect {
         persist_desired_daemon_vpn_enabled(&config_path, true)?;
     } else if args.no_connect {

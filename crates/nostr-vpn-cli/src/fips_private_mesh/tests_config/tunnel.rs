@@ -58,7 +58,7 @@
                 network_name: "Manual desktop".to_string(),
                 devices: Vec::new(),
                 admins: vec![admin_pubkey.clone()],
-                aliases: HashMap::new(),
+                aliases: Default::default(),
                 signed_at: unix_timestamp(),
             },
             &admin_keys,

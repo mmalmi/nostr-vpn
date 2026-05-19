@@ -327,7 +327,45 @@ pub struct AppConfig {
     pub pending_nostr_join_request: Option<PendingNostrJoinRequest>,
     #[serde(default)]
     pub node: NodeConfig,
+    #[serde(default)]
+    pub namecoin: NamecoinConfig,
 }
+
+/// Configuration for the Namecoin .bit alias resolver.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamecoinConfig {
+    #[serde(default = "default_namecoin_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_namecoin_electrumx_servers")]
+    pub electrumx_servers: Vec<String>,
+    #[serde(default = "default_namecoin_resolution_timeout_secs")]
+    pub resolution_timeout_secs: u64,
+    #[serde(default = "default_namecoin_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+}
+
+impl Default for NamecoinConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_namecoin_enabled(),
+            electrumx_servers: default_namecoin_electrumx_servers(),
+            resolution_timeout_secs: default_namecoin_resolution_timeout_secs(),
+            cache_ttl_secs: default_namecoin_cache_ttl_secs(),
+        }
+    }
+}
+
+pub(crate) fn default_namecoin_enabled() -> bool { true }
+
+pub(crate) fn default_namecoin_electrumx_servers() -> Vec<String> {
+    vec![
+        "electrum-nmc.le-space.de:50002".to_string(),
+        "nmc.bitcoins.sk:50002".to_string(),
+    ]
+}
+
+pub(crate) const fn default_namecoin_resolution_timeout_secs() -> u64 { 5 }
+pub(crate) const fn default_namecoin_cache_ttl_secs() -> u64 { 300 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -506,6 +544,9 @@ pub struct NetworkConfig {
     pub shared_roster_updated_at: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shared_roster_signed_by: String,
+    /// Optional human-readable aliases keyed by canonical hex pubkey.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub aliases: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -576,6 +617,7 @@ impl Default for AppConfig {
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,
                 shared_roster_signed_by: String::new(),
+            aliases: Default::default(),
             }],
             node_name: default_node_name(),
             lan_discovery_enabled: default_lan_discovery_enabled(),
@@ -614,6 +656,7 @@ impl Default for AppConfig {
             nostr: NostrConfig::default(),
             pending_nostr_join_request: None,
             node: NodeConfig::default(),
+            namecoin: NamecoinConfig::default(),
         };
         config.ensure_defaults();
         config

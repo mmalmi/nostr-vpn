@@ -8,12 +8,12 @@ fn format_health_severity(severity: HealthSeverity) -> &'static str {
 
 async fn run_doctor(args: DoctorArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
-    let (app, network_id) = load_config_with_overrides(
+    let (app, network_id) = load_config_with_overrides_async(
         &config_path,
         args.network_id,
         args.devices,
         ConfigLoadMode::ReadOnly,
-    )?;
+    ).await?;
     let daemon = daemon_status(&config_path)?;
     let netcheck = run_netcheck_report(&app, args.timeout_secs).await;
 

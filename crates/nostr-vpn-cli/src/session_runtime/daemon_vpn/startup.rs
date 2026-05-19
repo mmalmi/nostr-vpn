@@ -119,12 +119,13 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     }
     let network_override = args.network_id.clone();
     let participants_override = args.devices.clone();
-    let (mut app, network_id) = load_config_with_overrides(
+    let (mut app, network_id) = load_config_with_overrides_async(
         &config_path,
         network_override.clone(),
         participants_override.clone(),
         ConfigLoadMode::Persist,
-    )?;
+    )
+    .await?;
     if !args.fips_websocket_seed_urls.is_empty() {
         app.fips_websocket_seed_urls = args.fips_websocket_seed_urls.clone();
     }
