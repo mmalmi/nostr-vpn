@@ -103,7 +103,7 @@ use crate::network_signaling::NETWORK_INVITE_PREFIX;
 use crate::network_signaling::{
     RosterEditAction, active_network_invite_code, apply_network_invite_to_active_network,
     maybe_reload_running_daemon, parse_network_invite, queue_active_network_join_request,
-    update_active_network_roster,
+    resolve_and_apply_discovery_relays, update_active_network_roster,
 };
 #[cfg(any(test, not(target_os = "windows")))]
 pub(crate) use crate::platform_routing::*;
@@ -242,6 +242,8 @@ enum Command {
     CreateInvite(CreateInviteArgs),
     /// Import an `nvpn://invite/...` code into the active network config.
     ImportInvite(ImportInviteArgs),
+    /// Manage Namecoin-anchored discovery relay lists.
+    Relays(RelaysArgs),
     /// Broadcast the active network's invite over LAN multicast so nearby
     /// devices running `nvpn discover` can pair without copy/pasting a code.
     /// Runs in the foreground; Ctrl-C stops broadcasting.
@@ -600,6 +602,16 @@ struct CreateInviteArgs {
     config: Option<PathBuf>,
     #[arg(long)]
     json: bool,
+    /// Namecoin `.bit` name (e.g. `acmevpn.bit` or `d/acmevpn`) whose record
+    /// holds the discovery relay list. Persisted on the active network so
+    /// every future invite carries it; rotate relays by issuing one
+    /// `name_update` Namecoin transaction.
+    #[arg(long, value_name = "NAME")]
+    relay_record: Option<String>,
+    /// Clear any existing relay record from the active network before
+    /// emitting the invite. Mutually exclusive with `--relay-record`.
+    #[arg(long, conflicts_with = "relay_record")]
+    clear_relay_record: bool,
 }
 
 #[derive(Debug, Args)]
@@ -607,6 +619,47 @@ struct ImportInviteArgs {
     #[arg(long)]
     config: Option<PathBuf>,
     invite: String,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RelaysArgs {
+    #[command(subcommand)]
+    command: RelaysCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RelaysCommand {
+    /// Re-resolve the network's Namecoin-anchored relay record and apply
+    /// the result. Replaces the configured discovery relay list wholesale
+    /// on success; prints the before/after diff to stderr.
+    Refresh(RelaysRefreshArgs),
+    /// Show the configured discovery relay list and the anchoring record,
+    /// if any.
+    Show(RelaysShowArgs),
+}
+
+#[derive(Debug, Args)]
+struct RelaysRefreshArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Override the network entry id to refresh. Defaults to the active
+    /// network.
+    #[arg(long, value_name = "ID")]
+    network_id: Option<String>,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct RelaysShowArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Override the network entry id to inspect. Defaults to the active
+    /// network.
+    #[arg(long, value_name = "ID")]
+    network_id: Option<String>,
     #[arg(long)]
     json: bool,
 }
@@ -1120,7 +1173,37 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::CreateInvite(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
-            let app = load_or_default_config(&config_path)?;
+            let mut app = load_or_default_config(&config_path)?;
+            let mut mutated = false;
+            if let Some(record) = args.relay_record.as_ref() {
+                let trimmed = record.trim().to_string();
+                let active_id = app
+                    .active_network_opt()
+                    .ok_or_else(|| anyhow!("create or join a network first"))?
+                    .id
+                    .clone();
+                if let Some(network) = app.network_by_id_mut(&active_id) {
+                    network.relay_record = if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed)
+                    };
+                    mutated = true;
+                }
+            } else if args.clear_relay_record {
+                let active_id = app
+                    .active_network_opt()
+                    .ok_or_else(|| anyhow!("create or join a network first"))?
+                    .id
+                    .clone();
+                if let Some(network) = app.network_by_id_mut(&active_id) {
+                    network.relay_record = None;
+                    mutated = true;
+                }
+            }
+            if mutated {
+                app.save(&config_path)?;
+            }
             let invite = active_network_invite_code(&app)?;
 
             if args.json {
@@ -1129,6 +1212,7 @@ async fn run_command(command: Command) -> Result<()> {
                     serde_json::to_string_pretty(&json!({
                         "network_id": app.effective_network_id(),
                         "invite": invite,
+                        "relay_record": app.active_network().relay_record,
                     }))?
                 );
             } else {
@@ -1140,6 +1224,22 @@ async fn run_command(command: Command) -> Result<()> {
             let mut app = load_or_default_config(&config_path)?;
             let invite = parse_network_invite(&args.invite)?;
             apply_network_invite_to_active_network(&mut app, &invite)?;
+            let mut resolved_relays: Option<Vec<String>> = None;
+            if let Some(record) = invite.relay_record.as_deref() {
+                match resolve_and_apply_discovery_relays(&mut app, record).await {
+                    Ok(relays) => {
+                        resolved_relays = Some(relays);
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "warning: invite carries relay_record={record} but resolution failed: {error:#}"
+                        );
+                        eprintln!(
+                            "hint: re-run with `nvpn relays refresh` once the resolver succeeds."
+                        );
+                    }
+                }
+            }
             let join_request_queued = queue_active_network_join_request(&mut app)?;
             app.ensure_defaults();
             maybe_autoconfigure_node(&mut app);
@@ -1153,8 +1253,19 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("network_id={}", app.effective_network_id());
                 println!("invite_imported={}", app.active_network().name);
                 println!("join_request_queued={join_request_queued}");
+                if let Some(relays) = &resolved_relays {
+                    println!("relay_record_resolved={}", relays.len());
+                }
             }
         }
+        Command::Relays(args) => match args.command {
+            RelaysCommand::Refresh(refresh) => {
+                run_relays_refresh(refresh).await?;
+            }
+            RelaysCommand::Show(show) => {
+                run_relays_show(show)?;
+            }
+        },
         Command::InviteBroadcast(args) => {
             run_invite_broadcast(args)?;
         }
@@ -3963,6 +4074,80 @@ fn run_checked(command: &mut ProcessCommand) -> Result<()> {
     Ok(())
 }
 
+async fn run_relays_refresh(args: RelaysRefreshArgs) -> Result<()> {
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    let mut app = load_or_default_config(&config_path)?;
+    if let Some(network_id) = args.network_id.as_deref() {
+        app.set_active_network_id(network_id)?;
+    }
+    let active_network = app
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?;
+    let Some(relay_record) = active_network.relay_record.clone() else {
+        return Err(anyhow!(
+            "active network has no relay_record set; nothing to refresh"
+        ));
+    };
+
+    let relays = resolve_and_apply_discovery_relays(&mut app, &relay_record).await?;
+    app.ensure_defaults();
+    app.save(&config_path)?;
+    maybe_reload_running_daemon(&config_path);
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "network_id": app.effective_network_id(),
+                "relay_record": relay_record,
+                "relays": relays,
+            }))?
+        );
+    } else {
+        println!("saved {}", config_path.display());
+        println!("relay_record={relay_record}");
+        println!("relays={}", relays.len());
+    }
+    Ok(())
+}
+
+fn run_relays_show(args: RelaysShowArgs) -> Result<()> {
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    let mut app = load_or_default_config(&config_path)?;
+    if let Some(network_id) = args.network_id.as_deref() {
+        app.set_active_network_id(network_id)?;
+    }
+    let active_network = app
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?;
+    let relay_record = active_network.relay_record.clone();
+    let relays = app.nostr.relays.clone();
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "network_id": app.effective_network_id(),
+                "relay_record": relay_record,
+                "relays": relays,
+            }))?
+        );
+    } else {
+        println!(
+            "relay_record={}",
+            relay_record.as_deref().unwrap_or("<unset>")
+        );
+        if relays.is_empty() {
+            println!("relays=<none>");
+        } else {
+            for relay in &relays {
+                println!("relay={relay}");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn run_invite_broadcast(args: InviteBroadcastArgs) -> Result<()> {
     use nostr_vpn_core::lan_pairing::{
         LAN_PAIRING_DURATION, LanPairingAnnouncement, spawn_lan_pairing_worker,
@@ -4132,6 +4317,7 @@ mod tests {
     mod cli_smoke;
     mod config_cache;
     mod daemon_control;
+    mod namecoin_relays;
     mod runtime_misc;
     mod service_cli;
     pub(crate) mod support;

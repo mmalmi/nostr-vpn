@@ -35,12 +35,18 @@ pub struct NetworkInvite {
     pub participants: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relays: Vec<String>,
+    /// Optional Namecoin `.bit` name whose record's `nostr.relays` field
+    /// defines the network's discovery relay set. Resolved on import and
+    /// via `nvpn relays refresh`; rotating relays requires only one
+    /// `name_update` Namecoin transaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_record: Option<String>,
 }
 
 /// Decode `nvpn://invite/<base64>` (or a bare JSON document) into a normalized
 /// `NetworkInvite`. Normalization: trims whitespace, npub-encodes all pubkeys,
 /// derives the inviter from the first admin when omitted, drops legacy relay
-/// hints.
+/// hints, and trims/lowercases the optional `relay_record` Namecoin name.
 pub fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -105,6 +111,11 @@ pub fn parse_network_invite(value: &str) -> Result<NetworkInvite> {
         invite.participants.push(invite.inviter_npub.clone());
     }
     invite.relays.clear();
+    invite.relay_record = invite
+        .relay_record
+        .as_ref()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty());
 
     Ok(invite)
 }
@@ -147,4 +158,123 @@ fn normalized_invite_strings(values: &[String]) -> Vec<String> {
     normalized.sort();
     normalized.dedup();
     normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr_sdk::prelude::Keys;
+
+    fn sample_invite(relay_record: Option<&str>) -> NetworkInvite {
+        let admin_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("admin npub");
+        NetworkInvite {
+            v: NETWORK_INVITE_VERSION,
+            network_name: "Acme".to_string(),
+            network_id: "8d4f34f5425bc50e".to_string(),
+            inviter_npub: admin_npub.clone(),
+            inviter_node_name: "alice".to_string(),
+            inviter_endpoints: vec!["192.168.50.10:51820".to_string()],
+            admins: vec![admin_npub],
+            participants: Vec::new(),
+            relays: Vec::new(),
+            relay_record: relay_record.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn roundtrip_with_relay_record() {
+        let original = sample_invite(Some("acmevpn.bit"));
+        let encoded = encode_network_invite(&original).expect("encode invite");
+        let parsed = parse_network_invite(&encoded).expect("parse invite");
+        assert_eq!(parsed.relay_record.as_deref(), Some("acmevpn.bit"));
+        assert_eq!(parsed.network_id, "8d4f34f5425bc50e");
+    }
+
+    #[test]
+    fn roundtrip_without_relay_record_stays_unset() {
+        let original = sample_invite(None);
+        let encoded = encode_network_invite(&original).expect("encode invite");
+        let parsed = parse_network_invite(&encoded).expect("parse invite");
+        assert!(parsed.relay_record.is_none());
+    }
+
+    #[test]
+    fn invite_without_relay_record_field_parses() {
+        // Mirrors a v3 invite shipped before the relay_record field existed:
+        // the JSON document simply omits the key, which must still parse.
+        let admin_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("admin npub");
+        let raw = serde_json::json!({
+            "v": NETWORK_INVITE_VERSION,
+            "networkId": "8d4f34f5425bc50e",
+            "inviterNpub": admin_npub,
+            "admins": [admin_npub],
+        })
+        .to_string();
+        let parsed = parse_network_invite(&raw).expect("legacy invite parses");
+        assert!(parsed.relay_record.is_none());
+        assert_eq!(parsed.network_id, "8d4f34f5425bc50e");
+    }
+
+    #[test]
+    fn relay_record_is_trimmed_and_blank_treated_as_none() {
+        let admin_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("admin npub");
+        let raw = serde_json::json!({
+            "v": NETWORK_INVITE_VERSION,
+            "networkId": "8d4f34f5425bc50e",
+            "inviterNpub": admin_npub,
+            "admins": [admin_npub],
+            "relayRecord": "  acmevpn.bit  ",
+        })
+        .to_string();
+        let parsed = parse_network_invite(&raw).expect("invite parses");
+        assert_eq!(parsed.relay_record.as_deref(), Some("acmevpn.bit"));
+
+        let raw_blank = serde_json::json!({
+            "v": NETWORK_INVITE_VERSION,
+            "networkId": "8d4f34f5425bc50e",
+            "inviterNpub": admin_npub,
+            "admins": [admin_npub],
+            "relayRecord": "   ",
+        })
+        .to_string();
+        let parsed_blank = parse_network_invite(&raw_blank).expect("invite parses");
+        assert!(parsed_blank.relay_record.is_none());
+    }
+
+    #[test]
+    fn base64_round_trip_is_stable() {
+        let original = sample_invite(Some("d/acmevpn"));
+        let encoded = encode_network_invite(&original).expect("encode invite");
+        // Re-parsing and re-encoding must yield the same string.
+        let parsed = parse_network_invite(&encoded).expect("parse invite");
+        let reencoded = encode_network_invite(&parsed).expect("re-encode invite");
+        assert_eq!(encoded, reencoded);
+    }
+
+    #[test]
+    fn legacy_relays_field_is_dropped() {
+        let admin_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("admin npub");
+        let raw = serde_json::json!({
+            "v": NETWORK_INVITE_VERSION,
+            "networkId": "8d4f34f5425bc50e",
+            "inviterNpub": admin_npub,
+            "admins": [admin_npub],
+            "relays": ["wss://relay.example/"],
+        })
+        .to_string();
+        let parsed = parse_network_invite(&raw).expect("invite parses");
+        assert!(parsed.relays.is_empty());
+    }
 }

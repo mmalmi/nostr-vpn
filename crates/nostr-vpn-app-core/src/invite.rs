@@ -25,6 +25,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
         admins: roster.admins.iter().map(|admin| to_npub(admin)).collect(),
         participants: Vec::new(),
         relays: Vec::new(),
+        relay_record: active_network.relay_record.clone(),
     };
     encode_network_invite(&invite)
 }
@@ -84,6 +85,7 @@ struct PreparedNetworkInvite {
     inviter_pubkey: String,
     admins: Vec<String>,
     participants: Vec<String>,
+    relay_record: Option<String>,
 }
 
 impl PreparedNetworkInvite {
@@ -111,6 +113,7 @@ impl PreparedNetworkInvite {
                 .iter()
                 .map(|participant| normalize_nostr_pubkey(participant))
                 .collect::<Result<Vec<_>>>()?,
+            relay_record: invite.relay_record.clone(),
         })
     }
 }
@@ -154,6 +157,9 @@ fn merge_invite_membership(
         network.admins.clear();
         network.shared_roster_updated_at = 0;
         network.shared_roster_signed_by.clear();
+    }
+    if prepared.relay_record.is_some() {
+        network.relay_record.clone_from(&prepared.relay_record);
     }
 
     for participant in &prepared.participants {
