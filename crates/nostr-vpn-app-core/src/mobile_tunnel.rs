@@ -2176,6 +2176,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         app.exit_node = peer.to_string();
 
@@ -2222,6 +2223,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         app.fips_peer_endpoints
             .insert(peer.to_string(), vec!["192.168.50.10:51820".to_string()]);
@@ -2265,6 +2267,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         app.fips_peer_endpoints
             .insert(admin.clone(), vec!["192.168.50.10:51820".to_string()]);
@@ -2319,6 +2322,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         app.ensure_defaults();
 
@@ -2430,6 +2434,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         let requester = Keys::generate().public_key().to_hex();
         let app_config = Arc::new(RwLock::new(app));
@@ -2528,6 +2533,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         admin_app.ensure_defaults();
         admin_app
@@ -2752,6 +2758,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
@@ -2804,6 +2811,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
@@ -2880,6 +2888,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         }];
         app.wireguard_exit = WireGuardExitConfig {
             enabled: true,

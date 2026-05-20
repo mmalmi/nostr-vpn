@@ -1,0 +1,28 @@
+[package]
+name = "nostr-vpn-namecoin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Namecoin .bit alias resolver for Nostr VPN (ifa-0001 / NIP-05-over-Namecoin)"
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = "1"
+webpki-roots = "0.26"
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json.workspace = true
+
+[lints]
+workspace = true

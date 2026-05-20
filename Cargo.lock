@@ -2591,6 +2591,7 @@ dependencies = [
  "hostname",
  "netdev",
  "nostr-sdk 0.35.0",
+ "nostr-vpn-namecoin",
  "serde",
  "serde_json",
  "sha2",
@@ -2600,6 +2601,23 @@ dependencies = [
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "nostr-vpn-namecoin"
+version = "4.0.37"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -2700,6 +2718,7 @@ name = "nvpn"
 version = "4.0.37"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64",
  "boringtun",
  "clap",
@@ -2712,6 +2731,7 @@ dependencies = [
  "netdev",
  "nostr-sdk 0.35.0",
  "nostr-vpn-core",
+ "nostr-vpn-namecoin",
  "nostr-vpn-wintun",
  "rand 0.9.4",
  "serde",

@@ -145,7 +145,7 @@ fn uninstall_cli_path(destination: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn init_config(path: &Path, force: bool, participants: Vec<String>) -> Result<()> {
+pub(crate) async fn init_config(path: &Path, force: bool, participants: Vec<String>) -> Result<()> {
     if path.exists() && !force {
         return Err(anyhow!(
             "config already exists at {} (pass --force to overwrite)",
@@ -154,7 +154,8 @@ pub(crate) fn init_config(path: &Path, force: bool, participants: Vec<String>) -
     }
 
     let mut config = AppConfig::generated();
-    apply_participants_override(&mut config, participants)?;
+    let resolver = crate::namecoin_resolver::ResolverHandle::from_config(&config)?;
+    apply_participants_override_async(&mut config, participants, resolver.as_ref()).await?;
     maybe_autoconfigure_node(&mut config);
     config.save(path)?;
 
@@ -307,6 +308,17 @@ pub(crate) fn apply_participants_override(
         return Ok(());
     }
 
+    // Synchronous path: refuse `.bit` aliases up front rather than silently
+    // failing inside `normalize_nostr_pubkey`. Callers that need alias
+    // support must go through `apply_participants_override_async`.
+    for participant in &participants {
+        if nostr_vpn_namecoin::parse_bit_alias(participant).is_some() {
+            return Err(anyhow!(
+                "'{participant}' is a '.bit' alias; call apply_participants_override_async with a resolver"
+            ));
+        }
+    }
+
     let mut normalized = participants
         .iter()
         .map(|participant| normalize_nostr_pubkey(participant))
@@ -317,6 +329,49 @@ pub(crate) fn apply_participants_override(
     let pending_exit_node = normalize_nostr_pubkey(&config.exit_node).ok();
     config.ensure_defaults();
     config.active_network_mut().participants = normalized.clone();
+    if let Some(exit_node) = pending_exit_node
+        && normalized
+            .iter()
+            .any(|participant| participant == &exit_node)
+    {
+        config.exit_node = exit_node;
+    }
+    let _ = config.note_active_network_roster_local_change();
+    config.ensure_defaults();
+
+    Ok(())
+}
+
+/// Async variant of [`apply_participants_override`] that additionally
+/// understands `.bit` aliases via the supplied resolver. Non-alias inputs
+/// behave identically to the sync version.
+pub(crate) async fn apply_participants_override_async(
+    config: &mut AppConfig,
+    participants: Vec<String>,
+    resolver: Option<&crate::namecoin_resolver::ResolverHandle>,
+) -> Result<()> {
+    if participants.is_empty() {
+        return Ok(());
+    }
+
+    let mut normalized: Vec<String> = Vec::with_capacity(participants.len());
+    let mut alias_pairs: Vec<(String, String)> = Vec::new();
+    for participant in &participants {
+        let resolved = crate::namecoin_resolver::resolve_with_handle(participant, resolver).await?;
+        if let Some(alias) = resolved.alias {
+            alias_pairs.push((resolved.hex_pubkey.clone(), alias));
+        }
+        normalized.push(resolved.hex_pubkey);
+    }
+
+    normalized.sort();
+    normalized.dedup();
+    let pending_exit_node = normalize_nostr_pubkey(&config.exit_node).ok();
+    config.ensure_defaults();
+    config.active_network_mut().participants = normalized.clone();
+    for (hex, alias) in alias_pairs {
+        config.active_network_mut().aliases.insert(hex, alias);
+    }
     if let Some(exit_node) = pending_exit_node
         && normalized
             .iter()

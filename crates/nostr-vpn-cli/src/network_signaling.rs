@@ -291,26 +291,46 @@ pub(crate) async fn update_active_network_roster(
         .id
         .clone();
 
+    let resolver = crate::namecoin_resolver::ResolverHandle::from_config(&app)?;
+
     let mut changed = Vec::new();
     for participant in &args.participants {
+        // Resolve `.bit` aliases (or canonicalize bare pubkeys) up-front so
+        // the per-network mutators only ever see canonical hex/npub input.
+        let resolved =
+            crate::namecoin_resolver::resolve_with_handle(participant, resolver.as_ref()).await?;
+        let canonical = resolved.hex_pubkey.clone();
         let normalized = match action {
             RosterEditAction::AddParticipant => {
-                app.add_participant_to_network(&active_network_id, participant)?
+                app.add_participant_to_network(&active_network_id, &canonical)?
             }
             RosterEditAction::RemoveParticipant => {
-                let normalized = normalize_nostr_pubkey(participant)?;
-                app.remove_participant_from_network(&active_network_id, participant)?;
-                normalized
+                app.remove_participant_from_network(&active_network_id, &canonical)?;
+                canonical.clone()
             }
             RosterEditAction::AddAdmin => {
-                app.add_admin_to_network(&active_network_id, participant)?
+                app.add_admin_to_network(&active_network_id, &canonical)?
             }
             RosterEditAction::RemoveAdmin => {
-                let normalized = normalize_nostr_pubkey(participant)?;
-                app.remove_admin_from_network(&active_network_id, participant)?;
-                normalized
+                app.remove_admin_from_network(&active_network_id, &canonical)?;
+                canonical.clone()
             }
         };
+        if let Some(alias) = resolved.alias
+            && matches!(
+                action,
+                RosterEditAction::AddParticipant | RosterEditAction::AddAdmin
+            )
+            && let Some(network) = app.network_by_id_mut(&active_network_id)
+        {
+            network.aliases.insert(normalized.clone(), alias);
+        } else if matches!(
+            action,
+            RosterEditAction::RemoveParticipant | RosterEditAction::RemoveAdmin
+        ) && let Some(network) = app.network_by_id_mut(&active_network_id)
+        {
+            network.aliases.remove(&normalized);
+        }
         changed.push(normalized);
     }
 
