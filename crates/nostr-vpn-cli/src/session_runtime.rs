@@ -848,7 +848,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &mut app,
                         &config_path,
                         &mut vpn_status,
-                    ) {
+                    )
+                    .await
+                    {
                         Ok(true) => {
                             let reload = build_daemon_reload_config(
                                 app.clone(),

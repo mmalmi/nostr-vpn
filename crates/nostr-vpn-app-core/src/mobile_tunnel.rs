@@ -1010,7 +1010,8 @@ async fn apply_mobile_roster_frame(
         source_pubkey,
         network_id,
         roster,
-    )?
+    )
+    .await?
     else {
         return Ok(());
     };
@@ -1119,7 +1120,7 @@ fn control_frame_source_pubkey(
     })
 }
 
-fn apply_mobile_roster(
+async fn apply_mobile_roster(
     app_config: &Arc<RwLock<AppConfig>>,
     app_config_dirty: &AtomicBool,
     config_path: Option<&Path>,
@@ -1127,11 +1128,39 @@ fn apply_mobile_roster(
     network_id: &str,
     roster: &NetworkRoster,
 ) -> Result<Option<MobileTunnelConfig>> {
+    let chain = if let Some(id) =
+        nostr_vpn_core::namecoin_name_verify::parse_namecoin_network_id(network_id)
+    {
+        match nostr_vpn_core::namecoin_name_verify::resolve_network_record(&id).await {
+            Ok(record) => Some(record),
+            Err(error) => {
+                mobile_debug_log(format!(
+                    "mobile: refusing roster update for chain-anchored {} ({error:#})",
+                    id.display()
+                ));
+                let mut app = app_config
+                    .write()
+                    .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+                app.quarantine_network(
+                    network_id,
+                    &format!("chain anchor {} unreachable: {error}", id.display()),
+                );
+                if let Some(config_path) = config_path {
+                    let _ = app.save(config_path);
+                }
+                app_config_dirty.store(true, Ordering::Relaxed);
+                return Ok(None);
+            }
+        }
+    } else {
+        None
+    };
+
     let mut app = app_config
         .write()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
     app.ensure_defaults();
-    let changed = app.apply_admin_signed_shared_roster(
+    let changed = app.apply_admin_signed_shared_roster_with_chain(
         network_id,
         &roster.network_name,
         roster.participants.clone(),
@@ -1139,8 +1168,21 @@ fn apply_mobile_roster(
         roster.aliases.clone(),
         roster.signed_at,
         sender_pubkey,
+        chain.as_ref(),
     )?;
     if !changed {
+        if let Some(network) = app.network_by_id(network_id)
+            && !network.chain_quarantine_reason.is_empty()
+        {
+            mobile_debug_log(format!(
+                "mobile: roster update ignored, network {network_id} is quarantined ({})",
+                network.chain_quarantine_reason
+            ));
+            if let Some(config_path) = config_path {
+                let _ = app.save(config_path);
+            }
+            app_config_dirty.store(true, Ordering::Relaxed);
+        }
         return Ok(None);
     }
     maybe_autoconfigure_node(&mut app);
@@ -2176,6 +2218,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.exit_node = peer.to_string();
 
@@ -2222,6 +2265,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.fips_peer_endpoints
             .insert(peer.to_string(), vec!["192.168.50.10:51820".to_string()]);
@@ -2265,6 +2309,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.fips_peer_endpoints
             .insert(admin.clone(), vec!["192.168.50.10:51820".to_string()]);
@@ -2319,6 +2364,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.ensure_defaults();
 
@@ -2430,6 +2476,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         let requester = Keys::generate().public_key().to_hex();
         let app_config = Arc::new(RwLock::new(app));
@@ -2528,6 +2575,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         admin_app.ensure_defaults();
         admin_app
@@ -2752,6 +2800,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
@@ -2804,6 +2853,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
@@ -2880,6 +2930,7 @@ mod tests {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         app.wireguard_exit = WireGuardExitConfig {
             enabled: true,
