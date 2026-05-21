@@ -954,6 +954,7 @@ impl NativeAppRuntime {
             admins: vec![admin.to_string()],
             participants: Vec::new(),
             relays: Vec::new(),
+            relay_record: None,
         };
         let encoded = serde_json::to_string(&synthetic)
             .map_err(|err| anyhow!("failed to encode manual invite: {err}"))?;

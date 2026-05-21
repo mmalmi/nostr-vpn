@@ -10,6 +10,7 @@ pub mod invite;
 pub mod join_requests;
 pub mod lan_pairing;
 pub mod magic_dns;
+pub mod namecoin_resolver;
 mod network_roster;
 mod network_routes;
 pub mod paths;

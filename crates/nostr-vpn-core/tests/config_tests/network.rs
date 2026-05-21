@@ -507,6 +507,7 @@ fn active_network_helpers_ignore_inactive_networks() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            relay_record: None,
         },
         NetworkConfig {
             id: "network-2".to_string(),
@@ -522,6 +523,7 @@ fn active_network_helpers_ignore_inactive_networks() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            relay_record: None,
         },
     ];
     config.ensure_defaults();

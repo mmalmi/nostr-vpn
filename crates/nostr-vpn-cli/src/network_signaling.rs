@@ -90,6 +90,9 @@ pub(crate) fn apply_network_invite_to_active_network(
             network.shared_roster_updated_at = 0;
             network.shared_roster_signed_by.clear();
         }
+        if invite.relay_record.is_some() {
+            network.relay_record = invite.relay_record.clone();
+        }
 
         for participant in &invite_participants {
             if own_pubkey.as_deref() == Some(participant.as_str()) {
@@ -249,6 +252,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
     if roster.admins.is_empty() {
         return Err(anyhow!("active network has no admin configured"));
     }
+    let relay_record = active_network.relay_record.clone();
     let invite = NetworkInvite {
         v: nostr_vpn_core::invite::NETWORK_INVITE_VERSION,
         network_name: String::new(),
@@ -264,6 +268,7 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
             .collect(),
         participants: Vec::new(),
         relays: Vec::new(),
+        relay_record,
     };
     encode_network_invite(&invite)
 }
@@ -352,4 +357,41 @@ pub(crate) async fn update_active_network_roster(
 fn network_should_adopt_invite(network: &nostr_vpn_core::config::NetworkConfig) -> bool {
     let trimmed = network.name.trim();
     network.participants.is_empty() && (trimmed.is_empty() || trimmed.starts_with("Network "))
+}
+
+/// Re-resolve `relay_record` and rewrite the global discovery relay list.
+/// Returns the new relay list. On success, prints the before/after to stderr.
+pub(crate) async fn resolve_and_apply_discovery_relays(
+    config: &mut AppConfig,
+    relay_record: &str,
+) -> Result<Vec<String>> {
+    let transport = nostr_vpn_core::namecoin_resolver::ElectrumxTransport::default();
+    let resolved = nostr_vpn_core::namecoin_resolver::resolve_relays(&transport, relay_record)
+        .await
+        .map_err(|error| anyhow!("namecoin resolution for '{relay_record}' failed: {error:#}"))?;
+    apply_resolved_discovery_relays(config, relay_record, resolved.clone());
+    Ok(resolved)
+}
+
+/// Replace the configured discovery relay list with the resolved set and
+/// emit a before/after diff to stderr. Factored out for testability (the
+/// integration test injects a precomputed list).
+pub(crate) fn apply_resolved_discovery_relays(
+    config: &mut AppConfig,
+    relay_record: &str,
+    resolved: Vec<String>,
+) {
+    let previous: Vec<String> = config.nostr.relays.clone();
+    config.nostr.relays = resolved.clone();
+    eprintln!("relays: refreshed from namecoin record '{relay_record}'");
+    eprintln!("  before: {}", format_relay_list(&previous));
+    eprintln!("  after : {}", format_relay_list(&resolved));
+}
+
+fn format_relay_list(relays: &[String]) -> String {
+    if relays.is_empty() {
+        "<none>".to_string()
+    } else {
+        relays.join(", ")
+    }
 }

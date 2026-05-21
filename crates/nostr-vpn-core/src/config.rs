@@ -640,6 +640,11 @@ pub struct NetworkConfig {
     pub shared_roster_updated_at: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shared_roster_signed_by: String,
+    /// Optional Namecoin `.bit` name that anchors the discovery relay list
+    /// for this network. Set on invite import when the invite carries a
+    /// `relay_record` field; refreshable via `nvpn relays refresh`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_record: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -697,6 +702,7 @@ impl Default for AppConfig {
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,
                 shared_roster_signed_by: String::new(),
+                relay_record: None,
             }],
             node_name: default_node_name(),
             lan_discovery_enabled: default_lan_discovery_enabled(),
@@ -1108,6 +1114,7 @@ impl AppConfig {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            relay_record: None,
         });
         let _ = self.note_network_roster_local_change(&id);
         id

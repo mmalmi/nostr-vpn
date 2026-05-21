@@ -50,5 +50,6 @@ name = "nvpn"
 path = "src/main.rs"
 
 [dev-dependencies]
+async-trait.workspace = true
 nostr-sdk.workspace = true
 rand.workspace = true
