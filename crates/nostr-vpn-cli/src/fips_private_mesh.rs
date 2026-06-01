@@ -30,7 +30,7 @@ use std::io::IoSlice;
 use std::io::{self, Write};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::mem::ManuallyDrop;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::net::Ipv4Addr;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -919,7 +919,7 @@ impl FipsPrivateMeshRuntime {
             .collect())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) async fn peer_transport_ipv4_hosts(&self) -> Result<Vec<Ipv4Addr>> {
         let mut hosts = self
             .endpoint
@@ -1602,7 +1602,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     nostr_discovery_enabled: bool,
     nostr_discovery_policy: NostrDiscoveryPolicy,
     mesh_mtu: MeshMtu,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
 }
 
@@ -1741,7 +1741,7 @@ impl FipsPrivateTunnelConfig {
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
             nostr_discovery_policy: fips_nostr_discovery_policy_from_app(app),
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
         })
     }
@@ -1809,7 +1809,7 @@ fn tag_authenticated_transport_addr(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn endpoint_transport_ipv4_host(addr: &str) -> Option<Ipv4Addr> {
     if let Ok(socket_addr) = addr.parse::<SocketAddr>() {
         return match socket_addr.ip() {
@@ -2248,9 +2248,22 @@ impl FipsPrivateTunnelRuntime {
             return;
         }
 
+        let mut bypass_hosts = self.config.control_plane_bypass_hosts.clone();
+        match self.mesh.peer_transport_ipv4_hosts().await {
+            Ok(peer_hosts) => bypass_hosts.extend(peer_hosts),
+            Err(error) => {
+                eprintln!(
+                    "fips: WG upstream continuing without peer transport bypass hosts: {error}"
+                );
+            }
+        }
+        bypass_hosts.sort_unstable();
+        bypass_hosts.dedup();
+
         match crate::wg_upstream_runtime::apply_daemon_wg_upstream(
             wg_config,
             crate::wg_upstream_runtime::DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT,
+            &bypass_hosts,
         )
         .await
         {
