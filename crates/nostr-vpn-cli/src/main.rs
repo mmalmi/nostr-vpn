@@ -1764,7 +1764,7 @@ async fn run_wg_upstream_replace_default(
     // guard restores the original default + deletes the bypass on
     // Drop, so a panic / Ctrl-C from this point on still recovers.
     let mtu = if cfg.mtu > 0 { cfg.mtu } else { 1420 };
-    let mut full_route = apply_full_default_route(&actual_iface, &cfg.address, upstream, mtu)
+    let mut full_route = apply_full_default_route(&actual_iface, &cfg.address, upstream, mtu, &[])
         .with_context(|| {
             format!(
                 "swap default route via {actual_iface} (probably needs root). \

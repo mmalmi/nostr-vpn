@@ -1,12 +1,12 @@
 #[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::net::IpAddr;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::Ipv4Addr;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::Ipv6Addr;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::net::ToSocketAddrs;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
@@ -15,11 +15,11 @@ use std::process::Command as ProcessCommand;
 use anyhow::Context;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use anyhow::{Result, anyhow};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use netdev::get_interfaces;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use netdev::interface::interface::Interface as NetworkInterface;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::config::AppConfig;
 
 #[cfg(any(target_os = "macos", test))]
@@ -208,7 +208,7 @@ pub(crate) fn flush_linux_route_cache() -> Result<()> {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn relay_bypass_ipv4_hosts(app: &AppConfig) -> Vec<Ipv4Addr> {
     let mut hosts = app
         .nostr
@@ -221,7 +221,7 @@ fn relay_bypass_ipv4_hosts(app: &AppConfig) -> Vec<Ipv4Addr> {
     hosts
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn relay_ipv4_hosts(relay: &str) -> Vec<Ipv4Addr> {
     let Some((host, port)) = relay_host_port(relay) else {
         return Vec::new();
@@ -248,7 +248,7 @@ fn relay_ipv4_hosts(relay: &str) -> Vec<Ipv4Addr> {
         .unwrap_or_default()
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn relay_host_port(relay: &str) -> Option<(String, u16)> {
     let relay = relay.trim();
     if relay.is_empty() {
@@ -267,7 +267,7 @@ fn relay_host_port(relay: &str) -> Option<(String, u16)> {
     split_host_port(authority, default_port)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn stun_host_port(server: &str) -> Option<(String, u16)> {
     let server = server.trim();
     if server.is_empty() {
@@ -282,7 +282,7 @@ pub(crate) fn stun_host_port(server: &str) -> Option<(String, u16)> {
     split_host_port(authority, 3478)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn stun_ipv4_hosts(app: &AppConfig) -> Vec<Ipv4Addr> {
     let mut hosts = app
         .nat
@@ -316,7 +316,7 @@ fn stun_ipv4_hosts(app: &AppConfig) -> Vec<Ipv4Addr> {
     hosts
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn management_ipv4_hosts_from_interfaces(interfaces: &[NetworkInterface]) -> Vec<Ipv4Addr> {
     let mut hosts = interfaces
         .iter()
@@ -341,7 +341,7 @@ fn management_ipv4_hosts_from_interfaces(interfaces: &[NetworkInterface]) -> Vec
     hosts
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn control_plane_bypass_ipv4_hosts_from_interfaces(
     app: &AppConfig,
     interfaces: &[NetworkInterface],
@@ -354,12 +354,12 @@ pub(crate) fn control_plane_bypass_ipv4_hosts_from_interfaces(
     hosts
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn control_plane_bypass_ipv4_hosts(app: &AppConfig) -> Vec<Ipv4Addr> {
     control_plane_bypass_ipv4_hosts_from_interfaces(app, &get_interfaces())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn split_host_port(authority: &str, default_port: u16) -> Option<(String, u16)> {
     let authority = authority.trim();
     if authority.is_empty() {
@@ -1163,6 +1163,30 @@ mod tests {
         assert!(!linux_route_target_is_ipv4("::/0"));
         assert!(linux_route_target_is_ipv6("::/0"));
         assert!(!linux_route_target_is_ipv6("10.44.0.0/16"));
+    }
+
+    #[test]
+    fn platform_routing_parses_relay_and_stun_host_ports() {
+        assert_eq!(
+            relay_host_port("wss://relay.example.com"),
+            Some(("relay.example.com".to_string(), 443))
+        );
+        assert_eq!(
+            relay_host_port("ws://relay.example.com:8080/path"),
+            Some(("relay.example.com".to_string(), 8080))
+        );
+        assert_eq!(
+            relay_host_port("relay.example.com"),
+            Some(("relay.example.com".to_string(), 80))
+        );
+        assert_eq!(
+            stun_host_port("stun:stun.example.com"),
+            Some(("stun.example.com".to_string(), 3478))
+        );
+        assert_eq!(
+            stun_host_port("[2001:db8::1]:5349"),
+            Some(("2001:db8::1".to_string(), 5349))
+        );
     }
 
     #[test]

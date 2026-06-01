@@ -1076,7 +1076,7 @@ impl FipsPrivateMeshRuntime {
             .collect())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) async fn peer_transport_ipv4_hosts(&self) -> Result<Vec<Ipv4Addr>> {
         let mut hosts = self
             .endpoint
@@ -1759,6 +1759,17 @@ fn fips_udp_external_addr(transport: &FipsEndpointTransportConfig) -> Option<Str
     Some(endpoint.to_string())
 }
 
+fn fips_ipv4_bypass_hosts<I>(control_plane_hosts: &[Ipv4Addr], peer_hosts: I) -> Vec<Ipv4Addr>
+where
+    I: IntoIterator<Item = Ipv4Addr>,
+{
+    let mut bypass_hosts = control_plane_hosts.to_vec();
+    bypass_hosts.extend(peer_hosts);
+    bypass_hosts.sort_unstable();
+    bypass_hosts.dedup();
+    bypass_hosts
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) identity_nsec: String,
@@ -1783,7 +1794,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     nostr_discovery_policy: NostrDiscoveryPolicy,
     open_discovery_max_pending: usize,
     mesh_mtu: MeshMtu,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
 }
 
@@ -1939,7 +1950,7 @@ impl FipsPrivateTunnelConfig {
             nostr_discovery_policy: fips_nostr_discovery_policy_from_app(app),
             open_discovery_max_pending,
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
         })
     }
@@ -2007,7 +2018,7 @@ fn tag_authenticated_transport_addr(
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn endpoint_transport_ipv4_host(addr: &str) -> Option<Ipv4Addr> {
     if let Ok(socket_addr) = addr.parse::<SocketAddr>() {
         return match socket_addr.ip() {
@@ -2258,6 +2269,8 @@ impl FipsPrivateTunnelRuntime {
 
         #[cfg(target_os = "macos")]
         {
+            let config = self.config.clone();
+            self.reconcile_macos_wg_upstream(&config).await;
             Ok(())
         }
     }
@@ -2364,8 +2377,7 @@ impl FipsPrivateTunnelRuntime {
                 config.mesh_mtu.tunnel,
             )
             .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
-            self.reconcile_macos_wg_upstream(&config.wireguard_exit)
-                .await;
+            self.reconcile_macos_wg_upstream(config).await;
             self.reconcile_macos_exit_node_forwarding(
                 &config.local_address,
                 &config.local_advertised_routes,
@@ -2415,24 +2427,30 @@ impl FipsPrivateTunnelRuntime {
     /// Called on every `apply_interface_config` (which fires on
     /// startup, on every config change, and on the periodic
     /// peer-dependent route refresh). The function is idempotent: a
-    /// no-op if the existing tunnel already matches the config, a
-    /// teardown-then-bring-up if the config changed, just a teardown
-    /// if WG is now disabled.
+    /// no-op if the existing tunnel already matches the config and
+    /// current bypass hosts, a teardown-then-bring-up if either changed,
+    /// just a teardown if WG is now disabled.
     ///
     /// **Safe-by-construction**: if the WG handshake doesn't complete
     /// within the watchdog window (10s), nothing modifies the routing
     /// table. The host's default route only ever swaps to the WG tun
     /// after we've seen a real handshake from the upstream.
     #[cfg(target_os = "macos")]
-    async fn reconcile_macos_wg_upstream(&mut self, wg_config: &WireGuardExitConfig) {
+    async fn reconcile_macos_wg_upstream(&mut self, config: &FipsPrivateTunnelConfig) {
+        let wg_config = &config.wireguard_exit;
         let want_up = wg_config.enabled && wg_config.configured();
+        let bypass_hosts = if want_up {
+            self.macos_wg_upstream_bypass_hosts(config).await
+        } else {
+            Vec::new()
+        };
 
         // Already up with matching config → nothing to do.
         if want_up
             && self
                 .wg_upstream
                 .as_ref()
-                .is_some_and(|existing| existing.matches(wg_config))
+                .is_some_and(|existing| existing.matches(wg_config, &bypass_hosts))
         {
             return;
         }
@@ -2451,6 +2469,7 @@ impl FipsPrivateTunnelRuntime {
         match crate::wg_upstream_runtime::apply_daemon_wg_upstream(
             wg_config,
             crate::wg_upstream_runtime::DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT,
+            &bypass_hosts,
         )
         .await
         {
@@ -2470,6 +2489,23 @@ impl FipsPrivateTunnelRuntime {
                 eprintln!("fips: WG upstream not started: {error}");
             }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn macos_wg_upstream_bypass_hosts(
+        &self,
+        config: &FipsPrivateTunnelConfig,
+    ) -> Vec<Ipv4Addr> {
+        let mut peer_hosts = Vec::new();
+        match self.mesh.peer_transport_ipv4_hosts().await {
+            Ok(hosts) => peer_hosts = hosts,
+            Err(error) => {
+                eprintln!(
+                    "fips: WG upstream continuing without peer transport bypass hosts: {error}"
+                );
+            }
+        }
+        fips_ipv4_bypass_hosts(&config.control_plane_bypass_hosts, peer_hosts)
     }
 
     #[cfg(target_os = "macos")]
@@ -2604,10 +2640,8 @@ impl FipsPrivateTunnelRuntime {
         }
 
         let endpoint_bypass_specs = if original_route_targets_require_bypass || strict_exit {
-            let mut bypass_hosts = config.control_plane_bypass_hosts.clone();
-            bypass_hosts.extend(peer_endpoint_hosts);
-            bypass_hosts.sort_unstable();
-            bypass_hosts.dedup();
+            let bypass_hosts =
+                fips_ipv4_bypass_hosts(&config.control_plane_bypass_hosts, peer_endpoint_hosts);
             crate::linux_bypass_route_specs_for_hosts(
                 bypass_hosts,
                 &self.iface,
@@ -4050,10 +4084,10 @@ mod tests {
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         cap_recent_non_roster_transit_endpoints, control_frame_destination_npub,
         control_frame_source_pubkey, drain_event_batch, filter_static_tunnel_endpoints,
-        fips_endpoint_config, fips_endpoint_peers_from_mesh, fips_lan_discovery_scope,
-        fips_peer_address_from_hint, linux_cap_eff_has_net_admin, linux_tun_setup_error,
-        other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy, strip_cidr,
-        tag_authenticated_transport_addr, unix_timestamp,
+        fips_endpoint_config, fips_endpoint_peers_from_mesh, fips_ipv4_bypass_hosts,
+        fips_lan_discovery_scope, fips_peer_address_from_hint, linux_cap_eff_has_net_admin,
+        linux_tun_setup_error, other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
+        strip_cidr, tag_authenticated_transport_addr, unix_timestamp,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, FipsEndpointPeer, NostrDiscoveryPolicy,
@@ -4071,6 +4105,31 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::net::{IpAddr, Ipv4Addr, UdpSocket};
     use std::time::Duration;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn fips_ipv4_bypass_hosts_uses_current_config_and_peer_hosts() {
+        let hosts = fips_ipv4_bypass_hosts(
+            &[
+                "198.51.100.20".parse().expect("ip"),
+                "203.0.113.7".parse().expect("ip"),
+            ],
+            vec![
+                "192.0.2.5".parse().expect("ip"),
+                "198.51.100.20".parse().expect("ip"),
+                "192.0.2.5".parse().expect("ip"),
+            ],
+        );
+
+        assert_eq!(
+            hosts,
+            vec![
+                "192.0.2.5".parse::<Ipv4Addr>().expect("ip"),
+                "198.51.100.20".parse().expect("ip"),
+                "203.0.113.7".parse().expect("ip"),
+            ]
+        );
+    }
 
     #[test]
     fn parses_fips_nostr_discovery_policy_override() {

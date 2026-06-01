@@ -7,7 +7,7 @@
 //! `DaemonWgUpstream` lifecycle holder that the daemon's reconcile
 //! loop owns.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(target_os = "windows")]
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -315,8 +315,9 @@ pub struct ScopedHostRoute {
 
 /// Full default-route replacement: bring up the userspace WG tun and
 /// route **all** outbound traffic through it (Mullvad/Proton-style),
-/// while installing a bypass /32 route for the WG endpoint itself so
-/// the encrypted UDP keeps escaping via the original default route.
+/// while installing bypass /32 routes for the WG endpoint and any
+/// caller-supplied control-plane hosts so encrypted UDP and FIPS
+/// handshakes keep escaping via the original default route.
 ///
 /// **This is the dangerous mode** — if the WG handshake fails after
 /// this call returns, the host has lost its way to the internet
@@ -336,6 +337,7 @@ pub fn apply_full_default_route(
     address: &str,
     upstream_endpoint: SocketAddr,
     mtu: u16,
+    extra_ipv4_bypass_hosts: &[Ipv4Addr],
 ) -> Result<FullDefaultRoute> {
     let upstream_ip = upstream_endpoint.ip();
     let address_ip = address
@@ -387,17 +389,33 @@ pub fn apply_full_default_route(
     // Drop. Do this before touching anything routing-related.
     let original_default = capture_default_route()?;
 
-    // 3. Install the bypass /32 for the WG endpoint via the original
-    // default gateway. This MUST exist before we swap the default,
-    // otherwise the encrypted UDP would loop back into the tun.
-    install_endpoint_bypass(&upstream_ip, &original_default)?;
+    // 3. Install bypass /32 routes via the original default gateway.
+    // These MUST exist before we swap the default, otherwise the WG
+    // encrypted UDP and mesh control-plane handshakes would loop back
+    // into the tun.
+    let bypass_targets = full_default_route_bypass_targets(upstream_ip, extra_ipv4_bypass_hosts);
+    let mut installed_bypass_targets = Vec::with_capacity(bypass_targets.len());
+    for target in &bypass_targets {
+        if let Err(error) = install_endpoint_bypass(target, &original_default) {
+            for installed in installed_bypass_targets.iter().rev() {
+                delete_endpoint_bypass(installed, &original_default);
+            }
+            return Err(error);
+        }
+        installed_bypass_targets.push(*target);
+    }
 
     // 4. Swap the default route to the WG tun.
-    install_default_via_iface(iface, &address_ip)?;
+    if let Err(error) = install_default_via_iface(iface, &address_ip) {
+        for installed in installed_bypass_targets.iter().rev() {
+            delete_endpoint_bypass(installed, &original_default);
+        }
+        return Err(error);
+    }
 
     Ok(FullDefaultRoute {
         iface: iface.to_string(),
-        bypass_target: upstream_ip,
+        bypass_targets,
         original_default,
     })
 }
@@ -408,8 +426,29 @@ pub struct FullDefaultRoute {
     // `ip route show default` line for restore and never touches iface.
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     iface: String,
-    bypass_target: IpAddr,
+    bypass_targets: Vec<IpAddr>,
     original_default: CapturedDefaultRoute,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn full_default_route_bypass_targets(
+    upstream_ip: IpAddr,
+    extra_ipv4_bypass_hosts: &[Ipv4Addr],
+) -> Vec<IpAddr> {
+    let mut targets = Vec::with_capacity(1 + extra_ipv4_bypass_hosts.len());
+    targets.push(upstream_ip);
+    targets.extend(extra_ipv4_bypass_hosts.iter().copied().map(IpAddr::V4));
+    targets.sort_unstable();
+    targets.dedup();
+    targets
+}
+
+#[cfg(target_os = "macos")]
+fn canonical_ipv4_bypass_hosts(hosts: &[Ipv4Addr]) -> Vec<Ipv4Addr> {
+    let mut hosts = hosts.to_vec();
+    hosts.sort_unstable();
+    hosts.dedup();
+    hosts
 }
 
 /// Captured underlay default route, used to restore on Drop. The
@@ -529,6 +568,10 @@ fn install_endpoint_bypass(target: &IpAddr, original: &CapturedDefaultRoute) -> 
     }
     #[cfg(target_os = "macos")]
     {
+        if target_str == original.gateway {
+            return Ok(());
+        }
+
         // The daemon installs 0/1 + 128/1 routes through the WG utun.
         // The WG server itself must be an unscoped host route so
         // ordinary lookups still prefer the underlay gateway.
@@ -537,14 +580,7 @@ fn install_endpoint_bypass(target: &IpAddr, original: &CapturedDefaultRoute) -> 
             .arg("delete")
             .arg("-host")
             .arg(&target_str)
-            .arg("-ifscope")
-            .arg(&original.interface)
-            .status();
-        let _ = ProcessCommand::new("route")
-            .arg("-n")
-            .arg("delete")
-            .arg("-host")
-            .arg(&target_str)
+            .arg(&original.gateway)
             .status();
         run_checked(
             ProcessCommand::new("route")
@@ -556,6 +592,36 @@ fn install_endpoint_bypass(target: &IpAddr, original: &CapturedDefaultRoute) -> 
         )?;
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn delete_endpoint_bypass(target: &IpAddr, original: &CapturedDefaultRoute) {
+    #[cfg(target_os = "linux")]
+    let _ = original;
+
+    let target_str = target.to_string();
+    #[cfg(target_os = "linux")]
+    {
+        let _ = ProcessCommand::new("ip")
+            .arg("route")
+            .arg("del")
+            .arg(format!("{target_str}/32"))
+            .status();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if target_str == original.gateway {
+            return;
+        }
+
+        let _ = ProcessCommand::new("route")
+            .arg("-n")
+            .arg("delete")
+            .arg("-host")
+            .arg(&target_str)
+            .arg(&original.gateway)
+            .status();
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -601,7 +667,6 @@ impl FullDefaultRoute {
     /// Cleanup explicitly. Returning a `Result` lets the caller see
     /// what failed; on Drop the result is ignored.
     pub fn revert(&mut self) -> Result<()> {
-        let target_str = self.bypass_target.to_string();
         // Restore the original default route FIRST so the host has a
         // working route to the internet again before we delete the
         // bypass for the WG endpoint.
@@ -616,11 +681,9 @@ impl FullDefaultRoute {
                 command.arg(arg);
             }
             run_checked(&mut command)?;
-            let _ = ProcessCommand::new("ip")
-                .arg("route")
-                .arg("del")
-                .arg(format!("{target_str}/32"))
-                .status();
+            for target in &self.bypass_targets {
+                delete_endpoint_bypass(target, &self.original_default);
+            }
         }
         #[cfg(target_os = "macos")]
         {
@@ -663,29 +726,9 @@ impl FullDefaultRoute {
                         .arg(&self.original_default.gateway),
                 )?;
             }
-            let _ = ProcessCommand::new("route")
-                .arg("-n")
-                .arg("delete")
-                .arg("-host")
-                .arg(&target_str)
-                .arg(&self.original_default.gateway)
-                .arg("-ifscope")
-                .arg(&self.original_default.interface)
-                .status();
-            let _ = ProcessCommand::new("route")
-                .arg("-n")
-                .arg("delete")
-                .arg("-host")
-                .arg(&target_str)
-                .arg("-ifscope")
-                .arg(&self.original_default.interface)
-                .status();
-            let _ = ProcessCommand::new("route")
-                .arg("-n")
-                .arg("delete")
-                .arg("-host")
-                .arg(&target_str)
-                .status();
+            for target in &self.bypass_targets {
+                delete_endpoint_bypass(target, &self.original_default);
+            }
         }
         Ok(())
     }
@@ -840,6 +883,7 @@ pub struct DaemonWgUpstream {
     // tunnel; dropping it auto-removes the utun device on macOS.
     _tun: Arc<TunSocket>,
     config_fingerprint: WireGuardExitFingerprint,
+    extra_ipv4_bypass_hosts: Vec<Ipv4Addr>,
 }
 
 #[cfg(target_os = "windows")]
@@ -885,6 +929,7 @@ struct WindowsNativeWireGuardTunnel {
 pub async fn apply_daemon_wg_upstream(
     config: &WireGuardExitConfig,
     handshake_timeout: Duration,
+    extra_ipv4_bypass_hosts: &[Ipv4Addr],
 ) -> Result<DaemonWgUpstream> {
     let fingerprint = WireGuardExitFingerprint::from_config(config);
     let interface_hint =
@@ -921,7 +966,13 @@ pub async fn apply_daemon_wg_upstream(
     }
 
     let mtu = if config.mtu > 0 { config.mtu } else { 1420 };
-    let full_route = match apply_full_default_route(&actual_iface, &config.address, upstream, mtu) {
+    let full_route = match apply_full_default_route(
+        &actual_iface,
+        &config.address,
+        upstream,
+        mtu,
+        extra_ipv4_bypass_hosts,
+    ) {
         Ok(route) => route,
         Err(error) => {
             runtime.shutdown().await;
@@ -936,6 +987,7 @@ pub async fn apply_daemon_wg_upstream(
         full_route: Some(full_route),
         _tun: tun,
         config_fingerprint: fingerprint,
+        extra_ipv4_bypass_hosts: canonical_ipv4_bypass_hosts(extra_ipv4_bypass_hosts),
     })
 }
 
@@ -945,8 +997,13 @@ impl DaemonWgUpstream {
     /// equivalent to a fresh apply for `new_config`. Used by the
     /// reconcile loop to short-circuit a teardown+rebuild on every
     /// tick.
-    pub fn matches(&self, new_config: &WireGuardExitConfig) -> bool {
+    pub fn matches(
+        &self,
+        new_config: &WireGuardExitConfig,
+        extra_ipv4_bypass_hosts: &[Ipv4Addr],
+    ) -> bool {
         self.config_fingerprint == WireGuardExitFingerprint::from_config(new_config)
+            && self.extra_ipv4_bypass_hosts == canonical_ipv4_bypass_hosts(extra_ipv4_bypass_hosts)
     }
 
     /// Tear down the WG upstream cleanly: restore the default route
@@ -1848,6 +1905,50 @@ async fn apply_daemon_wg_upstream_userspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn full_default_route_bypass_targets_dedupes_upstream_and_extra_hosts() {
+        let targets = full_default_route_bypass_targets(
+            IpAddr::V4("198.51.100.10".parse().expect("ip")),
+            &[
+                "203.0.113.7".parse().expect("ip"),
+                "198.51.100.10".parse().expect("ip"),
+                "203.0.113.7".parse().expect("ip"),
+                "192.0.2.5".parse().expect("ip"),
+            ],
+        );
+        assert_eq!(
+            targets,
+            vec![
+                IpAddr::V4("192.0.2.5".parse().expect("ip")),
+                IpAddr::V4("198.51.100.10".parse().expect("ip")),
+                IpAddr::V4("203.0.113.7".parse().expect("ip")),
+            ]
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn full_default_route_bypass_targets_keeps_ipv6_upstream_with_ipv4_extras() {
+        let targets = full_default_route_bypass_targets(
+            IpAddr::V6("2001:db8::10".parse().expect("ip")),
+            &[
+                "203.0.113.7".parse().expect("ip"),
+                "192.0.2.5".parse().expect("ip"),
+                "203.0.113.7".parse().expect("ip"),
+            ],
+        );
+        assert_eq!(
+            targets,
+            vec![
+                IpAddr::V4("192.0.2.5".parse().expect("ip")),
+                IpAddr::V4("203.0.113.7".parse().expect("ip")),
+                IpAddr::V6("2001:db8::10".parse().expect("ip")),
+            ]
+        );
+    }
+
     #[test]
     fn parses_windows_default_route_from_route_print() {
         // Synthetic `route print -4 0.0.0.0` output. Only the
