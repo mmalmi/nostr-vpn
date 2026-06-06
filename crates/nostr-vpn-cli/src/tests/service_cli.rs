@@ -87,6 +87,20 @@ fn macos_service_disabled_parser_extracts_disabled_state() {
 }
 
 #[test]
+fn macos_service_print_is_running_accepts_keepalive_states() {
+    for state in ["running", "spawn scheduled", "waiting"] {
+        let output = format!("system/to.nostrvpn.nvpn = {{\n\tstate = {state}\n}}\n");
+        assert!(
+            crate::macos_service::macos_service_print_is_running(&output),
+            "expected running for state = {state}"
+        );
+    }
+    assert!(!crate::macos_service::macos_service_print_is_running(
+        "system/to.nostrvpn.nvpn = {\n\tstate = not running\n}\n"
+    ));
+}
+
+#[test]
 fn macos_service_plist_runs_service_supervised_daemon() {
     let plist = crate::macos_service::macos_service_plist_content(
         "to.nostrvpn.nvpn",

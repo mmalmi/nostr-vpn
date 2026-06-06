@@ -308,12 +308,15 @@ pub(super) fn macos_service_print(config_path: &Path) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 pub(super) fn macos_service_print_is_running(print_output: &str) -> bool {
+    // A KeepAlive daemon idling between (re)spawns reports `spawn scheduled` or
+    // `waiting`, not `running`; only `not running` means it is actually down.
     print_output
         .lines()
         .map(str::trim)
-        .any(|line| line == "state = running")
+        .filter_map(|line| line.strip_prefix("state = "))
+        .any(|state| matches!(state, "running" | "spawn scheduled" | "waiting"))
 }
 
 #[cfg(target_os = "macos")]
