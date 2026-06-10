@@ -448,6 +448,20 @@ pub(crate) fn linux_service_binary_path() -> PathBuf {
     PathBuf::from("/usr/local/bin/nvpn")
 }
 
+// `enable`/`disable --now` needs systemd v220+. Some NAS/embedded hosts (e.g.
+// Synology DSM) ship older systemd that rejects `--now`, which aborted install
+// after the unit was already written. Run the equivalent steps separately so
+// activation works across systemd versions.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_service_enable_steps(unit: &str) -> [[&str; 2]; 2] {
+    [["enable", unit], ["start", unit]]
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_service_disable_steps(unit: &str) -> [[&str; 2]; 2] {
+    [["stop", unit], ["disable", unit]]
+}
+
 #[cfg(target_os = "linux")]
 fn linux_install_service(
     executable: &Path,
@@ -470,11 +484,9 @@ fn linux_install_service(
         return Ok(());
     }
 
-    let _ = run_systemctl_allow_missing(
-        &["disable", "--now", LINUX_SERVICE_UNIT_NAME],
-        "disable/stop existing service",
-        true,
-    );
+    for step in linux_service_disable_steps(LINUX_SERVICE_UNIT_NAME) {
+        let _ = run_systemctl_allow_missing(&step, "disable/stop existing service", true);
+    }
     stop_existing_daemons_before_service_install(config_path)?;
     let service_executable = linux_service_binary_path();
     install_service_executable_copy(executable, &service_executable)?;
@@ -499,10 +511,9 @@ fn linux_install_service(
     })?;
 
     run_systemctl_checked(&["daemon-reload"], "reload systemd")?;
-    run_systemctl_checked(
-        &["enable", "--now", LINUX_SERVICE_UNIT_NAME],
-        "enable/start service",
-    )?;
+    for step in linux_service_enable_steps(LINUX_SERVICE_UNIT_NAME) {
+        run_systemctl_checked(&step, "enable/start service")?;
+    }
     println!("installed system service: {}", unit_path.display());
     println!("label: {LINUX_SERVICE_UNIT_NAME}");
     Ok(())
@@ -514,11 +525,9 @@ fn linux_uninstall_service() -> Result<()> {
         return Err(anyhow!("systemd (systemctl) is not available on this host"));
     }
 
-    run_systemctl_allow_missing(
-        &["disable", "--now", LINUX_SERVICE_UNIT_NAME],
-        "disable/stop service",
-        true,
-    )?;
+    for step in linux_service_disable_steps(LINUX_SERVICE_UNIT_NAME) {
+        run_systemctl_allow_missing(&step, "disable/stop service", true)?;
+    }
 
     let unit_path = linux_service_unit_path();
     if unit_path.exists() {

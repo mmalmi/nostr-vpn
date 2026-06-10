@@ -34,6 +34,29 @@ fn linux_service_show_parser_extracts_running_state() {
 }
 
 #[test]
+fn linux_service_steps_avoid_now_flag() {
+    use crate::service_management::{linux_service_disable_steps, linux_service_enable_steps};
+    let unit = "nvpn.service";
+    assert_eq!(
+        linux_service_enable_steps(unit),
+        [["enable", unit], ["start", unit]]
+    );
+    assert_eq!(
+        linux_service_disable_steps(unit),
+        [["stop", unit], ["disable", unit]]
+    );
+    for step in linux_service_enable_steps(unit)
+        .into_iter()
+        .chain(linux_service_disable_steps(unit))
+    {
+        assert!(
+            !step.contains(&"--now"),
+            "service steps must avoid the non-portable --now flag"
+        );
+    }
+}
+
+#[test]
 fn macos_service_disabled_parser_extracts_disabled_state() {
     let output = r#"
         disabled services = {
