@@ -1,6 +1,6 @@
 # Contributing
 
-## StartOS package
+## StartOS Package
 
 The StartOS package lives in `startos/` and uses the Dockerfile at
 `umbrel/Dockerfile` to build the service image. The package supports `x86_64`
