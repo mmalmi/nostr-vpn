@@ -29,8 +29,8 @@ cashu-service = { version = "0.4.2", default-features = false }
 cashu = { version = "=0.17.3", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "=0.4.54"
-fips-core = { version = "=0.4.54", features = ["webrtc-transport"] }
+fips-endpoint = "=0.4.56"
+fips-core = { version = "=0.4.56", features = ["webrtc-transport"] }
 fips-tcp = "=0.2.0"
 fips-tcp-endpoint = "=0.2.0"
 futures = "0.3"
