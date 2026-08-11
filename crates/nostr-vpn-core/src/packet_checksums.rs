@@ -6,6 +6,54 @@
 //! checksums before serializing packets onto the overlay or writing them back to
 //! an OS-owned TUN.
 
+use std::net::Ipv4Addr;
+
+/// Build an ICMP echo reply when `packet` is an IPv4 echo request addressed to
+/// this tunnel's own virtual address.
+///
+/// Packet-tunnel platforms do not necessarily have a kernel-owned interface
+/// that answers host-directed ICMP. Handling the request at the tunnel edge
+/// keeps `ping` useful without sending the request into an app packet flow.
+pub fn ipv4_icmp_echo_reply(packet: &[u8], local_address: Ipv4Addr) -> Option<Vec<u8>> {
+    if packet.len() < 28 || packet[0] >> 4 != 4 {
+        return None;
+    }
+
+    let ihl = usize::from(packet[0] & 0x0f) * 4;
+    if ihl < 20 || packet.len() < ihl + 8 {
+        return None;
+    }
+    let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+    if total_len < ihl + 8 || total_len > packet.len() || packet[9] != 1 {
+        return None;
+    }
+    let fragment = u16::from_be_bytes([packet[6], packet[7]]);
+    if fragment & 0x3fff != 0 || packet[ihl] != 8 || packet[ihl + 1] != 0 {
+        return None;
+    }
+    if packet[16..20] != local_address.octets() {
+        return None;
+    }
+
+    let mut reply = packet[..total_len].to_vec();
+    let source = <[u8; 4]>::try_from(&reply[12..16]).ok()?;
+    reply[12..16].copy_from_slice(&local_address.octets());
+    reply[16..20].copy_from_slice(&source);
+    reply[8] = 64;
+    reply[ihl] = 0;
+
+    reply[ihl + 2] = 0;
+    reply[ihl + 3] = 0;
+    let icmp_checksum = finalize_sum(add_words(0, &reply[ihl..total_len]));
+    reply[ihl + 2..ihl + 4].copy_from_slice(&icmp_checksum.to_be_bytes());
+
+    reply[10] = 0;
+    reply[11] = 0;
+    let header_checksum = finalize_sum(add_words(0, &reply[..ihl]));
+    reply[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+    Some(reply)
+}
+
 /// Recompute TCP/UDP checksums for supported IP packets in-place.
 pub fn finalize_transport_checksum(packet: &mut [u8]) {
     match packet.first().map(|byte| byte >> 4) {
@@ -147,6 +195,57 @@ fn finalize_sum(mut sum: u32) -> u16 {
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    fn icmp_echo_request(src: Ipv4Addr, dst: Ipv4Addr) -> Vec<u8> {
+        let payload = b"nvpn-ping";
+        let total_len = 20 + 8 + payload.len();
+        let mut packet = vec![0_u8; total_len];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(
+            &u16::try_from(total_len)
+                .expect("test packet fits u16")
+                .to_be_bytes(),
+        );
+        packet[8] = 64;
+        packet[9] = 1;
+        packet[12..16].copy_from_slice(&src.octets());
+        packet[16..20].copy_from_slice(&dst.octets());
+        packet[20] = 8;
+        packet[24..26].copy_from_slice(&0x1234_u16.to_be_bytes());
+        packet[26..28].copy_from_slice(&7_u16.to_be_bytes());
+        packet[28..].copy_from_slice(payload);
+        let icmp_checksum = finalize_sum(add_words(0, &packet[20..]));
+        packet[22..24].copy_from_slice(&icmp_checksum.to_be_bytes());
+        let header_checksum = finalize_sum(add_words(0, &packet[..20]));
+        packet[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+        packet
+    }
+
+    #[test]
+    fn replies_to_ipv4_icmp_echo_for_local_tunnel_address() {
+        let source = Ipv4Addr::new(10, 44, 5, 62);
+        let local = Ipv4Addr::new(10, 44, 252, 137);
+        let request = icmp_echo_request(source, local);
+        let reply = ipv4_icmp_echo_reply(&request, local).expect("echo reply");
+
+        assert_eq!(&reply[12..16], &local.octets());
+        assert_eq!(&reply[16..20], &source.octets());
+        assert_eq!(reply[20], 0);
+        assert_eq!(reply[21], 0);
+        assert_eq!(finalize_sum(add_words(0, &reply[20..])), 0);
+        assert_eq!(finalize_sum(add_words(0, &reply[..20])), 0);
+        assert_eq!(&reply[24..], &request[24..]);
+    }
+
+    #[test]
+    fn ignores_ipv4_icmp_echo_for_another_address() {
+        let request = icmp_echo_request(
+            Ipv4Addr::new(10, 44, 5, 62),
+            Ipv4Addr::new(10, 44, 252, 137),
+        );
+
+        assert!(ipv4_icmp_echo_reply(&request, Ipv4Addr::new(10, 44, 252, 138)).is_none());
+    }
 
     fn test_len_u16(len: usize) -> u16 {
         u16::try_from(len).expect("test packet length fits u16")
