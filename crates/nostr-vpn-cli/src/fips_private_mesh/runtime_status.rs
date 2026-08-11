@@ -1,5 +1,5 @@
 fn endpoint_link_refreshable_after_stale_participant(peer_link: &FipsEndpointPeer) -> bool {
-    peer_link.direct_probe_pending
+    peer_link.direct_probe_pending && !peer_link.connected
 }
 
 fn endpoint_path_refresh_due(

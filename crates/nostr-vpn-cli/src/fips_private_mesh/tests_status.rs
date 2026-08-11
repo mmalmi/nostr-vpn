@@ -114,6 +114,7 @@
         assert!(!super::endpoint_path_refresh_due(&peer, Some(120), 123));
 
         peer.connected = true;
+        peer.direct_probe_pending = true;
         assert!(
             !super::endpoint_path_refresh_due(&peer, Some(80), 123),
             "connected endpoint links should not be refreshed from wrapper-level participant staleness alone"
@@ -121,14 +122,14 @@
     }
 
     #[test]
-    fn endpoint_path_refresh_prefers_data_freshness_over_control_freshness() {
+    fn disconnected_endpoint_path_refresh_prefers_data_freshness() {
         let peer = FipsEndpointPeer {
             npub: Keys::generate()
                 .public_key()
                 .to_bech32()
                 .expect("npub"),
             node_addr: NodeAddr::from_bytes([7; 16]),
-            connected: true,
+            connected: false,
             transport_addr: Some("203.0.113.7:9000".to_string()),
             transport_type: Some("udp".to_string()),
             link_id: 43,
@@ -155,7 +156,7 @@
 
         assert!(
             super::endpoint_path_refresh_due(&peer, Some(80), 123),
-            "stale tunnel data should refresh direct probes even if control traffic stayed fresh"
+            "stale tunnel data should refresh a disconnected direct probe"
         );
         assert!(
             !super::endpoint_path_refresh_due(&peer, Some(120), 123),
