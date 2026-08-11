@@ -84,7 +84,8 @@ async fn handle_mobile_endpoint_message(
         return Ok(true);
     }
 
-    let source_node_addr = *message.source_peer.node_addr();
+    let source_peer = message.source_peer;
+    let source_node_addr = *source_peer.node_addr();
     let message_len = message.data.len();
     let packet = control.mesh.read().ok().and_then(|mesh| {
         mesh.receive_endpoint_data_owned_with_source_node_addr(
@@ -100,6 +101,21 @@ async fn handle_mobile_endpoint_message(
             message_len,
             MobilePeerRxKind::Data,
         );
+        let local_address = control
+            .config_state
+            .read()
+            .ok()
+            .and_then(|config| parse_ipv4(&config.local_address));
+        if let Some(reply) = local_address.and_then(|local_address| {
+            nostr_vpn_core::packet_checksums::ipv4_icmp_echo_reply(&bytes, local_address)
+        }) {
+            control
+                .endpoint
+                .send_batch_to_peer(source_peer, vec![reply])
+                .await
+                .context("failed to send mobile ICMP echo reply")?;
+            return Ok(true);
+        }
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut bytes);
         inbound_packets.push(bytes);
     }
