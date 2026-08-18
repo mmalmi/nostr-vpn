@@ -616,10 +616,7 @@ impl FipsPrivateTunnelConfig {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn interface_mtu(&self) -> u16 {
         if self.fips_host.is_some() {
-            fips_host_interface_mtu(
-                self.mesh_mtu.tunnel,
-                parse_mtu_env("NVPN_FIPS_HOST_INTERFACE_MTU_FLOOR"),
-            )
+            self.mesh_mtu.tunnel.max(1280)
         } else {
             self.mesh_mtu.tunnel
         }
