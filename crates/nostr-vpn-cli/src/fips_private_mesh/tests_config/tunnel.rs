@@ -649,6 +649,13 @@
             "transport bind changes still require a real endpoint restart",
         );
 
+        let mut changed_local_address = refreshed.clone();
+        changed_local_address.local_address = "10.44.201.17/32".to_string();
+        assert!(
+            fips_tunnel_requires_endpoint_restart(&refreshed, &changed_local_address),
+            "a new roster-derived tunnel address must replace the endpoint and TUN",
+        );
+
         let mut changed_underlay = refreshed.clone();
         changed_underlay.underlay_interface = Some("en0".to_string());
         assert!(
