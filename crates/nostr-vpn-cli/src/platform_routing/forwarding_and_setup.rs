@@ -333,6 +333,84 @@ pub(crate) fn linux_iptables_delete_rule(
     run_checked(&mut command)
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(serde::Deserialize)]
+struct LinuxInterfaceAddressSnapshot {
+    #[serde(default)]
+    addr_info: Vec<LinuxAddressSnapshot>,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(serde::Deserialize)]
+struct LinuxAddressSnapshot {
+    local: String,
+    prefixlen: u8,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn normalized_linux_interface_address(address: &str) -> Option<(IpAddr, u8)> {
+    let (ip, prefix_len) = address.split_once('/').unwrap_or((address, ""));
+    let ip = ip.parse::<IpAddr>().ok()?;
+    let prefix_len = if prefix_len.is_empty() {
+        if ip.is_ipv4() { 32 } else { 128 }
+    } else {
+        prefix_len.parse::<u8>().ok()?
+    };
+    ((ip.is_ipv4() && prefix_len <= 32) || (ip.is_ipv6() && prefix_len <= 128))
+        .then_some((ip, prefix_len))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn stale_linux_interface_addresses_json(raw: &str, desired: &[String]) -> Result<Vec<String>> {
+    let interfaces = serde_json::from_str::<Vec<LinuxInterfaceAddressSnapshot>>(raw)
+        .context("parse Linux tunnel interface addresses")?;
+    let [interface] = interfaces.as_slice() else {
+        return Err(anyhow!("expected exactly one Linux tunnel interface"));
+    };
+    let desired = desired
+        .iter()
+        .filter_map(|address| normalized_linux_interface_address(address))
+        .collect::<Vec<_>>();
+    Ok(interface
+        .addr_info
+        .iter()
+        .filter_map(|address| {
+            let normalized = normalized_linux_interface_address(&format!(
+                "{}/{}", address.local, address.prefixlen
+            ))?;
+            let link_local = match normalized.0 {
+                IpAddr::V4(ip) => ip.is_link_local(),
+                IpAddr::V6(ip) => ip.is_unicast_link_local(),
+            };
+            (!link_local && !desired.contains(&normalized))
+                .then(|| format!("{}/{}", normalized.0, normalized.1))
+        })
+        .collect())
+}
+
+#[cfg(target_os = "linux")]
+fn remove_stale_linux_interface_addresses(iface: &str, desired: &[String]) -> Result<()> {
+    let output = ProcessCommand::new("ip")
+        .args(["-j", "address", "show", "dev", iface])
+        .output()
+        .context("inspect Linux tunnel interface addresses")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "inspect Linux tunnel interface addresses failed with {}",
+            output.status
+        ));
+    }
+    let raw = std::str::from_utf8(&output.stdout)
+        .context("Linux tunnel interface addresses were not UTF-8")?;
+    for address in stale_linux_interface_addresses_json(raw, desired)? {
+        run_checked(
+            ProcessCommand::new("ip")
+                .args(["address", "delete", &address, "dev", iface]),
+        )?;
+    }
+    Ok(())
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
     iface: &str,
@@ -365,6 +443,7 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
                     .arg(iface),
             )?;
         }
+        remove_stale_linux_interface_addresses(iface, addresses)?;
         run_checked(
             ProcessCommand::new("ip")
                 .arg("link")

@@ -360,6 +360,16 @@
             1150,
             Some(4096),
         ));
+        assert!(!linux_interface_state_matches_json(
+            &base.replace(
+                r#"{"family": "inet", "local": "10.44.1.7", "prefixlen": 32}"#,
+                r#"{"family": "inet", "local": "10.44.0.1", "prefixlen": 32},
+                    {"family": "inet", "local": "10.44.1.7", "prefixlen": 32}"#,
+            ),
+            &addresses,
+            1150,
+            Some(4096),
+        ));
     }
 
     fn send_tunnel_packet_batch_owned_with_capacity(

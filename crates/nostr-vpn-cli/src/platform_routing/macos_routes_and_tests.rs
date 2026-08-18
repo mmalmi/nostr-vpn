@@ -128,6 +128,27 @@ mod tests {
     }
 
     #[test]
+    fn linux_tunnel_address_reconciliation_removes_only_stale_owned_addresses() {
+        let state = r#"[{
+            "addr_info": [
+                {"local": "10.44.0.1", "prefixlen": 32},
+                {"local": "10.44.29.134", "prefixlen": 32},
+                {"local": "fd00::134", "prefixlen": 128},
+                {"local": "fe80::134", "prefixlen": 64}
+            ]
+        }]"#;
+        let desired = vec![
+            "10.44.29.134/32".to_string(),
+            "fd00::134/128".to_string(),
+        ];
+
+        assert_eq!(
+            stale_linux_interface_addresses_json(state, &desired).expect("stale addresses"),
+            vec!["10.44.0.1/32"]
+        );
+    }
+
+    #[test]
     fn wireguard_upstream_inbound_drop_rule_blocks_new_mesh_forwards() {
         assert_eq!(
             linux_wireguard_exit_inbound_drop_rule("nvpn-wg-exit", "nvpn0", "10.44.0.0/16"),
