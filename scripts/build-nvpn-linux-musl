@@ -15,6 +15,9 @@ DOCKER_ENV=()
 if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
   DOCKER_ENV+=(-e NVPN_LINUX_MUSL_STRIP=1)
 fi
+if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
+  DOCKER_ENV+=(-e NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES=1)
+fi
 
 source "$WORKSPACE/scripts/release_common.sh"
 enable_deterministic_build_env "$WORKSPACE"
@@ -323,8 +326,12 @@ path.write_text(text.replace(old, new))
 PATCH
 fi
 
+cargo_feature_args=()
+if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
+  cargo_feature_args+=(--no-default-features)
+fi
 cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" \
-  -p nvpn --bin nvpn --release --target "$TARGET"
+  "${cargo_feature_args[@]}" -p nvpn --bin nvpn --release --target "$TARGET"
 if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
   "${TARGET}-strip" "$CARGO_TARGET_DIR/$TARGET/release/nvpn"
 fi
