@@ -27,6 +27,22 @@ mod linux_vnet_tun_tests {
     }
 
     #[test]
+    fn linux_vnet_gro_can_be_disabled_for_constrained_guest_kernels() {
+        let mut first = ipv4_tcp_packet(1000, 800, LINUX_TCP_FLAG_ACK);
+        let mut second = ipv4_tcp_packet(1800, 600, LINUX_TCP_FLAG_ACK | LINUX_TCP_FLAG_PSH);
+        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut first);
+        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut second);
+
+        let mut preparer = LinuxVnetWritePreparer::with_gro(false);
+        let frames = linux_vnet_collect_prepared_write_frames(&mut preparer, vec![first, second]);
+
+        assert_eq!(frames.len(), 2);
+        assert!(frames
+            .iter()
+            .all(|(frame, _)| matches!(frame, LinuxVnetPreparedWriteFrame::RawPacket(_))));
+    }
+
+    #[test]
     fn linux_vnet_tcp4_gso_read_splits_into_checked_segments() {
         let packet = ipv4_tcp_gso_packet(2400, 1200, 0x18);
         let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];

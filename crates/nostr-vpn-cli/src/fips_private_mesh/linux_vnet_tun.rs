@@ -265,6 +265,7 @@ struct LinuxVnetTcp4GroCandidate {
 }
 
 struct LinuxVnetWritePreparer {
+    gro_enabled: bool,
     frames: Vec<LinuxVnetPreparedWriteFrame>,
     vectored_frames: Vec<LinuxVnetWriteFrame>,
     vectored_frame_count: usize,
@@ -318,7 +319,12 @@ impl LinuxVnetPacketBatch for DirectTunWriteBatch {
 
 impl LinuxVnetWritePreparer {
     fn new() -> Self {
+        Self::with_gro(linux_vnet_tun_gro_enabled())
+    }
+
+    fn with_gro(gro_enabled: bool) -> Self {
         Self {
+            gro_enabled,
             frames: Vec::new(),
             vectored_frames: Vec::new(),
             vectored_frame_count: 0,
@@ -340,6 +346,11 @@ impl LinuxVnetWritePreparer {
         self.frames.reserve(packet_count);
         self.open_tcp4_flows.reserve(packet_count);
         for packet_index in 0..packet_count {
+            if !self.gro_enabled {
+                self.frames
+                    .push(LinuxVnetPreparedWriteFrame::RawPacket(packet_index));
+                continue;
+            }
             if let Some(candidate) =
                 self.packet_refs[packet_index].with_slice(linux_vnet_tcp4_gro_candidate)
             {
@@ -426,6 +437,12 @@ impl LinuxVnetWritePreparer {
         index
     }
 
+}
+
+fn linux_vnet_tun_gro_enabled() -> bool {
+    std::env::var("NVPN_FIPS_LINUX_TUN_GRO")
+        .ok()
+        .is_none_or(|value| !matches!(value.trim(), "0" | "false" | "no" | "off"))
 }
 
 #[cfg(test)]
