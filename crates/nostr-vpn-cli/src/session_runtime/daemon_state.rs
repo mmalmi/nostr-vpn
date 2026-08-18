@@ -423,7 +423,10 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
             })
             .count()
     };
-    let fips_other_peer_count = if !vpn_active {
+    // Pre-pairing nodes have no active roster yet, but their FIPS transport is
+    // already running so an admin can deliver the first signed roster. Keep
+    // those non-roster links visible while VPN service is enabled.
+    let fips_other_peer_count = if !vpn_enabled {
         0
     } else {
         fips_peer_statuses

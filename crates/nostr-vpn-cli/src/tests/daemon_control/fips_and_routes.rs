@@ -227,10 +227,29 @@ fn daemon_runtime_state_marks_peers_unreachable_when_vpn_is_off() {
     assert!(!state.vpn_active);
     assert!(!state.vpn_enabled);
     assert_eq!(state.connected_peer_count, 0);
+    assert_eq!(state.fips_other_peer_count, 0);
     assert!(!state.mesh_ready);
     assert_eq!(state.peers.len(), 1);
     assert!(!state.peers[0].reachable);
     assert!(state.peers[0].runtime_endpoint.is_none());
+
+    config.networks[0].devices.clear();
+    let pre_pairing = crate::build_daemon_runtime_state(crate::DaemonRuntimeStateInput {
+        app: &config,
+        vpn_enabled: true,
+        vpn_active: false,
+        expected_peers: 0,
+        tunnel_runtime: &tunnel_runtime,
+        fips_peer_statuses: &fips_peer_statuses,
+        fips_relay_statuses: &[],
+        fips_endpoint_peers: &[],
+        advertised_routes_by_participant: &std::collections::HashMap::new(),
+        vpn_status: "Waiting for approval",
+        network: &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+        port_mapping: &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+    });
+    assert_eq!(pre_pairing.connected_peer_count, 0);
+    assert_eq!(pre_pairing.fips_other_peer_count, 1);
 }
 
 #[test]
