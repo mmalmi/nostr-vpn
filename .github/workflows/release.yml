@@ -111,6 +111,7 @@ jobs:
           NVPN_RELEASE_GATE_LINUX_GUI_SMOKE: '0'
           NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
           NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
+          NVPN_RELEASE_GATE_WINDOWS_DNS_UI_E2E: '0'
           NVPN_RELEASE_GATE_WINDOWS_UNDERLAY_NETWORK_CHANGE_E2E: '0'
           NVPN_RELEASE_GATE_WINDOWS_MOBILE_JOIN_E2E: '0'
           # The signed local release gate requires the real private desktop
