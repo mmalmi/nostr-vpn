@@ -1651,7 +1651,7 @@ test('StartOS staging uses an explicit inspected prebuilt directory without buil
   assert.match(build, /if \(prebuilt\) copyFileSync/)
 })
 
-test('release builds always include paid exit support', () => {
+test('release builds include paid exit support by default', () => {
   for (const manifest of [
     'crates/nostr-vpn-core/Cargo.toml',
     'crates/nostr-vpn-cli/Cargo.toml',
@@ -1662,7 +1662,12 @@ test('release builds always include paid exit support', () => {
   }
 
   const linuxBuilder = readFileSync('scripts/build-nvpn-linux-musl', 'utf8')
-  assert.doesNotMatch(linuxBuilder, /NO_DEFAULT_FEATURES|--no-default-features/)
+  const releaseWorkflow = readFileSync('.github/workflows/release.yml', 'utf8')
+  assert.match(
+    linuxBuilder,
+    /if \[\[ \$\{NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0\} == 1 \]\]; then[\s\S]*cargo_feature_args\+=\(--no-default-features\)/,
+  )
+  assert.doesNotMatch(releaseWorkflow, /NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES/)
 })
 
 test('Linux musl builds extract only rustables instead of vendoring every dependency', () => {
@@ -2529,6 +2534,24 @@ test('Linux release reclaims Docker smoke storage before host packaging', () => 
   assert.ok(buildx >= 0 && smoke > buildx && cleanup > smoke && desktopPackage > cleanup)
   assert.match(linuxJob, /docker compose down --volumes --remove-orphans/)
   assert.match(linuxJob, /docker system prune --all --force --volumes/)
+})
+
+test('hosted release verification disables every private Windows lane', () => {
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+  const verifyStart = workflow.indexOf('  verify:')
+  const verifyEnd = workflow.indexOf('  build-cli:', verifyStart)
+  const verifyJob = workflow.slice(verifyStart, verifyEnd)
+
+  assert.ok(verifyStart >= 0 && verifyEnd > verifyStart)
+  for (const lane of [
+    'NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE',
+    'NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E',
+    'NVPN_RELEASE_GATE_WINDOWS_DNS_UI_E2E',
+    'NVPN_RELEASE_GATE_WINDOWS_MANUAL_JOIN_UI_E2E',
+    'NVPN_RELEASE_GATE_WINDOWS_SERVICE_TOGGLE_E2E',
+  ]) {
+    assert.match(verifyJob, new RegExp(`${lane}: '0'`))
+  }
 })
 
 test('dispatched release notes contain no build provenance text', () => {
