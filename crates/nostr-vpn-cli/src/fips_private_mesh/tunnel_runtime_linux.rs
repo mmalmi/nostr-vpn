@@ -15,6 +15,23 @@ fn linux_withhold_default_route_for_missing_peer_endpoint(
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn linux_cached_underlay_route_matches_interface(
+    cached_route: Option<&str>,
+    interface: &str,
+) -> bool {
+    let Some(route) = cached_route else {
+        return false;
+    };
+    let mut tokens = route.split_whitespace();
+    while let Some(token) = tokens.next() {
+        if token == "dev" {
+            return tokens.next() == Some(interface);
+        }
+    }
+    false
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn linux_strict_exit_requested(route_targets: &[String], exit_node_leak_protection: bool) -> bool {
     exit_node_leak_protection
         && route_targets
@@ -283,16 +300,23 @@ impl FipsPrivateTunnelRuntime {
                         format!("failed to inspect IPv4 underlay route on {interface}")
                     })? {
                     Some(route) => route,
-                    None => self
-                        .exit_node_runtime
-                        .wireguard_exit
-                        .as_ref()
-                        .and_then(|runtime| {
-                            runtime.underlay_default_route_for_interface(interface)
-                        })
-                        .ok_or_else(|| {
-                            anyhow!("failed to resolve IPv4 underlay route on {interface}")
-                        })?,
+                    None => {
+                        if linux_cached_underlay_route_matches_interface(
+                            self.original_default_route.as_deref(),
+                            interface,
+                        ) {
+                            return Ok(());
+                        }
+                        self.exit_node_runtime
+                            .wireguard_exit
+                            .as_ref()
+                            .and_then(|runtime| {
+                                runtime.underlay_default_route_for_interface(interface)
+                            })
+                            .ok_or_else(|| {
+                                anyhow!("failed to resolve IPv4 underlay route on {interface}")
+                            })?
+                    }
                 }
             }
             None => match crate::linux_default_route() {

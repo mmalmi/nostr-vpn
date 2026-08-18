@@ -49,6 +49,7 @@
     };
     use super::{
         linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
+        linux_cached_underlay_route_matches_interface,
         linux_ipv4_underlay_capture_requested, linux_ipv4_underlay_restore_due,
         linux_strict_exit_requested, linux_withhold_default_route_for_missing_peer_endpoint,
     };
@@ -149,6 +150,21 @@
             &["198.51.100.7".parse().unwrap()],
             false,
         ));
+    }
+
+    #[test]
+    fn ethernet_fips_underlay_reuses_its_cached_default_after_exit_activation() {
+        let cached = "default via 192.0.2.1 dev eth0 proto dhcp src 192.0.2.10";
+
+        assert!(linux_cached_underlay_route_matches_interface(
+            Some(cached),
+            "eth0",
+        ));
+        assert!(!linux_cached_underlay_route_matches_interface(
+            Some(cached),
+            "eth1",
+        ));
+        assert!(!linux_cached_underlay_route_matches_interface(None, "eth0"));
     }
 
     #[test]
