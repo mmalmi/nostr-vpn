@@ -50,7 +50,7 @@
     use super::{
         linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
         linux_ipv4_underlay_capture_requested, linux_ipv4_underlay_restore_due,
-        linux_strict_exit_requested,
+        linux_strict_exit_requested, linux_withhold_default_route_for_missing_peer_endpoint,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
@@ -126,6 +126,28 @@
         assert!(!linux_endpoint_bypass_hosts_unchanged(
             &current,
             &changed_hosts,
+        ));
+    }
+
+    #[test]
+    fn ethernet_fips_underlay_does_not_need_an_ip_endpoint_bypass() {
+        let routes = vec!["0.0.0.0/0".to_string()];
+        let no_hosts = Vec::<Ipv4Addr>::new();
+
+        assert!(linux_withhold_default_route_for_missing_peer_endpoint(
+            &routes,
+            &no_hosts,
+            false,
+        ));
+        assert!(!linux_withhold_default_route_for_missing_peer_endpoint(
+            &routes,
+            &no_hosts,
+            true,
+        ));
+        assert!(!linux_withhold_default_route_for_missing_peer_endpoint(
+            &routes,
+            &["198.51.100.7".parse().unwrap()],
+            false,
         ));
     }
 

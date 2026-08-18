@@ -4,6 +4,17 @@ fn linux_route_targets_require_ip_endpoint_bypass(route_targets: &[String]) -> b
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn linux_withhold_default_route_for_missing_peer_endpoint(
+    route_targets: &[String],
+    peer_endpoint_hosts: &[Ipv4Addr],
+    ethernet_underlay_configured: bool,
+) -> bool {
+    !ethernet_underlay_configured
+        && peer_endpoint_hosts.is_empty()
+        && route_targets.iter().any(|route| route == "0.0.0.0/0")
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn linux_strict_exit_requested(route_targets: &[String], exit_node_leak_protection: bool) -> bool {
     exit_node_leak_protection
         && route_targets
@@ -113,9 +124,11 @@ impl FipsPrivateTunnelRuntime {
         let mut peer_endpoint_hosts = Vec::new();
         if original_route_targets_require_bypass {
             peer_endpoint_hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
-            if route_targets.iter().any(|route| route == "0.0.0.0/0")
-                && peer_endpoint_hosts.is_empty()
-            {
+            if linux_withhold_default_route_for_missing_peer_endpoint(
+                &route_targets,
+                &peer_endpoint_hosts,
+                config.ethernet_underlay.is_some(),
+            ) {
                 eprintln!(
                     "fips: withholding default route until the selected exit peer underlay endpoint is known"
                 );
