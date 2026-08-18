@@ -616,7 +616,10 @@ impl FipsPrivateTunnelConfig {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn interface_mtu(&self) -> u16 {
         if self.fips_host.is_some() {
-            self.mesh_mtu.tunnel.max(1280)
+            fips_host_interface_mtu(
+                self.mesh_mtu.tunnel,
+                parse_mtu_env("NVPN_FIPS_HOST_INTERFACE_MTU_FLOOR"),
+            )
         } else {
             self.mesh_mtu.tunnel
         }
@@ -807,6 +810,8 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     macos_underlay_refresh_pending: bool,
     #[cfg(target_os = "linux")]
     original_default_route: Option<String>,
+    #[cfg(target_os = "linux")]
+    ethernet_underlay_default_route: Option<String>,
     #[cfg(target_os = "linux")]
     original_default_ipv6_route: Option<String>,
     #[cfg(target_os = "linux")]

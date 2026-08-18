@@ -226,6 +226,13 @@
     }
 
     #[test]
+    fn explicit_fips_host_mtu_floor_supports_constrained_web_runtimes() {
+        assert_eq!(super::fips_host_interface_mtu(1000, None), 1280);
+        assert_eq!(super::fips_host_interface_mtu(1000, Some(1000)), 1000);
+        assert_eq!(super::fips_host_interface_mtu(1150, Some(1000)), 1150);
+    }
+
+    #[test]
     fn private_mesh_mtu_lan_profile_uses_larger_paired_budget() {
         let mtu = super::resolve_private_mesh_mtu(Some(" LAN "), None, None);
 

@@ -15,7 +15,8 @@ fn linux_withhold_default_route_for_missing_peer_endpoint(
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn linux_cached_underlay_route_matches_interface(
+fn linux_reuse_cached_underlay_route(
+    original_default_route: &mut Option<String>,
     cached_route: Option<&str>,
     interface: &str,
 ) -> bool {
@@ -25,7 +26,11 @@ fn linux_cached_underlay_route_matches_interface(
     let mut tokens = route.split_whitespace();
     while let Some(token) = tokens.next() {
         if token == "dev" {
-            return tokens.next() == Some(interface);
+            if tokens.next() != Some(interface) {
+                return false;
+            }
+            *original_default_route = Some(route.to_string());
+            return true;
         }
     }
     false
@@ -290,8 +295,11 @@ impl FipsPrivateTunnelRuntime {
         &mut self,
         underlay_interface: Option<&str>,
     ) -> Result<()> {
-        if underlay_interface.is_none() && self.original_default_route.is_some() {
-            return Ok(());
+        if underlay_interface.is_none() {
+            self.ethernet_underlay_default_route = None;
+            if self.original_default_route.is_some() {
+                return Ok(());
+            }
         }
         let route = match underlay_interface {
             Some(interface) => {
@@ -301,8 +309,9 @@ impl FipsPrivateTunnelRuntime {
                     })? {
                     Some(route) => route,
                     None => {
-                        if linux_cached_underlay_route_matches_interface(
-                            self.original_default_route.as_deref(),
+                        if linux_reuse_cached_underlay_route(
+                            &mut self.original_default_route,
+                            self.ethernet_underlay_default_route.as_deref(),
                             interface,
                         ) {
                             return Ok(());
@@ -332,14 +341,27 @@ impl FipsPrivateTunnelRuntime {
             route,
             &self.iface,
         )
-        .context("failed to update cached IPv4 underlay route")
+        .context("failed to update cached IPv4 underlay route")?;
+        if underlay_interface.is_some() {
+            self.ethernet_underlay_default_route
+                .clone_from(&self.original_default_route);
+        }
+        Ok(())
     }
 
     pub(crate) fn linux_underlay_default_route_hints(&self) -> Vec<String> {
         if let Some(runtime) = self.exit_node_runtime.wireguard_exit.as_ref() {
             return runtime.underlay_default_route_hints().to_vec();
         }
-        self.original_default_route.iter().cloned().collect()
+        let mut routes = self
+            .original_default_route
+            .iter()
+            .chain(self.ethernet_underlay_default_route.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        routes.sort();
+        routes.dedup();
+        routes
     }
 
     fn capture_linux_original_default_ipv6_route(
