@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file.
 - Expand public FIPS WebSocket seed capacity so ordinary browser clients retain
   admission headroom as the authenticated public mesh grows, and evict
   persistently poisoned end-to-end sessions so seed receive loops recover.
+- Close a browser's physical WebSocket after its authenticated route becomes
+  link-dead, allowing WebVM to reconnect instead of waiting forever on an
+  orphaned carrier after approval.
 - Show the complete underlying cause chain in native app action errors instead
   of hiding useful wallet, service, and network diagnostics behind a generic
   top-level message.
