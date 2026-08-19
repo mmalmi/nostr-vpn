@@ -27,6 +27,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const umbrelDir = join(repoRoot, 'umbrel')
+const baseComposePath = join(umbrelDir, 'docker-compose.yml')
 const baseManifestPath = join(umbrelDir, 'umbrel-app.yml')
 const baseIconPath = join(umbrelDir, 'icon.svg')
 const baseExportsPath = join(umbrelDir, 'exports.sh')
@@ -390,53 +391,25 @@ docker compose -f umbrel/docker-compose.local.yml config
 `
 }
 
-export function renderUmbrelCompose(imageRef) {
+export function renderUmbrelCompose(
+  imageRef,
+  templateText = readFileSync(baseComposePath, 'utf8'),
+) {
   const pinnedRef = validatePinnedImageRef(imageRef)
-  return `services:
-  app_proxy:
-    restart: unless-stopped
-    environment:
-      APP_HOST: nostr-vpn_web_1
-      APP_PORT: 38080
-
-  daemon:
-    image: ${pinnedRef}
-    restart: unless-stopped
-    stop_grace_period: 1m
-    network_mode: "host"
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    entrypoint:
-      - /usr/local/bin/nvpn
-    command:
-      - daemon
-      - --config
-      - /data/config/nvpn/config.toml
-    environment:
-      HOME: /data/home
-      XDG_CONFIG_HOME: /data/config
-      RUST_LOG: info
-    volumes:
-      - \${APP_DATA_DIR}/data:/data
-
-  web:
-    image: ${pinnedRef}
-    restart: unless-stopped
-    stop_grace_period: 1m
-    depends_on:
-      - daemon
-    environment:
-      HOME: /data/home
-      XDG_CONFIG_HOME: /data/config
-      NVPN_CLI_PATH: /usr/local/bin/nvpn
-      NVPN_DAEMON_STATUS_MODE: state-file
-      NVPN_EXTERNAL_DAEMON: "true"
-      RUST_LOG: info
-    volumes:
-      - \${APP_DATA_DIR}/data:/data
-`
+  let replacementCount = 0
+  const compose = templateText.replace(
+    /^(\s*image:\s*)nostr-vpn-umbrel:local\s*$/gm,
+    (_line, prefix) => {
+      replacementCount += 1
+      return `${prefix}${pinnedRef}`
+    },
+  )
+  if (replacementCount !== 2) {
+    throw new Error(
+      `Expected canonical Umbrel compose to contain exactly two local image references, found ${replacementCount}`,
+    )
+  }
+  return compose.endsWith('\n') ? compose : `${compose}\n`
 }
 
 export function renderUmbrelManifest(templateText, { tag, releaseNotes } = {}) {

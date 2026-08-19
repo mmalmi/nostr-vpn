@@ -148,6 +148,10 @@ test('renderUmbrelCompose includes the pinned image and tunnel access', () => {
   assert.match(compose, /NVPN_DAEMON_STATUS_MODE: state-file/)
   assert.match(compose, /NVPN_EXTERNAL_DAEMON: "true"/)
   assert.match(compose, /^      APP_PORT: 38080$/m)
+  assert.match(
+    compose,
+    /^    command:\n      - --listen\n      - 0\.0\.0\.0:38080\n      - --behind-trusted-proxy\n      - --config\n      - \/data\/config\/nvpn\/config\.toml$/m,
+  )
 })
 
 test('renderUmbrelManifest syncs version and release notes', () => {
