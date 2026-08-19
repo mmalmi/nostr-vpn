@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file.
 - Print join-request reachability once, keep the approval wait quiet through
   transient connectivity changes without polling the daemon, and stop creating
   a replacement request immediately after approval.
+- Expand public FIPS WebSocket seed capacity so ordinary browser clients retain
+  admission headroom as the authenticated public mesh grows.
 - Show the complete underlying cause chain in native app action errors instead
   of hiding useful wallet, service, and network diagnostics behind a generic
   top-level message.
