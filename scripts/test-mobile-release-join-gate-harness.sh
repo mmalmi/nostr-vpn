@@ -1155,8 +1155,8 @@ fi
   }
   stuck_poll() { sleep 5; }
   late_state_poll() { printf '%s\n' "$((deadline + 1))"; }
-  reverse_desktop_poll() { sleep 0.25; release_join_now_ms; }
-  reverse_pixel_poll() { sleep 0.3; release_join_now_ms; }
+  reverse_desktop_poll() { sleep 1; release_join_now_ms; }
+  reverse_pixel_poll() { sleep 1.2; release_join_now_ms; }
   timestamp="$PRIVATE_DIR/detected-ms.txt"
   deadline=$(( $(release_join_now_ms) + 500 ))
   release_join_observe_until_ms "$deadline" "$timestamp" quick quick_poll
@@ -1187,7 +1187,9 @@ fi
     echo "Blocking public-UI poll outlived its absolute deadline" >&2
     exit 1
   }
-  reverse_deadline=$(( $(release_join_now_ms) + 450 ))
+  # Keep enough process-start margin for loaded macOS CI while retaining a
+  # deadline shorter than the two polls would take if run serially.
+  reverse_deadline=$(( $(release_join_now_ms) + 1800 ))
   release_join_observe_pair_until_ms \
     "$reverse_deadline" \
     "$PRIVATE_DIR/reverse-desktop.txt" reverse-desktop \
