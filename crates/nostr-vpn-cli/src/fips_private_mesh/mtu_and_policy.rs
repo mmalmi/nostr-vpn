@@ -112,11 +112,6 @@ fn clamp_mtu(value: Option<u16>, min: u16) -> Option<u16> {
     value.map(|mtu| mtu.clamp(min, MESH_MAX_MTU))
 }
 
-fn fips_host_interface_mtu(tunnel_mtu: u16, floor_override: Option<u16>) -> u16 {
-    let floor = clamp_mtu(floor_override, MESH_MIN_TUNNEL_MTU).unwrap_or(1280);
-    tunnel_mtu.max(floor)
-}
-
 fn clamp_mesh_mtu_to_underlay_interface_mtu(
     mut mtu: MeshMtu,
     underlay_interface_mtu: Option<u32>,

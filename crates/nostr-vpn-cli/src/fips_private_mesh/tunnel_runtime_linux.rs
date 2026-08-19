@@ -53,6 +53,14 @@ fn linux_ipv4_underlay_capture_requested(
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn linux_missing_ipv4_underlay_route_allowed(
+    ethernet_underlay_configured: bool,
+    wireguard_exit_enabled: bool,
+) -> bool {
+    ethernet_underlay_configured && !wireguard_exit_enabled
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn linux_ipv4_underlay_restore_due(
     requested_ipv4_exit: bool,
     active_mesh_ipv4_exit: bool,
@@ -162,7 +170,13 @@ impl FipsPrivateTunnelRuntime {
         let active_ipv6_exit = route_targets.iter().any(|route| route == "::/0");
 
         if requested_ipv4_exit {
-            self.capture_linux_original_default_route(config.underlay_interface.as_deref())?;
+            self.capture_linux_original_default_route(
+                config.underlay_interface.as_deref(),
+                linux_missing_ipv4_underlay_route_allowed(
+                    config.ethernet_underlay.is_some(),
+                    config.wireguard_exit.enabled,
+                ),
+            )?;
         } else {
             self.restore_linux_original_default_route();
         }
@@ -294,10 +308,14 @@ impl FipsPrivateTunnelRuntime {
     fn capture_linux_original_default_route(
         &mut self,
         underlay_interface: Option<&str>,
+        allow_missing: bool,
     ) -> Result<()> {
         if underlay_interface.is_none() {
             self.ethernet_underlay_default_route = None;
             if self.original_default_route.is_some() {
+                return Ok(());
+            }
+            if allow_missing {
                 return Ok(());
             }
         }
@@ -307,7 +325,7 @@ impl FipsPrivateTunnelRuntime {
                     .with_context(|| {
                         format!("failed to inspect IPv4 underlay route on {interface}")
                     })? {
-                    Some(route) => route,
+                    Some(route) => Some(route),
                     None => {
                         if linux_reuse_cached_underlay_route(
                             &mut self.original_default_route,
@@ -322,19 +340,31 @@ impl FipsPrivateTunnelRuntime {
                             .and_then(|runtime| {
                                 runtime.underlay_default_route_for_interface(interface)
                             })
-                            .ok_or_else(|| {
-                                anyhow!("failed to resolve IPv4 underlay route on {interface}")
-                            })?
+                            .map_or_else(
+                                || {
+                                    if allow_missing {
+                                        Ok(None)
+                                    } else {
+                                        Err(anyhow!(
+                                            "failed to resolve IPv4 underlay route on {interface}"
+                                        ))
+                                    }
+                                },
+                                |route| Ok(Some(route)),
+                            )?
                     }
                 }
             }
             None => match crate::linux_default_route() {
-                Ok(route) => route,
+                Ok(route) => Some(route),
                 Err(error) => {
                     eprintln!("fips: failed to capture original default route: {error}");
                     return Ok(());
                 }
             },
+        };
+        let Some(route) = route else {
+            return Ok(());
         };
         crate::update_linux_underlay_default_route(
             &mut self.original_default_route,
@@ -938,7 +968,7 @@ impl FipsPrivateTunnelRuntime {
         if !enabled {
             return;
         }
-        if let Err(error) = self.capture_linux_original_default_route(None) {
+        if let Err(error) = self.capture_linux_original_default_route(None, false) {
             eprintln!("fips: failed to capture WireGuard underlay default route: {error:#}");
         }
         if let Err(error) = self.persist_network_cleanup_ownership() {

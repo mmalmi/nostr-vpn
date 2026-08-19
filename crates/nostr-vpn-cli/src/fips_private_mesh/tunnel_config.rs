@@ -616,10 +616,7 @@ impl FipsPrivateTunnelConfig {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn interface_mtu(&self) -> u16 {
         if self.fips_host.is_some() {
-            fips_host_interface_mtu(
-                self.mesh_mtu.tunnel,
-                parse_mtu_env("NVPN_FIPS_HOST_INTERFACE_MTU_FLOOR"),
-            )
+            self.mesh_mtu.tunnel.max(1280)
         } else {
             self.mesh_mtu.tunnel
         }
@@ -726,6 +723,7 @@ fn fips_tunnel_requires_endpoint_restart(
     // still propagate through `apply_config` -> `mesh.replace_peers`.
     current.identity_nsec != next.identity_nsec
         || current.network_id != next.network_id
+        || current.local_address != next.local_address
         || current.listen_port != next.listen_port
         || fips_tunnel_public_udp_external_addr(current)
             != fips_tunnel_public_udp_external_addr(next)

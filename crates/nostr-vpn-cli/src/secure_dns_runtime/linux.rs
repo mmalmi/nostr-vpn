@@ -16,7 +16,7 @@ use anyhow::{Context, Result, anyhow};
 
 pub(super) const LINUX_DIRECT_RESOLV_CONF: &[u8] = b"# Managed by nvpn secure DNS\n\
 nameserver 127.0.0.1\n\
-options timeout:1 attempts:1\n";
+options timeout:7 attempts:1\n";
 #[cfg(unix)]
 const LINUX_RESOLVED_PREFIX: &str = ".nvpn-resolv-";
 #[cfg(unix)]

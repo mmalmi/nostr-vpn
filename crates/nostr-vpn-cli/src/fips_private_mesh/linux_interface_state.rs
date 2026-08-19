@@ -47,15 +47,17 @@ fn linux_interface_state_matches_json(
                 .ok()
                 .map(|ip| (ip, address.prefixlen))
         })
+		.filter(|(ip, _)| match ip {
+			IpAddr::V4(ip) => !ip.is_link_local(),
+			IpAddr::V6(ip) => !ip.is_unicast_link_local(),
+		})
         .collect::<HashSet<_>>();
-    addresses.iter().all(|address| {
+	let desired = addresses.iter().filter_map(|address| {
         let (ip, prefix_len) = address.split_once('/').map_or(
             (address.as_str(), None),
             |(ip, prefix_len)| (ip, Some(prefix_len)),
         );
-        let Ok(ip) = ip.parse::<IpAddr>() else {
-            return false;
-        };
+		let ip = ip.parse::<IpAddr>().ok()?;
         let prefix_len = match prefix_len {
             Some(prefix_len) => match prefix_len.parse::<u8>() {
                 Ok(prefix_len)
@@ -64,13 +66,14 @@ fn linux_interface_state_matches_json(
                 {
                     prefix_len
                 }
-                _ => return false,
+				_ => return None,
             },
             None if ip.is_ipv4() => 32,
             None => 128,
         };
-        actual.contains(&(ip, prefix_len))
-    })
+		Some((ip, prefix_len))
+	}).collect::<HashSet<_>>();
+	desired.len() == addresses.len() && actual == desired
 }
 
 #[cfg(target_os = "linux")]

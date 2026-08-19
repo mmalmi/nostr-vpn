@@ -50,7 +50,8 @@
     use super::{
         linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
         linux_ipv4_underlay_capture_requested, linux_ipv4_underlay_restore_due,
-        linux_reuse_cached_underlay_route, linux_strict_exit_requested,
+        linux_missing_ipv4_underlay_route_allowed, linux_reuse_cached_underlay_route,
+        linux_strict_exit_requested,
         linux_withhold_default_route_for_missing_peer_endpoint,
     };
     #[cfg(target_os = "linux")]
@@ -150,6 +151,13 @@
             &["198.51.100.7".parse().unwrap()],
             false,
         ));
+    }
+
+    #[test]
+    fn ethernet_fips_underlay_allows_an_absent_ip_default_route() {
+        assert!(linux_missing_ipv4_underlay_route_allowed(true, false));
+        assert!(!linux_missing_ipv4_underlay_route_allowed(false, false));
+        assert!(!linux_missing_ipv4_underlay_route_allowed(true, true));
     }
 
     #[test]
@@ -357,6 +365,16 @@
         assert!(!linux_interface_state_matches_json(
             base,
             &["10.44.1.7/99".to_string()],
+            1150,
+            Some(4096),
+        ));
+        assert!(!linux_interface_state_matches_json(
+            &base.replace(
+                r#"{"family": "inet", "local": "10.44.1.7", "prefixlen": 32}"#,
+                r#"{"family": "inet", "local": "10.44.0.1", "prefixlen": 32},
+                    {"family": "inet", "local": "10.44.1.7", "prefixlen": 32}"#,
+            ),
+            &addresses,
             1150,
             Some(4096),
         ));

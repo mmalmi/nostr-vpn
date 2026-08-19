@@ -1,6 +1,6 @@
 #[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 use std::net::IpAddr;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use std::net::Ipv4Addr;

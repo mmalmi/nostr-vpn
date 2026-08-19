@@ -101,7 +101,8 @@ fn initialize_or_load_admin(
 
 fn run() -> Result<()> {
     let args = parse_args()?;
-    let parsed = parse_join_request_qr_code_or_link(&args.join_request)?;
+    let parsed = parse_join_request_qr_code_or_link(&args.join_request)
+        .map_err(|error| anyhow!("{error:#}"))?;
     let recipient = normalize_nostr_pubkey(&parsed.bootstrap.device_app_key_npub)?;
     let config_path = args.data_dir.join("config.toml");
     let websocket = fips_core::config::WebSocketConfig {
@@ -152,7 +153,8 @@ fn run() -> Result<()> {
         "queueDepth": initial_queue.len(),
     }));
 
-    let delivered = deliver_queued_join_rosters(&config_path, args.timeout)?;
+    let delivered = deliver_queued_join_rosters(&config_path, args.timeout)
+        .map_err(|error| anyhow!("{error:#}"))?;
     if !load_join_rosters(&config_path).is_empty() {
         bail!("ordinary queued roster delivery did not drain");
     }
