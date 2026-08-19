@@ -550,6 +550,8 @@ impl NativeAppRuntime {
                 .inbound_join_requests
                 .retain(|pending| pending.requester != requester);
         }
+        let delivery = prepare_manual_join_delivery(&self.config, network_id, &requester)?;
+        self.queue_join_roster_delivery_to(&requester, &delivery)?;
         self.save_reload_and_refresh()?;
         if !self.vpn_enabled {
             self.connect_vpn()?;

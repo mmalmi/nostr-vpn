@@ -22,15 +22,18 @@ pub(super) fn respond_to_join_request(
     app: &mut AppConfig,
     request: crate::DaemonJoinRequestIpcRequest,
 ) {
-    if request.reset {
-        app.clear_pending_nostr_join_request();
-    }
-    let response = app
-        .ensure_pending_nostr_join_request(crate::unix_timestamp())
-        .and_then(|_| {
-            app.pending_nostr_join_request_link(crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX)
-        })
-        .map_err(|error| error.to_string());
+    let response = if app.active_network_has_confirmed_local_identity() {
+        Err("this device is already approved for its active network".to_string())
+    } else {
+        if request.reset {
+            app.clear_pending_nostr_join_request();
+        }
+        app.ensure_pending_nostr_join_request(crate::unix_timestamp())
+            .and_then(|_| {
+                app.pending_nostr_join_request_link(crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX)
+            })
+            .map_err(|error| error.to_string())
+    };
     let _ = request.response.send(response);
 }
 
@@ -171,6 +174,37 @@ fn consume_join_roster(path: &Path) {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn approved_device_ipc_does_not_create_another_join_request() {
+        let mut app = AppConfig::generated_without_networks();
+        let network_id = app.add_owned_network("Approved network");
+        let own_pubkey = app.own_nostr_pubkey_hex().expect("own public key");
+        app.network_by_id_mut(&network_id)
+            .expect("owned network")
+            .devices
+            .push(own_pubkey);
+        app.set_network_enabled(&network_id, true)
+            .expect("enable approved network");
+        assert!(app.active_network_has_confirmed_local_identity());
+        assert!(app.pending_nostr_join_request.is_none());
+        let (response, received) = tokio::sync::oneshot::channel();
+
+        respond_to_join_request(
+            &mut app,
+            crate::DaemonJoinRequestIpcRequest {
+                reset: false,
+                response,
+            },
+        );
+
+        let error = received
+            .blocking_recv()
+            .expect("daemon response")
+            .expect_err("approved device must not receive a new request");
+        assert!(error.contains("already"), "unexpected IPC error: {error}");
+        assert!(app.pending_nostr_join_request.is_none());
+    }
 
     #[test]
     fn failed_join_roster_delivery_keeps_outbox_file_for_retry() {

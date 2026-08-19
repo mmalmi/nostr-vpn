@@ -1,6 +1,6 @@
 use super::*;
 
-const DAEMON_STATE_PERSIST_INTERVAL_SECS: u64 = 5;
+pub(crate) const DAEMON_STATE_PERSIST_INTERVAL_SECS: u64 = 5;
 const DAEMON_PEER_MAX_FUTURE_SKEW_SECS: u64 = 2;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 300;

@@ -46,6 +46,20 @@
             runtime.config.peer_alias(&requester_hex).as_deref(),
             Some("linux-dev")
         );
+        assert_eq!(
+            runtime.queued_join_rosters.len(),
+            1,
+            "accepting an inbound request must queue the signed roster back to the joiner"
+        );
+        let manual_token = nostr_vpn_core::join_requests::manual_join_request_token(
+            &runtime.config.networks[0].network_id,
+            &runtime.config.own_nostr_pubkey_hex().expect("admin pubkey"),
+            &requester_hex,
+        )
+        .expect("manual join request token");
+        runtime.queued_join_rosters[0]
+            .verify_for_request(&manual_token)
+            .expect("request-bound inbound join roster");
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert_eq!(

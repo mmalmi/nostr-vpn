@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use qrcode::QrCode;
 use qrcode::render::unicode::Dense1x2;
 
-#[cfg(not(unix))]
 use nostr_vpn_core::config::AppConfig;
 
 #[cfg(not(unix))]
@@ -17,6 +16,7 @@ use crate::{
 };
 
 pub(crate) const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
+const REQUEST_REACHABILITY_MAX_AGE_SECS: u64 = crate::DAEMON_STATE_PERSIST_INTERVAL_SECS * 3;
 
 #[cfg(all(test, not(unix)))]
 pub(crate) fn pending_pairing_uri(config_path: &Path) -> Result<String> {
@@ -72,6 +72,13 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
                 return Ok(());
             }
             _ = poll.tick() => {
+                #[cfg(unix)]
+                if AppConfig::load(&config_path)
+                    .is_ok_and(|app| app.active_network_has_confirmed_local_identity())
+                {
+                    println!("Join request accepted.");
+                    return Ok(());
+                }
                 #[cfg(not(unix))]
                 let app = AppConfig::load(&config_path)
                     .with_context(|| format!("failed to reload {}", config_path.display()))?;
@@ -166,10 +173,17 @@ impl RequestReachability {
 }
 
 fn request_reachability(state: Option<&DaemonRuntimeState>) -> RequestReachability {
+    request_reachability_at(state, unix_timestamp())
+}
+
+fn request_reachability_at(state: Option<&DaemonRuntimeState>, now: u64) -> RequestReachability {
     let Some(state) = state else {
         return RequestReachability::DaemonUnavailable;
     };
-    if unix_timestamp().saturating_sub(state.updated_at) > 4 {
+    // The daemon persists status every five seconds. Give it several write
+    // intervals so the waiting UI does not alternate between reachable and
+    // unavailable between ordinary state-file updates.
+    if now.saturating_sub(state.updated_at) > REQUEST_REACHABILITY_MAX_AGE_SECS {
         return RequestReachability::DaemonUnavailable;
     }
     let connected =
@@ -187,6 +201,21 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    #[test]
+    fn reachability_stays_stable_across_the_daemon_state_write_interval() {
+        let state = DaemonRuntimeState {
+            updated_at: 100,
+            fips_other_peer_count: 1,
+            ..DaemonRuntimeState::default()
+        };
+
+        assert_eq!(
+            request_reachability_at(Some(&state), 105),
+            RequestReachability::FipsReachable,
+            "the five-second daemon state cadence must not flap to unavailable"
+        );
+    }
 
     #[test]
     fn terminal_output_contains_dense_qr_and_exact_uri() {
