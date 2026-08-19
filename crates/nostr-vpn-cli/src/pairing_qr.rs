@@ -82,14 +82,6 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
                 #[cfg(not(unix))]
                 let app = AppConfig::load(&config_path)
                     .with_context(|| format!("failed to reload {}", config_path.display()))?;
-                #[cfg(unix)]
-                if crate::join_request_ipc::request_daemon_join_request_link(&config_path, false)
-                    .await
-                    .is_ok_and(|current| current != uri)
-                {
-                    println!("Join request accepted.");
-                    return Ok(());
-                }
                 #[cfg(not(unix))]
                 if app.active_network_has_confirmed_local_identity() {
                     println!("Join approved for network {}.", app.effective_network_id());
@@ -197,6 +189,8 @@ fn request_reachability_at(state: Option<&DaemonRuntimeState>, now: u64) -> Requ
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::time::SystemTime;
     #[cfg(not(unix))]
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -226,6 +220,68 @@ mod tests {
         assert!(output.lines().any(|line| line.contains('▀')));
         assert_eq!(output.lines().filter(|line| *line == uri).count(), 1);
         assert!(output.ends_with(&format!("\n\n{uri}\n")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn blocking_wait_requests_once_then_observes_persisted_approval() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let directory = std::path::PathBuf::from("/tmp").join(format!(
+            "nvw-{}-{:x}",
+            std::process::id(),
+            nonce & 0xffff_ffff
+        ));
+        std::fs::create_dir(&directory).expect("create test directory");
+        let config = directory.join("config.toml");
+        let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let server = crate::join_request_ipc::JoinRequestIpcServer::spawn(&config, requests)
+            .expect("start join request IPC server");
+        let waiter = tokio::spawn(run_join_request(JoinRequestArgs {
+            config: Some(config.clone()),
+            no_wait: false,
+            no_qr: true,
+            reset: false,
+        }));
+
+        let request = tokio::time::timeout(Duration::from_secs(2), received.recv())
+            .await
+            .expect("initial IPC request timeout")
+            .expect("initial IPC request");
+        assert!(!request.reset);
+        request
+            .response
+            .send(Ok(format!("{JOIN_REQUEST_LINK_PREFIX}test")))
+            .expect("answer initial IPC request");
+        tokio::time::sleep(Duration::from_millis(750)).await;
+        assert!(
+            received.try_recv().is_err(),
+            "waiting must observe config state instead of polling join-request IPC"
+        );
+
+        let mut approved = AppConfig::generated_without_networks();
+        let network_id = approved.add_owned_network("Approved network");
+        let own_pubkey = approved.own_nostr_pubkey_hex().expect("own public key");
+        approved
+            .network_by_id_mut(&network_id)
+            .expect("owned network")
+            .devices
+            .push(own_pubkey);
+        approved
+            .set_network_enabled(&network_id, true)
+            .expect("enable owned network");
+        approved.save(&config).expect("persist approval");
+
+        tokio::time::timeout(Duration::from_secs(2), waiter)
+            .await
+            .expect("blocking wait did not finish")
+            .expect("wait task panicked")
+            .expect("blocking wait failed");
+        drop(server);
+        AppConfig::delete_persisted_secrets_for_path(&config).expect("delete test secrets");
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[cfg(not(unix))]
