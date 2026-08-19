@@ -315,6 +315,9 @@ impl FipsPrivateTunnelRuntime {
             if self.original_default_route.is_some() {
                 return Ok(());
             }
+            if allow_missing {
+                return Ok(());
+            }
         }
         let route = match underlay_interface {
             Some(interface) => {
