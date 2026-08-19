@@ -72,6 +72,7 @@ fn save_config_and_reload_with(
     Err(apply_error.context("configuration apply failed; previous configuration was restored"))
 }
 
+#[cfg(any(feature = "paid-exit", not(unix)))]
 pub(crate) fn maybe_reload_running_daemon(config_path: &Path) {
     if let Err(error) = reload_running_daemon_after_save(config_path) {
         eprintln!("config: daemon reload after save failed: {error}");

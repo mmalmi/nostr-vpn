@@ -84,12 +84,13 @@ use nostr_sdk::prelude::{Alphabet, Filter, SingleLetterTag};
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp, ToBech32};
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::config::normalize_relay_urls;
+#[cfg(feature = "paid-exit")]
+use nostr_vpn_core::config::write_private_file_preserving_user_owner;
 use nostr_vpn_core::config::{
     AppConfig, ExitDnsMode, ExitDohProvider, InternetSource, SharedNetworkRoster,
     derive_mesh_tunnel_ip, exit_node_default_routes, maybe_autoconfigure_node,
     normalize_advertised_route, normalize_fips_peer_endpoint_hint, normalize_nostr_pubkey,
     normalize_runtime_network_id, parse_wireguard_exit_config,
-    write_private_file_preserving_user_owner,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::data_plane::MeshPeerStatus;
@@ -174,9 +175,11 @@ use crate::diagnostics::{
     PortMappingRuntime, build_health_issues, capture_network_snapshot, detect_captive_portal,
     run_netcheck_report, write_doctor_bundle,
 };
+#[cfg(any(feature = "paid-exit", not(unix)))]
+use crate::network_signaling::maybe_reload_running_daemon;
 use crate::network_signaling::{
-    RosterEditAction, maybe_reload_running_daemon, reload_running_daemon_after_save,
-    save_config_and_reload_transactionally, update_active_network_roster,
+    RosterEditAction, reload_running_daemon_after_save, save_config_and_reload_transactionally,
+    update_active_network_roster,
 };
 #[cfg(any(test, not(target_os = "windows")))]
 pub(crate) use crate::platform_routing::*;
