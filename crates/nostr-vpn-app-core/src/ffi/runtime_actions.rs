@@ -1,9 +1,13 @@
+fn action_error_text(error: &anyhow::Error) -> String {
+    format!("{error:#}")
+}
+
 impl NativeAppRuntime {
     fn dispatch(&mut self, action: NativeAppAction) {
         let result = self.apply_action(action);
         match result {
             Ok(()) => self.last_error.clear(),
-            Err(error) => self.set_error(error.to_string()),
+            Err(error) => self.set_error(action_error_text(&error)),
         }
         self.rev = self.rev.saturating_add(1);
     }

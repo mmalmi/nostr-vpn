@@ -32,6 +32,17 @@
         );
     }
 
+    #[test]
+    fn action_error_text_preserves_context_chain() {
+        let error = anyhow!("mint rejected the wallet keyset")
+            .context("Failed to prepare Cashu payment token");
+
+        assert_eq!(
+            action_error_text(&error),
+            "Failed to prepare Cashu payment token: mint rejected the wallet keyset"
+        );
+    }
+
     #[cfg(feature = "paid-exit")]
     #[test]
     fn standalone_paid_exit_status_uses_runtime_readiness_not_vpn_activity() {

@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Show the complete underlying cause chain in native app action errors instead
+  of hiding useful wallet, service, and network diagnostics behind a generic
+  top-level message.
+
 ## 4.1.8 - 2026-08-18
 
 ### Release notes
