@@ -150,13 +150,13 @@ fn macos_resolver_contents_owned(path: &Path, contents: &[u8]) -> bool {
 
 fn legacy_macos_secure_dns_resolver_config() -> String {
     format!(
-        "# Managed by nvpn\ndomain .\nsearch_order 1\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:1 attempts:1\n"
+        "# Managed by nvpn\ndomain .\nsearch_order 1\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:7 attempts:1\n"
     )
 }
 
 pub(super) fn macos_magic_dns_resolver_config() -> String {
     format!(
-        "# Managed by nvpn secure DNS\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:1 attempts:1\n"
+        "# Managed by nvpn secure DNS\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:7 attempts:1\n"
     )
 }
 

@@ -127,6 +127,12 @@ fn direct_resolv_conf_crash_repair_only_restores_owned_content() {
     ));
 }
 
+#[test]
+fn direct_resolv_conf_waits_for_through_exit_upstream_failover() {
+    let contents = std::str::from_utf8(LINUX_DIRECT_RESOLV_CONF).expect("UTF-8 resolv.conf");
+    assert!(contents.contains("options timeout:7 attempts:1"));
+}
+
 #[cfg(unix)]
 fn resolved_resolv_conf_fixture(
     name: &str,
