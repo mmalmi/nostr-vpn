@@ -50,7 +50,8 @@
     use super::{
         linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
         linux_ipv4_underlay_capture_requested, linux_ipv4_underlay_restore_due,
-        linux_reuse_cached_underlay_route, linux_strict_exit_requested,
+        linux_missing_ipv4_underlay_route_allowed, linux_reuse_cached_underlay_route,
+        linux_strict_exit_requested,
         linux_withhold_default_route_for_missing_peer_endpoint,
     };
     #[cfg(target_os = "linux")]
@@ -150,6 +151,13 @@
             &["198.51.100.7".parse().unwrap()],
             false,
         ));
+    }
+
+    #[test]
+    fn ethernet_fips_underlay_allows_an_absent_ip_default_route() {
+        assert!(linux_missing_ipv4_underlay_route_allowed(true, false));
+        assert!(!linux_missing_ipv4_underlay_route_allowed(false, false));
+        assert!(!linux_missing_ipv4_underlay_route_allowed(true, true));
     }
 
     #[test]
