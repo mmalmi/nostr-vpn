@@ -8,9 +8,9 @@ All notable changes to this project are documented in this file.
 
 - Deliver the signed roster when an admin accepts an inbound device request,
   so the joining device completes instead of remaining at the approval prompt.
-- Keep the join-request wait display stable across normal daemon status writes
-  without polling the daemon, and stop creating a replacement request
-  immediately after approval.
+- Print join-request reachability once, keep the approval wait quiet through
+  transient connectivity changes without polling the daemon, and stop creating
+  a replacement request immediately after approval.
 - Show the complete underlying cause chain in native app action errors instead
   of hiding useful wallet, service, and network diagnostics behind a generic
   top-level message.

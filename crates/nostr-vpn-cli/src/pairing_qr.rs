@@ -55,7 +55,7 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     }
 
     let state_path = daemon_state_file_path(&config_path);
-    let mut reachability = request_reachability(read_daemon_state(&state_path)?.as_ref());
+    let reachability = request_reachability(read_daemon_state(&state_path)?.as_ref());
     println!("{}", reachability.message());
     if args.no_wait {
         return Ok(());
@@ -86,11 +86,6 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
                 if app.active_network_has_confirmed_local_identity() {
                     println!("Join approved for network {}.", app.effective_network_id());
                     return Ok(());
-                }
-                let next = request_reachability(read_daemon_state(&state_path)?.as_ref());
-                if next != reachability {
-                    reachability = next;
-                    println!("{}", reachability.message());
                 }
             }
         }
