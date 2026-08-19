@@ -30,8 +30,8 @@ cashu = { version = "=0.17.3", default-features = false }
 cdk-spilman = "=0.17.6"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "=0.4.60"
-fips-core = { version = "=0.4.60", features = ["webrtc-transport"] }
+fips-endpoint = "=0.4.61"
+fips-core = { version = "=0.4.61", features = ["webrtc-transport"] }
 fips-tcp = "=0.2.0"
 fips-tcp-endpoint = "=0.2.0"
 futures = "0.3"
