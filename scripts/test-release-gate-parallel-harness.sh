@@ -265,8 +265,10 @@ if release_gate_require_complete_fixture_inputs >/dev/null 2>&1; then
   fail "complete release gate accepted a missing Linux underlay VM name"
 fi
 export NVPN_LINUX_UNDERLAY_VM_NAME=linux-test
+export NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST=wireguard-fixture.test
+export NVPN_MOBILE_WG_EXIT_REMOTE_MODE=native
 release_gate_require_complete_fixture_inputs \
-  || fail "complete release gate rejected local WireGuard fixture inputs"
+  || fail "complete release gate rejected remote-native WireGuard fixture inputs"
 
 # Exercise candidate receipts rather than asserting their implementation text.
 receipt_functions="$tmp/platform-preparation-receipts.sh"

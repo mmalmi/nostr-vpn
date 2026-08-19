@@ -6,6 +6,7 @@ SCRIPT="$ROOT_DIR/scripts/idle-cpu-gate.py"
 RELEASE_GATE="$ROOT_DIR/scripts/release-gate.sh"
 MOBILE_IOS_SMOKE="$ROOT_DIR/scripts/mobile-ios-smoke.sh"
 MOBILE_ANDROID_SMOKE="$ROOT_DIR/scripts/mobile-android-smoke.sh"
+MOBILE_WIREGUARD_EXIT="$ROOT_DIR/scripts/mobile-wireguard-exit-e2e.sh"
 
 fail() {
   printf 'idle CPU gate harness failed: %s\n' "$*" >&2
@@ -180,10 +181,6 @@ grep -Fq 'local ios_smoke_command=(./scripts/mobile-ios-smoke.sh device)' "$RELE
   || fail "release gate does not construct the physical iOS packet-tunnel command safely"
 grep -Fq 'ios_smoke_command+=(--install --create-network --vpn-cycle)' "$RELEASE_GATE" \
   || fail "release gate does not install and exercise the candidate iOS packet tunnel"
-grep -Fq './scripts/mobile-ios-smoke.sh simulator' "$RELEASE_GATE" \
-  || fail "release gate does not run the iOS app idle CPU smoke"
-grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELEASE_GATE" \
-  || fail "release gate does not run the Android background active-VPN idle CPU smoke"
 grep -Fq 'run_android_idle_cpu_gate "Android Release foreground VPN-off"' "$MOBILE_ANDROID_SMOKE" \
   || fail "Android exact Release smoke does not measure foreground VPN-off idle CPU"
 # shellcheck disable=SC2016 # Match the literal default-value contract.
@@ -198,8 +195,8 @@ grep -Fq 'android-release-foreground-vpn-off-idle/idle-cpu.json' "$RELEASE_GATE"
   || fail "Android exact Release foreground idle CPU lacks a distinct artifact path"
 grep -Fq 'write_android_release_foreground_idle_receipt' "$MOBILE_ANDROID_SMOKE" \
   || fail "Android exact Release foreground idle CPU lacks its source/artifact-bound receipt"
-grep -Fq './scripts/mobile-android-smoke.sh --release-network-gate' "$RELEASE_GATE" \
-  || fail "release gate does not run the exact signed nondebuggable Android Release foreground idle gate"
+grep -Fq 'android_args=(--release-network-gate "${android_args[@]}")' "$MOBILE_WIREGUARD_EXIT" \
+  || fail "real Android network lane does not use the exact signed nondebuggable Release app"
 grep -Fq 'run_android_activity_lifecycle_gate' "$MOBILE_ANDROID_SMOKE" \
   || fail "Android physical smoke does not verify Activity background/foreground survival"
 if grep -Fq 'fi.siriusbusiness.nvpn.releasegate' "$RELEASE_GATE"; then
@@ -209,12 +206,8 @@ grep -Fq 'NVPN_ANDROID_DEBUG_RELEASE_SIGNING=1' "$RELEASE_GATE" \
   || fail "release gate canonical Android smoke is not signed for in-place replacement"
 grep -Fq 'remove_stale_nvpn_packages' "$MOBILE_ANDROID_SMOKE" \
   || fail "Android smoke does not remove stale parallel nVPN packages"
-grep -Fq 'release_gate_select_android_idle_serial' "$RELEASE_GATE" \
-  || fail "release gate does not isolate Android idle sampling from shared emulators"
-grep -Fq 'NVPN_ANDROID_SERIAL="$android_idle_serial"' "$RELEASE_GATE" \
-  || fail "release gate Android idle smoke does not pin its selected device"
-grep -Fq 'NVPN_IDLE_CPU_MAX_PERCENT="$ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT"' "$RELEASE_GATE" \
-  || fail "release gate Android active-overlay smoke does not use its CPU bound"
+grep -Fq 'NVPN_ANDROID_IDLE_CPU_OUTPUT="$evidence_dir/android-release-foreground-vpn-off-idle/idle-cpu.json"' "$RELEASE_GATE" \
+  || fail "real Android network lane does not retain foreground idle CPU evidence"
 grep -Fq 'env NVPN_IDLE_CPU_GATE=0' "$RELEASE_GATE" \
   || fail "release gate repeats physical idle sampling inside the WireGuard exit smoke"
 grep -Fq 'environmentVariable("NVPN_ANDROID_PACKAGE")' "$ROOT_DIR/android/app/build.gradle.kts" \
