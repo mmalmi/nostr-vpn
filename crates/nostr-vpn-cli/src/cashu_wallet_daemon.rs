@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +12,15 @@ use serde_json::Value;
 use crate::{daemon_status, paid_exit_wallet_data_dir, wait_for_running_daemon_control_ready};
 
 const CASHU_WALLET_REQUEST_TIMEOUT: Duration = Duration::from_secs(90);
+const LEGACY_CHANNEL_SEND_MATCH_WINDOW_SECS: u64 = 30;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingCashuSend {
+    mint_url: String,
+    operation_id: String,
+    amount_sat: u64,
+    created_at_unix: u64,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct DaemonCashuWalletOverview {
@@ -106,6 +116,17 @@ impl DaemonCashuWallet {
         let recovery = service.recover_startup_state().await;
         for warning in recovery.warnings {
             eprintln!("cashu-wallet: startup recovery incomplete: {warning}");
+        }
+        match reclaim_legacy_orphaned_channel_sends(&service, config_path, cashu_wallet_now_unix())
+            .await
+        {
+            Ok(reclaimed) if reclaimed > 0 => eprintln!(
+                "cashu-wallet: returned {reclaimed} sat from expired channel opening attempts"
+            ),
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("cashu-wallet: legacy channel wallet recovery incomplete: {error:#}")
+            }
         }
         prepare_ipc_directories(config_path)?;
         Ok(Self { service })
@@ -235,11 +256,49 @@ impl DaemonCashuWallet {
                     .send_lightning_payment(&mint_url, &invoice)
                     .await?,
             )?,
-            DaemonCashuWalletCommand::OpenSpilmanChannel { request } => serde_json::to_value(
-                self.service
+            DaemonCashuWalletCommand::OpenSpilmanChannel { request } => {
+                let pending_before =
+                    pending_cashu_sends(&self.service.load_wallet_activity().await?);
+                let pending_before = pending_before
+                    .into_iter()
+                    .map(|send| send.operation_id)
+                    .collect::<BTreeSet<_>>();
+                match self
+                    .service
                     .open_streaming_route_cashu_spilman_channel(request)
-                    .await?,
-            )?,
+                    .await
+                {
+                    Ok(opened) => serde_json::to_value(opened)?,
+                    Err(open_error) => {
+                        let activity_after = self.service.load_wallet_activity().await?;
+                        let created = newly_pending_cashu_sends(&pending_before, &activity_after);
+                        let mut reclaimed_sat = 0_u64;
+                        let mut rollback_errors = Vec::new();
+                        for send in created {
+                            match self
+                                .service
+                                .revoke_pending_payment(&send.mint_url, &send.operation_id)
+                                .await
+                            {
+                                Ok(amount) => reclaimed_sat = reclaimed_sat.saturating_add(amount),
+                                Err(error) => rollback_errors.push(format!("{error:#}")),
+                            }
+                        }
+                        if rollback_errors.is_empty() && reclaimed_sat > 0 {
+                            return Err(open_error).context(format!(
+                                "channel opening failed; returned {reclaimed_sat} sat to the wallet"
+                            ));
+                        }
+                        if !rollback_errors.is_empty() {
+                            return Err(open_error).context(format!(
+                                "channel opening failed and wallet rollback needs retry: {}",
+                                rollback_errors.join("; ")
+                            ));
+                        }
+                        return Err(open_error);
+                    }
+                }
+            }
             DaemonCashuWalletCommand::ImportProofs {
                 mint_url,
                 unit,
@@ -252,6 +311,102 @@ impl DaemonCashuWallet {
         };
         Ok(value)
     }
+}
+
+fn cashu_wallet_now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn normalized_mint_for_match(value: &str) -> &str {
+    value.trim().trim_end_matches('/')
+}
+
+fn pending_cashu_sends(
+    activity: &[cashu_service::CashuWalletActivityEntry],
+) -> Vec<PendingCashuSend> {
+    activity
+        .iter()
+        .filter(|entry| {
+            entry.kind == cashu_service::CashuWalletActivityKind::TokenSend
+                && entry.status == cashu_service::CashuWalletActivityStatus::Pending
+        })
+        .filter_map(|entry| {
+            Some(PendingCashuSend {
+                mint_url: entry.mint_url.clone(),
+                operation_id: entry.operation_id.clone()?,
+                amount_sat: entry.amount_sat,
+                created_at_unix: entry.created_at_unix,
+            })
+        })
+        .collect()
+}
+
+fn newly_pending_cashu_sends(
+    pending_before: &BTreeSet<String>,
+    activity_after: &[cashu_service::CashuWalletActivityEntry],
+) -> Vec<PendingCashuSend> {
+    pending_cashu_sends(activity_after)
+        .into_iter()
+        .filter(|send| !pending_before.contains(&send.operation_id))
+        .collect()
+}
+
+fn legacy_orphaned_channel_sends(
+    store: &nostr_vpn_core::paid_route_store::PaidRouteStore,
+    activity: &[cashu_service::CashuWalletActivityEntry],
+    now_unix: u64,
+) -> Vec<PendingCashuSend> {
+    let pending = pending_cashu_sends(activity);
+    pending
+        .into_iter()
+        .filter(|send| {
+            store.channels.values().any(|channel| {
+                channel.role == nostr_vpn_core::paid_route_store::PaidRouteChannelRole::Buyer
+                    && channel.status
+                        == nostr_vpn_core::paid_route_store::PaidRouteLifecycleStatus::Probing
+                    && channel.payment.cashu_spilman_payment.is_none()
+                    && channel.expires_at_unix <= now_unix
+                    && channel.payment.capacity_sat == send.amount_sat
+                    && normalized_mint_for_match(&channel.mint_url)
+                        == normalized_mint_for_match(&send.mint_url)
+                    && send.created_at_unix >= channel.created_at_unix
+                    && send.created_at_unix - channel.created_at_unix
+                        <= LEGACY_CHANNEL_SEND_MATCH_WINDOW_SECS
+            })
+        })
+        .collect()
+}
+
+async fn reclaim_legacy_orphaned_channel_sends(
+    service: &CashuWalletService,
+    config_path: &Path,
+    now_unix: u64,
+) -> Result<u64> {
+    let store_path = nostr_vpn_core::paid_route_store::paid_route_store_file_path(config_path);
+    let store = nostr_vpn_core::paid_route_store::load_paid_route_store(&store_path)?;
+    let activity = service.load_wallet_activity().await?;
+    let candidates = legacy_orphaned_channel_sends(&store, &activity, now_unix);
+    let mut reclaimed_sat = 0_u64;
+    let mut failures = Vec::new();
+    for send in candidates {
+        match service
+            .revoke_pending_payment(&send.mint_url, &send.operation_id)
+            .await
+        {
+            Ok(amount) => reclaimed_sat = reclaimed_sat.saturating_add(amount),
+            Err(error) => failures.push(format!("{error:#}")),
+        }
+    }
+    if !failures.is_empty() {
+        return Err(anyhow!(
+            "failed to reclaim one or more expired channel wallet tokens: {}",
+            failures.join("; ")
+        ));
+    }
+    Ok(reclaimed_sat)
 }
 
 pub(crate) struct DaemonCashuWalletWorker {
@@ -510,6 +665,92 @@ fn write_wallet_response(config_path: &Path, response: &DaemonCashuWalletRespons
 mod tests {
     use super::*;
 
+    fn pending_send(
+        operation_id: &str,
+        amount_sat: u64,
+        created_at_unix: u64,
+    ) -> cashu_service::CashuWalletActivityEntry {
+        cashu_service::CashuWalletActivityEntry {
+            id: format!("activity-{operation_id}"),
+            kind: cashu_service::CashuWalletActivityKind::TokenSend,
+            status: cashu_service::CashuWalletActivityStatus::Pending,
+            mint_url: "https://mint.example/Bitcoin".to_string(),
+            unit: "sat".to_string(),
+            amount_sat,
+            fee_sat: Some(0),
+            created_at_unix,
+            expires_at_unix: None,
+            quote_id: None,
+            operation_id: Some(operation_id.to_string()),
+            payment_request: None,
+            token: Some("cashu-token-redacted-in-test".to_string()),
+        }
+    }
+
+    fn expired_unfunded_buyer_channel(
+        created_at_unix: u64,
+    ) -> nostr_vpn_core::paid_route_store::PaidRouteChannelRecord {
+        nostr_vpn_core::paid_route_store::PaidRouteChannelRecord {
+            channel_id: "route-channel".to_string(),
+            offer_id: "offer".to_string(),
+            role: nostr_vpn_core::paid_route_store::PaidRouteChannelRole::Buyer,
+            status: nostr_vpn_core::paid_route_store::PaidRouteLifecycleStatus::Probing,
+            payment: nostr_vpn_core::paid_routes::PaidRoutePaymentState {
+                capacity_sat: 20,
+                cashu_unit: "sat".to_string(),
+                ..Default::default()
+            },
+            accepted_terms: None,
+            mint_url: "https://mint.example/Bitcoin/".to_string(),
+            counterparty_npub: "npub-test".to_string(),
+            created_at_unix,
+            expires_at_unix: created_at_unix + 60,
+            updated_at_unix: created_at_unix,
+            error: String::new(),
+        }
+    }
+
+    #[test]
+    fn upgrade_reclaims_only_pending_send_matching_expired_unfunded_channel() {
+        let mut store = nostr_vpn_core::paid_route_store::PaidRouteStore::default();
+        store.channels.insert(
+            "route-channel".to_string(),
+            expired_unfunded_buyer_channel(1_000),
+        );
+        let activity = vec![
+            pending_send("matching", 20, 1_002),
+            pending_send("manual-send", 20, 900),
+            pending_send("wrong-amount", 21, 1_002),
+        ];
+
+        let candidates = legacy_orphaned_channel_sends(&store, &activity, 2_000);
+
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|candidate| candidate.operation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["matching"]
+        );
+    }
+
+    #[test]
+    fn failed_channel_cleanup_selects_only_sends_created_by_that_attempt() {
+        let pending_before = BTreeSet::from(["already-pending".to_string()]);
+        let mut completed = pending_send("completed", 20, 1_003);
+        completed.status = cashu_service::CashuWalletActivityStatus::Complete;
+        let activity_after = vec![
+            pending_send("already-pending", 20, 900),
+            pending_send("new-channel-send", 20, 1_002),
+            completed,
+        ];
+
+        let created = newly_pending_cashu_sends(&pending_before, &activity_after);
+
+        assert_eq!(created.len(), 1);
+        assert_eq!(created[0].operation_id, "new-channel-send");
+    }
+
     #[derive(Debug)]
     struct FixedSeedStore;
 
@@ -579,7 +820,9 @@ mod tests {
         let response_path =
             cashu_wallet_response_dir(&config_path).join("00000000000000000000000000000042.json");
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !response_path.exists() && Instant::now() < deadline {
+        while (!response_path.exists() || daemon_cashu_wallet_requests_pending(&config_path))
+            && Instant::now() < deadline
+        {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(response_path.exists(), "daemon wallet worker did not reply");
