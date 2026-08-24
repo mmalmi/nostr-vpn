@@ -225,6 +225,17 @@
         assert_eq!(store.offers.len(), 2, "only signed offers are retained");
         assert_eq!(store.sessions.len(), 1);
         let session = store.sessions.values().next().expect("manual buyer session");
+        assert_eq!(
+            store.selected_buyer_session_id,
+            session.session.session_id,
+            "the GUI must persist the exact selected session, not only its seller"
+        );
+        assert!(
+            store
+                .buyer_session_open_attempts
+                .contains_key(&session.session.session_id),
+            "the daemon needs a bounded acknowledgment deadline"
+        );
         let channel = &store.channels[&session.session.payment.channel_id];
         let terms = channel.accepted_terms.as_ref().expect("accepted seller terms");
         assert_eq!(terms.pricing.price_msat_per_gb, 2_000_000);

@@ -207,9 +207,19 @@ extension RootView {
 
     func paidRouteSessionIsSelected(_ session: NativePaidRouteSessionState) -> Bool {
         let seller = paidRouteSessionSellerNpub(session)
-        return !seller.isEmpty
-            && ["paid_automatic", "paid_manual"].contains(state.internetSource)
-            && state.exitNode == seller
+        guard !seller.isEmpty,
+              ["paid_automatic", "paid_manual"].contains(state.internetSource),
+              state.exitNode == seller
+        else {
+            return false
+        }
+        let nowUnix = UInt64(Date().timeIntervalSince1970)
+        let current = state.paidRouteMarket.sessions.first { candidate in
+            paidRouteSessionSellerNpub(candidate) == seller
+                && ["opening", "probing", "active", "paused"].contains(candidate.lifecycleStatus)
+                && (candidate.expiresAtUnix == 0 || candidate.expiresAtUnix > nowUnix)
+        }
+        return current?.sessionId == session.sessionId
     }
 
     func paidRouteSessionSellerNpub(_ session: NativePaidRouteSessionState) -> String {
@@ -393,6 +403,7 @@ extension RootView {
         !session.paymentChannelReady
             && ["free_probe", "grace", "suspended"].contains(session.accessState)
             && ["opening", "probing", "active", "paused"].contains(session.lifecycleStatus)
+            && (session.expiresAtUnix == 0 || session.expiresAtUnix > UInt64(Date().timeIntervalSince1970))
     }
 
     func paidRouteSessionCanSignPayment(_ session: NativePaidRouteSessionState) -> Bool {
@@ -431,6 +442,16 @@ extension RootView {
     }
 
     func paidRouteBuyerSessionTitle(_ session: NativePaidRouteSessionState, selected: Bool) -> String {
+        switch session.lifecycleStatus {
+        case "expired":
+            return "Ended"
+        case "closed":
+            return "Closed"
+        case "failed":
+            return "Connection failed"
+        default:
+            break
+        }
         if selected {
             if state.exitNodeActive {
                 return "Connected"

@@ -842,10 +842,25 @@ fn paid_route_session_state_with_decision(
     let now_unix = unix_timestamp();
     let channel = store.channels.get(&session.payment.channel_id);
     let lease = store.leases.get(&session.lease_id);
-    let lifecycle_status = channel
-        .map(|channel| paid_route_lifecycle_status_text(channel.status))
-        .or_else(|| lease.map(|lease| paid_route_lifecycle_status_text(lease.status)))
-        .unwrap_or_default();
+    let stored_lifecycle_status = channel
+        .map(|channel| channel.status)
+        .or_else(|| lease.map(|lease| lease.status));
+    let expires_at_unix = match (channel, lease) {
+        (Some(channel), Some(lease)) => channel.expires_at_unix.min(lease.lease.expires_at_unix),
+        (Some(channel), None) => channel.expires_at_unix,
+        (None, Some(lease)) => lease.lease.expires_at_unix,
+        (None, None) => 0,
+    };
+    let lifecycle_status = if expires_at_unix > 0
+        && expires_at_unix <= now_unix
+        && stored_lifecycle_status.is_some_and(paid_route_lifecycle_is_current)
+    {
+        "expired"
+    } else {
+        stored_lifecycle_status
+            .map(paid_route_lifecycle_status_text)
+            .unwrap_or_default()
+    };
     let access_state = decision
         .map(|decision| decision.state.as_str())
         .unwrap_or_default();
@@ -858,12 +873,6 @@ fn paid_route_session_state_with_decision(
         .is_none_or(|channel| paid_route_lifecycle_allows_routing_for_state(channel.status))
         && lease.is_none_or(|lease| paid_route_lifecycle_allows_routing_for_state(lease.status));
     let channel_role = channel.map(|channel| channel.role);
-    let expires_at_unix = match (channel, lease) {
-        (Some(channel), Some(lease)) => channel.expires_at_unix.min(lease.lease.expires_at_unix),
-        (Some(channel), None) => channel.expires_at_unix,
-        (None, Some(lease)) => lease.lease.expires_at_unix,
-        (None, None) => 0,
-    };
     let time_allows_routing = expires_at_unix == 0 || expires_at_unix > now_unix;
     let payment_allows_routing = channel_role != Some(PaidRouteChannelRole::Buyer)
         || offer.is_none_or(|offer| {

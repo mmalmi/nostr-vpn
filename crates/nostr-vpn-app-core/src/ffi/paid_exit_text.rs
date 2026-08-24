@@ -102,7 +102,13 @@ fn paid_route_session_title_text(
     allow_routing: bool,
     unpaid_msat: u64,
 ) -> String {
-    if allow_routing {
+    if lifecycle_status == "expired" {
+        "Ended".to_string()
+    } else if lifecycle_status == "closed" {
+        "Closed".to_string()
+    } else if lifecycle_status == "failed" {
+        "Connection failed".to_string()
+    } else if allow_routing {
         "Ready".to_string()
     } else if unpaid_msat > 0 {
         "Payment needed".to_string()

@@ -75,6 +75,24 @@ mod paid_exit {
         }
 
         #[test]
+        fn terminal_session_titles_win_over_stale_payment_state() {
+            assert_eq!(
+                paid_route_session_title_text("Free probe", "expired", false, false, 0),
+                "Ended"
+            );
+            assert_eq!(
+                paid_route_session_title_text(
+                    "Seller did not acknowledge",
+                    "failed",
+                    false,
+                    false,
+                    0,
+                ),
+                "Connection failed"
+            );
+        }
+
+        #[test]
         fn default_order_ranks_good_unknown_bad_ratings() {
             let mut offers = [
                 offer("bad", Some(-80), 1),

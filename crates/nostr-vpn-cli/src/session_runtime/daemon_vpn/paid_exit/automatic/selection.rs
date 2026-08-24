@@ -32,6 +32,10 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
     if let Some((seller_npub, seller_pubkey, session_id, funded)) =
         recover_automatic_paid_exit_session(&store, &selection, now_unix)
     {
+        update_paid_route_store(&store_path, |store| {
+            store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+            Ok(())
+        })?;
         let route_changed =
             app.public_paid_exit_node_pubkey_hex().as_deref() != Some(seller_pubkey.as_str());
         app.select_public_paid_exit_node(&seller_npub)?;
@@ -56,14 +60,16 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         .to_bech32()
         .context("failed to encode automatic paid exit buyer npub")?;
     let session = update_paid_route_store(&store_path, |store| {
-        store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+        let session = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector: selection.offer_key.clone(),
             buyer_npub,
             mint_url: Some(selection.mint_url.clone()),
             channel_capacity_sat: Some(selection.channel_capacity_sat),
             initial_paid_msat: 0,
             now_unix,
-        })
+        })?;
+        store.begin_buyer_session_open_attempt(&session.session_id, now_unix)?;
+        Ok(session)
     })?;
     let seller_pubkey = normalize_nostr_pubkey(&session.seller_npub)
         .context("invalid automatically selected paid exit seller")?;

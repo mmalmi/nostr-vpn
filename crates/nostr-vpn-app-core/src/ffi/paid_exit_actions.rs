@@ -503,13 +503,18 @@ impl NativeAppRuntime {
         if session_id.is_empty() {
             return Err(anyhow!("paid route session id is empty"));
         }
-        let store = load_paid_route_store(&self.paid_route_store_path())?;
-        let seller_npub = store.buyer_session_seller_npub(session_id)?;
-        if connect && !store.buyer_session_allows_routing(session_id, unix_timestamp())? {
-            return Err(anyhow!(
-                "paid route session is not ready to route yet; fund it or wait for seller admission"
-            ));
-        }
+        let now_unix = unix_timestamp();
+        let store_path = self.paid_route_store_path();
+        let seller_npub = update_paid_route_store(&store_path, |store| {
+            let seller_npub = store.buyer_session_seller_npub(session_id)?;
+            if connect && !store.buyer_session_allows_routing(session_id, now_unix)? {
+                return Err(anyhow!(
+                    "paid route session is not ready to route yet; fund it or wait for seller admission"
+                ));
+            }
+            store.begin_buyer_session_open_attempt(session_id, now_unix)?;
+            Ok(seller_npub)
+        })?;
         self.config.select_public_paid_exit_node(&seller_npub)?;
         self.save_reload_and_refresh()?;
         if connect && !self.vpn_enabled {

@@ -457,15 +457,35 @@ loop {
                     >= Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS)
                 {
                     last_paid_exit_session_open_at = Instant::now();
-                    if let Err(error) = send_selected_paid_exit_session_open(
+                    match send_selected_paid_exit_session_open(
                         runtime,
-                        &app,
+                        &mut app,
                         &config_path,
                         unix_timestamp(),
                     )
                     .await
                     {
-                        eprintln!("paid-exit: free-probe session open send failed: {error}");
+                        Ok(PaidExitSessionOpenResult::FellBackDirect) => {
+                            if let Err(error) = refresh_fips_tunnel_config(
+                                runtime,
+                                &app,
+                                &config_path,
+                                &network_id,
+                                network_snapshot.default_interface.as_deref(),
+                                network_snapshot.default_interface_mtu,
+                                own_pubkey.as_deref(),
+                            )
+                            .await
+                            {
+                                vpn_status = format!(
+                                    "paid-exit direct fallback refresh failed ({error})"
+                                );
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            eprintln!("paid-exit: free-probe session open send failed: {error}")
+                        }
                     }
                 }
                 match drain_fips_mesh_events(

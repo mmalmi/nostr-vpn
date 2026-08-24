@@ -7,10 +7,14 @@ pub(crate) use automatic::*;
 #[path = "paid_exit/refunds.rs"]
 mod refunds;
 pub(in crate::session_runtime) use refunds::PaidExitBuyerRefundRuntime;
+#[cfg(test)]
+#[path = "paid_exit/tests.rs"]
+mod tests;
 
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
 pub(super) const PAID_EXIT_SESSION_OPEN_RETRY_SECS: u64 = 5;
+pub(super) const PAID_EXIT_SESSION_OPEN_TIMEOUT_SECS: u64 = 30;
 pub(super) const PAID_EXIT_OFFER_REFRESH_SECS: u64 =
     nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_TTL_SECS / 4;
 
@@ -174,14 +178,21 @@ pub(super) struct PaidExitApplySessionOpensResult {
     pub(super) acknowledgments: Vec<(String, String)>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PaidExitSessionOpenResult {
+    None,
+    Sent,
+    FellBackDirect,
+}
+
 pub(super) async fn send_selected_paid_exit_session_open(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
-    app: &AppConfig,
+    app: &mut AppConfig,
     config_path: &Path,
     now_unix: u64,
-) -> Result<bool> {
+) -> Result<PaidExitSessionOpenResult> {
     let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() else {
-        return Ok(false);
+        return Ok(PaidExitSessionOpenResult::None);
     };
     let buyer_npub = app
         .nostr_keys()?
@@ -193,7 +204,17 @@ pub(super) async fn send_selected_paid_exit_session_open(
         &app.nostr_keys()?.public_key().to_hex(),
     )
     .ok_or_else(|| anyhow!("failed to derive paid route buyer tunnel IP"))?;
-    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    let reconciled =
+        reconcile_selected_paid_exit_session(app, config_path, &seller_pubkey, now_unix)?;
+    if reconciled.selected_session_timed_out {
+        eprintln!(
+            "paid-exit: seller did not acknowledge selected session {}; falling back to direct internet",
+            reconciled.selected_session_id
+        );
+        return Ok(PaidExitSessionOpenResult::FellBackDirect);
+    }
+    let store_path = paid_route_store_file_path(config_path);
+    let store = load_paid_route_store(&store_path)?;
     let Some(open) = store.buyer_session_open_for_seller(
         &seller_pubkey,
         &buyer_npub,
@@ -201,12 +222,40 @@ pub(super) async fn send_selected_paid_exit_session_open(
         now_unix,
     )?
     else {
-        return Ok(false);
+        return Ok(PaidExitSessionOpenResult::None);
     };
     runtime
         .send_paid_route_session_open(&seller_pubkey, open)
         .await?;
-    Ok(true)
+    Ok(PaidExitSessionOpenResult::Sent)
+}
+
+pub(super) fn reconcile_selected_paid_exit_session(
+    app: &mut AppConfig,
+    config_path: &Path,
+    seller_pubkey: &str,
+    now_unix: u64,
+) -> Result<nostr_vpn_core::paid_route_store::PaidRouteBuyerSessionLifecycleReconcile> {
+    let manual = app.internet_source == nostr_vpn_core::config::InternetSource::PaidManual;
+    let reconciled = update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
+        let reconciled = store.reconcile_buyer_session_lifecycle(
+            now_unix,
+            if manual {
+                PAID_EXIT_SESSION_OPEN_TIMEOUT_SECS
+            } else {
+                0
+            },
+        );
+        if !reconciled.selected_session_timed_out {
+            store.begin_latest_buyer_session_open_attempt_for_seller(seller_pubkey, now_unix)?;
+        }
+        Ok(reconciled)
+    })?;
+    if manual && reconciled.selected_session_timed_out {
+        app.set_internet_source(nostr_vpn_core::config::InternetSource::Direct);
+        app.save(config_path)?;
+    }
+    Ok(reconciled)
 }
 
 pub(super) fn apply_paid_exit_session_opens(

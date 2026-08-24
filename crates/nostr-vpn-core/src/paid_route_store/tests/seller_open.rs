@@ -103,6 +103,106 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
 }
 
 #[test]
+fn selected_buyer_session_expires_or_fails_instead_of_retrying_forever() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = sample_config();
+    let (mut store, session_id, channel_id) = buyer_store_with_session(&seller, &buyer, &config);
+    let lease_id = store.sessions[&session_id].session.lease_id.clone();
+
+    assert!(
+        store
+            .begin_buyer_session_open_attempt(&session_id, 130)
+            .expect("select buyer session")
+    );
+    assert_eq!(store.selected_buyer_session_id, session_id);
+    assert_eq!(store.buyer_session_open_attempts[&session_id], 130);
+
+    let early = store.reconcile_buyer_session_lifecycle(159, 30);
+    assert!(!early.selected_session_timed_out);
+    assert_eq!(
+        store.channels[&channel_id].status,
+        PaidRouteLifecycleStatus::Probing
+    );
+
+    let timed_out = store.reconcile_buyer_session_lifecycle(160, 30);
+    assert!(timed_out.changed);
+    assert!(timed_out.selected_session_timed_out);
+    assert_eq!(timed_out.selected_session_id, session_id);
+    assert_eq!(
+        store.channels[&channel_id].status,
+        PaidRouteLifecycleStatus::Failed
+    );
+    assert_eq!(
+        store.leases[&lease_id].status,
+        PaidRouteLifecycleStatus::Failed
+    );
+    assert!(store.channels[&channel_id].error.contains("acknowledge"));
+    assert!(!store.buyer_session_open_attempts.contains_key(&session_id));
+    assert!(
+        store
+            .buyer_session_open_for_seller(
+                &seller.public_key().to_hex(),
+                &buyer.public_key().to_bech32().expect("buyer npub"),
+                "10.44.201.17/32",
+                160,
+            )
+            .expect("find selected buyer session")
+            .is_none()
+    );
+
+    let (mut expired, expired_session_id, expired_channel_id) =
+        buyer_store_with_session(&seller, &buyer, &config);
+    let expired_lease_id = expired.sessions[&expired_session_id]
+        .session
+        .lease_id
+        .clone();
+    let expiry = expired.channels[&expired_channel_id].expires_at_unix;
+    let result = expired.reconcile_buyer_session_lifecycle(expiry, 30);
+    assert!(result.changed);
+    assert_eq!(
+        expired.channels[&expired_channel_id].status,
+        PaidRouteLifecycleStatus::Expired
+    );
+    assert_eq!(
+        expired.leases[&expired_lease_id].status,
+        PaidRouteLifecycleStatus::Expired
+    );
+}
+
+#[test]
+fn seller_acknowledgment_activates_only_the_selected_buyer_session() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = sample_config();
+    let (mut store, session_id, channel_id) = buyer_store_with_session(&seller, &buyer, &config);
+    let lease_id = store.sessions[&session_id].session.lease_id.clone();
+    store
+        .begin_buyer_session_open_attempt(&session_id, 130)
+        .expect("select buyer session");
+
+    assert!(
+        store
+            .acknowledge_buyer_session_open(&seller.public_key().to_hex(), &lease_id, 140)
+            .expect("acknowledge selected session")
+    );
+    assert_eq!(
+        store.channels[&channel_id].status,
+        PaidRouteLifecycleStatus::Active
+    );
+    assert_eq!(
+        store.leases[&lease_id].status,
+        PaidRouteLifecycleStatus::Active
+    );
+    assert!(!store.buyer_session_open_attempts.contains_key(&session_id));
+    assert!(
+        !store
+            .reconcile_buyer_session_lifecycle(200, 30)
+            .selected_session_timed_out
+    );
+}
+
+#[test]
 fn session_open_requires_current_version_buyer_tunnel_ip_and_rejects_public_sources() {
     let legacy = serde_json::json!({
         "version": "2",

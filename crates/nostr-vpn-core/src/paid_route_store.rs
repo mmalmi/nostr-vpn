@@ -28,7 +28,7 @@ use crate::paid_routes::{
     PaidRouteSessionOpen, PaidRouteUsage, SignedPaidRouteOffer,
 };
 
-const CURRENT_VERSION: u8 = 4;
+const CURRENT_VERSION: u8 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteStore {
@@ -48,6 +48,10 @@ pub struct PaidRouteStore {
     pub sessions: BTreeMap<String, PaidRouteSessionRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_admissions: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub selected_buyer_session_id: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buyer_session_open_attempts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub seller_session_tunnel_ips: BTreeMap<String, String>,
 }
@@ -63,6 +67,8 @@ impl Default for PaidRouteStore {
             channels: BTreeMap::new(),
             sessions: BTreeMap::new(),
             buyer_session_admissions: BTreeMap::new(),
+            selected_buyer_session_id: String::new(),
+            buyer_session_open_attempts: BTreeMap::new(),
             seller_session_tunnel_ips: BTreeMap::new(),
         }
     }
@@ -191,6 +197,13 @@ pub struct UpdatePaidRouteSessionProbeResult {
     pub observed_country_code: Option<String>,
     pub observed_asn: Option<u32>,
     pub quality: Option<PaidRouteQualityMetrics>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PaidRouteBuyerSessionLifecycleReconcile {
+    pub changed: bool,
+    pub selected_session_timed_out: bool,
+    pub selected_session_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
