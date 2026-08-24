@@ -55,7 +55,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;

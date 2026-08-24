@@ -111,11 +111,42 @@ fn prioritize_fips_control_peer(
 
 fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
     let (transport, addr) = split_peer_transport_addr(&hint.addr);
+    fips_peer_address_from_parts(hint, transport, addr)
+}
+
+fn fips_peer_address_from_parts(
+    hint: &FipsPeerAddressHint,
+    transport: String,
+    addr: String,
+) -> PeerAddress {
     let mut peer_address = PeerAddress::with_priority(transport, addr, hint.priority);
     if let Some(seen_at_ms) = hint.seen_at_ms {
         peer_address = peer_address.learned().with_seen_at_ms(seen_at_ms);
     }
     peer_address
+}
+
+fn fips_peer_addresses_from_hint(hint: &FipsPeerAddressHint) -> Vec<PeerAddress> {
+    let (transport, addr) = split_peer_transport_addr(&hint.addr);
+    if transport != "udp" || addr.parse::<SocketAddr>().is_ok() {
+        return vec![fips_peer_address_from_parts(hint, transport, addr)];
+    }
+
+    let Ok(resolved) = addr.to_socket_addrs() else {
+        return vec![fips_peer_address_from_parts(hint, transport, addr)];
+    };
+    let mut seen = HashSet::new();
+    let addresses = resolved
+        .filter(|socket_addr| seen.insert(*socket_addr))
+        .map(|socket_addr| {
+            fips_peer_address_from_parts(hint, transport.clone(), socket_addr.to_string())
+        })
+        .collect::<Vec<_>>();
+    if addresses.is_empty() {
+        vec![fips_peer_address_from_parts(hint, transport, addr)]
+    } else {
+        addresses
+    }
 }
 
 fn retain_enabled_peer_transport_addresses(
@@ -359,7 +390,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
             addresses: peer
                 .addresses
                 .iter()
-                .map(fips_peer_address_from_hint)
+                .flat_map(fips_peer_addresses_from_hint)
                 .collect(),
             connect_policy: if peer.connect_on_start {
                 ConnectPolicy::AutoConnect

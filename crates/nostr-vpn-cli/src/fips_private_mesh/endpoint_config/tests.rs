@@ -175,6 +175,20 @@ mod endpoint_config_tests {
     }
 
     #[test]
+    fn udp_hostname_hints_resolve_before_family_specific_transport_selection() {
+        let addresses = fips_peer_addresses_from_hint(&FipsPeerAddressHint {
+            addr: "localhost:51820".to_string(),
+            seen_at_ms: None,
+            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+        });
+
+        assert!(!addresses.is_empty());
+        assert!(addresses.iter().all(|address| {
+            address.transport == "udp" && address.addr.parse::<SocketAddr>().is_ok()
+        }));
+    }
+
+    #[test]
     fn configured_control_peer_does_not_force_joiner_advertising() {
         let mut transport = test_transport(true, false);
         transport.advertise_on_nostr = false;
