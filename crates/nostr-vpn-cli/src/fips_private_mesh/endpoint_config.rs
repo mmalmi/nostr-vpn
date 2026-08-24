@@ -109,6 +109,7 @@ fn prioritize_fips_control_peer(
     peers
 }
 
+#[cfg(test)]
 fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
     let (transport, addr) = split_peer_transport_addr(&hint.addr);
     fips_peer_address_from_parts(hint, transport, addr)

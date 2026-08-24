@@ -468,7 +468,7 @@ impl FipsPrivateMeshRuntime {
                 addresses: peer
                     .addresses
                     .iter()
-                    .map(fips_peer_address_from_hint)
+                    .flat_map(fips_peer_addresses_from_hint)
                     .collect(),
                 connect_policy: if peer.connect_on_start {
                     ConnectPolicy::AutoConnect
