@@ -50,7 +50,7 @@ impl NativeAppRuntime {
         } else {
             String::new()
         };
-        #[cfg(feature = "paid-exit")]
+        #[cfg(all(feature = "paid-exit", any(target_os = "ios", target_os = "android")))]
         let cashu_wallet_runtime = Some(paid_exit::PaidRouteWalletRuntime::open(&config_path)?);
         let mut runtime = Self {
             rev: 0,
@@ -81,7 +81,7 @@ impl NativeAppRuntime {
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             #[cfg(feature = "paid-exit")]
             paid_route_wallet_next_refresh_at: None,
-            #[cfg(feature = "paid-exit")]
+            #[cfg(all(feature = "paid-exit", any(target_os = "ios", target_os = "android")))]
             cashu_wallet_runtime,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
@@ -143,7 +143,7 @@ impl NativeAppRuntime {
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             #[cfg(feature = "paid-exit")]
             paid_route_wallet_next_refresh_at: None,
-            #[cfg(feature = "paid-exit")]
+            #[cfg(all(feature = "paid-exit", any(target_os = "ios", target_os = "android")))]
             cashu_wallet_runtime: None,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,

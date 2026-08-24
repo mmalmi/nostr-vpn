@@ -33,29 +33,24 @@ pub(super) async fn fund_automatic_paid_exit(
         .get(&lease.lease.quote_id)
         .cloned()
         .ok_or_else(|| anyhow!("automatic paid exit session has no quote"))?;
-    let wallet_data_dir = paid_exit_wallet_data_dir(config_path);
-    let Some(client_store_lock) =
-        SharedSpilmanClientStoreLock::try_acquire(spilman_client_store_path(&wallet_data_dir))
-            .map_err(|error| anyhow!("{error}"))?
-    else {
-        return Err(anyhow!("Cashu channel storage is busy; retry funding"));
-    };
-    let opened = open_streaming_route_cashu_spilman_channel_from_wallet_with_lock(
-        &wallet_data_dir,
-        StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
-            mint_url: channel.mint_url,
-            receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
-            capacity_sat: session.session.payment.capacity_sat,
-            expiry_unix: channel.expires_at_unix,
-            max_amount_per_output: 0,
-            unit: "sat".to_string(),
-            opening_paid_msat: 0,
-            keyset_id: None,
-            keyset_info_json: None,
-        },
-        client_store_lock,
-    )
-    .await?;
+    let opened: cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletResult =
+        daemon_cashu_wallet_request(
+            config_path,
+            crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
+                request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                    mint_url: channel.mint_url,
+                    receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
+                    capacity_sat: session.session.payment.capacity_sat,
+                    expiry_unix: channel.expires_at_unix,
+                    max_amount_per_output: 0,
+                    unit: "sat".to_string(),
+                    opening_paid_msat: 0,
+                    keyset_id: None,
+                    keyset_info_json: None,
+                },
+            },
+        )
+        .await?;
     let buyer_npub = app
         .nostr_keys()?
         .public_key()

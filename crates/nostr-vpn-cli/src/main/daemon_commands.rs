@@ -467,7 +467,7 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
     Ok(())
 }
 
-fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
+pub(crate) fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
     let pid_file = daemon_pid_file_path(config_path);
     let log_file = daemon_log_file_path(config_path);
     let state_file = daemon_state_file_path(config_path);

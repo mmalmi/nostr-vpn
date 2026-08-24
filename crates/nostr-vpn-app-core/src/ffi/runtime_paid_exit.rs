@@ -6,12 +6,15 @@ mod paid_exit {
     use std::process::Stdio;
 
     use nostr_sdk::prelude::ToBech32;
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     use nostr_vpn_core::paid_route_store::{
-        AttachPaidRouteBuyerSpilmanChannelRequest, BuildPaidRouteBuyerPaymentEnvelopeKind,
-        BuildPaidRouteBuyerPaymentEnvelopeRequest, BuildPaidRouteBuyerSignedPaymentEnvelopeRequest,
+        AttachPaidRouteBuyerSpilmanChannelRequest, BuildPaidRouteBuyerPaymentEnvelopeRequest,
+    };
+    use nostr_vpn_core::paid_route_store::{
+        BuildPaidRouteBuyerPaymentEnvelopeKind, BuildPaidRouteBuyerSignedPaymentEnvelopeRequest,
         OpenPaidRouteBuyerSessionRequest, PaidRouteChannelRecord, PaidRouteChannelRole,
-        PaidRouteLifecycleStatus, PaidRouteSellerCollectionState, PaidRouteStore, PaidRouteWalletState,
-        UpdatePaidRouteSessionProbeRequest, load_paid_route_store,
+        PaidRouteLifecycleStatus, PaidRouteSellerCollectionState, PaidRouteStore,
+        PaidRouteWalletState, UpdatePaidRouteSessionProbeRequest, load_paid_route_store,
         normalize_paid_route_mint_url, paid_route_store_file_path, update_paid_route_store,
     };
     use nostr_vpn_core::paid_routes::{
@@ -40,7 +43,9 @@ mod paid_exit {
     const PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE: std::time::Duration =
         std::time::Duration::from_secs(3);
 
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     include!("paid_exit_wallet_runtime.rs");
+    include!("paid_exit_wallet_client.rs");
     include!("paid_exit_actions.rs");
     include!("paid_exit_manual_provider.rs");
     include!("paid_exit_wallet_helpers.rs");

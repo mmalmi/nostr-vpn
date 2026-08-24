@@ -244,15 +244,12 @@ fn open_wallet_service(
         .build()
         .context("failed to create the Cashu wallet async runtime")?;
 
-    #[cfg(any(target_os = "ios", target_os = "android"))]
     let service = runtime.block_on(cashu_service::CashuWalletService::open_with_seed_store(
         data_dir,
         std::sync::Arc::new(nostr_vpn_core::PlatformCashuWalletSeedStore::new(
             config_path,
         )),
     ))?;
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
-    let service = runtime.block_on(cashu_service::CashuWalletService::open_file_backed(data_dir))?;
 
     Ok((runtime, service))
 }

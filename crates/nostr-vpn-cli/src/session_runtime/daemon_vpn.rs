@@ -23,7 +23,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut platform_network_change_rx = spawn_platform_network_change_monitor();
     let mut terminate_wait = daemon_termination_wait()?;
     let loop_state = initialize_daemon_vpn_loop(&args, &startup).await?;
-    write_daemon_control_ready(&startup.config_path, std::process::id())?;
     let DaemonVpnStartup {
         config_path,
         _instance_lock,
@@ -55,11 +54,15 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         mut last_fips_endpoint_peer_signature,
     } = startup;
     #[cfg(feature = "paid-exit")]
+    let daemon_cashu_wallet_worker =
+        crate::cashu_wallet_daemon::DaemonCashuWalletWorker::start(config_path.clone())?;
+    #[cfg(feature = "paid-exit")]
     if let Some(signer) = FileSpilmanPaymentSigner::try_load(&paid_exit_wallet_data_dir(&config_path))
         .map_err(|error| anyhow!("{error}"))?
     {
         drop(signer);
     }
+    write_daemon_control_ready(&config_path, std::process::id())?;
     let DaemonVpnLoopState {
         mut vpn_status,
         mut last_log_compact_check,
@@ -95,6 +98,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(not(unix))]
     let _join_request_ipc_keepalive = join_request_ipc_tx;
     include!("daemon_vpn/run_loop.rs");
+    #[cfg(feature = "paid-exit")]
+    daemon_cashu_wallet_worker.stop();
     let shutdown_result = shutdown_daemon_vpn(DaemonVpnShutdown {
         port_mapping_runtime: &mut port_mapping_runtime,
         fips_tunnel_runtime,

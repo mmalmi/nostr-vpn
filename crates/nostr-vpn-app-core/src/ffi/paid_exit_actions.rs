@@ -343,10 +343,8 @@ impl NativeAppRuntime {
         Ok(())
     }
 
-    fn cashu_wallet(&self) -> Result<&PaidRouteWalletRuntime> {
-        self.cashu_wallet_runtime
-            .as_ref()
-            .ok_or_else(|| anyhow!("Cashu wallet runtime is unavailable"))
+    fn cashu_wallet(&self) -> Result<PaidRouteWalletClient<'_>> {
+        PaidRouteWalletClient::new(self)
     }
 
     fn wallet_data_dir(&self) -> PathBuf {
@@ -617,6 +615,17 @@ impl NativeAppRuntime {
         if session_id.is_empty() {
             return Err(anyhow!("paid route session id is empty"));
         }
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        return self.open_paid_route_channel_from_daemon_wallet(
+            session_id,
+            mint_url,
+            paid_msat,
+            max_amount_per_output,
+            keyset_id,
+        );
+
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        {
         let buyer_npub = self
             .config
             .nostr_keys()?
@@ -667,6 +676,63 @@ impl NativeAppRuntime {
             fee_sat,
             fee_text: paid_route_fee_text(fee_sat),
             operation_id: opened.wallet_send.operation_id,
+            ..NativePaidRouteWalletActionState::default()
+        };
+        Ok(())
+        }
+    }
+
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    fn open_paid_route_channel_from_daemon_wallet(
+        &mut self,
+        session_id: &str,
+        mint_url: Option<&str>,
+        paid_msat: Option<u64>,
+        max_amount_per_output: Option<u64>,
+        keyset_id: Option<&str>,
+    ) -> Result<()> {
+        let mut args = self.paid_exit_cli_args("create-payment")?;
+        args.extend([
+            session_id.to_string(),
+            "--kind".to_string(),
+            "channel-open".to_string(),
+            "--open-from-wallet".to_string(),
+        ]);
+        if let Some(mint_url) = mint_url.map(str::trim).filter(|value| !value.is_empty()) {
+            args.extend(["--mint".to_string(), mint_url.to_string()]);
+        }
+        if let Some(paid_msat) = paid_msat {
+            args.extend(["--paid-msat".to_string(), paid_msat.to_string()]);
+        }
+        if let Some(max_amount_per_output) = max_amount_per_output {
+            args.extend([
+                "--max-amount-per-output".to_string(),
+                max_amount_per_output.to_string(),
+            ]);
+        }
+        if let Some(keyset_id) = keyset_id.map(str::trim).filter(|value| !value.is_empty()) {
+            args.extend(["--keyset-id".to_string(), keyset_id.to_string()]);
+        }
+        let output = self.run_nvpn_vec(&args)?;
+        let value =
+            decode_paid_route_command_json_output(output, "nvpn paid-exit create-payment")?;
+        self.paid_route_payment_last_action =
+            paid_route_payment_action_state("open_channel", &value)?;
+        let wallet_send = value
+            .get("wallet_open")
+            .and_then(|wallet_open| wallet_open.get("wallet_send"))
+            .ok_or_else(|| anyhow!("daemon wallet response has no channel funding result"))?;
+        let amount_sat = json_u64(wallet_send, "amount_sat");
+        let fee_sat = json_u64(wallet_send, "send_fee_sat");
+        self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
+            kind: "open_channel".to_string(),
+            status_text: format!("Opened payment channel with {amount_sat} sat"),
+            mint_url: json_string(wallet_send, "mint_url"),
+            amount_sat,
+            amount_text: paid_route_sat_text(amount_sat),
+            fee_sat,
+            fee_text: paid_route_fee_text(fee_sat),
+            operation_id: json_string(wallet_send, "operation_id"),
             ..NativePaidRouteWalletActionState::default()
         };
         Ok(())

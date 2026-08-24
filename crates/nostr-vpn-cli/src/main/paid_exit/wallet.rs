@@ -20,14 +20,28 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
 
     match args.command {
         PaidExitWalletCommand::Show(show) => {
-            let overview = load_wallet_overview(&data_dir, show.refresh).await?;
+            let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
+                crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: show.refresh,
+                },
+            )
+            .await?,
+            )?;
             let (changed, store) = update_paid_route_store(&store_path, |store| {
                 let changed =
                     sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
                 Ok((changed, store.clone()))
             })?;
             let activity = if show.activity {
-                Some(load_wallet_activity(&data_dir).await?)
+                Some(
+                    daemon_cashu_wallet_request::<Vec<cashu_service::CashuWalletActivityEntry>>(
+                        &config_path,
+                        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Activity,
+                    )
+                    .await?,
+                )
             } else {
                 None
             };
@@ -70,7 +84,15 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                 &load_paid_route_store(&store_path)?,
                 topup.mint.as_deref(),
             )?;
-            let quote = create_topup_quote(&data_dir, &mint, topup.amount_sat).await?;
+            let quote: crate::cashu_wallet_daemon::DaemonCashuTopupQuote =
+                daemon_cashu_wallet_request(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::CreateTopupQuote {
+                    mint_url: mint,
+                    amount_sat: topup.amount_sat,
+                },
+            )
+            .await?;
             let (changed, store) = update_paid_route_store(&store_path, |store| {
                 let changed = ensure_paid_exit_wallet_mint(store, &quote.mint_url, None)?;
                 Ok((changed, store.clone()))
@@ -105,8 +127,20 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
         }
         PaidExitWalletCommand::Receive(receive) => {
             let token = read_paid_exit_wallet_token(receive.token, receive.token_stdin)?;
-            let payment = receive_payment_token(&data_dir, &token).await?;
-            let overview = load_wallet_overview(&data_dir, false).await?;
+            let payment: cashu_service::CashuReceivedPayment = daemon_cashu_wallet_request(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::ReceiveToken { token },
+            )
+            .await?;
+            let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
+                crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: false,
+                },
+            )
+            .await?,
+            )?;
             let (changed, store) = update_paid_route_store(&store_path, |store| {
                 let changed =
                     sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
@@ -154,8 +188,23 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                 &load_paid_route_store(&store_path)?,
                 send.mint.as_deref(),
             )?;
-            let payment = send_payment_token(&data_dir, &mint, send.amount_sat).await?;
-            let overview = load_wallet_overview(&data_dir, false).await?;
+            let payment: cashu_service::CashuSentPayment = daemon_cashu_wallet_request(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::SendToken {
+                    mint_url: mint,
+                    amount_sat: send.amount_sat,
+                },
+            )
+            .await?;
+            let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
+                crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: false,
+                },
+            )
+            .await?,
+            )?;
             let (changed, store) = update_paid_route_store(&store_path, |store| {
                 let changed =
                     sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
@@ -191,8 +240,23 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                 &load_paid_route_store(&store_path)?,
                 withdraw.mint.as_deref(),
             )?;
-            let payment = send_lightning_payment(&data_dir, &mint, &withdraw.invoice).await?;
-            let overview = load_wallet_overview(&data_dir, false).await?;
+            let payment: cashu_service::CashuLightningPayment = daemon_cashu_wallet_request(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::PayLightning {
+                    mint_url: mint,
+                    invoice: withdraw.invoice,
+                },
+            )
+            .await?;
+            let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
+                crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: false,
+                },
+            )
+            .await?,
+            )?;
             let (changed, store) = update_paid_route_store(&store_path, |store| {
                 let changed =
                     sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
@@ -267,6 +331,14 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+async fn daemon_cashu_wallet_request<T: serde::de::DeserializeOwned>(
+    config_path: &Path,
+    command: crate::cashu_wallet_daemon::DaemonCashuWalletCommand,
+) -> Result<T> {
+    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet(config_path, command).await?;
+    serde_json::from_value(value).context("daemon returned an invalid Cashu wallet response")
 }
 
 async fn inspect_paid_exit_wallet_token(token_text: &str) -> Result<PaidExitWalletTokenPreview> {

@@ -84,7 +84,7 @@ struct PaidExitCollectChannelOutcome {
 
 async fn paid_exit_collect_channel_with_receiver(
     receiver: &FileSpilmanPaymentReceiver,
-    wallet_data_dir: &Path,
+    config_path: &Path,
     store_path: &Path,
     channel_id: &str,
 ) -> Result<PaidExitCollectChannelOutcome> {
@@ -103,15 +103,16 @@ async fn paid_exit_collect_channel_with_receiver(
     let wallet_collect = if close.receiver_proofs_json.trim().is_empty() {
         None
     } else {
-        Some(json!(
-            import_payment_proofs(
-                wallet_data_dir,
-                &close.mint_url,
-                &close.unit,
-                &close.receiver_proofs_json,
+        let imported: cashu_service::CashuReceivedPayment = daemon_cashu_wallet_request(
+                config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::ImportProofs {
+                    mint_url: close.mint_url.clone(),
+                    unit: close.unit.clone(),
+                    proofs_json: close.receiver_proofs_json.clone(),
+                },
             )
-            .await?
-        ))
+            .await?;
+        Some(json!(imported))
     };
 
     Ok(PaidExitCollectChannelOutcome {
@@ -135,13 +136,21 @@ async fn paid_exit_collect_command(args: PaidExitCollectArgs) -> Result<()> {
     let store_path = paid_route_store_file_path(&config_path);
     let outcome = paid_exit_collect_channel_with_receiver(
         &receiver,
-        &wallet_data_dir,
+        &config_path,
         &store_path,
         &args.channel,
     )
     .await?;
     let mut changed = outcome.changed;
-    let overview = load_wallet_overview(&wallet_data_dir, false).await?;
+    let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
+        crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+        &config_path,
+        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+            refresh_quotes: false,
+        },
+    )
+    .await?,
+    )?;
     let (wallet_changed, store) = update_paid_route_store(&store_path, |store| {
         let changed = sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
         Ok((changed, store.clone()))
@@ -241,7 +250,7 @@ async fn paid_exit_collect_due_command(args: PaidExitCollectDueArgs) -> Result<(
         for state in &due {
             match paid_exit_collect_channel_with_receiver(
                 &receiver,
-                &wallet_data_dir,
+                &config_path,
                 &store_path,
                 &state.channel_id,
             )
@@ -265,7 +274,15 @@ async fn paid_exit_collect_due_command(args: PaidExitCollectDueArgs) -> Result<(
     let cashu = if collected.is_empty() {
         serde_json::Value::Null
     } else {
-        let overview = load_wallet_overview(&wallet_data_dir, false).await?;
+        let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
+            crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+            &config_path,
+            crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                refresh_quotes: false,
+            },
+        )
+        .await?,
+        )?;
         changed |= update_paid_route_store(&store_path, |store| {
             Ok(sync_paid_exit_wallet_store_from_cashu(
                 store,

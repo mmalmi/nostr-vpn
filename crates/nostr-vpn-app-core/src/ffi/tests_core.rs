@@ -201,7 +201,7 @@
 
     #[cfg(feature = "paid-exit")]
     #[test]
-    fn only_one_host_runtime_can_own_the_cashu_wallet() {
+    fn host_runtimes_do_not_own_or_lock_the_cashu_wallet() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -211,54 +211,65 @@
         let data_dir = dir.to_str().expect("utf8 temp dir");
 
         let first = NativeAppRuntime::new(data_dir, String::new()).expect("first runtime starts");
-        let error = NativeAppRuntime::new(data_dir, String::new())
-            .expect_err("second runtime must not open the same wallet");
-
-        let wallet_lock_contended = error.to_string().contains("already in use");
-        #[cfg(windows)]
-        let wallet_lock_contended = {
-            const ERROR_LOCK_VIOLATION: i32 = 33;
-            wallet_lock_contended || error.chain().any(|cause| {
-                cause
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| error.raw_os_error() == Some(ERROR_LOCK_VIOLATION))
-            })
-        };
-        assert!(wallet_lock_contended, "{error:#}");
+        let second = NativeAppRuntime::new(data_dir, String::new())
+            .expect("a second GUI runtime must not contend for the daemon wallet");
+        assert!(!dir.join("cashu/wallet.lock").exists());
+        drop(second);
         drop(first);
-        let reopened =
-            NativeAppRuntime::new(data_dir, String::new()).expect("wallet reopens after drop");
-        drop(reopened);
         let _ = fs::remove_dir_all(&dir);
     }
 
-    #[cfg(feature = "paid-exit")]
+    #[cfg(all(feature = "paid-exit", unix))]
     #[test]
-    fn cashu_wallet_runtime_is_safe_inside_async_host() {
+    fn host_wallet_refresh_uses_daemon_cli_after_runtime_startup() {
+        use std::os::unix::fs::PermissionsExt as _;
+
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-async-wallet-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-        let outer_runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .expect("create async host runtime");
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-daemon-wallet-{nonce}"));
+        fs::create_dir_all(&dir).expect("create daemon wallet test dir");
+        let calls_path = dir.join("wallet-cli-calls.txt");
+        let script_path = dir.join("fake-nvpn");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '%s\\n' '{{\"cashu\":{{\"totals\":[{{\"unit\":\"sat\",\"balance\":21}}],\"entries\":[{{\"mint_url\":\"https://mint.example\",\"unit\":\"sat\",\"balance\":21}}],\"warnings\":[],\"legacy_state_detected\":false}},\"activity\":null}}'\n",
+            calls_path.display()
+        );
+        fs::write(&script_path, script).expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
 
-        outer_runtime.block_on(async {
-            let mut runtime = NativeAppRuntime::new(
-                dir.to_str().expect("utf8 temp dir"),
-                String::new(),
-            )
-            .expect("wallet opens inside async host");
-            runtime
-                .refresh_paid_route_wallet(false)
-                .expect("wallet command runs inside async host");
-            drop(runtime);
-        });
+        let mut runtime = NativeAppRuntime::new(
+            dir.to_str().expect("utf8 temp dir"),
+            String::new(),
+        )
+        .expect("runtime starts without opening a wallet");
+        runtime.nvpn_bin = Some(script_path);
+        runtime
+            .refresh_paid_route_wallet(false)
+            .expect("wallet refresh delegates to daemon CLI");
 
-        drop(outer_runtime);
+        let store = nostr_vpn_core::paid_route_store::load_paid_route_store(
+            &nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path),
+        )
+        .expect("load synchronized paid route store");
+        let mint = store
+            .wallet
+            .mints
+            .iter()
+            .find(|mint| mint.url == "https://mint.example")
+            .expect("daemon wallet mint synchronized");
+        assert_eq!(mint.balance_msat, Some(21_000));
+        let calls = fs::read_to_string(calls_path).expect("read fake nvpn calls");
+        assert!(calls.contains("paid-exit wallet --config"), "{calls}");
+        assert!(calls.contains("--json show"), "{calls}");
+        assert!(!dir.join("cashu/wallet.lock").exists());
+
+        drop(runtime);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -1,3 +1,5 @@
+#[cfg(feature = "paid-exit")]
+mod cashu_wallet_daemon;
 mod config_bootstrap;
 use nvpn::control_pubsub_runtime;
 mod daemon_runtime;
@@ -70,12 +72,8 @@ use cashu_service::{
     CashuWalletOverview, FileSpilmanPaymentReceiver, FileSpilmanPaymentReceiverConfig,
     FileSpilmanPaymentSigner, SharedSpilmanClientStoreLock, StreamingRouteCashuTokenLease,
     StreamingRouteOpenCashuSpilmanChannelFromWalletRequest, StreamingRoutePaymentEnvelope,
-    StreamingRoutePaymentPayload, create_topup_quote, import_payment_proofs,
-    load_or_create_cashu_spilman_receiver_key, load_wallet_activity, load_wallet_overview,
-    normalize_mint_url, open_streaming_route_cashu_spilman_channel_from_wallet,
-    open_streaming_route_cashu_spilman_channel_from_wallet_with_lock, receive_payment_token,
-    restore_streaming_route_cashu_spilman_refund_with_lock, send_lightning_payment,
-    send_payment_token, spilman_client_store_path,
+    StreamingRoutePaymentPayload, load_or_create_cashu_spilman_receiver_key, normalize_mint_url,
+    spilman_client_store_path,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 #[cfg(all(feature = "paid-exit", test))]

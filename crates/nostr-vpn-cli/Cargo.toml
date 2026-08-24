@@ -13,7 +13,10 @@ default = ["paid-exit"]
 paid-exit = [
   "dep:cashu",
   "dep:cashu-service",
+  "dep:cdk-spilman",
+  "dep:uuid",
   "nostr-vpn-core/paid-exit",
+  "nostr-vpn-core/cashu-wallet",
 ]
 
 [dependencies]
@@ -35,6 +38,7 @@ tokio.workspace = true
 toml.workspace = true
 tracing-subscriber.workspace = true
 tracing.workspace = true
+uuid = { workspace = true, optional = true }
 nostr-sdk.workspace = true
 nostr-pubsub.workspace = true
 nostr-pubsub-fips.workspace = true
@@ -47,6 +51,7 @@ cashu-service = { workspace = true, optional = true, features = [
   "spilman-configurable-host-reqwest",
 ] }
 cashu = { workspace = true, optional = true }
+cdk-spilman = { workspace = true, optional = true }
 
 nostr-vpn-core = { workspace = true, features = ["updater", "secure-dns"] }
 crab_nat = "0.7"
@@ -89,7 +94,6 @@ required-features = ["paid-exit"]
 
 [dev-dependencies]
 async-trait.workspace = true
-cdk-spilman.workspace = true
 fips-core = { workspace = true, features = ["sim-transport"] }
 futures-util = "0.3"
 nostr-sdk.workspace = true

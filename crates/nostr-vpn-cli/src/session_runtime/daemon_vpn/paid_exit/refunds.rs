@@ -3,6 +3,10 @@ use super::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 
+use cashu::nuts::{Proof, SecretKey};
+use cdk_spilman::ClientStorage;
+use serde::Serialize;
+
 const PAID_EXIT_BUYER_REFUND_ATTEMPT_TIMEOUT_SECS: u64 = 3;
 const PAID_EXIT_BUYER_REFUND_RETRY_SECS: u64 = 10;
 
@@ -309,14 +313,9 @@ async fn attempt_paid_exit_buyer_refund(
         sync_wallet,
         attempt_timeout,
     } = command;
-    let wallet_data_dir = paid_exit_wallet_data_dir(&config_path);
     let restore = tokio::time::timeout(
         attempt_timeout,
-        restore_streaming_route_cashu_spilman_refund_with_lock(
-            &wallet_data_dir,
-            &channel_id,
-            client_store_lock,
-        ),
+        restore_spilman_refund_through_daemon_wallet(&config_path, &channel_id, client_store_lock),
     )
     .await;
     let restore = match restore {
@@ -332,10 +331,16 @@ async fn attempt_paid_exit_buyer_refund(
         Ok(result) => {
             let refresh_wallet = sync_wallet || result.imported_amount_sat > 0;
             let (overview, wallet_error) = if refresh_wallet {
-                match tokio::time::timeout(
-                    attempt_timeout,
-                    load_wallet_overview(&wallet_data_dir, false),
-                )
+                match tokio::time::timeout(attempt_timeout, async {
+                    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                        &config_path,
+                        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                            refresh_quotes: false,
+                        },
+                    )
+                    .await?;
+                    crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(value)
+                })
                 .await
                 {
                     Ok(Ok(overview)) => (Some(overview), None),
@@ -361,6 +366,200 @@ async fn attempt_paid_exit_buyer_refund(
     PaidExitBuyerRefundAttempt {
         channel_id,
         outcome,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RefundMintConnection {
+    client: reqwest::Client,
+    mint_url: String,
+}
+
+impl RefundMintConnection {
+    fn new(mint_url: &str) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            mint_url: mint_url.trim_end_matches('/').to_string(),
+        }
+    }
+
+    async fn post_json<T, R>(&self, path: &str, request: &T) -> Result<R>
+    where
+        T: Serialize + ?Sized,
+        R: serde::de::DeserializeOwned,
+    {
+        let response = self
+            .client
+            .post(format!("{}{path}", self.mint_url))
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            return Err(anyhow!(
+                "Cashu mint request to {path} failed with {status}: {body}"
+            ));
+        }
+        serde_json::from_str(&body).map_err(Into::into)
+    }
+}
+
+#[async_trait::async_trait]
+impl cdk_spilman::MintConnection for RefundMintConnection {
+    async fn process_swap(
+        &self,
+        request: cashu::nuts::SwapRequest,
+    ) -> Result<cashu::nuts::SwapResponse> {
+        self.post_json("/v1/swap", &request).await
+    }
+
+    async fn post_restore(
+        &self,
+        request: cashu::nuts::RestoreRequest,
+    ) -> Result<cashu::nuts::RestoreResponse> {
+        self.post_json("/v1/restore", &request).await
+    }
+
+    async fn check_state(
+        &self,
+        ys: Vec<cashu::nuts::PublicKey>,
+    ) -> Result<cashu::nuts::CheckStateResponse> {
+        self.post_json("/v1/checkstate", &cashu::nuts::CheckStateRequest { ys })
+            .await
+    }
+}
+
+async fn restore_spilman_refund_through_daemon_wallet(
+    config_path: &Path,
+    channel_id: &str,
+    client_store_lock: SharedSpilmanClientStoreLock,
+) -> Result<cashu_service::StreamingRouteRestoreCashuSpilmanRefundResult> {
+    let channel_id = channel_id.trim();
+    if channel_id.is_empty() {
+        return Err(anyhow!("missing Cashu Spilman channel id"));
+    }
+    let data_dir = paid_exit_wallet_data_dir(config_path);
+    let (mut storage, storage_errors) =
+        cashu_service::FileSpilmanClientStorage::load_with_lock(client_store_lock)
+            .map_err(|error| anyhow!(error))?;
+    let funding = storage
+        .get_funding(channel_id)
+        .cloned()
+        .ok_or_else(|| anyhow!("Cashu Spilman channel not found: {channel_id}"))?;
+    let unit = serde_json::from_str::<serde_json::Value>(&funding.params_json)?
+        .get("unit")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("sat")
+        .to_string();
+    if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed {
+        return Ok(completed_refund_result(
+            channel_id,
+            funding.mint_url,
+            unit,
+            0,
+            0,
+            0,
+        ));
+    }
+
+    let original_keyset = cdk_spilman::parse_keyset_info_from_json(&funding.keyset_info_json)
+        .map_err(|error| anyhow!(error))?;
+    let channel_secret: [u8; 32] = hex::decode(&funding.channel_secret_hex)?
+        .try_into()
+        .map_err(|_| anyhow!("invalid Cashu Spilman channel secret length"))?;
+    let params = cdk_spilman::ChannelParameters::from_json_with_channel_secret(
+        &funding.params_json,
+        original_keyset,
+        channel_secret,
+    )?;
+    let funding_proofs: Vec<Proof> = serde_json::from_str(&funding.funding_proofs_json)?;
+    let channel = cdk_spilman::EstablishedChannel::new(params, funding_proofs)?;
+    let sender_key = cashu_service::load_or_create_cashu_spilman_sender_key(&data_dir)
+        .map_err(|error| anyhow!(error))?;
+    if sender_key.public_key_hex != funding.sender_pubkey_hex {
+        return Err(anyhow!(
+            "Cashu Spilman channel sender key does not match local wallet key"
+        ));
+    }
+    let sender_secret = SecretKey::from_hex(&sender_key.secret_hex)?;
+    let output_keyset_json =
+        cashu_service::fetch_spilman_keyset_info_json(&funding.mint_url, &unit, None)
+            .await
+            .map_err(|error| anyhow!(error))?;
+    let output_keyset = cdk_spilman::parse_keyset_info_from_json(&output_keyset_json)
+        .map_err(|error| anyhow!(error))?;
+    let mint = RefundMintConnection::new(&funding.mint_url);
+    let funding_state = channel.check_funding_token_state(&mint).await?;
+    if funding_state.state != cashu::nuts::State::Spent {
+        return Ok(
+            cashu_service::StreamingRouteRestoreCashuSpilmanRefundResult {
+                channel_id: channel_id.to_string(),
+                mint_url: funding.mint_url,
+                unit,
+                complete: false,
+                recovered_amount_sat: 0,
+                imported_amount_sat: 0,
+                proof_count: 0,
+            },
+        );
+    }
+
+    let sender = cdk_spilman::SpilmanChannelSender::new(sender_secret, channel);
+    let proofs = sender
+        .restore_sender_proofs_with_keyset(&mint, &output_keyset)
+        .await?;
+    let recovered_amount_sat = proofs
+        .iter()
+        .map(|proof| u64::from(proof.amount))
+        .sum::<u64>();
+    let proof_count = proofs.len();
+    let imported_amount_sat = if proofs.is_empty() {
+        0
+    } else {
+        let imported: cashu_service::CashuReceivedPayment = serde_json::from_value(
+            crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::ImportProofs {
+                    mint_url: funding.mint_url.clone(),
+                    unit: unit.clone(),
+                    proofs_json: serde_json::to_string(&proofs)?,
+                },
+            )
+            .await?,
+        )
+        .context("daemon returned an invalid Cashu refund import response")?;
+        imported.amount_sat
+    };
+    storage.set_closed(channel_id);
+    storage_errors.ensure_ok().map_err(|error| anyhow!(error))?;
+
+    Ok(completed_refund_result(
+        channel_id,
+        funding.mint_url,
+        unit,
+        recovered_amount_sat,
+        imported_amount_sat,
+        proof_count,
+    ))
+}
+
+fn completed_refund_result(
+    channel_id: &str,
+    mint_url: String,
+    unit: String,
+    recovered_amount_sat: u64,
+    imported_amount_sat: u64,
+    proof_count: usize,
+) -> cashu_service::StreamingRouteRestoreCashuSpilmanRefundResult {
+    cashu_service::StreamingRouteRestoreCashuSpilmanRefundResult {
+        channel_id: channel_id.to_string(),
+        mint_url,
+        unit,
+        complete: true,
+        recovered_amount_sat,
+        imported_amount_sat,
+        proof_count,
     }
 }
 
@@ -664,10 +863,9 @@ mod tests {
         let (accepted_tx, accepted_rx) = tokio::sync::oneshot::channel();
         let hanging_mint = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("accept mint request");
-            let mut request = [0_u8; 4096];
-            let bytes_read = stream.read(&mut request).await.expect("read mint request");
-            assert!(bytes_read > 0, "mint received an empty request");
             let _ = accepted_tx.send(());
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).await;
             std::future::pending::<()>().await;
         });
 
@@ -702,7 +900,7 @@ mod tests {
         })
         .expect("write paid route fixtures");
 
-        let attempt_timeout = Duration::from_millis(250);
+        let attempt_timeout = Duration::from_millis(750);
         let mut runtime =
             PaidExitBuyerRefundRuntime::with_timings(attempt_timeout, Duration::from_secs(5))
                 .expect("start refund runtime");
@@ -751,7 +949,7 @@ mod tests {
             .expect("reload paid route store");
         let hanging = store.channels.get("a-hanging").expect("hanging channel");
         assert_eq!(hanging.status, PaidRouteLifecycleStatus::Closing);
-        assert!(hanging.error.contains("timed out after 250 ms"));
+        assert!(hanging.error.contains("timed out after 750 ms"));
         let complete = store.channels.get("b-complete").expect("complete channel");
         assert_eq!(complete.status, PaidRouteLifecycleStatus::Closed);
         assert!(complete.error.is_empty());

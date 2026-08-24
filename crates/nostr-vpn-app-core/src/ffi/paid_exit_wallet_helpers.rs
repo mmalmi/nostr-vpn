@@ -49,6 +49,7 @@ fn cashu_top_up_activity_status(
         })
 }
 
+#[cfg(any(target_os = "ios", target_os = "android"))]
 fn paid_route_wallet_channel_open_request(
     store: &PaidRouteStore,
     session_id: &str,
