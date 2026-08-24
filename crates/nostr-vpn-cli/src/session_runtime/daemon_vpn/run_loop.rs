@@ -481,6 +481,10 @@ loop {
                                     "paid-exit direct fallback refresh failed ({error})"
                                 );
                             }
+                            // The paid route used the secure-DNS runtime. Once that
+                            // runtime is removed, restore direct-mode split MagicDNS
+                            // so private peers such as mini.nvpn remain resolvable.
+                            refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
                         }
                         Ok(_) => {}
                         Err(error) => {
