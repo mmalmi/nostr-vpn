@@ -16,16 +16,22 @@ pub const DEFAULT_FIPS_WEBSOCKET_SEEDS: &[(&str, &str)] = &[
 ];
 
 /// Public FIPS transit peers used to establish the first authenticated route.
-/// WebSocket is the canonical public transport because it works on ordinary
-/// Internet networks where unsolicited or provider-filtered UDP is unavailable.
+/// Native clients try UDP first and retain WebSocket as the HTTPS-shaped
+/// fallback for networks that filter UDP.
 pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
     (
         "npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd",
-        &["websocket:wss://fips1.iris.to/fips"],
+        &[
+            "fips1.iris.to:51820",
+            "websocket:wss://fips1.iris.to/fips",
+        ],
     ),
     (
         "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh",
-        &["websocket:wss://fips2.iris.to/fips"],
+        &[
+            "fips2.iris.to:51820",
+            "websocket:wss://fips2.iris.to/fips",
+        ],
     ),
 ];
 
@@ -40,11 +46,19 @@ const LEGACY_FIPS_UDP_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
     ),
 ];
 
+const LEGACY_FIPS_WEBSOCKET_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
+    (
+        "npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd",
+        &["websocket:wss://fips1.iris.to/fips"],
+    ),
+    (
+        "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh",
+        &["websocket:wss://fips2.iris.to/fips"],
+    ),
+];
+
 pub fn default_fips_websocket_seed_urls() -> Vec<String> {
-    DEFAULT_FIPS_WEBSOCKET_SEEDS
-        .iter()
-        .map(|(_, url)| (*url).to_string())
-        .collect()
+    Vec::new()
 }
 
 /// The default bootstrap peer list as an owned map, used to seed configs and to
@@ -61,20 +75,37 @@ pub fn default_fips_bootstrap_peers() -> HashMap<String, Vec<String>> {
         .collect()
 }
 
-pub(crate) fn is_legacy_fips_udp_bootstrap(
+pub(crate) fn is_legacy_fips_bootstrap(
     npub: &str,
     configured_addresses: &[String],
 ) -> bool {
-    LEGACY_FIPS_UDP_BOOTSTRAP_PEERS
-        .iter()
-        .find(|(legacy_npub, _)| *legacy_npub == npub)
-        .is_some_and(|(_, legacy_addresses)| {
-            configured_addresses.len() == legacy_addresses.len()
-                && configured_addresses
-                    .iter()
-                    .zip(legacy_addresses.iter())
-                    .all(|(configured, legacy)| configured.trim() == *legacy)
-        })
+    [
+        LEGACY_FIPS_UDP_BOOTSTRAP_PEERS,
+        LEGACY_FIPS_WEBSOCKET_BOOTSTRAP_PEERS,
+    ]
+    .into_iter()
+    .any(|legacy_peers| {
+        legacy_peers
+            .iter()
+            .find(|(legacy_npub, _)| *legacy_npub == npub)
+            .is_some_and(|(_, legacy_addresses)| {
+                configured_addresses.len() == legacy_addresses.len()
+                    && configured_addresses
+                        .iter()
+                        .zip(legacy_addresses.iter())
+                        .all(|(configured, legacy)| configured.trim() == *legacy)
+            })
+    })
+}
+
+pub(crate) fn is_legacy_default_fips_websocket_seed_urls(
+    configured_urls: &[String],
+) -> bool {
+    configured_urls.len() == DEFAULT_FIPS_WEBSOCKET_SEEDS.len()
+        && configured_urls
+            .iter()
+            .zip(DEFAULT_FIPS_WEBSOCKET_SEEDS.iter())
+            .all(|(configured, (_, legacy))| configured.trim() == *legacy)
 }
 
 /// Split a transport-tagged peer address into `(transport, address)`. A bare

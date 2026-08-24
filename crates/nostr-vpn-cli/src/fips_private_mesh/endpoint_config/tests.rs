@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod endpoint_config_tests {
     use super::*;
-    use nostr_sdk::prelude::Keys;
+    use nostr_sdk::prelude::{Keys, ToBech32};
 
     fn websocket_peer(npub: String) -> FipsEndpointPeerTransportConfig {
         FipsEndpointPeerTransportConfig {
@@ -118,6 +118,59 @@ mod endpoint_config_tests {
             config.node.discovery.nostr.open_discovery_max_pending
                 < FIPS_PUBLIC_WEBSOCKET_MAX_INBOUND_CONNECTIONS,
             "public unaffiliated admission must remain bounded below socket capacity",
+        );
+    }
+
+    #[test]
+    fn configured_websocket_fallback_enables_transport_without_independent_seed_dial() {
+        let mut transport = test_transport(true, false);
+        transport.websocket.seed_urls.clear();
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &[websocket_peer(Keys::generate().public_key().to_bech32().expect("npub"))],
+            Some(&transport),
+            resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        let (_, websocket) = config
+            .transports
+            .websocket
+            .iter()
+            .next()
+            .expect("configured fallback needs an outbound WebSocket transport");
+        assert!(websocket.seed_urls.is_empty());
+    }
+
+    #[test]
+    fn configured_udp_seed_outranks_its_websocket_fallback() {
+        let npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let peers = fips_endpoint_peers_from_mesh(
+            &[],
+            vec![(
+                npub,
+                vec![
+                    "seed.example.org:51820".to_string(),
+                    "websocket:wss://seed.example.org/fips".to_string(),
+                ],
+            )],
+            Vec::new(),
+        );
+
+        assert_eq!(peers.len(), 1);
+        assert_eq!(
+            peers[0]
+                .addresses
+                .iter()
+                .map(|hint| (hint.addr.as_str(), hint.priority))
+                .collect::<Vec<_>>(),
+            [
+                ("seed.example.org:51820", FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY),
+                (
+                    "websocket:wss://seed.example.org/fips",
+                    FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY,
+                ),
+            ]
         );
     }
 

@@ -58,6 +58,7 @@ impl FipsEthernetUnderlayConfig {
 const FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY: u8 = 10;
 const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
 const FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
+const FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY: u8 = 200;
 const FIPS_UDP_IPV4_TRANSPORT: &str = "ipv4";
 const FIPS_UDP_IPV6_TRANSPORT: &str = "ipv6";
 
@@ -285,8 +286,14 @@ fn fips_endpoint_config_with_open_discovery_limit(
                 mesh_mtu.underlay_udp,
             );
         }
+        let has_configured_websocket_fallback = peers.iter().any(|peer| {
+            peer.addresses
+                .iter()
+                .any(|hint| split_peer_transport_addr(&hint.addr).0 == "websocket")
+        });
         if !transport.websocket.seed_urls.is_empty()
             || transport.websocket.bind_addr.is_some()
+            || has_configured_websocket_fallback
         {
             config.transports.websocket =
                 TransportInstances::Single(transport.websocket.clone());
@@ -431,7 +438,11 @@ fn fips_endpoint_peers_from_mesh(
             if trimmed.is_empty() {
                 continue;
             }
-            let priority = FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY;
+            let priority = if split_peer_transport_addr(trimmed).0 == "websocket" {
+                FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY
+            } else {
+                FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
+            };
             if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
                 existing.seen_at_ms = None;
                 existing.priority = existing.priority.min(priority);

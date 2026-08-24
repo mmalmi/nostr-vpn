@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Prefer authenticated UDP for the public native FIPS seeds while retaining
+  WSS as a fallback on UDP-blocked networks, and migrate prior WSS-only native
+  defaults without making the WebSocket transport dial independently.
 - Deliver the signed roster when an admin accepts an inbound device request,
   so the joining device completes instead of remaining at the approval prompt.
 - Print join-request reachability once, keep the approval wait quiet through

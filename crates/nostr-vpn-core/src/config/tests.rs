@@ -46,24 +46,19 @@ mod tests {
     }
 
     #[test]
-    fn generated_config_uses_identity_pinned_public_websocket_seeds() {
+    fn generated_native_config_uses_identity_pinned_public_udp_seeds() {
         let config = AppConfig::generated_without_networks();
 
         assert!(config.fips_bootstrap_enabled);
         assert_eq!(config.fips_bootstrap_peers.len(), 2);
-        assert_eq!(
-            config.fips_websocket_seed_urls,
-            [
-                "wss://fips1.iris.to/fips",
-                "wss://fips2.iris.to/fips"
-            ]
-        );
+        assert!(config.fips_websocket_seed_urls.is_empty());
         assert_eq!(
             config
                 .fips_bootstrap_peers
                 .get("npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd"),
             Some(&vec![
-                "websocket:wss://fips1.iris.to/fips".to_string()
+                "fips1.iris.to:51820".to_string(),
+                "websocket:wss://fips1.iris.to/fips".to_string(),
             ])
         );
         assert_eq!(
@@ -71,18 +66,22 @@ mod tests {
                 .fips_bootstrap_peers
                 .get("npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh"),
             Some(&vec![
-                "websocket:wss://fips2.iris.to/fips".to_string()
+                "fips2.iris.to:51820".to_string(),
+                "websocket:wss://fips2.iris.to/fips".to_string(),
             ])
         );
         assert!(config
             .fips_bootstrap_peers
             .values()
-            .flatten()
-            .all(|addr| addr.starts_with("websocket:wss://")));
+            .all(|addresses| {
+                addresses.len() == 2
+                    && !addresses[0].contains("://")
+                    && addresses[1].starts_with("websocket:wss://")
+            }));
     }
 
     #[test]
-    fn existing_custom_bootstraps_gain_missing_public_websocket_seeds() {
+    fn existing_custom_bootstraps_gain_missing_public_udp_with_websocket_fallback_seeds() {
         let mut config = AppConfig::generated_without_networks();
         let (_, custom_npub) = generate_nostr_identity();
         config.fips_bootstrap_peers = std::collections::HashMap::from([(
@@ -106,18 +105,22 @@ mod tests {
     }
 
     #[test]
-    fn legacy_public_udp_bootstraps_migrate_to_canonical_websocket() {
+    fn legacy_public_websocket_bootstraps_migrate_to_native_udp() {
         let mut config = AppConfig::generated_without_networks();
+        config.fips_websocket_seed_urls = vec![
+            "wss://fips1.iris.to/fips".to_string(),
+            "wss://fips2.iris.to/fips".to_string(),
+        ];
         config.fips_bootstrap_peers = std::collections::HashMap::from([
             (
                 "npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd"
                     .to_string(),
-                vec!["185.18.221.232:51820".to_string()],
+                vec!["websocket:wss://fips1.iris.to/fips".to_string()],
             ),
             (
                 "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh"
                     .to_string(),
-                vec!["65.109.48.91:51820".to_string()],
+                vec!["websocket:wss://fips2.iris.to/fips".to_string()],
             ),
         ]);
 
@@ -127,6 +130,7 @@ mod tests {
             config.fips_bootstrap_peers,
             super::default_fips_bootstrap_peers()
         );
+        assert!(config.fips_websocket_seed_urls.is_empty());
     }
 
     #[test]

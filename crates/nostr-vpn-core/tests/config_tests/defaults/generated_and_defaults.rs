@@ -177,7 +177,7 @@ fn fips_bootstrap_peers_are_public_editable_and_resettable() {
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse");
     assert_eq!(decoded.fips_bootstrap_peers.len(), 1);
 
-    // Resettable to the public WebSocket seed default.
+    // Resettable to the public native UDP seed default.
     config.reset_fips_bootstrap_peers();
     assert_eq!(config.fips_bootstrap_peers, default_fips_bootstrap_peers());
 }
