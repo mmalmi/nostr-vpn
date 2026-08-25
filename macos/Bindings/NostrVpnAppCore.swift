@@ -5819,6 +5819,7 @@ public enum NativeAppAction {
     )
     case streamPaidRoutePayments(publish: Bool, minIncrementMsat: UInt64, limit: UInt64
     )
+    case clearPaidRouteActivity
     case receivePaidRoutePayments(durationSecs: UInt64
     )
     case collectPaidExitChannel(channelId: String
@@ -5984,23 +5985,25 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
         case 49: return .streamPaidRoutePayments(publish: try FfiConverterBool.read(from: &buf), minIncrementMsat: try FfiConverterUInt64.read(from: &buf), limit: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 50: return .receivePaidRoutePayments(durationSecs: try FfiConverterUInt64.read(from: &buf)
+        case 50: return .clearPaidRouteActivity
+
+        case 51: return .receivePaidRoutePayments(durationSecs: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 51: return .collectPaidExitChannel(channelId: try FfiConverterString.read(from: &buf)
+        case 52: return .collectPaidExitChannel(channelId: try FfiConverterString.read(from: &buf)
         )
 
-        case 52: return .collectDuePaidExitChannels
+        case 53: return .collectDuePaidExitChannels
 
-        case 53: return .publishPaidExitOffer
+        case 54: return .publishPaidExitOffer
 
-        case 54: return .setPaidRouteMarketFilter(query: try FfiConverterString.read(from: &buf), countryCode: try FfiConverterString.read(from: &buf), mintUrl: try FfiConverterString.read(from: &buf), requireIpv4: try FfiConverterBool.read(from: &buf), requireIpv6: try FfiConverterBool.read(from: &buf), sort: try FfiConverterString.read(from: &buf)
+        case 55: return .setPaidRouteMarketFilter(query: try FfiConverterString.read(from: &buf), countryCode: try FfiConverterString.read(from: &buf), mintUrl: try FfiConverterString.read(from: &buf), requireIpv4: try FfiConverterBool.read(from: &buf), requireIpv6: try FfiConverterBool.read(from: &buf), sort: try FfiConverterString.read(from: &buf)
         )
 
-        case 55: return .discoverPaidRouteOffers(durationSecs: try FfiConverterUInt64.read(from: &buf)
+        case 56: return .discoverPaidRouteOffers(durationSecs: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 56: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
+        case 57: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -6292,26 +6295,30 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
             FfiConverterUInt64.write(limit, into: &buf)
 
 
-        case let .receivePaidRoutePayments(durationSecs):
+        case .clearPaidRouteActivity:
             writeInt(&buf, Int32(50))
+
+
+        case let .receivePaidRoutePayments(durationSecs):
+            writeInt(&buf, Int32(51))
             FfiConverterUInt64.write(durationSecs, into: &buf)
 
 
         case let .collectPaidExitChannel(channelId):
-            writeInt(&buf, Int32(51))
+            writeInt(&buf, Int32(52))
             FfiConverterString.write(channelId, into: &buf)
 
 
         case .collectDuePaidExitChannels:
-            writeInt(&buf, Int32(52))
-
-
-        case .publishPaidExitOffer:
             writeInt(&buf, Int32(53))
 
 
-        case let .setPaidRouteMarketFilter(query,countryCode,mintUrl,requireIpv4,requireIpv6,sort):
+        case .publishPaidExitOffer:
             writeInt(&buf, Int32(54))
+
+
+        case let .setPaidRouteMarketFilter(query,countryCode,mintUrl,requireIpv4,requireIpv6,sort):
+            writeInt(&buf, Int32(55))
             FfiConverterString.write(query, into: &buf)
             FfiConverterString.write(countryCode, into: &buf)
             FfiConverterString.write(mintUrl, into: &buf)
@@ -6321,12 +6328,12 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
 
 
         case let .discoverPaidRouteOffers(durationSecs):
-            writeInt(&buf, Int32(55))
+            writeInt(&buf, Int32(56))
             FfiConverterUInt64.write(durationSecs, into: &buf)
 
 
         case let .updateSettings(patch):
-            writeInt(&buf, Int32(56))
+            writeInt(&buf, Int32(57))
             FfiConverterTypeSettingsPatch.write(patch, into: &buf)
 
         }

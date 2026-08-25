@@ -81,6 +81,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
     #[cfg(feature = "paid-exit")]
+    let mut manual_paid_exit = PaidExitManualBuyer::default();
+    #[cfg(feature = "paid-exit")]
     let mut last_paid_exit_session_open_at =
         Instant::now() - Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS);
     #[cfg(feature = "paid-exit")]

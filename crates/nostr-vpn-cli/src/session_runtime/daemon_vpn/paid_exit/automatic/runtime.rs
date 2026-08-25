@@ -1,6 +1,6 @@
 use super::*;
 
-async fn paid_exit_automatic_probe_measurement(
+pub(crate) async fn paid_exit_route_probe_measurement(
     app: &AppConfig,
     now_unix: u64,
 ) -> Result<PaidRouteProbeMeasurement> {
@@ -73,7 +73,7 @@ pub(crate) async fn update_automatic_paid_exit(
         automatic.probe = Some(PaidExitAutomaticProbe {
             generation: automatic.generation,
             task: tokio::spawn(async move {
-                paid_exit_automatic_probe_measurement(&probe_app, now_unix).await
+                paid_exit_route_probe_measurement(&probe_app, now_unix).await
             }),
         });
     }
@@ -96,12 +96,7 @@ pub(crate) async fn update_automatic_paid_exit(
                         .as_ref()
                         .map(|candidate| candidate.session_id.clone())
                         .ok_or_else(|| anyhow!("automatic paid exit probe lost its candidate"))?;
-                    record_automatic_paid_exit_probe(
-                        config_path,
-                        &session_id,
-                        measurement,
-                        now_unix,
-                    )?;
+                    record_paid_exit_probe(config_path, &session_id, measurement, now_unix)?;
                     if let Some(candidate) = automatic.candidate.as_mut() {
                         candidate.probe_succeeded = true;
                         if candidate.health_evidence_fresh(now_unix) {
@@ -173,7 +168,7 @@ pub(crate) async fn update_automatic_paid_exit(
     Ok(false)
 }
 
-fn record_automatic_paid_exit_probe(
+pub(crate) fn record_paid_exit_probe(
     config_path: &Path,
     session_id: &str,
     measurement: PaidRouteProbeMeasurement,

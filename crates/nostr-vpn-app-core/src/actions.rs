@@ -185,6 +185,7 @@ pub enum NativeAppAction {
         min_increment_msat: u64,
         limit: u64,
     },
+    ClearPaidRouteActivity,
     ReceivePaidRoutePayments {
         duration_secs: u64,
     },

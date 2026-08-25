@@ -51,6 +51,7 @@ struct RootView: View {
     @State var wireGuardUpstreamExpanded = RootView.initialWireGuardUpstreamExpanded()
     @State var paidRouteOfferCountryFilter = "all"
     @State var paidRouteOfferSort = "quality"
+    @AppStorage("paidRouteHistoryClearedBeforeUnix") var paidRouteHistoryClearedBeforeUnix = 0.0
     @State var networkNameInput = ""
     @State var selectedDevicePubkeyHex: String?
     @State var networkNameDrafts: [String: String] = [:]

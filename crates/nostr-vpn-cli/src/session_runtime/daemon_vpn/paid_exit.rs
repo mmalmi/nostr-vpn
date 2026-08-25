@@ -4,6 +4,9 @@ use nostr_vpn_core::paid_routes::PaidRouteUsage;
 #[path = "paid_exit/automatic.rs"]
 mod automatic;
 pub(crate) use automatic::*;
+#[path = "paid_exit/manual.rs"]
+mod manual;
+pub(crate) use manual::*;
 #[path = "paid_exit/refunds.rs"]
 mod refunds;
 pub(in crate::session_runtime) use refunds::PaidExitBuyerRefundRuntime;

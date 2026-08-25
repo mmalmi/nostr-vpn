@@ -450,6 +450,8 @@ loop {
             #[cfg(feature = "paid-exit")]
             let mut automatic_paid_exit_route_changed = false;
             #[cfg(feature = "paid-exit")]
+            let mut manual_paid_exit_route_changed = false;
+            #[cfg(feature = "paid-exit")]
             let mut paid_exit_payment_outbox_changed = false;
             if let Some(runtime) = fips_tunnel_runtime.as_mut() {
                 #[cfg(feature = "paid-exit")]
@@ -636,6 +638,28 @@ loop {
                                     "paid-exit: automatic buyer update failed: {error}"
                                 ),
                             }
+                            match update_manual_paid_exit(
+                                &mut manual_paid_exit,
+                                runtime,
+                                &mut app,
+                                &config_path,
+                                unix_timestamp(),
+                            )
+                            .await
+                            {
+                                Ok(changed) => {
+                                    manual_paid_exit_route_changed |= changed;
+                                    if changed {
+                                        refresh_or_start_split_magic_dns(
+                                            &mut magic_dns_runtime,
+                                            &app,
+                                        );
+                                    }
+                                }
+                                Err(error) => eprintln!(
+                                    "paid-exit: manual buyer health update failed: {error}"
+                                ),
+                            }
                         }
                         Err(error) => {
                             eprintln!("paid-exit: failed to record FIPS usage: {error}");
@@ -681,7 +705,9 @@ loop {
                 }
             }
                 #[cfg(feature = "paid-exit")]
-                if (automatic_paid_exit_route_changed || paid_exit_payment_outbox_changed)
+                if (automatic_paid_exit_route_changed
+                    || manual_paid_exit_route_changed
+                    || paid_exit_payment_outbox_changed)
                     && let Err(error) = sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {

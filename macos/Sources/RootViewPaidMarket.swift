@@ -5,9 +5,10 @@ import SwiftUI
 extension RootView {
     var paidRouteMarketSettings: some View {
         let market = state.paidRouteMarket
+        let visibleSessions = paidRouteVisibleSessions(market.sessions)
         return VStack(alignment: .leading, spacing: 14) {
-            if market.supported && !market.sessions.isEmpty {
-                paidRouteActiveSessionSection(market)
+            if market.supported && (!visibleSessions.isEmpty || !market.lastPaymentAction.kind.isEmpty) {
+                paidRouteActiveSessionSection(market, sessions: visibleSessions)
                 paidRouteOfferDiscoverySection(market)
             } else {
                 paidRouteOfferDiscoverySection(market)
@@ -15,7 +16,10 @@ extension RootView {
         }
     }
 
-    func paidRouteActiveSessionSection(_ market: NativePaidRouteMarketState) -> some View {
+    func paidRouteActiveSessionSection(
+        _ market: NativePaidRouteMarketState,
+        sessions: [NativePaidRouteSessionState]
+    ) -> some View {
         surface {
             HStack(spacing: 12) {
                 sectionHeader("Current Internet", systemImage: "bolt.horizontal.circle.fill")
@@ -28,14 +32,48 @@ extension RootView {
                 .controlSize(.small)
                 .disabled(manager.actionInFlight || !paidRouteHasStreamablePayments(market.sessions))
                 .help("Send due payments")
-            }
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(market.sessions, id: \.sessionId) { session in
-                    paidRouteSessionRow(session)
+                if paidRouteActivityCanClear(market) {
+                    Button {
+                        paidRouteHistoryClearedBeforeUnix = Date().timeIntervalSince1970
+                        manager.clearPaidRouteActivity()
+                    } label: {
+                        Label("Clear", systemImage: "trash")
+                    }
+                    .controlSize(.small)
+                    .disabled(manager.actionInFlight)
+                    .help("Clear past connection activity from this view")
+                    .accessibilityIdentifier("paid-exit-clear-activity")
                 }
             }
-            paidRoutePaymentActionResult(market.lastPaymentAction)
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(sessions, id: \.sessionId) { session in
+                        paidRouteSessionRow(session)
+                    }
+                    paidRoutePaymentActionResult(market.lastPaymentAction)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 340)
+            .accessibilityIdentifier("paid-exit-activity-log")
         }
+    }
+
+    func paidRouteVisibleSessions(
+        _ sessions: [NativePaidRouteSessionState]
+    ) -> [NativePaidRouteSessionState] {
+        sessions.filter { session in
+            !["closed", "expired", "failed"].contains(session.lifecycleStatus)
+                || Double(session.updatedAtUnix) > paidRouteHistoryClearedBeforeUnix
+        }
+    }
+
+    func paidRouteActivityCanClear(_ market: NativePaidRouteMarketState) -> Bool {
+        !market.lastPaymentAction.kind.isEmpty
+            || market.sessions.contains { session in
+                ["closed", "expired", "failed"].contains(session.lifecycleStatus)
+                    && Double(session.updatedAtUnix) > paidRouteHistoryClearedBeforeUnix
+            }
     }
 
     func paidRouteOfferDiscoverySection(_ market: NativePaidRouteMarketState) -> some View {

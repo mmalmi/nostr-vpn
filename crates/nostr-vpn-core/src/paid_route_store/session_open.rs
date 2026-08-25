@@ -204,6 +204,45 @@ impl PaidRouteStore {
             .contains_key(&session.session.lease_id))
     }
 
+    pub fn fail_selected_buyer_session(&mut self, error: &str, now_unix: u64) -> Result<bool> {
+        let session_id = trimmed_required(
+            &self.selected_buyer_session_id,
+            "selected paid route session id",
+        )?;
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} does not exist"))?;
+        let lease_id = session.session.lease_id.clone();
+        let channel_id = session.session.payment.channel_id.clone();
+        let channel = self
+            .channels
+            .get(&channel_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} has no channel"))?;
+        if channel.role != PaidRouteChannelRole::Buyer {
+            return Err(anyhow!(
+                "paid route session {session_id} is not a buyer session"
+            ));
+        }
+
+        let before = self.clone();
+        if let Some(lease) = self.leases.get_mut(&lease_id)
+            && paid_route_lifecycle_allows_routing(lease.status)
+        {
+            lease.status = PaidRouteLifecycleStatus::Failed;
+            lease.updated_at_unix = lease.updated_at_unix.max(now_unix);
+        }
+        if let Some(channel) = self.channels.get_mut(&channel_id)
+            && paid_route_lifecycle_allows_routing(channel.status)
+        {
+            channel.status = PaidRouteLifecycleStatus::Failed;
+            channel.updated_at_unix = channel.updated_at_unix.max(now_unix);
+            channel.error = trimmed_required(error, "paid route failure reason")?;
+        }
+        self.buyer_session_open_attempts.remove(&session_id);
+        Ok(*self != before)
+    }
+
     pub fn acknowledge_buyer_session_open(
         &mut self,
         authenticated_seller_pubkey: &str,
@@ -447,29 +486,11 @@ impl PaidRouteStore {
                 .saturating_add(config.channel.channel_expiry_secs.max(1)),
         );
 
-        for existing in self.sessions.values() {
-            let Some(existing_lease) = self.leases.get(&existing.session.lease_id) else {
-                continue;
-            };
-            let Some(existing_channel) = self.channels.get(&existing.session.payment.channel_id)
-            else {
-                continue;
-            };
-            if existing_channel.role == PaidRouteChannelRole::Seller
-                && normalize_nostr_pubkey(&existing_lease.lease.buyer_npub)
-                    .ok()
-                    .as_deref()
-                    == Some(buyer_pubkey.as_str())
-                && existing.session.lease_id != lease_id
-                && existing.session.payment.cashu_spilman_payment.is_none()
-                && existing.session.payment.cashu_token_lease.is_none()
-            {
-                return Err(anyhow!(
-                    "paid route buyer already consumed a free probe on this seller"
-                ));
-            }
-        }
-
+        // A funded channel can arrive before its session-open frame. In that case the
+        // payment handler has already created this seller session, and this frame is
+        // binding the authenticated buyer's tunnel IP to it. Handle that replay before
+        // enforcing the one-free-probe-per-buyer rule: an older free probe must not
+        // prevent a newly funded session from becoming routable.
         let session_id = seller_session_id_for_lease(&lease_id);
         if self.sessions.contains_key(&session_id) {
             let lease = self
@@ -508,6 +529,29 @@ impl PaidRouteStore {
                 state: admission.state,
                 changed: false,
             });
+        }
+
+        for existing in self.sessions.values() {
+            let Some(existing_lease) = self.leases.get(&existing.session.lease_id) else {
+                continue;
+            };
+            let Some(existing_channel) = self.channels.get(&existing.session.payment.channel_id)
+            else {
+                continue;
+            };
+            if existing_channel.role == PaidRouteChannelRole::Seller
+                && normalize_nostr_pubkey(&existing_lease.lease.buyer_npub)
+                    .ok()
+                    .as_deref()
+                    == Some(buyer_pubkey.as_str())
+                && existing.session.lease_id != lease_id
+                && existing.session.payment.cashu_spilman_payment.is_none()
+                && existing.session.payment.cashu_token_lease.is_none()
+            {
+                return Err(anyhow!(
+                    "paid route buyer already consumed a free probe on this seller"
+                ));
+            }
         }
         if config.channel.free_probe_units == 0 {
             return Err(anyhow!(

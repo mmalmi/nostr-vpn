@@ -103,6 +103,94 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
 }
 
 #[test]
+fn funded_reconnect_is_admitted_after_the_same_buyer_used_an_older_free_probe() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
+    let config = sample_config();
+    let mut store = PaidRouteStore::default();
+
+    store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: PaidRouteSessionOpen {
+                version: PAID_ROUTE_OFFER_VERSION.to_string(),
+                service_id: "internet-exit".to_string(),
+                lease_id: "old-free-lease".to_string(),
+                channel_id: "old-free-channel".to_string(),
+                seller_npub: seller_npub.clone(),
+                buyer_tunnel_ip: "10.44.201.17/32".to_string(),
+                expires_at_unix: 500,
+            },
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 100,
+        })
+        .expect("consume the buyer's first free probe");
+
+    let reconnect = PaidRouteSessionOpen {
+        version: PAID_ROUTE_OFFER_VERSION.to_string(),
+        service_id: "internet-exit".to_string(),
+        lease_id: "funded-reconnect-lease".to_string(),
+        channel_id: "funded-reconnect-channel".to_string(),
+        seller_npub: seller_npub.clone(),
+        buyer_tunnel_ip: "10.44.201.17/32".to_string(),
+        expires_at_unix: 500,
+    };
+    let error = store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: reconnect.clone(),
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 110,
+        })
+        .expect_err("an unfunded second free probe remains rejected");
+    assert!(error.to_string().contains("already consumed a free probe"));
+
+    store
+        .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
+            envelope: seller_payment_envelope(
+                "internet-exit",
+                "funded-reconnect-lease",
+                &buyer_npub,
+                &seller_npub,
+                111,
+                StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
+                    mint_url: "https://mint.minibits.cash/Bitcoin".to_string(),
+                    unit: "sat".to_string(),
+                    capacity: 20,
+                    expires_unix: 500,
+                    receiver_pubkey_hex: seller.public_key().to_hex(),
+                    paid_msat: 0,
+                    payment: sample_spilman_payment("funded-reconnect-channel", 0),
+                }),
+            ),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 111,
+        })
+        .expect("persist the funded reconnect before its next session-open retry");
+
+    let applied = store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: reconnect,
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub,
+            config: config.clone(),
+            now_unix: 112,
+        })
+        .expect("funded reconnect must bypass historical free-probe rejection");
+    assert!(applied.allow_routing);
+    assert_eq!(store.seller_admissions(&config, 112).len(), 1);
+    assert_eq!(
+        store.seller_admissions(&config, 112)[0].buyer_tunnel_ip,
+        "10.44.201.17/32"
+    );
+}
+
+#[test]
 fn selected_buyer_session_expires_or_fails_instead_of_retrying_forever() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
@@ -199,6 +287,41 @@ fn seller_acknowledgment_activates_only_the_selected_buyer_session() {
         !store
             .reconcile_buyer_session_lifecycle(200, 30)
             .selected_session_timed_out
+    );
+}
+
+#[test]
+fn selected_buyer_session_fails_when_end_to_end_exit_health_check_fails() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = sample_config();
+    let (mut store, session_id, channel_id) = buyer_store_with_session(&seller, &buyer, &config);
+    let lease_id = store.sessions[&session_id].session.lease_id.clone();
+    store
+        .begin_buyer_session_open_attempt(&session_id, 130)
+        .expect("select buyer session");
+    store
+        .acknowledge_buyer_session_open(&seller.public_key().to_hex(), &lease_id, 140)
+        .expect("acknowledge selected session");
+
+    assert!(
+        store
+            .fail_selected_buyer_session("Seller exit did not return Internet traffic", 145)
+            .expect("fail selected session")
+    );
+    assert_eq!(
+        store.channels[&channel_id].status,
+        PaidRouteLifecycleStatus::Failed
+    );
+    assert_eq!(
+        store.leases[&lease_id].status,
+        PaidRouteLifecycleStatus::Failed
+    );
+    assert!(store.channels[&channel_id].error.contains("did not return"));
+    assert!(
+        !store
+            .buyer_session_allows_routing(&session_id, 146)
+            .expect("failed session routing decision")
     );
 }
 

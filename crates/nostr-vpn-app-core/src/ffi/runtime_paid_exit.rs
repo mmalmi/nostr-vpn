@@ -93,6 +93,22 @@ mod paid_exit {
         }
 
         #[test]
+        fn paid_route_activity_can_be_cleared_without_mutating_wallet_or_sessions() {
+            let error = anyhow!("test runtime");
+            let mut runtime = NativeAppRuntime::from_startup_error(&error);
+            runtime.paid_route_payment_last_action = NativePaidRoutePaymentActionState {
+                kind: "send".to_string(),
+                status_text: "Payment send attempted".to_string(),
+                ..NativePaidRoutePaymentActionState::default()
+            };
+
+            runtime.dispatch(crate::NativeAppAction::ClearPaidRouteActivity);
+
+            assert!(runtime.paid_route_payment_last_action.kind.is_empty());
+            assert!(runtime.paid_route_payment_last_action.status_text.is_empty());
+        }
+
+        #[test]
         fn default_order_ranks_good_unknown_bad_ratings() {
             let mut offers = [
                 offer("bad", Some(-80), 1),

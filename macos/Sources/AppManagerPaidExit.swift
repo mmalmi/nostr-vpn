@@ -280,6 +280,10 @@ extension AppManager {
         )
     }
 
+    func clearPaidRouteActivity() {
+        dispatch(.clearPaidRouteActivity, status: "Clearing activity")
+    }
+
     func receivePaidRoutePayments() {
         dispatch(.receivePaidRoutePayments(durationSecs: 5), status: "Receiving payments")
     }

@@ -249,14 +249,9 @@ fn acknowledge_paid_exit_payment(
             "paid route payment acknowledgment source does not match seller"
         ));
     }
-    let store_path = paid_route_store_file_path(config_path);
-    update_paid_route_store(&store_path, |store| {
-        store.acknowledge_buyer_session_open(
-            seller_pubkey,
-            &envelope.lease_id,
-            unix_timestamp(),
-        )
-    })?;
+    // A payment acknowledgment proves only that the seller persisted the
+    // payment. Routing is admitted separately by PaidRouteSessionOpenAck after
+    // the seller has authenticated and bound the buyer's tunnel IP.
     fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
     Ok(true)
 }

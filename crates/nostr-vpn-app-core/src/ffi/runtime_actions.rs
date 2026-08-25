@@ -417,6 +417,11 @@ impl NativeAppRuntime {
                 min_increment_msat,
                 limit,
             } => self.stream_paid_route_payments(publish, min_increment_msat, limit),
+            NativeAppAction::ClearPaidRouteActivity => {
+                self.paid_route_payment_last_action =
+                    NativePaidRoutePaymentActionState::default();
+                Ok(())
+            }
             NativeAppAction::ReceivePaidRoutePayments { duration_secs } => {
                 self.receive_paid_route_payments(duration_secs)
             }

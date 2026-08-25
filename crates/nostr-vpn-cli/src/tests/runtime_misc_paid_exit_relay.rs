@@ -890,9 +890,9 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     let acknowledged = load_paid_route_store(&paid_route_store_file_path(&config_path))
         .expect("load acknowledged buyer store");
     assert!(
-        acknowledged
+        !acknowledged
             .buyer_has_seller_admission(&seller.public_key().to_hex(), 129)
-            .expect("seller admission")
+            .expect("payment acknowledgment is not seller admission")
     );
     assert!(load_paid_exit_payment_outbox(&config_path).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
