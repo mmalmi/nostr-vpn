@@ -709,6 +709,9 @@ async fn test_import_payment_proofs_repairs_a_duplicate_witness() {
         .await
         .unwrap();
 
+    let replacement_keyset = build_test_keyset(32);
+    proof.keyset_id = replacement_keyset.id;
+    proof.c = SecretKey::generate().public_key();
     proof.witness = Some(Witness::P2PKWitness(P2PKWitness {
         signatures: vec!["signed-refund".to_string()],
     }));
@@ -725,6 +728,8 @@ async fn test_import_payment_proofs_repairs_a_duplicate_witness() {
         .await
         .unwrap();
     assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].proof.keyset_id, replacement_keyset.id);
+    assert_eq!(stored[0].proof.c, proof.c);
     assert_eq!(stored[0].proof.witness, proof.witness);
 }
 

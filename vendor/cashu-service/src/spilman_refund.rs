@@ -1,6 +1,10 @@
 //! Buyer-side recovery for settled Cashu Spilman channels.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{BTreeSet, HashMap},
+    future::Future,
+    path::Path,
+};
 
 use cashu::nuts::{Proof, SecretKey};
 use cdk_spilman::ClientStorage;
@@ -105,6 +109,118 @@ pub fn sign_restored_sender_proofs(
     Ok(())
 }
 
+async fn restore_sender_proofs_from_issued_keyset_with_resolver<M, R, F>(
+    sender: &cdk_spilman::SpilmanChannelSender,
+    mint: &M,
+    requested_keyset: &cdk_spilman::KeysetInfo,
+    fallback_keyset_ids: &[cashu::nuts::Id],
+    mut resolve_keyset: R,
+) -> anyhow::Result<Vec<Proof>>
+where
+    M: cdk_spilman::MintConnection + ?Sized,
+    R: FnMut(cashu::nuts::Id) -> F,
+    F: Future<Output = anyhow::Result<cdk_spilman::KeysetInfo>>,
+{
+    let mut candidates = vec![requested_keyset.keyset_id];
+    candidates.extend_from_slice(fallback_keyset_ids);
+    let mut seen_candidates = BTreeSet::new();
+    candidates.retain(|keyset_id| seen_candidates.insert(*keyset_id));
+    for candidate_id in candidates {
+        let candidate = if candidate_id == requested_keyset.keyset_id {
+            requested_keyset.clone()
+        } else {
+            resolve_keyset(candidate_id).await?
+        };
+        if candidate.keyset_id != candidate_id {
+            anyhow::bail!(
+                "resolved Cashu keyset {} instead of requested keyset {}",
+                candidate.keyset_id,
+                candidate_id
+            );
+        }
+        let proofs = sender
+            .restore_sender_proofs_with_keyset(mint, &candidate)
+            .await?;
+        if proofs.is_empty() {
+            continue;
+        }
+        let issued_keysets = proofs
+            .iter()
+            .map(|proof| proof.keyset_id)
+            .collect::<BTreeSet<_>>();
+        if issued_keysets.len() != 1 {
+            anyhow::bail!("Cashu restore returned proofs from multiple keysets");
+        }
+        let issued_keyset_id = *issued_keysets.iter().next().expect("one issued keyset");
+        if issued_keyset_id == candidate_id {
+            return Ok(proofs);
+        }
+        let issued_keyset = resolve_keyset(issued_keyset_id).await?;
+        if issued_keyset.keyset_id != issued_keyset_id {
+            anyhow::bail!(
+                "resolved Cashu keyset {} instead of restored keyset {}",
+                issued_keyset.keyset_id,
+                issued_keyset_id
+            );
+        }
+        let proofs = sender
+            .restore_sender_proofs_with_keyset(mint, &issued_keyset)
+            .await?;
+        if proofs.is_empty() {
+            anyhow::bail!(
+                "Cashu restore reported keyset {issued_keyset_id} but returned no proofs when retried with that keyset"
+            );
+        }
+        if proofs
+            .iter()
+            .any(|proof| proof.keyset_id != issued_keyset_id)
+        {
+            anyhow::bail!("Cashu restore response keyset changed while recovering channel refund");
+        }
+        return Ok(proofs);
+    }
+    Ok(Vec::new())
+}
+
+pub async fn restore_sender_proofs_from_issued_keyset<M>(
+    sender: &cdk_spilman::SpilmanChannelSender,
+    mint: &M,
+    mint_url: &str,
+    unit: &str,
+    requested_keyset: &cdk_spilman::KeysetInfo,
+) -> anyhow::Result<Vec<Proof>>
+where
+    M: cdk_spilman::MintConnection + ?Sized,
+{
+    let mint_url = mint_url.to_string();
+    let unit = unit.to_string();
+    let fallback_keyset_ids = crate::fetch_spilman_keyset_ids(&mint_url, &unit)
+        .await
+        .map_err(anyhow::Error::msg)?
+        .into_iter()
+        .map(|keyset_id| keyset_id.parse())
+        .collect::<Result<Vec<cashu::nuts::Id>, _>>()?;
+    restore_sender_proofs_from_issued_keyset_with_resolver(
+        sender,
+        mint,
+        requested_keyset,
+        &fallback_keyset_ids,
+        move |keyset_id| {
+            let mint_url = mint_url.clone();
+            let unit = unit.clone();
+            async move {
+                let keyset_id = keyset_id.to_string();
+                let json =
+                    fetch_spilman_keyset_info_json(&mint_url, &unit, Some(keyset_id.as_str()))
+                        .await
+                        .map_err(anyhow::Error::msg)?;
+                cdk_spilman::parse_keyset_info_from_json(&json).map_err(anyhow::Error::msg)
+            }
+        },
+    )
+    .await
+}
+
 pub async fn restore_streaming_route_cashu_spilman_refund(
     data_dir: &Path,
     channel_id: &str,
@@ -136,7 +252,7 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
         .unwrap_or("sat")
         .to_string();
     if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed
-        && storage.refund_witnesses_persisted(channel_id)
+        && storage.refund_proofs_validated(channel_id)
     {
         return Ok(complete_result(channel_id, funding.mint_url, unit, 0, 0, 0));
     }
@@ -179,9 +295,14 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
     }
 
     let sender = cdk_spilman::SpilmanChannelSender::new(sender_secret, channel);
-    let mut proofs = sender
-        .restore_sender_proofs_with_keyset(&mint, &output_keyset)
-        .await?;
+    let mut proofs = restore_sender_proofs_from_issued_keyset(
+        &sender,
+        &mint,
+        &funding.mint_url,
+        &unit,
+        &output_keyset,
+    )
+    .await?;
     sign_restored_sender_proofs(&sender.channel.params, &sender.alice_secret, &mut proofs)?;
     let recovered_amount_sat = proofs
         .iter()
@@ -198,6 +319,7 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
     };
     storage.set_closed(channel_id);
     storage.mark_refund_witnesses_persisted(channel_id);
+    storage.mark_refund_proofs_validated(channel_id);
     storage_errors
         .ensure_ok()
         .map_err(|error| anyhow::anyhow!(error))?;
@@ -234,11 +356,62 @@ fn complete_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
     use cashu::{
-        nuts::{CurrencyUnit, Id, Keys},
+        nuts::{
+            BlindSignature, CheckStateResponse, CurrencyUnit, Id, Keys, RestoreRequest,
+            RestoreResponse, SwapRequest, SwapResponse,
+        },
         Amount,
     };
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::Mutex};
+
+    struct RotatedRestoreMint {
+        issued_keyset_id: Id,
+        issued_secret: SecretKey,
+        restorable_blinded_secret: cashu::nuts::PublicKey,
+        require_issued_keyset_request: bool,
+        requested_keysets: Mutex<Vec<Id>>,
+    }
+
+    #[async_trait]
+    impl cdk_spilman::MintConnection for RotatedRestoreMint {
+        async fn process_swap(&self, _request: SwapRequest) -> anyhow::Result<SwapResponse> {
+            unreachable!("refund restore does not process swaps")
+        }
+
+        async fn post_restore(&self, request: RestoreRequest) -> anyhow::Result<RestoreResponse> {
+            let output = request.outputs.first().expect("one restore output");
+            self.requested_keysets
+                .lock()
+                .unwrap()
+                .push(output.keyset_id);
+            let signatures = if output.blinded_secret == self.restorable_blinded_secret
+                && (!self.require_issued_keyset_request
+                    || output.keyset_id == self.issued_keyset_id)
+            {
+                vec![BlindSignature {
+                    amount: output.amount,
+                    keyset_id: self.issued_keyset_id,
+                    c: cashu::dhke::sign_message(&self.issued_secret, &output.blinded_secret)?,
+                    dleq: None,
+                }]
+            } else {
+                Vec::new()
+            };
+            Ok(RestoreResponse {
+                outputs: request.outputs,
+                signatures,
+            })
+        }
+
+        async fn check_state(
+            &self,
+            _ys: Vec<cashu::nuts::PublicKey>,
+        ) -> anyhow::Result<CheckStateResponse> {
+            unreachable!("refund restore test does not check funding state")
+        }
+    }
 
     fn test_funding() -> cdk_spilman::ClientChannelFunding {
         cdk_spilman::ClientChannelFunding {
@@ -274,6 +447,7 @@ mod tests {
         storage.save_funding("channel-1", test_funding());
         storage.set_closed("channel-1");
         storage.mark_refund_witnesses_persisted("channel-1");
+        storage.mark_refund_proofs_validated("channel-1");
         errors.ensure_ok().unwrap();
         drop(storage);
 
@@ -329,5 +503,179 @@ mod tests {
 
         assert!(proofs[0].witness.is_some());
         proofs[0].verify_p2pk().unwrap();
+    }
+
+    #[tokio::test]
+    async fn restored_refund_uses_the_keyset_that_actually_issued_the_signature() {
+        let alice_secret = SecretKey::generate();
+        let charlie_secret = SecretKey::generate();
+        let issued_secret = SecretKey::generate();
+        let active_secret = SecretKey::generate();
+        let issued_keys = Keys::new(BTreeMap::from([(
+            Amount::from(2_u64),
+            issued_secret.public_key(),
+        )]));
+        let active_keys = Keys::new(BTreeMap::from([(
+            Amount::from(2_u64),
+            active_secret.public_key(),
+        )]));
+        let issued_keyset = cdk_spilman::KeysetInfo::new(
+            Id::v1_from_keys(&issued_keys),
+            CurrencyUnit::Sat,
+            issued_keys,
+            0,
+            None,
+        );
+        let active_keyset = cdk_spilman::KeysetInfo::new(
+            Id::v1_from_keys(&active_keys),
+            CurrencyUnit::Sat,
+            active_keys,
+            0,
+            None,
+        );
+        let params = cdk_spilman::ChannelParameters::new_with_secret_key(
+            alice_secret.public_key(),
+            charlie_secret.public_key(),
+            "https://mint.example".to_string(),
+            CurrencyUnit::Sat,
+            2,
+            2,
+            1_000,
+            1,
+            issued_keyset.clone(),
+            2,
+            &alice_secret,
+        )
+        .unwrap();
+        let restorable = params
+            .create_deterministic_output_with_blinding("sender", 2, 0)
+            .unwrap();
+        let mint = RotatedRestoreMint {
+            issued_keyset_id: issued_keyset.keyset_id,
+            issued_secret: issued_secret.clone(),
+            restorable_blinded_secret: restorable
+                .to_blinded_message(Amount::from(2_u64), active_keyset.keyset_id)
+                .unwrap()
+                .blinded_secret,
+            require_issued_keyset_request: false,
+            requested_keysets: Mutex::new(Vec::new()),
+        };
+        let funding_proof = Proof::new(
+            Amount::from(2_u64),
+            issued_keyset.keyset_id,
+            cashu::secret::Secret::generate(),
+            SecretKey::generate().public_key(),
+        );
+        let channel = cdk_spilman::EstablishedChannel::new(params, vec![funding_proof]).unwrap();
+        let sender = cdk_spilman::SpilmanChannelSender::new(alice_secret, channel);
+
+        let proofs = restore_sender_proofs_from_issued_keyset_with_resolver(
+            &sender,
+            &mint,
+            &active_keyset,
+            &[issued_keyset.keyset_id],
+            |keyset_id| {
+                let issued_keyset = issued_keyset.clone();
+                async move {
+                    assert_eq!(keyset_id, issued_keyset.keyset_id);
+                    Ok(issued_keyset)
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(proofs.len(), 1);
+        assert_eq!(proofs[0].keyset_id, issued_keyset.keyset_id);
+        cashu::dhke::verify_message(&issued_secret, proofs[0].c, proofs[0].secret.as_bytes())
+            .unwrap();
+        let requested = mint.requested_keysets.lock().unwrap();
+        assert!(requested.contains(&active_keyset.keyset_id));
+        assert!(requested.contains(&issued_keyset.keyset_id));
+    }
+
+    #[tokio::test]
+    async fn restored_refund_probes_inactive_keysets_when_active_restore_is_empty() {
+        let alice_secret = SecretKey::generate();
+        let charlie_secret = SecretKey::generate();
+        let issued_secret = SecretKey::generate();
+        let active_secret = SecretKey::generate();
+        let issued_keys = Keys::new(BTreeMap::from([(
+            Amount::from(2_u64),
+            issued_secret.public_key(),
+        )]));
+        let active_keys = Keys::new(BTreeMap::from([(
+            Amount::from(2_u64),
+            active_secret.public_key(),
+        )]));
+        let issued_keyset = cdk_spilman::KeysetInfo::new(
+            Id::v1_from_keys(&issued_keys),
+            CurrencyUnit::Sat,
+            issued_keys,
+            0,
+            None,
+        );
+        let active_keyset = cdk_spilman::KeysetInfo::new(
+            Id::v1_from_keys(&active_keys),
+            CurrencyUnit::Sat,
+            active_keys,
+            0,
+            None,
+        );
+        let params = cdk_spilman::ChannelParameters::new_with_secret_key(
+            alice_secret.public_key(),
+            charlie_secret.public_key(),
+            "https://mint.example".to_string(),
+            CurrencyUnit::Sat,
+            2,
+            2,
+            1_000,
+            1,
+            issued_keyset.clone(),
+            2,
+            &alice_secret,
+        )
+        .unwrap();
+        let restorable = params
+            .create_deterministic_output_with_blinding("sender", 2, 0)
+            .unwrap();
+        let mint = RotatedRestoreMint {
+            issued_keyset_id: issued_keyset.keyset_id,
+            issued_secret: issued_secret.clone(),
+            restorable_blinded_secret: restorable
+                .to_blinded_message(Amount::from(2_u64), active_keyset.keyset_id)
+                .unwrap()
+                .blinded_secret,
+            require_issued_keyset_request: true,
+            requested_keysets: Mutex::new(Vec::new()),
+        };
+        let funding_proof = Proof::new(
+            Amount::from(2_u64),
+            issued_keyset.keyset_id,
+            cashu::secret::Secret::generate(),
+            SecretKey::generate().public_key(),
+        );
+        let channel = cdk_spilman::EstablishedChannel::new(params, vec![funding_proof]).unwrap();
+        let sender = cdk_spilman::SpilmanChannelSender::new(alice_secret, channel);
+
+        let proofs = restore_sender_proofs_from_issued_keyset_with_resolver(
+            &sender,
+            &mint,
+            &active_keyset,
+            &[issued_keyset.keyset_id],
+            |keyset_id| {
+                let issued_keyset = issued_keyset.clone();
+                async move {
+                    assert_eq!(keyset_id, issued_keyset.keyset_id);
+                    Ok(issued_keyset)
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(proofs.len(), 1);
+        cashu::dhke::verify_message(&issued_secret, proofs[0].c, proofs[0].secret.as_bytes())
+            .unwrap();
     }
 }

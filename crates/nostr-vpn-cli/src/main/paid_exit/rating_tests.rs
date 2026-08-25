@@ -5,6 +5,28 @@ mod paid_exit_rating_tests {
     use nostr_sdk::prelude::{EventBuilder, Kind, Tag, Timestamp};
 
     #[test]
+    fn local_paid_exit_offer_includes_the_public_fips_endpoint() {
+        let temp = std::env::temp_dir().join(format!(
+            "nvpn-paid-offer-endpoint-{}-{}",
+            std::process::id(),
+            unix_timestamp()
+        ));
+        std::fs::create_dir_all(&temp).expect("create tempdir");
+        let config_path = temp.join("config.toml");
+        let mut app = AppConfig::generated();
+        app.paid_exit.enabled = true;
+        app.paid_exit.channel.accepted_mints = vec!["https://mint.example".to_string()];
+        app.fips_advertise_public_endpoint = true;
+        app.node.endpoint = "1.1.1.1:2122".to_string();
+
+        let local = build_local_paid_exit_offer(&app, &config_path, "internet", 100)
+            .expect("build local paid exit offer");
+
+        assert_eq!(local.offer.fips_endpoints, vec!["1.1.1.1:2122"]);
+        std::fs::remove_dir_all(temp).expect("remove tempdir");
+    }
+
+    #[test]
     fn seller_outputs_include_canonical_provider_link() {
         let keys = Keys::generate();
         let mut config = PaidExitConfig {

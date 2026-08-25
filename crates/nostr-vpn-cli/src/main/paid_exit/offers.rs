@@ -87,11 +87,19 @@ fn build_local_paid_exit_offer(
 ) -> Result<LocalPaidExitOffer> {
     let config = paid_exit_offer_config(app)?;
     let receiver_pubkey_hex = paid_exit_spilman_receiver_pubkey_hex(config_path, &config)?;
-    let signed = signed_paid_exit_offer_from_config_with_receiver(
+    let fips_endpoints = if app.fips_advertise_public_endpoint {
+        normalize_fips_peer_endpoint_hint(&app.node.endpoint)
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+    let signed = signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
         offer_id,
         &app.nostr_keys()?,
         &config,
         receiver_pubkey_hex.as_deref(),
+        &fips_endpoints,
         Some(PaidRouteQualityMetrics {
             last_seen_unix: Some(now_unix),
             ..PaidRouteQualityMetrics::default()

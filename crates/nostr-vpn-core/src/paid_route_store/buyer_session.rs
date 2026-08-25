@@ -136,6 +136,28 @@ impl PaidRouteStore {
             .and_then(|seller| normalize_paid_route_npub(&seller, "seller"))
     }
 
+    pub fn buyer_session_seller_fips_endpoints(&self, session_id: &str) -> Result<Vec<String>> {
+        let session_id = trimmed_required(session_id, "paid route session id")?;
+        let record = self
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| anyhow!("paid route session {session_id} not found"))?;
+        let channel = self
+            .channels
+            .get(&record.session.payment.channel_id)
+            .ok_or_else(|| anyhow!("paid route session {session_id} has no channel"))?;
+        let seller_npub = self.buyer_session_seller_npub(&session_id)?;
+        Ok(self
+            .offers
+            .values()
+            .find(|candidate| {
+                candidate.offer.offer_id == channel.offer_id
+                    && candidate.offer.seller_npub == seller_npub
+            })
+            .map(|candidate| candidate.offer.fips_endpoints.clone())
+            .unwrap_or_default())
+    }
+
     pub fn buyer_session_allows_routing(&self, session_id: &str, now_unix: u64) -> Result<bool> {
         let session_id = trimmed_required(session_id, "paid route session id")?;
         let record = self

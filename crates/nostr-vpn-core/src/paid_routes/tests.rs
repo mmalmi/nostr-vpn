@@ -247,6 +247,7 @@ fn offer_json_does_not_publish_raw_exit_ip() {
         offer_id: "offer-1".to_string(),
         seller_npub: "npub1seller".to_string(),
         receiver_pubkey_hex: String::new(),
+        fips_endpoints: Vec::new(),
         service: PaidRouteServiceKind::InternetExit,
         access: PaidRouteAccessPolicy {
             upstream: PaidExitUpstream::WireGuardExit,
@@ -408,6 +409,30 @@ fn signed_offer_event_includes_spilman_receiver_pubkey_when_present() {
         tag.as_slice() == ["receiver_pubkey".to_string(), receiver_pubkey_hex.clone()].as_slice()
     }));
     SignedPaidRouteOffer::from_event(signed.event).expect("verify receiver-key offer");
+}
+
+#[test]
+fn signed_offer_carries_authenticated_fips_endpoint_hints() {
+    let seller = Keys::generate();
+    let receiver_pubkey_hex = format!("03{}", "11".repeat(32));
+    let endpoint = "1.1.1.1:2122".to_string();
+    let signed = signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
+        "paid-exit-fi",
+        &seller,
+        &sample_paid_exit_config(),
+        Some(&receiver_pubkey_hex),
+        std::slice::from_ref(&endpoint),
+        None,
+        123,
+    )
+    .expect("sign paid route offer with FIPS endpoint");
+    let offer = signed.offer().expect("decode offer");
+
+    assert_eq!(offer.fips_endpoints, vec![endpoint.clone()]);
+    assert!(signed.event.tags.iter().any(|tag| {
+        tag.as_slice() == ["fips_endpoint".to_string(), endpoint.clone()].as_slice()
+    }));
+    SignedPaidRouteOffer::from_event(signed.event).expect("verify endpoint-bearing offer");
 }
 
 #[test]

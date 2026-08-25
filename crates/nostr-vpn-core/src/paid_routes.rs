@@ -11,6 +11,8 @@ use nostr_sdk::prelude::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::config::normalize_fips_peer_endpoint_hint;
+
 /// Parameterized replaceable Nostr event for generic paid route offers.
 ///
 /// FIPS overlay endpoint discovery already uses kind 37195 for transport

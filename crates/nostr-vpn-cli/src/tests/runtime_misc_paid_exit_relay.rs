@@ -469,7 +469,9 @@ fn relay_message_text(message: &Message) -> Option<&str> {
 fn paid_exit_buy_and_use_select_public_exit_route() {
     use nostr_sdk::prelude::Keys;
     use nostr_vpn_core::paid_route_store::{PaidRouteStore, update_paid_route_store};
-    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+    use nostr_vpn_core::paid_routes::{
+        PaidExitConfig, signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints,
+    };
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -492,9 +494,17 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     offer_config.pricing.price_msat_per_gb = 1_000;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
     let now_unix = unix_timestamp();
-    let signed_offer =
-        signed_paid_exit_offer_from_config("internet-exit", &seller, &offer_config, None, now_unix)
-            .expect("sign offer");
+    let seller_endpoint = "1.1.1.1:2122".to_string();
+    let signed_offer = signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
+        "internet-exit",
+        &seller,
+        &offer_config,
+        None,
+        std::slice::from_ref(&seller_endpoint),
+        None,
+        now_unix,
+    )
+    .expect("sign offer");
     let offer = signed_offer.offer().expect("offer");
 
     let store_path = paid_route_store_file_path(&config_path);
@@ -536,12 +546,19 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     assert!(saved.connect_to_non_roster_fips_peers);
     assert!(!saved.fips_nostr_discovery_enabled);
     assert!(!saved.wireguard_exit.enabled);
+    assert_eq!(
+        saved.fips_peer_endpoint_hints(&offer.seller_npub),
+        vec![seller_endpoint.clone()]
+    );
 
     let mut reset = saved;
     reset.exit_node.clear();
     reset.connect_to_non_roster_fips_peers = false;
     reset.fips_nostr_discovery_enabled = false;
     reset.wireguard_exit.enabled = true;
+    reset
+        .set_fips_peer_endpoint_hints(&offer.seller_npub, &[])
+        .expect("clear seller endpoint hints");
     reset.save(&config_path).expect("save reset config");
 
     let selected = paid_exit_use_once(PaidExitUseArgs {
@@ -561,6 +578,10 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     assert!(saved.connect_to_non_roster_fips_peers);
     assert!(!saved.fips_nostr_discovery_enabled);
     assert!(!saved.wireguard_exit.enabled);
+    assert_eq!(
+        saved.fips_peer_endpoint_hints(&offer.seller_npub),
+        vec![seller_endpoint]
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -6,6 +6,8 @@ pub struct PaidRouteOffer {
     pub seller_npub: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub receiver_pubkey_hex: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fips_endpoints: Vec<String>,
     #[serde(default)]
     pub service: PaidRouteServiceKind,
     #[serde(default)]
@@ -50,6 +52,24 @@ impl PaidRouteOffer {
         receiver_pubkey_hex: Option<&str>,
         quality: Option<PaidRouteQualityMetrics>,
     ) -> Self {
+        Self::from_paid_exit_config_with_receiver_and_fips_endpoints(
+            offer_id,
+            seller_npub,
+            config,
+            receiver_pubkey_hex,
+            &[],
+            quality,
+        )
+    }
+
+    pub fn from_paid_exit_config_with_receiver_and_fips_endpoints(
+        offer_id: impl Into<String>,
+        seller_npub: impl Into<String>,
+        config: &PaidExitConfig,
+        receiver_pubkey_hex: Option<&str>,
+        fips_endpoints: &[String],
+        quality: Option<PaidRouteQualityMetrics>,
+    ) -> Self {
         let mut config = config.clone();
         config.normalize();
         Self {
@@ -58,6 +78,7 @@ impl PaidRouteOffer {
             receiver_pubkey_hex: receiver_pubkey_hex
                 .map(normalize_receiver_pubkey_hex_lossy)
                 .unwrap_or_default(),
+            fips_endpoints: normalize_offer_fips_endpoints_lossy(fips_endpoints),
             service: PaidRouteServiceKind::InternetExit,
             access: config.access.clone(),
             pricing: config.pricing.clone(),
@@ -89,6 +110,26 @@ pub fn signed_paid_exit_offer_from_config_with_receiver(
     quality: Option<PaidRouteQualityMetrics>,
     signed_at: u64,
 ) -> Result<SignedPaidRouteOffer> {
+    signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
+        offer_id,
+        keys,
+        config,
+        receiver_pubkey_hex,
+        &[],
+        quality,
+        signed_at,
+    )
+}
+
+pub fn signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
+    offer_id: impl Into<String>,
+    keys: &Keys,
+    config: &PaidExitConfig,
+    receiver_pubkey_hex: Option<&str>,
+    fips_endpoints: &[String],
+    quality: Option<PaidRouteQualityMetrics>,
+    signed_at: u64,
+) -> Result<SignedPaidRouteOffer> {
     if !config.enabled {
         return Err(anyhow!("paid exit selling is disabled"));
     }
@@ -105,11 +146,13 @@ pub fn signed_paid_exit_offer_from_config_with_receiver(
     let receiver_pubkey_hex = receiver_pubkey_hex
         .map(normalize_receiver_pubkey_hex)
         .transpose()?;
-    let offer = PaidRouteOffer::from_paid_exit_config_with_receiver(
+    let normalized_fips_endpoints = normalize_offer_fips_endpoints(fips_endpoints)?;
+    let offer = PaidRouteOffer::from_paid_exit_config_with_receiver_and_fips_endpoints(
         offer_id,
         public_key_npub(&keys.public_key())?,
         &normalized_config,
         receiver_pubkey_hex.as_deref(),
+        &normalized_fips_endpoints,
         quality,
     );
     SignedPaidRouteOffer::sign(offer, keys, signed_at)
@@ -321,6 +364,13 @@ pub(super) fn paid_route_offer_tags(offer: &PaidRouteOffer) -> Result<Vec<Tag>> 
         ])?);
     }
 
+    for endpoint in &offer.fips_endpoints {
+        tags.push(paid_route_owned_tag(vec![
+            "fips_endpoint".to_string(),
+            endpoint.clone(),
+        ])?);
+    }
+
     for mint in normalize_string_list(&offer.channel.accepted_mints) {
         tags.push(paid_route_owned_tag(vec!["mint".to_string(), mint])?);
     }
@@ -422,6 +472,7 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
     } else {
         normalize_receiver_pubkey_hex(&offer.receiver_pubkey_hex)?
     };
+    let mut remaining_fips_endpoints = offer.fips_endpoints.clone();
 
     for tag in tags {
         let parts = tag.as_slice();
@@ -500,6 +551,22 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
                 }
                 receiver_ok = true;
             }
+            "fips_endpoint" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!("paid route offer has an empty FIPS endpoint tag"));
+                };
+                let endpoint = normalize_fips_peer_endpoint_hint(value)
+                    .ok_or_else(|| anyhow!("paid route offer has an invalid FIPS endpoint tag"))?;
+                let Some(index) = remaining_fips_endpoints
+                    .iter()
+                    .position(|candidate| candidate == &endpoint)
+                else {
+                    return Err(anyhow!(
+                        "paid route offer FIPS endpoint tag does not match content"
+                    ));
+                };
+                remaining_fips_endpoints.remove(index);
+            }
             _ => {}
         }
     }
@@ -532,7 +599,36 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
             "paid route offer event is missing matching receiver pubkey tag"
         ));
     }
+    if !remaining_fips_endpoints.is_empty() {
+        return Err(anyhow!(
+            "paid route offer is missing matching FIPS endpoint tags"
+        ));
+    }
     Ok(())
+}
+
+fn normalize_offer_fips_endpoints(values: &[String]) -> Result<Vec<String>> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let endpoint = normalize_fips_peer_endpoint_hint(value).ok_or_else(|| {
+            anyhow!("paid route offer contains an invalid FIPS endpoint: {value}")
+        })?;
+        if !normalized.contains(&endpoint) {
+            normalized.push(endpoint);
+        }
+    }
+    normalized.sort();
+    Ok(normalized)
+}
+
+fn normalize_offer_fips_endpoints_lossy(values: &[String]) -> Vec<String> {
+    let mut normalized = values
+        .iter()
+        .filter_map(|value| normalize_fips_peer_endpoint_hint(value))
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
 }
 
 fn normalize_receiver_pubkey_hex(value: &str) -> Result<String> {

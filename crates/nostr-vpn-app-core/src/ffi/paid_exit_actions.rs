@@ -505,7 +505,7 @@ impl NativeAppRuntime {
         }
         let now_unix = unix_timestamp();
         let store_path = self.paid_route_store_path();
-        let seller_npub = update_paid_route_store(&store_path, |store| {
+        let (seller_npub, endpoint_hints) = update_paid_route_store(&store_path, |store| {
             let seller_npub = store.buyer_session_seller_npub(session_id)?;
             if connect {
                 store.retry_failed_funded_buyer_session(session_id, now_unix)?;
@@ -516,8 +516,11 @@ impl NativeAppRuntime {
                 }
             }
             store.begin_buyer_session_open_attempt(session_id, now_unix)?;
-            Ok(seller_npub)
+            let endpoint_hints = store.buyer_session_seller_fips_endpoints(session_id)?;
+            Ok((seller_npub, endpoint_hints))
         })?;
+        self.config
+            .add_fips_peer_endpoint_hints(&seller_npub, &endpoint_hints)?;
         self.config.select_public_paid_exit_node(&seller_npub)?;
         self.save_reload_and_refresh()?;
         if connect && !self.vpn_enabled {

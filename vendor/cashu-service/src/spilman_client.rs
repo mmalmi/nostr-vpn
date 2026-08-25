@@ -10,9 +10,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "spilman-wallet")]
+use crate::private_file::create_atomic_private;
 use crate::private_file::{
-    create_atomic_private, open_private_lock_file, read_private_regular_to_string,
-    write_atomic_private,
+    open_private_lock_file, read_private_regular_to_string, write_atomic_private,
 };
 
 #[cfg(feature = "spilman-wallet")]
@@ -43,6 +44,7 @@ fn lock_path_for_store(store_path: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
+#[allow(dead_code)]
 pub(crate) fn require_lock_for_data_dir(
     data_dir: &Path,
     lock: SharedSpilmanClientStoreLock,
@@ -118,6 +120,8 @@ struct SpilmanClientStoreFile {
     closed: BTreeSet<String>,
     #[serde(default)]
     refund_witnesses_persisted: BTreeSet<String>,
+    #[serde(default)]
+    refund_proofs_validated: BTreeSet<String>,
 }
 
 impl SpilmanClientStoreFile {
@@ -128,6 +132,7 @@ impl SpilmanClientStoreFile {
             payments: BTreeMap::new(),
             closed: BTreeSet::new(),
             refund_witnesses_persisted: BTreeSet::new(),
+            refund_proofs_validated: BTreeSet::new(),
         }
     }
 }
@@ -243,6 +248,20 @@ impl FileSpilmanClientStorage {
         if self
             .state
             .refund_witnesses_persisted
+            .insert(channel_id.to_string())
+        {
+            self.persist();
+        }
+    }
+
+    pub fn refund_proofs_validated(&self, channel_id: &str) -> bool {
+        self.state.refund_proofs_validated.contains(channel_id)
+    }
+
+    pub fn mark_refund_proofs_validated(&mut self, channel_id: &str) {
+        if self
+            .state
+            .refund_proofs_validated
             .insert(channel_id.to_string())
         {
             self.persist();
@@ -641,6 +660,37 @@ impl cdk_spilman::SpilmanClientAsyncNetworking for HttpSpilmanClientNetworking {
 }
 
 #[cfg(feature = "spilman-wallet-http")]
+pub async fn fetch_spilman_keyset_ids(mint_url: &str, unit: &str) -> Result<Vec<String>, String> {
+    let mint_url = mint_url.trim_end_matches('/');
+    let response: serde_json::Value = reqwest::Client::new()
+        .get(format!("{mint_url}/v1/keysets"))
+        .send()
+        .await
+        .map_err(|error| format!("failed to fetch Cashu mint keysets: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("failed to decode Cashu mint keysets: {error}"))?;
+    let unit = unit.trim().to_ascii_lowercase();
+    let mut ids = response
+        .get("keysets")
+        .and_then(|value| value.as_array())
+        .ok_or("Cashu mint keysets response is missing keysets")?
+        .iter()
+        .filter(|entry| {
+            entry
+                .get("unit")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case(&unit))
+        })
+        .filter_map(|entry| entry.get("id").and_then(|value| value.as_str()))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+#[cfg(feature = "spilman-wallet-http")]
 pub async fn fetch_spilman_keyset_info_json(
     mint_url: &str,
     unit: &str,
@@ -894,11 +944,14 @@ mod tests {
         let (mut storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
         assert!(!storage.refund_witnesses_persisted("channel-1"));
         storage.mark_refund_witnesses_persisted("channel-1");
+        assert!(!storage.refund_proofs_validated("channel-1"));
+        storage.mark_refund_proofs_validated("channel-1");
         errors.ensure_ok().unwrap();
         drop(storage);
 
         let (storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
         assert!(storage.refund_witnesses_persisted("channel-1"));
+        assert!(storage.refund_proofs_validated("channel-1"));
         errors.ensure_ok().unwrap();
     }
 

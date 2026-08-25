@@ -136,6 +136,7 @@ use nostr_vpn_core::paid_routes::{
     PaidRouteQualityMetrics, PaidRouteRoutingDecision, PaidRouteSessionOpen, SignedPaidRouteOffer,
     paid_route_country_claim, paid_route_offer_filter,
     signed_paid_exit_offer_from_config_with_receiver,
+    signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints,
 };
 #[cfg(target_os = "windows")]
 use nostr_vpn_core::platform_paths::{
