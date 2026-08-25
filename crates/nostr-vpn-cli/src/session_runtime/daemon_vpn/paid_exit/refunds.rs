@@ -89,19 +89,22 @@ impl PaidExitBuyerRefundRuntime {
         config_path: &Path,
         allow_background_maintenance: bool,
     ) -> Option<DaemonControlRequest> {
-        // Leave a newly arrived request on disk while the bounded worker owns
-        // Cashu state, then process it before starting another refund.
-        let control_request_waiting = daemon_control_file_path(config_path).exists();
+        // Always reap a completed bounded worker, including while network or
+        // control work suppresses new background maintenance. Otherwise an
+        // already-finished refund leaves active_channel_id set forever and a
+        // newly arrived daemon control request can never be acknowledged.
+        if let Err(error) = self.poll_and_log(config_path, false) {
+            eprintln!("paid-exit: buyer refund recovery failed: {error}");
+        }
         let pending_control_request = if self.active_channel_id.is_some() {
             None
         } else {
             take_daemon_control_request(config_path)
         };
         if allow_background_maintenance
-            && let Err(error) = self.poll_and_log(
-                config_path,
-                pending_control_request.is_none() && !control_request_waiting,
-            )
+            && pending_control_request.is_none()
+            && !daemon_control_file_path(config_path).exists()
+            && let Err(error) = self.poll_and_log(config_path, true)
         {
             eprintln!("paid-exit: buyer refund recovery failed: {error}");
         }
@@ -847,6 +850,61 @@ mod tests {
             runtime.active_channel_id.is_none(),
             "a control-free state tick started refund work during the network deadline"
         );
+    }
+
+    #[tokio::test]
+    async fn finished_refund_does_not_hide_control_when_background_is_suppressed() {
+        let directory = TestDirectory::new();
+        let config_path = directory.0.join("config.toml");
+        let channel_id = "finished-before-control";
+        let (mut client_storage, storage_errors) = FileSpilmanClientStorage::load(
+            spilman_client_store_path(&paid_exit_wallet_data_dir(&config_path)),
+        )
+        .expect("load Spilman client storage");
+        client_storage.save_funding(
+            channel_id,
+            test_spilman_funding(&directory.0, "http://127.0.0.1:1"),
+        );
+        client_storage.set_closed(channel_id);
+        storage_errors
+            .ensure_ok()
+            .expect("persist closed Spilman fixture");
+        drop(client_storage);
+
+        let mut store = PaidRouteStore::default();
+        store.upsert_channel(channel(
+            channel_id,
+            PaidRouteChannelRole::Buyer,
+            PaidRouteLifecycleStatus::Closing,
+        ));
+        update_paid_route_store(&paid_route_store_file_path(&config_path), |target| {
+            *target = store;
+            Ok(())
+        })
+        .expect("write paid route fixture");
+
+        let mut runtime = PaidExitBuyerRefundRuntime::with_timings(
+            Duration::from_secs(1),
+            Duration::from_secs(5),
+        )
+        .expect("start refund runtime");
+        assert!(
+            runtime
+                .poll(&config_path, true)
+                .expect("start refund worker")
+                .is_none()
+        );
+        assert_eq!(runtime.active_channel_id.as_deref(), Some(channel_id));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        write_daemon_control_request(&config_path, DaemonControlRequest::Reload)
+            .expect("queue daemon control request");
+
+        assert_eq!(
+            runtime.before_tick(&config_path, false),
+            Some(DaemonControlRequest::Reload),
+            "a completed background refund kept the daemon control file stuck"
+        );
+        assert!(runtime.active_channel_id.is_none());
     }
 
     #[tokio::test]
