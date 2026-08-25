@@ -748,13 +748,13 @@ jobs:
       - name: Install pinned StartOS package inspector
         shell: bash
         env:
-          STARTOS_CLI_VERSION: '0.4.0-beta.9'
-          STARTOS_CLI_SHA256: '212686c28056b48810b383d7aa2cfc733db7332d406f4376a0bfd6ca94c6d88f'
+          STARTOS_CLI_VERSION: '1.1.0'
+          STARTOS_CLI_SHA256: '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'
         run: |
           set -euo pipefail
           cli_path="${RUNNER_TEMP}/start-cli-${STARTOS_CLI_VERSION}-x86_64"
           curl --fail --location --silent --show-error --retry 3 \
-            "https://github.com/Start9Labs/start-technologies/releases/download/v${STARTOS_CLI_VERSION}/start-cli_x86_64-linux" \
+            "https://github.com/Start9Labs/start-technologies/releases/download/start-cli/v${STARTOS_CLI_VERSION}/start-cli_x86_64-linux" \
             --output "${cli_path}"
           printf '%s  %s\n' "${STARTOS_CLI_SHA256}" "${cli_path}" \
             | sha256sum --check -

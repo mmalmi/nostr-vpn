@@ -2746,6 +2746,15 @@ test('Actions cannot mutate public releases and local promotion is exact-stage g
   const releaseJob = workflow.slice(workflow.indexOf('  release:'))
   assert.match(releaseJob, /htree get "\$\{LOCALLY_GATED_RELEASE_CID\}"/)
   assert.match(releaseJob, /verify-release-publication-bundle\.mjs/)
+  assert.match(releaseJob, /STARTOS_CLI_VERSION: '1\.1\.0'/)
+  assert.match(
+    releaseJob,
+    /STARTOS_CLI_SHA256: '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'/,
+  )
+  assert.match(
+    releaseJob,
+    /releases\/download\/start-cli\/v\$\{STARTOS_CLI_VERSION\}/,
+  )
   assert.match(releaseJob, /start-cli_x86_64-linux/)
   assert.doesNotMatch(releaseJob, /actions\/download-artifact/)
   assert.doesNotMatch(releaseJob, /contents:\s*write/)
