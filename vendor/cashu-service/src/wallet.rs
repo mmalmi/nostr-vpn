@@ -733,8 +733,14 @@ impl CashuWalletService {
                     Some(proof)
                 }
                 Some(existing)
-                    if existing.proof.witness.is_none() && proof.proof.witness.is_some() =>
+                    if proof.proof.witness.is_some()
+                        && (existing.proof.witness.is_none() || existing.proof != proof.proof) =>
                 {
+                    // A channel refund can be reconstructed again after learning which
+                    // rotated keyset actually issued it. The Y stays the same, while the
+                    // keyset, C, NUT-28 nonce, and witness can all be repaired. Treat the
+                    // freshly reconstructed signed proof as authoritative, even when an
+                    // older migration already stored a signed duplicate.
                     proof.state = existing.state;
                     proof.used_by_operation = existing.used_by_operation;
                     proof.created_by_operation = existing.created_by_operation;

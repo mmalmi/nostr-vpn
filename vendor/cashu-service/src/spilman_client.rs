@@ -122,6 +122,8 @@ struct SpilmanClientStoreFile {
     refund_witnesses_persisted: BTreeSet<String>,
     #[serde(default)]
     refund_proofs_validated: BTreeSet<String>,
+    #[serde(default)]
+    refund_proofs_repaired: BTreeSet<String>,
 }
 
 impl SpilmanClientStoreFile {
@@ -133,6 +135,7 @@ impl SpilmanClientStoreFile {
             closed: BTreeSet::new(),
             refund_witnesses_persisted: BTreeSet::new(),
             refund_proofs_validated: BTreeSet::new(),
+            refund_proofs_repaired: BTreeSet::new(),
         }
     }
 }
@@ -262,6 +265,20 @@ impl FileSpilmanClientStorage {
         if self
             .state
             .refund_proofs_validated
+            .insert(channel_id.to_string())
+        {
+            self.persist();
+        }
+    }
+
+    pub fn refund_proofs_repaired(&self, channel_id: &str) -> bool {
+        self.state.refund_proofs_repaired.contains(channel_id)
+    }
+
+    pub fn mark_refund_proofs_repaired(&mut self, channel_id: &str) {
+        if self
+            .state
+            .refund_proofs_repaired
             .insert(channel_id.to_string())
         {
             self.persist();
@@ -946,12 +963,15 @@ mod tests {
         storage.mark_refund_witnesses_persisted("channel-1");
         assert!(!storage.refund_proofs_validated("channel-1"));
         storage.mark_refund_proofs_validated("channel-1");
+        assert!(!storage.refund_proofs_repaired("channel-1"));
+        storage.mark_refund_proofs_repaired("channel-1");
         errors.ensure_ok().unwrap();
         drop(storage);
 
         let (storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
         assert!(storage.refund_witnesses_persisted("channel-1"));
         assert!(storage.refund_proofs_validated("channel-1"));
+        assert!(storage.refund_proofs_repaired("channel-1"));
         errors.ensure_ok().unwrap();
     }
 

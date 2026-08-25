@@ -252,7 +252,7 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
         .unwrap_or("sat")
         .to_string();
     if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed
-        && storage.refund_proofs_validated(channel_id)
+        && storage.refund_proofs_repaired(channel_id)
     {
         return Ok(complete_result(channel_id, funding.mint_url, unit, 0, 0, 0));
     }
@@ -320,6 +320,7 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
     storage.set_closed(channel_id);
     storage.mark_refund_witnesses_persisted(channel_id);
     storage.mark_refund_proofs_validated(channel_id);
+    storage.mark_refund_proofs_repaired(channel_id);
     storage_errors
         .ensure_ok()
         .map_err(|error| anyhow::anyhow!(error))?;
@@ -448,6 +449,7 @@ mod tests {
         storage.set_closed("channel-1");
         storage.mark_refund_witnesses_persisted("channel-1");
         storage.mark_refund_proofs_validated("channel-1");
+        storage.mark_refund_proofs_repaired("channel-1");
         errors.ensure_ok().unwrap();
         drop(storage);
 

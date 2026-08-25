@@ -734,6 +734,52 @@ async fn test_import_payment_proofs_repairs_a_duplicate_witness() {
 }
 
 #[tokio::test]
+async fn test_import_payment_proofs_replaces_a_stale_signed_duplicate() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let service = CashuWalletService::open_file_backed(temp_dir.path())
+        .await
+        .unwrap();
+    let keyset = build_test_keyset(16);
+    let mut stale = make_test_proof(keyset.id, 8);
+    stale.witness = Some(Witness::P2PKWitness(P2PKWitness {
+        signatures: vec!["stale-signed-refund".to_string()],
+    }));
+    service
+        .import_payment_proofs(
+            "https://mint.example",
+            "sat",
+            &serde_json::to_string(&vec![stale.clone()]).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let replacement_keyset = build_test_keyset(32);
+    let mut repaired = stale;
+    repaired.keyset_id = replacement_keyset.id;
+    repaired.c = SecretKey::generate().public_key();
+    repaired.witness = Some(Witness::P2PKWitness(P2PKWitness {
+        signatures: vec!["reconstructed-signed-refund".to_string()],
+    }));
+    let imported = service
+        .import_payment_proofs(
+            "https://mint.example",
+            "sat",
+            &serde_json::to_string(&vec![repaired.clone()]).unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(imported.amount_sat, 0, "repair must not count as new funds");
+    let stored = service
+        .localstore()
+        .get_proofs_by_ys(vec![repaired.y().unwrap()])
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].proof, repaired);
+}
+
+#[tokio::test]
 async fn test_revoke_pending_payment_rejects_invalid_operation_id() {
     let temp_dir = tempfile::tempdir().unwrap();
     let err = revoke_pending_payment(temp_dir.path(), "https://mint.example", "nope")
