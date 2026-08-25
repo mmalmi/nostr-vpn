@@ -456,7 +456,7 @@ async fn restore_spilman_refund_through_daemon_wallet(
         .unwrap_or("sat")
         .to_string();
     if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed
-        && storage.refund_proofs_validated(channel_id)
+        && storage.refund_proofs_repaired(channel_id)
     {
         return Ok(completed_refund_result(
             channel_id,
@@ -549,6 +549,7 @@ async fn restore_spilman_refund_through_daemon_wallet(
     storage.set_closed(channel_id);
     storage.mark_refund_witnesses_persisted(channel_id);
     storage.mark_refund_proofs_validated(channel_id);
+    storage.mark_refund_proofs_repaired(channel_id);
     storage_errors.ensure_ok().map_err(|error| anyhow!(error))?;
 
     Ok(completed_refund_result(
@@ -882,6 +883,7 @@ mod tests {
         client_storage.set_closed(channel_id);
         client_storage.mark_refund_witnesses_persisted(channel_id);
         client_storage.mark_refund_proofs_validated(channel_id);
+        client_storage.mark_refund_proofs_repaired(channel_id);
         storage_errors
             .ensure_ok()
             .expect("persist closed Spilman fixture");
@@ -954,6 +956,7 @@ mod tests {
         client_storage.set_closed("b-complete");
         client_storage.mark_refund_witnesses_persisted("b-complete");
         client_storage.mark_refund_proofs_validated("b-complete");
+        client_storage.mark_refund_proofs_repaired("b-complete");
         storage_errors
             .ensure_ok()
             .expect("persist Spilman fixtures");
