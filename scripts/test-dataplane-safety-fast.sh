@@ -103,9 +103,9 @@ prepare_cargo_config() {
     fips_path="$(validated_fips_repo_path)"
     prepare_lock_restore
     cargo_config_args+=(
-      --config "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\""
-      --config "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
-      --config "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\""
+      --config "patch.crates-io.nvpn-fips-core.path=\"$fips_path/crates/fips-core\""
+      --config "patch.crates-io.nvpn-fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
+      --config "patch.crates-io.nvpn-fips-identity.path=\"$fips_path/crates/fips-identity\""
     )
     printf 'using local FIPS crates from %s\n' "$fips_path"
   fi
@@ -303,33 +303,33 @@ run_app_state() {
 }
 
 run_fips() {
-  run fips_cargo_test -p fips-core overlay_adverts -- --nocapture
-  run fips_cargo_test -p fips-core update_peers -- --nocapture
-  run fips_cargo_test -p fips-core non_reconnect -- --nocapture
-  run fips_cargo_test -p fips-core active_fallback -- --nocapture
-  run fips_cargo_test -p fips-core live_node_owner_routes_send_endpoint_and_tun_to_transport -- --nocapture
-  run fips_cargo_test -p fips-core live_route_table_outbound_source_preserves_tun_slice_after_endpoint_batch_overrun -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_runtime_owns_attach_delivery_and_backlog -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_owns_backlog_message_count -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_preserves_fifo_for_mixed_payload_sizes -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_drops_app_data_when_full -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_dropped_batch_counts_as_success -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_partially_admits_batch_at_message_boundary -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_capacity_counts_messages_not_batches -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_message_count_treats_batch_items_as_public_messages -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_send_fails_after_receiver_drop -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_closes_after_all_senders_drop -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_queue_async_recv_closes_when_senders_drop -- --nocapture
-  run fips_cargo_test -p fips-core recv_batch_drains_ready_loopback_endpoint_data -- --nocapture
-  run fips_cargo_test -p fips-core recv_batch_into_splits_internal_endpoint_batches_without_reordering -- --nocapture
-  run fips_cargo_test -p fips-core recv_batch_into_preserves_pending_batch_tail_fifo -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_data_batch_enqueue_drops_when_full -- --nocapture
-  run fips_cargo_test -p fips-core packet_channel_batch_send_amortizes_bulk_channel_items -- --nocapture
-  run fips_cargo_test -p fips-core packet_channel_reuses_pooled_batch_container_after_rx_drain -- --nocapture
-  run fips_cargo_test -p fips-core packet_channel_recycles_pooled_packet_buffer_when_bulk_batch_is_dropped -- --nocapture
-  run fips_cargo_test -p fips-core packet_channel_keeps_single_lane_batches_grouped -- --nocapture
-  run fips_cargo_test -p fips-core packet_channel_dequeue_counts_preserve_item_and_lane_counts -- --nocapture
-  run fips_cargo_test -p fips-core packet_channel_priority_overtakes_pending_bulk_batch_tail -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core overlay_adverts -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core update_peers -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core non_reconnect -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core active_fallback -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core live_node_owner_routes_send_endpoint_and_tun_to_transport -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core live_route_table_outbound_source_preserves_tun_slice_after_endpoint_batch_overrun -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_runtime_owns_attach_delivery_and_backlog -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_owns_backlog_message_count -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_preserves_fifo_for_mixed_payload_sizes -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_drops_app_data_when_full -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_dropped_batch_counts_as_success -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_partially_admits_batch_at_message_boundary -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_capacity_counts_messages_not_batches -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_message_count_treats_batch_items_as_public_messages -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_send_fails_after_receiver_drop -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_closes_after_all_senders_drop -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_event_queue_async_recv_closes_when_senders_drop -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core recv_batch_drains_ready_loopback_endpoint_data -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core recv_batch_into_splits_internal_endpoint_batches_without_reordering -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core recv_batch_into_preserves_pending_batch_tail_fifo -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core endpoint_data_batch_enqueue_drops_when_full -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core packet_channel_batch_send_amortizes_bulk_channel_items -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core packet_channel_reuses_pooled_batch_container_after_rx_drain -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core packet_channel_recycles_pooled_packet_buffer_when_bulk_batch_is_dropped -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core packet_channel_keeps_single_lane_batches_grouped -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core packet_channel_dequeue_counts_preserve_item_and_lane_counts -- --nocapture
+  run fips_cargo_test -p nvpn-fips-core packet_channel_priority_overtakes_pending_bulk_batch_tail -- --nocapture
 }
 
 run_suite() {

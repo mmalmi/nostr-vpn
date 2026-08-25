@@ -437,9 +437,9 @@ write_import_phase() {
   chmod 0400 "$phase_temp"
   mv "$phase_temp" "$remote_dir/.nvpn-deb-installed"
 }
-[[ "$fips_core_patch_spec" == fips-core=* ]]
-[[ "$fips_endpoint_patch_spec" == fips-endpoint=* ]]
-[[ "$fips_identity_patch_spec" == fips-identity=* ]]
+[[ "$fips_core_patch_spec" == nvpn-fips-core=* ]]
+[[ "$fips_endpoint_patch_spec" == nvpn-fips-endpoint=* ]]
+[[ "$fips_identity_patch_spec" == nvpn-fips-identity=* ]]
 fips_core_patch_version="${fips_core_patch_spec#*=}"
 fips_endpoint_patch_version="${fips_endpoint_patch_spec#*=}"
 fips_identity_patch_version="${fips_identity_patch_spec#*=}"
@@ -537,9 +537,9 @@ jq -e \
     and .linuxCargoLockSha256 == $linux_lock_sha
     and .linuxRealizedCargoLockSha256 == $linux_realized_lock_sha
     and .fipsPatchedLockPackages == {
-      "fips-core": $fips_core_patch_version,
-      "fips-endpoint": $fips_endpoint_patch_version,
-      "fips-identity": $fips_identity_patch_version
+      "nvpn-fips-core": $fips_core_patch_version,
+      "nvpn-fips-endpoint": $fips_endpoint_patch_version,
+      "nvpn-fips-identity": $fips_identity_patch_version
     }
     and .target == $target
     and .dockerPlatform == "linux/amd64"

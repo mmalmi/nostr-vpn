@@ -43,7 +43,7 @@ trap cleanup EXIT INT TERM
 mkdir -p "$APP_ROOT" "$LOCK_ROOT"
 for crate in fips-core fips-endpoint fips-identity; do
   mkdir -p "$FIPS_ROOT/crates/$crate"
-  printf '[package]\nname = "%s"\nversion = "0.0.0"\n' "$crate" \
+  printf '[package]\nname = "nvpn-%s"\nversion = "0.0.0"\n' "$crate" \
     >"$FIPS_ROOT/crates/$crate/Cargo.toml"
 done
 git -C "$FIPS_ROOT" init -q

@@ -179,13 +179,20 @@ function Prepare-LocalFipsPatch {
   $FipsRoot = (Resolve-Path $env:NVPN_FIPS_REPO_PATH).Path
   Prepare-CargoLockRestore
   $ManifestText = Get-Content -Raw -Path $WorkspaceCargoToml
-  foreach ($CrateName in @("fips-core", "fips-endpoint", "fips-identity")) {
+  $FipsCrates = @(
+    @{ Alias = "fips-core"; Package = "nvpn-fips-core" },
+    @{ Alias = "fips-endpoint"; Package = "nvpn-fips-endpoint" },
+    @{ Alias = "fips-identity"; Package = "nvpn-fips-identity" }
+  )
+  foreach ($Crate in $FipsCrates) {
+    $CrateName = $Crate.Alias
+    $PackageName = $Crate.Package
     $CrateDir = Join-Path $FipsRoot "crates\$CrateName"
     if (!(Test-Path (Join-Path $CrateDir "Cargo.toml"))) {
       throw "NVPN_FIPS_REPO_PATH must point at a fips checkout with ${CrateName}: $CrateDir"
     }
     $CargoPath = Convert-ToCargoPath $CrateDir
-    $script:CargoConfigArgs += @("--config", "patch.crates-io.$CrateName.path='$CargoPath'")
+    $script:CargoConfigArgs += @("--config", "patch.crates-io.$PackageName.path='$CargoPath'")
     $EscapedName = [regex]::Escape($CrateName)
     $Pattern = "(?m)($EscapedName\s*=\s*\{[^\r\n}]*\bpath\s*=\s*)`"[^`"]*`""
     $ManifestText = [regex]::Replace($ManifestText, $Pattern, {

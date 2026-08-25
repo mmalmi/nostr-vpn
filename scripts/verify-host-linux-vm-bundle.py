@@ -105,9 +105,9 @@ for specification in (
         fail("exact FIPS patched lock package specification is invalid")
     fips_patch_packages[name] = version
 if set(fips_patch_packages) != {
-    "fips-core",
-    "fips-endpoint",
-    "fips-identity",
+    "nvpn-fips-core",
+    "nvpn-fips-endpoint",
+    "nvpn-fips-identity",
 }:
     fail("exact FIPS patched lock package set differs")
 

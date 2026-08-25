@@ -344,9 +344,9 @@ nvpn_install_local_fips_cargo_wrapper() {
     printf '#!/usr/bin/env bash\n' \
       && printf 'exec %q' "$real_cargo" \
       && printf ' --config %q' \
-      "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\"" \
-      "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\"" \
-      "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\"" \
+      "patch.crates-io.nvpn-fips-core.path=\"$fips_path/crates/fips-core\"" \
+      "patch.crates-io.nvpn-fips-endpoint.path=\"$fips_path/crates/fips-endpoint\"" \
+      "patch.crates-io.nvpn-fips-identity.path=\"$fips_path/crates/fips-identity\"" \
       && printf ' \"$@\"\n'
   } >"$wrapper_script"; then
     rm -f "$wrapper_script"
@@ -485,21 +485,21 @@ manifest = os.path.realpath(
 matches = [
     package
     for package in payload.get("packages", [])
-    if package.get("name") == "fips-core"
+    if package.get("name") == "nvpn-fips-core"
 ]
 if len(matches) != 1:
-    raise SystemExit(f"Cargo metadata resolved {len(matches)} fips-core packages")
+    raise SystemExit(f"Cargo metadata resolved {len(matches)} nvpn-fips-core packages")
 package = matches[0]
 if os.path.realpath(package.get("manifest_path", "")) != manifest:
-    raise SystemExit("Cargo metadata did not resolve fips-core to the exact checkout")
+    raise SystemExit("Cargo metadata did not resolve nvpn-fips-core to the exact checkout")
 if package.get("version") != version:
-    raise SystemExit("Cargo metadata resolved the wrong fips-core version")
+    raise SystemExit("Cargo metadata resolved the wrong nvpn-fips-core version")
 if package.get("source") is not None:
-    raise SystemExit("Cargo metadata resolved a registry fips-core package")
+    raise SystemExit("Cargo metadata resolved a registry nvpn-fips-core package")
 package_id = package.get("id")
 nodes = payload.get("resolve", {}).get("nodes", [])
 if not any(node.get("id") == package_id for node in nodes):
-    raise SystemExit("Cargo dependency graph does not contain exact local fips-core")
+    raise SystemExit("Cargo dependency graph does not contain exact local nvpn-fips-core")
 with open(receipt_path, "w", encoding="utf-8") as output:
     checkout_path = os.path.realpath(checkout)
     json.dump(
@@ -544,7 +544,7 @@ nvpn_force_rebuild_local_fips_target() {
   [[ "$profile" != "release" ]] || profile_args+=(--release)
   (
     cd "$root"
-    cargo clean -p fips-core -p fips-endpoint -p fips-identity \
+    cargo clean -p nvpn-fips-core -p nvpn-fips-endpoint -p nvpn-fips-identity \
       --target "$target" "${profile_args[@]}"
   ) >/dev/null
   mkdir -p "$(dirname "$marker")"

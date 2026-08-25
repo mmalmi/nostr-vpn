@@ -191,15 +191,15 @@ if [[ -n ${NVPN_NOSTR_PUBSUB_PATCH_PATH:-} ]]; then
   cargo_lock_args=()
 fi
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
-  cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
+  cargo_config_args+=(--config "patch.crates-io.nvpn-fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
   cargo_lock_args=()
 fi
 if [[ -n ${NVPN_FIPS_CORE_PATCH_PATH:-} ]]; then
-  cargo_config_args+=(--config "patch.crates-io.fips-core.path=\"${NVPN_FIPS_CORE_PATCH_PATH}\"")
+  cargo_config_args+=(--config "patch.crates-io.nvpn-fips-core.path=\"${NVPN_FIPS_CORE_PATCH_PATH}\"")
   cargo_lock_args=()
 fi
 if [[ -n ${NVPN_FIPS_IDENTITY_PATCH_PATH:-} ]]; then
-  cargo_config_args+=(--config "patch.crates-io.fips-identity.path=\"${NVPN_FIPS_IDENTITY_PATCH_PATH}\"")
+  cargo_config_args+=(--config "patch.crates-io.nvpn-fips-identity.path=\"${NVPN_FIPS_IDENTITY_PATCH_PATH}\"")
   cargo_lock_args=()
 fi
 if [[ -n ${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH:-} ]]; then
@@ -215,13 +215,13 @@ if [[ -n ${NVPN_NOSTR_PUBSUB_PATCH_PATH:-} ]]; then
   cargo "${cargo_config_args[@]}" update -p nostr-pubsub
 fi
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p fips-endpoint
+  cargo "${cargo_config_args[@]}" update -p nvpn-fips-endpoint
 fi
 if [[ -n ${NVPN_FIPS_CORE_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p fips-core
+  cargo "${cargo_config_args[@]}" update -p nvpn-fips-core
 fi
 if [[ -n ${NVPN_FIPS_IDENTITY_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p fips-identity
+  cargo "${cargo_config_args[@]}" update -p nvpn-fips-identity
 fi
 if [[ -n ${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH:-} ]]; then
   cargo "${cargo_config_args[@]}" update -p nostr-pubsub-fips

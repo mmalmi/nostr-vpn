@@ -21,7 +21,11 @@ import { proveUnchangedPlatformInputs } from './release-component-source.mjs'
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url))
 const defaultCandidateRoot = resolve(scriptsDir, '..')
-const fipsPackageNames = ['fips-core', 'fips-endpoint', 'fips-identity']
+const fipsPackageNames = [
+  'nvpn-fips-core',
+  'nvpn-fips-endpoint',
+  'nvpn-fips-identity',
+]
 const cratesIoSource = 'registry+https://github.com/rust-lang/crates.io-index'
 
 function requireRegularFile(path, label) {
@@ -279,9 +283,9 @@ function resolveWindowsCratesIoFipsPackages({
     },
   ))
   const expectedVersions = {
-    'fips-core': expectedFipsVersion,
-    'fips-endpoint': expectedFipsVersion,
-    'fips-identity': '0.3.2',
+    'nvpn-fips-core': expectedFipsVersion,
+    'nvpn-fips-endpoint': expectedFipsVersion,
+    'nvpn-fips-identity': '0.3.3',
   }
   const exactPackages = {}
   for (const name of fipsPackageNames) {
@@ -309,7 +313,7 @@ function resolveWindowsCratesIoFipsPackages({
       throw new Error(`${name} crates.io VCS receipt is incomplete.`)
     }
     if (
-      (name === 'fips-core' || name === 'fips-endpoint')
+      (name === 'nvpn-fips-core' || name === 'nvpn-fips-endpoint')
       && packageVcsSha !== expectedFipsGitSha
     ) {
       throw new Error(`${name} was not packaged from the exact FIPS release.`)
@@ -525,13 +529,13 @@ export function exactFipsPublicationCandidate({
   const rootCargoLockPath = join(exactCandidateRoot, 'Cargo.lock')
   requireRegularFile(rootCargoLockPath, `${label} exact Cargo lock`)
   const lock = readFileSync(rootCargoLockPath, 'utf8')
-  cargoLockRegistryPackage(lock, 'fips-core', expectedFipsVersion)
-  cargoLockRegistryPackage(lock, 'fips-endpoint', expectedFipsVersion)
-  const identity = cargoLockUniqueRegistryPackage(lock, 'fips-identity')
+  cargoLockRegistryPackage(lock, 'nvpn-fips-core', expectedFipsVersion)
+  cargoLockRegistryPackage(lock, 'nvpn-fips-endpoint', expectedFipsVersion)
+  const identity = cargoLockUniqueRegistryPackage(lock, 'nvpn-fips-identity')
   const packageVersions = {
-    'fips-core': expectedFipsVersion,
-    'fips-endpoint': expectedFipsVersion,
-    'fips-identity': identity.version,
+    'nvpn-fips-core': expectedFipsVersion,
+    'nvpn-fips-endpoint': expectedFipsVersion,
+    'nvpn-fips-identity': identity.version,
   }
 
   return {

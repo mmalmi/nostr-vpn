@@ -194,9 +194,9 @@ install_release_cargo_config() {
 
   cat >"$release_cargo_config_path" <<EOF
 [patch.crates-io]
-fips-core = { path = $(toml_string "$release_fips_path/crates/fips-core") }
-fips-endpoint = { path = $(toml_string "$release_fips_path/crates/fips-endpoint") }
-fips-identity = { path = $(toml_string "$release_fips_path/crates/fips-identity") }
+nvpn-fips-core = { path = $(toml_string "$release_fips_path/crates/fips-core") }
+nvpn-fips-endpoint = { path = $(toml_string "$release_fips_path/crates/fips-endpoint") }
+nvpn-fips-identity = { path = $(toml_string "$release_fips_path/crates/fips-identity") }
 EOF
 }
 
@@ -238,9 +238,9 @@ prepare_release_cargo_config() {
   )"
 
   release_cargo_config_args+=(
-    --config "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\""
-    --config "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
-    --config "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\""
+    --config "patch.crates-io.nvpn-fips-core.path=\"$fips_path/crates/fips-core\""
+    --config "patch.crates-io.nvpn-fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
+    --config "patch.crates-io.nvpn-fips-identity.path=\"$fips_path/crates/fips-identity\""
   )
   echo "Using local FIPS crates from $fips_path"
   case "${NVPN_PATCH_LOCAL_FIPS:-1}" in
@@ -302,7 +302,7 @@ run_local_fips_regression_tests() {
     local_test() {
       local filter="$1"
       shift
-      release_gate_cargo_test_filter fips-core "$filter" cargo test -p fips-core "$@"
+      release_gate_cargo_test_filter nvpn-fips-core "$filter" cargo test -p nvpn-fips-core "$@"
     }
     local filter
     for filter in \

@@ -678,9 +678,9 @@ fips_patch_packages = dict(
     )
 )
 if set(fips_patch_packages) != {
-    "fips-core",
-    "fips-endpoint",
-    "fips-identity",
+    "nvpn-fips-core",
+    "nvpn-fips-endpoint",
+    "nvpn-fips-identity",
 }:
     raise SystemExit("unexpected exact FIPS patched lock package set")
 names = {

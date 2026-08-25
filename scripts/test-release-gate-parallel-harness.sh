@@ -412,17 +412,17 @@ sed -n '/^release_gate_cargo_test_filter() (/ , /^)/p' \
 # shellcheck disable=SC1090
 source "$selector_function"
 zero_match_output="$tmp/zero-match.log"
-if release_gate_cargo_test_filter fips-core stale_selector \
+if release_gate_cargo_test_filter nvpn-fips-core stale_selector \
   printf '%s\n' 'running 0 tests' \
   'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured' \
   >"$zero_match_output" 2>&1
 then
   fail "focused release-gate tests can pass with an empty selector"
 fi
-grep -Fq 'Release gate test selector matched no passing test: stale_selector (fips-core)' \
+grep -Fq 'Release gate test selector matched no passing test: stale_selector (nvpn-fips-core)' \
   "$zero_match_output" \
   || fail "zero-match selector did not explain its failure"
-release_gate_cargo_test_filter fips-core current_regression \
+release_gate_cargo_test_filter nvpn-fips-core current_regression \
   printf '%s\n' 'running 1 test' \
   'test module::current_regression ... ok' \
   'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured' \

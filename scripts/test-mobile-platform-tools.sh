@@ -11,10 +11,11 @@ fail() {
 
 make_fips_fixture() {
   local dir="$1"
-  local crate
+  local crate package
   for crate in fips-core fips-endpoint fips-identity; do
+    package="nvpn-$crate"
     mkdir -p "$dir/crates/$crate"
-    printf '[package]\nname = "%s"\nversion = "0.0.0"\n' "$crate" \
+    printf '[package]\nname = "%s"\nversion = "0.0.0"\n' "$package" \
       >"$dir/crates/$crate/Cargo.toml"
   done
   git -C "$dir" init -q
@@ -89,7 +90,7 @@ cat >"$stubbin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" \
-  | grep -Fq "patch.crates-io.fips-core.path=\"$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core\""
+  | grep -Fq "patch.crates-io.nvpn-fips-core.path=\"$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core\""
 printf '\n# mutated by fake iOS cargo\n' >> "$NVPN_TEST_CARGO_LOCK"
 exit 42
 EOF
@@ -124,14 +125,14 @@ set -euo pipefail
 if [[ "${NVPN_TEST_PRECONFIGURED:-0}" == "1" ]]; then
   manifest="$(cd "$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core" && pwd -P)/Cargo.toml"
   python3 -c 'import json,sys
-m=sys.argv[1]; i=f"path+file://{m}#fips-core@0.0.0"
-json.dump({"packages":[{"id":i,"manifest_path":m,"name":"fips-core",
+m=sys.argv[1]; i=f"path+file://{m}#nvpn-fips-core@0.0.0"
+json.dump({"packages":[{"id":i,"manifest_path":m,"name":"nvpn-fips-core",
 "source":None,"version":"0.0.0"}],"resolve":{"nodes":[{"id":i}]}},sys.stdout)' \
     "$manifest"
   exit
 fi
 printf '%s\n' "$*" \
-  | grep -Fq "patch.crates-io.fips-core.path=\"$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core\""
+  | grep -Fq "patch.crates-io.nvpn-fips-core.path=\"$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core\""
 printf '\n# mutated by fake Android cargo\n' >> "$NVPN_TEST_CARGO_LOCK"
 exit 42
 EOF

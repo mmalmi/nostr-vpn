@@ -54,9 +54,9 @@ if [[ "${NVPN_PATCH_LOCAL_FIPS:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$
     exit 1
   fi
   prepare_lock_restore
-  cargo_config_args+=(--config "patch.crates-io.fips-core.path=\"$FIPS_REPO_PATH/crates/fips-core\"")
-  cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"$FIPS_REPO_PATH/crates/fips-endpoint\"")
-  cargo_config_args+=(--config "patch.crates-io.fips-identity.path=\"$FIPS_REPO_PATH/crates/fips-identity\"")
+  cargo_config_args+=(--config "patch.crates-io.nvpn-fips-core.path=\"$FIPS_REPO_PATH/crates/fips-core\"")
+  cargo_config_args+=(--config "patch.crates-io.nvpn-fips-endpoint.path=\"$FIPS_REPO_PATH/crates/fips-endpoint\"")
+  cargo_config_args+=(--config "patch.crates-io.nvpn-fips-identity.path=\"$FIPS_REPO_PATH/crates/fips-identity\"")
 fi
 
 cargo_build=(cargo)

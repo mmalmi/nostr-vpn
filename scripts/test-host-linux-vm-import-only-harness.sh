@@ -162,9 +162,9 @@ def package(name: str, version: str, checksum: str, patched: bool) -> str:
 
 
 targets = (
-    ("fips-core", "0.4.45", "a" * 64),
-    ("fips-endpoint", "0.4.45", "b" * 64),
-    ("fips-identity", "0.3.2", "c" * 64),
+    ("nvpn-fips-core", "0.4.65", "a" * 64),
+    ("nvpn-fips-endpoint", "0.4.65", "b" * 64),
+    ("nvpn-fips-identity", "0.3.3", "c" * 64),
 )
 unrelated = ("unrelated", "1.0.0", "d" * 64)
 prefix = "version = 4\n\n"
@@ -185,12 +185,12 @@ dependency = realized.replace(
     'dependencies = ["stable"]', 'dependencies = ["changed"]', 1
 )
 version = realized.replace(
-    'name = "fips-identity"\nversion = "0.3.2"',
-    'name = "fips-identity"\nversion = "0.3.3"',
+    'name = "nvpn-fips-identity"\nversion = "0.3.3"',
+    'name = "nvpn-fips-identity"\nversion = "0.3.4"',
 )
 wrong_version = committed.replace(
-    'name = "fips-identity"\nversion = "0.3.2"',
-    'name = "fips-identity"\nversion = "0.3.3"',
+    'name = "nvpn-fips-identity"\nversion = "0.3.3"',
+    'name = "nvpn-fips-identity"\nversion = "0.3.4"',
 )
 for name, value in (
     ("committed.lock", committed),
@@ -204,9 +204,9 @@ for name, value in (
     (root / name).write_text(value, encoding="utf-8")
 PY
 patch_specs=(
-  fips-core=0.4.45
-  fips-endpoint=0.4.45
-  fips-identity=0.3.2
+  nvpn-fips-core=0.4.65
+  nvpn-fips-endpoint=0.4.65
+  nvpn-fips-identity=0.3.3
 )
 expected_patch_sha="$(
   python3 "$PATCH_LOCK_VERIFIER" \

@@ -18,7 +18,7 @@ FIPS_ROOT="$TMP_ROOT/fips"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 mkdir -p "$APP_ROOT" "$FIPS_ROOT/crates/fips-core"
 printf 'fixture\n' >"$APP_ROOT/source"
-printf '[package]\nname = "fips-core"\nversion = "1.2.3"\n' \
+printf '[package]\nname = "nvpn-fips-core"\nversion = "1.2.3"\n' \
   >"$FIPS_ROOT/crates/fips-core/Cargo.toml"
 for repo in "$APP_ROOT" "$FIPS_ROOT"; do
   git -C "$repo" init -q

@@ -36,22 +36,22 @@ function exactWindowsCratesIoFixture() {
   const fipsGitSha = 'c'.repeat(40)
   const fipsGitTree = 'd'.repeat(40)
   const exactPackages = {
-    'fips-core': {
+    'nvpn-fips-core': {
       version: '0.4.53',
       source: 'registry+https://github.com/rust-lang/crates.io-index',
       cargoLockChecksum: '1'.repeat(64),
       packageVcsSha: fipsGitSha,
       pathInVcs: 'crates/fips-core',
     },
-    'fips-endpoint': {
+    'nvpn-fips-endpoint': {
       version: '0.4.53',
       source: 'registry+https://github.com/rust-lang/crates.io-index',
       cargoLockChecksum: '2'.repeat(64),
       packageVcsSha: fipsGitSha,
       pathInVcs: 'crates/fips-endpoint',
     },
-    'fips-identity': {
-      version: '0.3.2',
+    'nvpn-fips-identity': {
+      version: '0.3.3',
       source: 'registry+https://github.com/rust-lang/crates.io-index',
       cargoLockChecksum: '3'.repeat(64),
       packageVcsSha: 'e'.repeat(40),
@@ -138,22 +138,22 @@ test('Windows crates.io receipts reject source, VCS, and artifact drift', () => 
   for (const [label, mutate, error] of [
     [
       'lock checksum',
-      (fixture) => { fixture.sourceReceipt.fipsCrates['fips-core'].cargoLockChecksum = '9'.repeat(64) },
+      (fixture) => { fixture.sourceReceipt.fipsCrates['nvpn-fips-core'].cargoLockChecksum = '9'.repeat(64) },
       /package checksums\/VCS differ/,
     ],
     [
       'package VCS',
-      (fixture) => { fixture.sourceReceipt.fipsCrates['fips-core'].packageVcsSha = '9'.repeat(40) },
+      (fixture) => { fixture.sourceReceipt.fipsCrates['nvpn-fips-core'].packageVcsSha = '9'.repeat(40) },
       /package checksums\/VCS differ/,
     ],
     [
       'registry source',
-      (fixture) => { fixture.sourceReceipt.fipsCrates['fips-core'].source = 'path+file:///tmp/fips' },
+      (fixture) => { fixture.sourceReceipt.fipsCrates['nvpn-fips-core'].source = 'path+file:///tmp/fips' },
       /package checksums\/VCS differ/,
     ],
     [
       'package set',
-      (fixture) => { delete fixture.sourceReceipt.fipsCrates['fips-identity'] },
+      (fixture) => { delete fixture.sourceReceipt.fipsCrates['nvpn-fips-identity'] },
       /package checksums\/VCS differ/,
     ],
     [
@@ -309,7 +309,7 @@ function committedRegistryPackageVersion(name) {
 }
 
 const fipsPackages = Object.fromEntries(
-  ['fips-core', 'fips-endpoint', 'fips-identity'].map((name) => [
+  ['nvpn-fips-core', 'nvpn-fips-endpoint', 'nvpn-fips-identity'].map((name) => [
     name,
     committedRegistryPackageVersion(name),
   ]),
@@ -492,7 +492,7 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
     appVersion: workspaceVersion,
     fipsGitSha,
     fipsGitTree,
-    fipsVersion: fipsPackages['fips-core'],
+    fipsVersion: fipsPackages['nvpn-fips-core'],
     rootCargoLockSha256: sha256(rootLock),
     rootRealizedCargoLockSha256,
     linuxCargoLockSha256: sha256(linuxLock),
@@ -526,7 +526,7 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
     ...process.env,
     NVPN_EXPECTED_FIPS_GIT_SHA: fipsGitSha,
     NVPN_EXPECTED_FIPS_GIT_TREE: fipsGitTree,
-    NVPN_EXPECTED_FIPS_VERSION: fipsPackages['fips-core'],
+    NVPN_EXPECTED_FIPS_VERSION: fipsPackages['nvpn-fips-core'],
     NVPN_FIPS_REPO_PATH: fipsRoot,
     NVPN_HOST_LINUX_VM_BUILDER_MODE: 'remote-native',
     NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST: 'fixture-builder',
@@ -602,7 +602,7 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
     ['NVPN_EXPECTED_FIPS_GIT_SHA', '', /exact lowercase NVPN_EXPECTED_FIPS_GIT_SHA/i],
     ['NVPN_EXPECTED_FIPS_GIT_TREE', '', /exact lowercase NVPN_EXPECTED_FIPS_GIT_TREE/i],
     ['NVPN_EXPECTED_FIPS_VERSION', '', /exact NVPN_EXPECTED_FIPS_VERSION/i],
-    ['NVPN_EXPECTED_FIPS_VERSION', '0.4.53', /fips-core 0\.4\.53/i],
+    ['NVPN_EXPECTED_FIPS_VERSION', '0.4.53', /nvpn-fips-core 0\.4\.53/i],
   ]) {
     assert.throws(
       () => planFor({ env: { ...exactEnv, [field]: value } }),
@@ -730,7 +730,7 @@ test('frozen FIPS publication identity comes from explicit proof and sealed Carg
   const expected = {
     fipsGitSha: 'a'.repeat(40),
     fipsGitTree: 'b'.repeat(40),
-    fipsVersion: fipsPackages['fips-core'],
+    fipsVersion: fipsPackages['nvpn-fips-core'],
     fipsSpecifications: fipsSpecs,
     fipsPatchedLockPackages: fipsPackages,
     lockVerifierPath: join(

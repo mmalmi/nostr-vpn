@@ -17,7 +17,11 @@ PACKAGE_HEADER = "[[package]]"
 NAME_RE = re.compile(r'^name = "([^"]+)"$')
 VERSION_RE = re.compile(r'^version = "([^"]+)"$')
 CHECKSUM_RE = re.compile(r'^checksum = "[0-9a-f]{64}"$')
-PATCH_CRATES = ("fips-core", "fips-endpoint", "fips-identity")
+PATCH_CRATES = {
+    "nvpn-fips-core": "fips-core",
+    "nvpn-fips-endpoint": "fips-endpoint",
+    "nvpn-fips-identity": "fips-identity",
+}
 
 
 def fail(message: str) -> "NoReturn":
@@ -45,8 +49,8 @@ def package_specs(arguments: list[str]) -> dict[str, str]:
 def manifest_specs(root_arg: str) -> dict[str, str]:
     root = pathlib.Path(root_arg)
     result: dict[str, str] = {}
-    for crate in PATCH_CRATES:
-        manifest = root / "crates" / crate / "Cargo.toml"
+    for package_name, crate_dir in PATCH_CRATES.items():
+        manifest = root / "crates" / crate_dir / "Cargo.toml"
         try:
             text = manifest.read_text(encoding="utf-8")
         except OSError as error:
@@ -67,8 +71,8 @@ def manifest_specs(root_arg: str) -> dict[str, str]:
         if len(names) != 1 or len(versions) != 1:
             fail(f"manifest lacks one exact package identity: {manifest}")
         name, version = names[0], versions[0]
-        if name != crate or not version:
-            fail(f"manifest package identity differs for {crate}")
+        if name != package_name or not version:
+            fail(f"manifest package identity differs for {package_name}")
         result[name] = version
     return result
 

@@ -131,9 +131,9 @@ prepare_cargo_config() {
     fips_path="$(validated_fips_repo_path)"
     prepare_lock_restore
     cargo_config_args+=(
-      --config "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\""
-      --config "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
-      --config "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\""
+      --config "patch.crates-io.nvpn-fips-core.path=\"$fips_path/crates/fips-core\""
+      --config "patch.crates-io.nvpn-fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
+      --config "patch.crates-io.nvpn-fips-identity.path=\"$fips_path/crates/fips-identity\""
     )
     printf 'using local FIPS crates from %s\n' "$fips_path"
   fi

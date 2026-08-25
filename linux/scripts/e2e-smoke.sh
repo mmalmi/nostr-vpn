@@ -25,9 +25,9 @@ if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
     exit 2
   fi
   cargo_config_args+=(
-    --config "patch.crates-io.fips-core.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-core\""
-    --config "patch.crates-io.fips-endpoint.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-endpoint\""
-    --config "patch.crates-io.fips-identity.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-identity\""
+    --config "patch.crates-io.nvpn-fips-core.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-core\""
+    --config "patch.crates-io.nvpn-fips-endpoint.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-endpoint\""
+    --config "patch.crates-io.nvpn-fips-identity.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-identity\""
   )
   cargo_lock_args=()
 fi

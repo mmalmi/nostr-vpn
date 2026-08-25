@@ -11,9 +11,9 @@ set -euo pipefail
 PHASE="$1"
 cd /workspace/app
 fips_config=(
-  --config 'patch.crates-io.fips-core.path="/workspace/fips/crates/fips-core"'
-  --config 'patch.crates-io.fips-endpoint.path="/workspace/fips/crates/fips-endpoint"'
-  --config 'patch.crates-io.fips-identity.path="/workspace/fips/crates/fips-identity"'
+  --config 'patch.crates-io.nvpn-fips-core.path="/workspace/fips/crates/fips-core"'
+  --config 'patch.crates-io.nvpn-fips-endpoint.path="/workspace/fips/crates/fips-endpoint"'
+  --config 'patch.crates-io.nvpn-fips-identity.path="/workspace/fips/crates/fips-identity"'
 )
 lock_verifier=/workspace/app/scripts/verify-cargo-path-patch-lock.py
 cargo_cache_verifier=/workspace/app/scripts/host_linux_cargo_archive_cache.py
@@ -143,9 +143,9 @@ import sys
 path = pathlib.Path(sys.argv[1])
 content = (
     '[patch.crates-io]\n'
-    'fips-core = { path = "/workspace/fips/crates/fips-core" }\n'
-    'fips-endpoint = { path = "/workspace/fips/crates/fips-endpoint" }\n'
-    'fips-identity = { path = "/workspace/fips/crates/fips-identity" }\n'
+    'nvpn-fips-core = { path = "/workspace/fips/crates/fips-core" }\n'
+    'nvpn-fips-endpoint = { path = "/workspace/fips/crates/fips-endpoint" }\n'
+    'nvpn-fips-identity = { path = "/workspace/fips/crates/fips-identity" }\n'
 ).encode()
 descriptor = os.open(
     path,
