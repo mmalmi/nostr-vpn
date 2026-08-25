@@ -26,7 +26,8 @@ RUN case "$NVPN_PATCH_LOCAL_FIPS" in \
             && test -f /app/fips/crates/fips-endpoint/Cargo.toml \
             && test -f /app/fips/crates/fips-identity/Cargo.toml \
             || { echo "NVPN_PATCH_LOCAL_FIPS=1 requires NVPN_FIPS_REPO_PATH to point at a fips checkout" >&2; exit 1; }; \
-          printf '\n[patch.crates-io]\nfips-core = { path = "/app/fips/crates/fips-core" }\nfips-endpoint = { path = "/app/fips/crates/fips-endpoint" }\nfips-identity = { path = "/app/fips/crates/fips-identity" }\n' >> Cargo.toml; \
+          mkdir -p .cargo; \
+          printf '[patch.crates-io]\nnvpn-fips-core = { path = "/app/fips/crates/fips-core" }\nnvpn-fips-endpoint = { path = "/app/fips/crates/fips-endpoint" }\nnvpn-fips-identity = { path = "/app/fips/crates/fips-identity" }\n' > .cargo/config.toml; \
           ;; \
       esac
 

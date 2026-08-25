@@ -1209,6 +1209,7 @@ PY
 
 test_dockerfile_supports_local_base_images() {
   local dockerfile="$ROOT_DIR/Dockerfile.e2e"
+  local paid_exit_dockerfile="$ROOT_DIR/Dockerfile.paid-exit-e2e"
   local compose
 
   assert_file_not_contains "$dockerfile" "syntax=docker/dockerfile" "Dockerfile external frontend directive"
@@ -1219,6 +1220,12 @@ test_dockerfile_supports_local_base_images() {
   assert_file_contains "$dockerfile" "ARG NVPN_E2E_BUILDER_APT_INSTALL=1" "builder apt arg"
   assert_file_contains "$dockerfile" "ARG NVPN_E2E_RUNTIME_APT_INSTALL=1" "runtime apt arg"
   assert_file_contains "$dockerfile" "[patch.crates-io]" "local FIPS Cargo patch table"
+  assert_file_contains "$dockerfile" 'nvpn-fips-core = { path = "/app/fips/crates/fips-core" }' "renamed local FIPS core patch"
+  assert_file_contains "$dockerfile" 'nvpn-fips-endpoint = { path = "/app/fips/crates/fips-endpoint" }' "renamed local FIPS endpoint patch"
+  assert_file_contains "$dockerfile" 'nvpn-fips-identity = { path = "/app/fips/crates/fips-identity" }' "renamed local FIPS identity patch"
+  assert_file_contains "$paid_exit_dockerfile" 'nvpn-fips-core = { path = "/app/fips/crates/fips-core" }' "paid-exit renamed local FIPS core patch"
+  assert_file_contains "$paid_exit_dockerfile" 'nvpn-fips-endpoint = { path = "/app/fips/crates/fips-endpoint" }' "paid-exit renamed local FIPS endpoint patch"
+  assert_file_contains "$paid_exit_dockerfile" 'nvpn-fips-identity = { path = "/app/fips/crates/fips-identity" }' "paid-exit renamed local FIPS identity patch"
 
   for compose in \
     "$ROOT_DIR/docker-compose.e2e.yml" \
