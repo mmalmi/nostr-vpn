@@ -116,6 +116,8 @@ struct SpilmanClientStoreFile {
     payments: BTreeMap<String, cdk_spilman::ClientPaymentState>,
     #[serde(default)]
     closed: BTreeSet<String>,
+    #[serde(default)]
+    refund_witnesses_persisted: BTreeSet<String>,
 }
 
 impl SpilmanClientStoreFile {
@@ -125,6 +127,7 @@ impl SpilmanClientStoreFile {
             funding: BTreeMap::new(),
             payments: BTreeMap::new(),
             closed: BTreeSet::new(),
+            refund_witnesses_persisted: BTreeSet::new(),
         }
     }
 }
@@ -230,6 +233,20 @@ impl FileSpilmanClientStorage {
             .map_err(|error| format!("failed to encode Spilman client store: {error}"))?;
         write_atomic_private(&self.path, content.as_bytes())
             .map_err(|error| format!("failed to write Spilman client store: {error}"))
+    }
+
+    pub fn refund_witnesses_persisted(&self, channel_id: &str) -> bool {
+        self.state.refund_witnesses_persisted.contains(channel_id)
+    }
+
+    pub fn mark_refund_witnesses_persisted(&mut self, channel_id: &str) {
+        if self
+            .state
+            .refund_witnesses_persisted
+            .insert(channel_id.to_string())
+        {
+            self.persist();
+        }
     }
 }
 
@@ -869,6 +886,21 @@ fn default_streaming_route_cashu_unit() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_spilman_client_storage_persists_refund_witness_migration() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("client.json");
+        let (mut storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
+        assert!(!storage.refund_witnesses_persisted("channel-1"));
+        storage.mark_refund_witnesses_persisted("channel-1");
+        errors.ensure_ok().unwrap();
+        drop(storage);
+
+        let (storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
+        assert!(storage.refund_witnesses_persisted("channel-1"));
+        errors.ensure_ok().unwrap();
+    }
 
     #[cfg(feature = "spilman-wallet-http")]
     #[test]

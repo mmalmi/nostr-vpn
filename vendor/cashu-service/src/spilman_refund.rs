@@ -1,6 +1,6 @@
 //! Buyer-side recovery for settled Cashu Spilman channels.
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use cashu::nuts::{Proof, SecretKey};
 use cdk_spilman::ClientStorage;
@@ -82,6 +82,29 @@ pub struct StreamingRouteRestoreCashuSpilmanRefundResult {
     pub proof_count: usize,
 }
 
+pub fn sign_restored_sender_proofs(
+    params: &cdk_spilman::ChannelParameters,
+    sender_secret: &SecretKey,
+    proofs: &mut [Proof],
+) -> anyhow::Result<()> {
+    let mut next_index_by_amount = HashMap::<u64, usize>::new();
+    for proof in proofs {
+        let amount = u64::from(proof.amount);
+        let index = next_index_by_amount.entry(amount).or_default();
+        let signing_key = params.get_sender_blinded_secret_key_for_stage2_output(
+            sender_secret,
+            amount,
+            *index,
+        )?;
+        proof.sign_p2pk(signing_key)?;
+        proof
+            .verify_p2pk()
+            .map_err(|error| anyhow::anyhow!(error))?;
+        *index += 1;
+    }
+    Ok(())
+}
+
 pub async fn restore_streaming_route_cashu_spilman_refund(
     data_dir: &Path,
     channel_id: &str,
@@ -112,7 +135,9 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("sat")
         .to_string();
-    if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed {
+    if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed
+        && storage.refund_witnesses_persisted(channel_id)
+    {
         return Ok(complete_result(channel_id, funding.mint_url, unit, 0, 0, 0));
     }
 
@@ -154,9 +179,10 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
     }
 
     let sender = cdk_spilman::SpilmanChannelSender::new(sender_secret, channel);
-    let proofs = sender
+    let mut proofs = sender
         .restore_sender_proofs_with_keyset(&mint, &output_keyset)
         .await?;
+    sign_restored_sender_proofs(&sender.channel.params, &sender.alice_secret, &mut proofs)?;
     let recovered_amount_sat = proofs
         .iter()
         .map(|proof| u64::from(proof.amount))
@@ -171,6 +197,7 @@ pub async fn restore_streaming_route_cashu_spilman_refund_with_lock(
             .amount_sat
     };
     storage.set_closed(channel_id);
+    storage.mark_refund_witnesses_persisted(channel_id);
     storage_errors
         .ensure_ok()
         .map_err(|error| anyhow::anyhow!(error))?;
@@ -207,6 +234,11 @@ fn complete_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cashu::{
+        nuts::{CurrencyUnit, Id, Keys},
+        Amount,
+    };
+    use std::collections::BTreeMap;
 
     fn test_funding() -> cdk_spilman::ClientChannelFunding {
         cdk_spilman::ClientChannelFunding {
@@ -241,6 +273,7 @@ mod tests {
             FileSpilmanClientStorage::load(spilman_client_store_path(temp.path())).unwrap();
         storage.save_funding("channel-1", test_funding());
         storage.set_closed("channel-1");
+        storage.mark_refund_witnesses_persisted("channel-1");
         errors.ensure_ok().unwrap();
         drop(storage);
 
@@ -252,5 +285,49 @@ mod tests {
         assert_eq!(result.recovered_amount_sat, 0);
         assert_eq!(result.imported_amount_sat, 0);
         assert_eq!(result.proof_count, 0);
+    }
+
+    #[test]
+    fn restored_sender_refunds_are_signed_for_generic_wallet_spending() {
+        let alice_secret = SecretKey::generate();
+        let charlie_secret = SecretKey::generate();
+        let mut keys = BTreeMap::new();
+        for amount in [1_u64, 2, 4, 8, 16] {
+            keys.insert(Amount::from(amount), SecretKey::generate().public_key());
+        }
+        let keys = Keys::new(keys);
+        let keyset_id = Id::v1_from_keys(&keys);
+        let keyset = cdk_spilman::KeysetInfo::new(keyset_id, CurrencyUnit::Sat, keys, 0, None);
+        let funding_token_amount =
+            cdk_spilman::ChannelParameters::get_minimum_funding_token_amount(8, &keyset, 0)
+                .unwrap();
+        let params = cdk_spilman::ChannelParameters::new_with_secret_key(
+            alice_secret.public_key(),
+            charlie_secret.public_key(),
+            "https://mint.example".to_string(),
+            CurrencyUnit::Sat,
+            8,
+            funding_token_amount,
+            1_000,
+            1,
+            keyset,
+            0,
+            &alice_secret,
+        )
+        .unwrap();
+        let deterministic = params
+            .create_deterministic_output_with_blinding("sender", 2, 0)
+            .unwrap();
+        let mut proofs = vec![Proof::new(
+            Amount::from(2_u64),
+            keyset_id,
+            deterministic.secret,
+            SecretKey::generate().public_key(),
+        )];
+
+        sign_restored_sender_proofs(&params, &alice_secret, &mut proofs).unwrap();
+
+        assert!(proofs[0].witness.is_some());
+        proofs[0].verify_p2pk().unwrap();
     }
 }

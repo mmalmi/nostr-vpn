@@ -7,7 +7,7 @@ use cdk::Amount;
 use cdk_sqlite::WalletSqliteDatabase;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -714,22 +714,33 @@ impl CashuWalletService {
             );
         }
 
-        let existing_ys = wallet
+        let existing_by_y = wallet
             .localstore
             .get_proofs_by_ys(proof_infos.iter().map(|proof| proof.y).collect())
             .await
             .context("Failed to check existing Cashu proofs")?
             .into_iter()
-            .map(|proof| proof.y.to_string())
-            .collect::<HashSet<_>>();
+            .map(|proof| (proof.y, proof))
+            .collect::<HashMap<_, _>>();
 
         let mut imported_amount_sat = 0_u64;
         let proof_infos = proof_infos
             .into_iter()
-            .filter(|proof| !existing_ys.contains(&proof.y.to_string()))
-            .inspect(|proof| {
-                imported_amount_sat =
-                    imported_amount_sat.saturating_add(proof.proof.amount.to_u64());
+            .filter_map(|mut proof| match existing_by_y.get(&proof.y) {
+                None => {
+                    imported_amount_sat =
+                        imported_amount_sat.saturating_add(proof.proof.amount.to_u64());
+                    Some(proof)
+                }
+                Some(existing)
+                    if existing.proof.witness.is_none() && proof.proof.witness.is_some() =>
+                {
+                    proof.state = existing.state;
+                    proof.used_by_operation = existing.used_by_operation;
+                    proof.created_by_operation = existing.created_by_operation;
+                    Some(proof)
+                }
+                Some(_) => None,
             })
             .collect::<Vec<_>>();
 
@@ -740,26 +751,28 @@ impl CashuWalletService {
                 .await
                 .context("Failed to import Cashu proofs into wallet")?;
 
-            append_wallet_activity_entry(
-                self.localstore().as_ref(),
-                CashuWalletActivityEntry {
-                    id: wallet_activity_id(),
-                    kind: CashuWalletActivityKind::ChannelCollect,
-                    status: CashuWalletActivityStatus::Complete,
-                    mint_url: normalized_mint.clone(),
-                    unit: CurrencyUnit::Sat.to_string(),
-                    amount_sat: imported_amount_sat,
-                    fee_sat: None,
-                    created_at_unix: wallet_activity_now_unix(),
-                    expires_at_unix: None,
-                    quote_id: None,
-                    operation_id: None,
-                    payment_request: None,
-                    token: None,
-                },
-            )
-            .await
-            .context("Failed to record Cashu channel collection activity")?;
+            if imported_amount_sat > 0 {
+                append_wallet_activity_entry(
+                    self.localstore().as_ref(),
+                    CashuWalletActivityEntry {
+                        id: wallet_activity_id(),
+                        kind: CashuWalletActivityKind::ChannelCollect,
+                        status: CashuWalletActivityStatus::Complete,
+                        mint_url: normalized_mint.clone(),
+                        unit: CurrencyUnit::Sat.to_string(),
+                        amount_sat: imported_amount_sat,
+                        fee_sat: None,
+                        created_at_unix: wallet_activity_now_unix(),
+                        expires_at_unix: None,
+                        quote_id: None,
+                        operation_id: None,
+                        payment_request: None,
+                        token: None,
+                    },
+                )
+                .await
+                .context("Failed to record Cashu channel collection activity")?;
+            }
         }
 
         Ok(CashuReceivedPayment {

@@ -4,8 +4,8 @@ use cdk::cdk_database::WalletDatabase;
 use cdk::nuts::{
     BatchCheckMintQuoteRequest, BatchMintRequest, CheckStateRequest, CheckStateResponse,
     CurrencyUnit, Id, KeySet, KeySetInfo, Keys, KeysetResponse, MeltQuoteBolt11Response,
-    MeltRequest, MintInfo, MintRequest, MintResponse, PaymentMethod, Proof, RestoreRequest,
-    RestoreResponse, SecretKey, State, SwapRequest, SwapResponse,
+    MeltRequest, MintInfo, MintRequest, MintResponse, P2PKWitness, PaymentMethod, Proof,
+    RestoreRequest, RestoreResponse, SecretKey, State, SwapRequest, SwapResponse, Witness,
 };
 use cdk::secret::Secret;
 use cdk::wallet::{types::ProofInfo, MintConnector, WalletBuilder};
@@ -693,6 +693,39 @@ async fn test_import_payment_proofs_is_idempotent() {
     assert_eq!(overview.entries[0].balance, 12);
     let activity = load_wallet_activity(temp_dir.path()).await.unwrap();
     assert_eq!(activity.len(), 1);
+}
+
+#[tokio::test]
+async fn test_import_payment_proofs_repairs_a_duplicate_witness() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let service = CashuWalletService::open_file_backed(temp_dir.path())
+        .await
+        .unwrap();
+    let keyset = build_test_keyset(16);
+    let mut proof = make_test_proof(keyset.id, 8);
+    let unsigned_json = serde_json::to_string(&vec![proof.clone()]).unwrap();
+    service
+        .import_payment_proofs("https://mint.example", "sat", &unsigned_json)
+        .await
+        .unwrap();
+
+    proof.witness = Some(Witness::P2PKWitness(P2PKWitness {
+        signatures: vec!["signed-refund".to_string()],
+    }));
+    let signed_json = serde_json::to_string(&vec![proof.clone()]).unwrap();
+    let repaired = service
+        .import_payment_proofs("https://mint.example", "sat", &signed_json)
+        .await
+        .unwrap();
+
+    assert_eq!(repaired.amount_sat, 0, "repair must not count as new funds");
+    let stored = service
+        .localstore()
+        .get_proofs_by_ys(vec![proof.y().unwrap()])
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].proof.witness, proof.witness);
 }
 
 #[tokio::test]

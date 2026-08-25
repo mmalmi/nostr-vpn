@@ -86,6 +86,7 @@ pub async fn transfer_between_mints(
 }
 
 /// Resume an already durable saga without permitting a new payment to start.
+#[allow(dead_code)]
 pub(crate) async fn resume_transfer_between_mints(
     data_dir: &Path,
     request: CashuCrossMintTransferRequest,
@@ -104,6 +105,7 @@ impl CashuWalletService {
         self.transfer_between_mints_with_start(request, true).await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn resume_transfer_between_mints(
         &self,
         request: CashuCrossMintTransferRequest,

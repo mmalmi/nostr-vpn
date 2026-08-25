@@ -455,7 +455,9 @@ async fn restore_spilman_refund_through_daemon_wallet(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("sat")
         .to_string();
-    if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed {
+    if storage.get_state(channel_id) == cdk_spilman::ClientChannelState::Closed
+        && storage.refund_witnesses_persisted(channel_id)
+    {
         return Ok(completed_refund_result(
             channel_id,
             funding.mint_url,
@@ -509,9 +511,14 @@ async fn restore_spilman_refund_through_daemon_wallet(
     }
 
     let sender = cdk_spilman::SpilmanChannelSender::new(sender_secret, channel);
-    let proofs = sender
+    let mut proofs = sender
         .restore_sender_proofs_with_keyset(&mint, &output_keyset)
         .await?;
+    cashu_service::sign_restored_sender_proofs(
+        &sender.channel.params,
+        &sender.alice_secret,
+        &mut proofs,
+    )?;
     let recovered_amount_sat = proofs
         .iter()
         .map(|proof| u64::from(proof.amount))
@@ -535,6 +542,7 @@ async fn restore_spilman_refund_through_daemon_wallet(
         imported.amount_sat
     };
     storage.set_closed(channel_id);
+    storage.mark_refund_witnesses_persisted(channel_id);
     storage_errors.ensure_ok().map_err(|error| anyhow!(error))?;
 
     Ok(completed_refund_result(
@@ -866,6 +874,7 @@ mod tests {
             test_spilman_funding(&directory.0, "http://127.0.0.1:1"),
         );
         client_storage.set_closed(channel_id);
+        client_storage.mark_refund_witnesses_persisted(channel_id);
         storage_errors
             .ensure_ok()
             .expect("persist closed Spilman fixture");
@@ -936,6 +945,7 @@ mod tests {
             test_spilman_funding(&directory.0, "http://127.0.0.1:1"),
         );
         client_storage.set_closed("b-complete");
+        client_storage.mark_refund_witnesses_persisted("b-complete");
         storage_errors
             .ensure_ok()
             .expect("persist Spilman fixtures");
