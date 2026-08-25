@@ -63,7 +63,7 @@ function startosManifestSha256(arch) {
     .update(canonicalJson({
       id: 'nostr-vpn',
       images: [{ id: 'app', arch: [arch] }],
-      nestedRuntime: true,
+      virtualNetworking: true,
       version: `${marketingVersion}:0`,
     }))
     .digest('hex')
@@ -96,7 +96,7 @@ case "$3" in
   *-startos-x86_64.s9pk) arch=x86_64 ;;
   *) exit 2 ;;
 esac
-printf '{"id":"nostr-vpn","version":"${marketingVersion}:0","nestedRuntime":true,"images":[{"id":"app","arch":["%s"]}]}\\n' "$arch"
+printf '{"id":"nostr-vpn","version":"${marketingVersion}:0","virtualNetworking":true,"images":[{"id":"app","arch":["%s"]}]}\\n' "$arch"
 `,
   )
   chmodSync(fakeStartCli, 0o755)

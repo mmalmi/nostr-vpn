@@ -3,7 +3,7 @@
 
 PACKAGE_ID := $(shell awk -F"'" '/id:/ {print $$2}' startos/manifest/index.ts)
 INGREDIENTS := $(shell start-cli s9pk list-ingredients 2>/dev/null)
-DOCKER_CONTEXT_DEPS := $(shell git ls-files -- .dockerignore Cargo.toml Cargo.lock crates web/control-panel umbrel/Dockerfile 2>/dev/null)
+DOCKER_CONTEXT_DEPS := $(shell git ls-files -- .dockerignore Cargo.toml Cargo.lock crates vendor/cashu-service web/control-panel umbrel/Dockerfile 2>/dev/null)
 PACKAGE_DEPS := $(sort $(INGREDIENTS) $(DOCKER_CONTEXT_DEPS))
 GIT_DIR := $(shell git rev-parse --git-dir 2>/dev/null)
 GIT_DEPS := $(if $(GIT_DIR),$(GIT_DIR)/HEAD $(GIT_DIR)/index)

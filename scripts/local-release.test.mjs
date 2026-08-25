@@ -1289,7 +1289,7 @@ test('staged draft publication publishes only the already validated bytes', () =
                         asset.name.includes('aarch64')
                           ? 'aarch64'
                           : 'x86_64'
-                      }"],"id":"app"}],"nestedRuntime":true,"version":"4.1.5:0"}`,
+                      }"],"id":"app"}],"version":"4.1.5:0","virtualNetworking":true}`,
                     )
                     .digest('hex'),
                   package: asset.sha256,
@@ -1364,7 +1364,7 @@ case "$3" in
   *-startos-x86_64.s9pk) arch=x86_64 ;;
   *) exit 2 ;;
 esac
-printf '{"id":"nostr-vpn","version":"4.1.5:0","nestedRuntime":true,"images":[{"id":"app","arch":["%s"]}]}\\n' "$arch"
+printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":[{"id":"app","arch":["%s"]}]}\\n' "$arch"
 `,
   )
   chmodSync(startCli, 0o755)
@@ -2793,10 +2793,11 @@ test('GitHub release requires and publishes both StartOS package architectures',
 
   assert.ok(startosJobStart >= 0 && releaseJobStart > startosJobStart)
   assert.match(startosJob, /STARTOS_DEV_KEY/)
-  assert.match(startosJob, /STARTOS_CLI_VERSION: '0\.4\.0-beta\.9'/)
-  assert.match(startosJob, /startos_cli_sha256: 212686c28056b48810b383d7aa2cfc733db7332d406f4376a0bfd6ca94c6d88f/)
-  assert.match(startosJob, /startos_cli_sha256: eb09a55aeb8241a6ed0a7659ed8bd5f86f950fb3b5315bc2798a05d8edd07d29/)
-  assert.match(startosJob, /releases\/download\/v\$\{STARTOS_CLI_VERSION\}/)
+  assert.match(startosJob, /STARTOS_CLI_VERSION: '1\.1\.0'/)
+  assert.match(startosJob, /startos_cli_sha256: 70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a/)
+  assert.match(startosJob, /startos_cli_sha256: 5feebd3f9b24a130e54496040b09e78b93307a5eee0052d56cab29a12ec4c571/)
+  assert.match(startosJob, /releases\/download\/start-cli\/v\$\{STARTOS_CLI_VERSION\}/)
+  assert.match(startosJob, /\.startos\/build\.key\.pem/)
   assert.match(startosJob, /sha256sum --check/)
   assert.match(startosJob, /start-cli \$\{STARTOS_CLI_VERSION\}/)
   assert.match(startosJob, /target: x86/)

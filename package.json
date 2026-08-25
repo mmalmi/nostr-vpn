@@ -7,7 +7,7 @@
     "prettier": "prettier --write startos"
   },
   "dependencies": {
-    "@start9labs/start-sdk": "1.5.2"
+    "@start9labs/start-sdk": "2.0.9"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

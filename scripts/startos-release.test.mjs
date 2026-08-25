@@ -7,8 +7,17 @@ import {
   resolveStartosRevision,
   resolveStartosTarget,
   startosReleaseAssetName,
+  validateStartosCliVersion,
   validateStartosManifest,
 } from './startos-release.mjs'
+
+test('validateStartosCliVersion requires the builder that preserves virtual networking', () => {
+  assert.doesNotThrow(() => validateStartosCliVersion('start-cli 1.1.0'))
+  assert.throws(
+    () => validateStartosCliVersion('start-cli 0.4.0-beta.9'),
+    /expected start-cli 1\.1\.0/,
+  )
+})
 
 test('resolveStartosTarget accepts make targets and architecture names', () => {
   assert.deepEqual(resolveStartosTarget('x86'), {
@@ -55,11 +64,11 @@ test('corrected tag build metadata stays separate from the StartOS revision', ()
   assert.throws(() => resolveStartosRevision('100', '4.1.4:1', 'v4.1.4'), /revision/)
 })
 
-test('validateStartosManifest requires the v0.4 runtime, release version, and target image', () => {
+test('validateStartosManifest requires tunnel access, the v0.4 runtime, release version, and target image', () => {
   const manifest = {
     id: 'nostr-vpn',
     version: '4.0.97:0',
-    nestedRuntime: true,
+    virtualNetworking: true,
     images: [{ id: 'app', arch: ['x86_64'] }],
   }
 
@@ -77,10 +86,10 @@ test('validateStartosManifest requires the v0.4 runtime, release version, and ta
   assert.throws(
     () =>
       validateStartosManifest(
-        { ...manifest, nestedRuntime: false },
+        { ...manifest, virtualNetworking: false },
         { arch: 'x86_64', tag: 'v4.0.97' },
       ),
-    /nestedRuntime is false, expected true/,
+    /virtualNetworking is false, expected true/,
   )
 
   const correctedManifest = { ...manifest, version: '4.1.4:1' }

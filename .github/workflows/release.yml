@@ -649,14 +649,14 @@ jobs:
           - target: x86
             arch: x86_64
             runner: ubuntu-latest
-            startos_cli_sha256: 212686c28056b48810b383d7aa2cfc733db7332d406f4376a0bfd6ca94c6d88f
+            startos_cli_sha256: 70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a
           - target: arm
             arch: aarch64
             runner: ubuntu-24.04-arm
-            startos_cli_sha256: eb09a55aeb8241a6ed0a7659ed8bd5f86f950fb3b5315bc2798a05d8edd07d29
+            startos_cli_sha256: 5feebd3f9b24a130e54496040b09e78b93307a5eee0052d56cab29a12ec4c571
     env:
       RELEASE_TAG: ${{ github.event.inputs.tag }}
-      STARTOS_CLI_VERSION: '0.4.0-beta.9'
+      STARTOS_CLI_VERSION: '1.1.0'
     steps:
       - name: Reclaim runner disk for the StartOS image build
         uses: Start9Labs/start-technologies/.github/actions/free-disk-space@ded16ed19378f8503ad1fed5fca608650a77a6f6
@@ -664,7 +664,7 @@ jobs:
       - name: Set up StartOS build environment
         uses: Start9Labs/start-technologies/.github/actions/setup-build-env@ded16ed19378f8503ad1fed5fca608650a77a6f6
 
-      - name: Pin StartOS v0.4 CLI
+      - name: Pin StartOS CLI
         shell: bash
         run: |
           set -euo pipefail
@@ -676,7 +676,7 @@ jobs:
 
           cli_path="${RUNNER_TEMP}/start-cli-${STARTOS_CLI_VERSION}-${arch}"
           curl --fail --location --silent --show-error --retry 3 \
-            "https://github.com/Start9Labs/start-technologies/releases/download/v${STARTOS_CLI_VERSION}/start-cli_${arch}-linux" \
+            "https://github.com/Start9Labs/start-technologies/releases/download/start-cli/v${STARTOS_CLI_VERSION}/start-cli_${arch}-linux" \
             --output "${cli_path}"
           printf '%s  %s\n' '${{ matrix.startos_cli_sha256 }}' "${cli_path}" | sha256sum --check -
           sudo install -m 755 "${cli_path}" /usr/local/bin/start-cli
@@ -706,7 +706,7 @@ jobs:
           umask 077
           mkdir -p "${HOME}/.startos" .startos
           printf '%s' "${STARTOS_DEV_KEY}" > "${HOME}/.startos/developer.key.pem"
-          cp "${HOME}/.startos/developer.key.pem" .startos/build-key
+          cp "${HOME}/.startos/developer.key.pem" .startos/build.key.pem
 
       - name: Build and validate StartOS package
         run: node scripts/startos-release.mjs --tag "${RELEASE_TAG}" --target "${{ matrix.target }}"

@@ -8,6 +8,7 @@ dist/
 javascript/
 *.s9pk
 .claude/
+.startos/
 .codex_tmp*
 umbrel/.data
 **/*.rs.bk

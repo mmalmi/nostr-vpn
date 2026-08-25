@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Grant StartOS packages virtual networking access for `/dev/net/tun` and
+  `CAP_NET_ADMIN`, validate the permission in signed release artifacts, and
+  restore StartOS/Umbrel image builds after vendoring `cashu-service`.
 - Prefer authenticated UDP for the public native FIPS seeds while retaining
   WSS as a fallback on UDP-blocked networks, and migrate prior WSS-only native
   defaults without making the WebSocket transport dial independently. Resolve

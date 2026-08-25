@@ -11,6 +11,11 @@ scripts/**
 !crates
 !crates/**
 
+!vendor
+vendor/**
+!vendor/cashu-service
+!vendor/cashu-service/**
+
 !linux
 linux/**
 !linux/Dockerfile

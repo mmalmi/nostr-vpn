@@ -24,6 +24,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
 const cargoTomlPath = join(repoRoot, 'Cargo.toml')
 const startosVersionPath = join(repoRoot, 'startos', 'versions', 'current.ts')
+const startosCliVersion = '1.1.0'
 
 const targetAliases = new Map([
   ['x86', { arch: 'x86_64', makeTarget: 'x86' }],
@@ -115,6 +116,15 @@ function run(
   return capture ? result.stdout.trim() : ''
 }
 
+export function validateStartosCliVersion(output) {
+  const actual = String(output ?? '').trim()
+  const expected = `start-cli ${startosCliVersion}`
+  if (actual !== expected) {
+    throw new Error(`StartOS package builder is ${actual || '<missing>'}, expected ${expected}`)
+  }
+  return actual
+}
+
 export function resolveStartosTarget(value) {
   const normalized = String(value ?? '').trim().toLowerCase()
   const target = targetAliases.get(normalized)
@@ -164,9 +174,9 @@ export function validateStartosManifest(manifest, { arch, tag, revision = 0 }) {
   if (manifest?.id !== 'nostr-vpn') {
     throw new Error(`StartOS package id is ${manifest?.id ?? '<missing>'}, expected nostr-vpn`)
   }
-  if (manifest.nestedRuntime !== true) {
+  if (manifest.virtualNetworking !== true) {
     throw new Error(
-      `StartOS package nestedRuntime is ${manifest.nestedRuntime ?? '<missing>'}, expected true for StartOS v0.4`,
+      `StartOS package virtualNetworking is ${manifest.virtualNetworking ?? '<missing>'}, expected true for tunnel access`,
     )
   }
 
@@ -302,6 +312,12 @@ export async function main(argv = process.argv.slice(2)) {
   if (sourceVersion !== expectedVersion) {
     throw new Error(
       `StartOS source version ${sourceVersion} does not match release ${tag} (${expectedVersion}); run node scripts/sync-versions.mjs`,
+    )
+  }
+
+  if (!options.dryRun) {
+    validateStartosCliVersion(
+      run('start-cli', ['--version'], { capture: true }),
     )
   }
 
