@@ -335,7 +335,7 @@ async fn attempt_paid_exit_buyer_refund(
             let refresh_wallet = sync_wallet || result.imported_amount_sat > 0;
             let (overview, wallet_error) = if refresh_wallet {
                 match tokio::time::timeout(attempt_timeout, async {
-                    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
                         &config_path,
                         crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
                             refresh_quotes: false,
@@ -521,7 +521,7 @@ async fn restore_spilman_refund_through_daemon_wallet(
         0
     } else {
         let imported: cashu_service::CashuReceivedPayment = serde_json::from_value(
-            crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+            crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
                 config_path,
                 crate::cashu_wallet_daemon::DaemonCashuWalletCommand::ImportProofs {
                     mint_url: funding.mint_url.clone(),

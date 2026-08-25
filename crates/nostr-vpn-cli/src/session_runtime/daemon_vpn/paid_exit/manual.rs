@@ -106,7 +106,7 @@ async fn fund_manual_paid_exit_if_available(
 
     let required_sat = session.session.payment.capacity_sat;
     let mint_url = channel.mint_url.clone();
-    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
         config_path,
         crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
             refresh_quotes: false,

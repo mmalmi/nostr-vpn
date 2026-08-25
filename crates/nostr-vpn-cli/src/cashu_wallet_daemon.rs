@@ -547,6 +547,19 @@ pub(crate) async fn request_daemon_cashu_wallet(
         ));
     }
     wait_for_running_daemon_control_ready(config_path, &status)?;
+    request_daemon_cashu_wallet_worker(config_path, command).await
+}
+
+/// Submit work directly to the wallet worker owned by the current daemon.
+///
+/// `request_daemon_cashu_wallet` intentionally searches for a *different*
+/// daemon process, so calling it from the daemon itself reports that the
+/// service is stopped. Background paid-exit maintenance already runs beside
+/// the single wallet worker and must use this entry point instead.
+pub(crate) async fn request_daemon_cashu_wallet_worker(
+    config_path: &Path,
+    command: DaemonCashuWalletCommand,
+) -> Result<Value> {
     prepare_ipc_directories(config_path)?;
 
     let id = uuid::Uuid::new_v4().simple().to_string();
@@ -802,6 +815,19 @@ mod tests {
                 .await
                 .expect_err("a second wallet owner must be rejected");
         assert!(second_owner.to_string().contains("already in use"));
+
+        let in_process_overview = decode_daemon_cashu_wallet_overview(
+            request_daemon_cashu_wallet_worker(
+                &config_path,
+                DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: false,
+                },
+            )
+            .await
+            .expect("daemon process can request its wallet worker"),
+        )
+        .expect("decode in-process wallet overview");
+        assert!(in_process_overview.entries.is_empty());
 
         let request = DaemonCashuWalletRequest {
             id: "00000000000000000000000000000042".to_string(),

@@ -43,23 +43,26 @@ pub(crate) async fn fund_paid_exit_session(
         .cloned()
         .ok_or_else(|| anyhow!("automatic paid exit session has no quote"))?;
     let opened: cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletResult =
-        daemon_cashu_wallet_request(
-            config_path,
-            crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
-                request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
-                    mint_url: channel.mint_url,
-                    receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
-                    capacity_sat: session.session.payment.capacity_sat,
-                    expiry_unix: channel.expires_at_unix,
-                    max_amount_per_output: 0,
-                    unit: "sat".to_string(),
-                    opening_paid_msat: 0,
-                    keyset_id: None,
-                    keyset_info_json: None,
+        serde_json::from_value(
+            crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
+                config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
+                    request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                        mint_url: channel.mint_url,
+                        receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
+                        capacity_sat: session.session.payment.capacity_sat,
+                        expiry_unix: channel.expires_at_unix,
+                        max_amount_per_output: 0,
+                        unit: "sat".to_string(),
+                        opening_paid_msat: 0,
+                        keyset_id: None,
+                        keyset_info_json: None,
+                    },
                 },
-            },
+            )
+            .await?,
         )
-        .await?;
+        .context("daemon wallet returned an invalid opened Cashu channel")?;
     let buyer_npub = app
         .nostr_keys()?
         .public_key()
