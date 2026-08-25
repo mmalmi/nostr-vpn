@@ -8,7 +8,7 @@ members = [
   "crates/nostr-vpn-web",
   "crates/nostr-vpn-wintun",
 ]
-exclude = ["linux"]
+exclude = ["linux", "vendor/cashu-service"]
 resolver = "2"
 
 [workspace.package]
@@ -75,3 +75,6 @@ missing_panics_doc = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[patch.crates-io]
+cashu-service = { path = "vendor/cashu-service" }
