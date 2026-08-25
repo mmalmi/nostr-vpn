@@ -25,8 +25,6 @@ use crate::spilman::{
 const SPILMAN_CLIENT_STORE_VERSION: u16 = 1;
 #[cfg(feature = "spilman-wallet")]
 const SPILMAN_SENDER_KEY_VERSION: u16 = 1;
-#[cfg(feature = "spilman-wallet")]
-const LEGACY_OPEN_REQUEST_MATCH_WINDOW_SECS: u64 = 30;
 
 pub fn spilman_client_store_path(data_dir: &Path) -> PathBuf {
     data_dir.join("spilman-client.json")
@@ -757,9 +755,11 @@ fn funding_matches_open_request(
     let Some(route_created_at_unix) = request.route_created_at_unix else {
         return Ok(false);
     };
-    Ok(funding.created_at >= route_created_at_unix
-        && funding.created_at.saturating_sub(route_created_at_unix)
-            <= LEGACY_OPEN_REQUEST_MATCH_WINDOW_SECS)
+    // Old daemon requests could remain inside a slow mint operation long
+    // after the route task was cancelled. The immutable expiry is part of the
+    // channel id and identifies the owning route precisely; only require that
+    // funding happened during that route's lifetime.
+    Ok(funding.created_at >= route_created_at_unix && funding.created_at < expiry_unix)
 }
 
 #[cfg(feature = "spilman-wallet")]
@@ -1327,7 +1327,7 @@ mod tests {
             capacity: 10,
             funding_token_amount: 10,
             mint_url: "https://mint.example/Bitcoin/".to_string(),
-            created_at: 1_005,
+            created_at: 5_000,
         }
     }
 
@@ -1347,7 +1347,7 @@ mod tests {
                 balance: 0,
                 signature: "opening-signature".to_string(),
                 payment_count: 1,
-                last_payment_at: 1_005,
+                last_payment_at: 5_000,
             },
         );
         errors.ensure_ok().unwrap();
@@ -1375,7 +1375,7 @@ mod tests {
 
     #[cfg(feature = "spilman-wallet")]
     #[test]
-    fn upgrade_claims_one_exact_unmapped_legacy_channel() {
+    fn upgrade_claims_one_exact_delayed_legacy_channel() {
         use cdk_spilman::ClientStorage as _;
 
         let temp = tempfile::tempdir().unwrap();
@@ -1388,10 +1388,19 @@ mod tests {
                 balance: 0,
                 signature: "opening-signature".to_string(),
                 payment_count: 1,
-                last_payment_at: 1_005,
+                last_payment_at: 5_000,
             },
         );
         errors.ensure_ok().unwrap();
+
+        let mut wrong_session = recoverable_open_request("newer-route-session");
+        wrong_session.expiry_unix = 11_000;
+        assert!(
+            recover_opened_channel_from_storage(&mut storage, &wrong_session)
+                .unwrap()
+                .is_none(),
+            "a newer session with different immutable expiry must not claim the channel"
+        );
 
         let recovered = recover_opened_channel_from_storage(
             &mut storage,
