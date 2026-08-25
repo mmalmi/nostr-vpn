@@ -1219,6 +1219,8 @@ test_dockerfile_supports_local_base_images() {
   assert_file_contains "$dockerfile" 'FROM ${NVPN_E2E_RUNTIME_IMAGE} AS runtime' "runtime image from"
   assert_file_contains "$dockerfile" "ARG NVPN_E2E_BUILDER_APT_INSTALL=1" "builder apt arg"
   assert_file_contains "$dockerfile" "ARG NVPN_E2E_RUNTIME_APT_INSTALL=1" "runtime apt arg"
+  assert_file_contains "$dockerfile" "COPY vendor ./vendor" "vendored Cashu source copy"
+  assert_file_contains "$paid_exit_dockerfile" "COPY vendor ./vendor" "paid-exit vendored Cashu source copy"
   assert_file_contains "$dockerfile" "[patch.crates-io]" "local FIPS Cargo patch table"
   assert_file_contains "$dockerfile" 'nvpn-fips-core = { path = "/app/fips/crates/fips-core" }' "renamed local FIPS core patch"
   assert_file_contains "$dockerfile" 'nvpn-fips-endpoint = { path = "/app/fips/crates/fips-endpoint" }' "renamed local FIPS endpoint patch"
