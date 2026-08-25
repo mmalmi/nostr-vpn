@@ -321,7 +321,7 @@
     }
 
     #[test]
-    fn pending_paid_manual_exit_without_leak_protection_still_owns_dns() {
+    fn pending_paid_manual_exit_without_leak_protection_leaves_dns_direct() {
         let keys = Keys::generate();
         let own_pubkey = keys.public_key().to_hex();
         let mut app = AppConfig::default();
@@ -331,7 +331,7 @@
         app.exit_node_leak_protection = false;
         app.set_internet_source(InternetSource::PaidManual);
 
-        let config = FipsPrivateTunnelConfig::from_app(
+        let mut config = FipsPrivateTunnelConfig::from_app(
             &app,
             "pending-paid-manual",
             "utun-test",
@@ -340,6 +340,7 @@
             &[],
         )
         .expect("pending paid-manual tunnel config");
+        config.require_public_paid_exit_admission(false);
 
         assert!(
             !config
@@ -347,7 +348,10 @@
                 .iter()
                 .any(|route| route == "0.0.0.0/0")
         );
-        assert!(config.secure_dns_required());
+        assert!(
+            !config.secure_dns_required(),
+            "an unadmitted paid exit must not blackhole ordinary DNS"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@ use super::*;
 
 const PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS: u64 = 30;
 const PAID_EXIT_MANUAL_HEALTH_RETRY_SECS: u64 = 2;
+const PAID_EXIT_MANUAL_FUNDING_RETRY_SECS: u64 = 5;
 
 #[derive(Default)]
 pub(crate) struct PaidExitManualBuyer {
@@ -12,6 +13,9 @@ pub(crate) struct PaidExitManualBuyer {
     probe_retry_after: u64,
     last_probe_error: String,
     probe: Option<PaidExitManualProbe>,
+    funding_satisfied: bool,
+    funding_retry_after: u64,
+    funding: Option<PaidExitManualFunding>,
 }
 
 struct PaidExitManualProbe {
@@ -19,10 +23,28 @@ struct PaidExitManualProbe {
     task: tokio::task::JoinHandle<Result<PaidRouteProbeMeasurement>>,
 }
 
+struct PaidExitManualFunding {
+    generation: u64,
+    task: tokio::task::JoinHandle<Result<PaidExitManualFundingOutcome>>,
+}
+
+enum PaidExitManualFundingOutcome {
+    Funded(Box<StreamingRoutePaymentEnvelope>),
+    AlreadyFunded,
+    InsufficientBalance {
+        mint_url: String,
+        available_sat: u64,
+        required_sat: u64,
+    },
+}
+
 impl PaidExitManualBuyer {
     fn cancel(&mut self) {
         if let Some(probe) = self.probe.take() {
             probe.task.abort();
+        }
+        if let Some(funding) = self.funding.take() {
+            funding.task.abort();
         }
         self.generation = self.generation.wrapping_add(1);
         self.session_id.clear();
@@ -30,6 +52,8 @@ impl PaidExitManualBuyer {
         self.probe_succeeded = false;
         self.probe_retry_after = 0;
         self.last_probe_error.clear();
+        self.funding_satisfied = false;
+        self.funding_retry_after = 0;
     }
 
     fn select(&mut self, session_id: &str, now_unix: u64) {
@@ -53,6 +77,60 @@ impl PaidExitManualBuyer {
             )
         }
     }
+
+    fn schedule_funding_retry(&mut self, now_unix: u64) {
+        self.funding_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_FUNDING_RETRY_SECS);
+    }
+}
+
+async fn fund_manual_paid_exit_if_available(
+    app: &AppConfig,
+    config_path: &Path,
+    session_id: &str,
+    now_unix: u64,
+) -> Result<PaidExitManualFundingOutcome> {
+    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    let session = store
+        .sessions
+        .get(session_id)
+        .ok_or_else(|| anyhow!("manual paid exit session {session_id} does not exist"))?;
+    let channel = store
+        .channels
+        .get(&session.session.payment.channel_id)
+        .ok_or_else(|| anyhow!("manual paid exit session {session_id} has no channel"))?;
+    if session.session.payment.cashu_spilman_payment.is_some()
+        || session.session.payment.cashu_token_lease.is_some()
+    {
+        return Ok(PaidExitManualFundingOutcome::AlreadyFunded);
+    }
+
+    let required_sat = session.session.payment.capacity_sat;
+    let mint_url = channel.mint_url.clone();
+    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+        config_path,
+        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+            refresh_quotes: false,
+        },
+    )
+    .await?;
+    let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(value)?;
+    let available_sat = overview
+        .entries
+        .iter()
+        .find(|entry| entry.unit == "sat" && entry.mint_url.trim() == mint_url.trim())
+        .map(|entry| entry.balance)
+        .unwrap_or_default();
+    if available_sat < required_sat {
+        return Ok(PaidExitManualFundingOutcome::InsufficientBalance {
+            mint_url,
+            available_sat,
+            required_sat,
+        });
+    }
+
+    Ok(PaidExitManualFundingOutcome::Funded(Box::new(
+        fund_paid_exit_session(app, config_path, session_id, now_unix).await?,
+    )))
 }
 
 pub(crate) async fn update_manual_paid_exit(
@@ -79,6 +157,94 @@ pub(crate) async fn update_manual_paid_exit(
     }
     if manual.session_id != session_id {
         manual.select(&session_id, now_unix);
+    }
+
+    if manual.funding.is_none()
+        && !manual.funding_satisfied
+        && now_unix >= manual.funding_retry_after
+    {
+        let funding_app = app.clone();
+        let funding_config_path = config_path.to_path_buf();
+        let funding_session_id = session_id.clone();
+        manual.funding = Some(PaidExitManualFunding {
+            generation: manual.generation,
+            task: tokio::spawn(async move {
+                fund_manual_paid_exit_if_available(
+                    &funding_app,
+                    &funding_config_path,
+                    &funding_session_id,
+                    now_unix,
+                )
+                .await
+            }),
+        });
+    }
+    if manual
+        .funding
+        .as_ref()
+        .is_some_and(|funding| funding.task.is_finished())
+    {
+        let funding = manual
+            .funding
+            .take()
+            .expect("finished manual funding exists");
+        let generation = funding.generation;
+        let result = funding.task.await;
+        if generation == manual.generation {
+            match result {
+                Ok(Ok(PaidExitManualFundingOutcome::Funded(envelope))) => {
+                    queue_paid_exit_payment(app, config_path, &envelope)?;
+                    update_paid_route_store(&store_path, |store| {
+                        store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+                        Ok(())
+                    })?;
+                    manual.funding_satisfied = true;
+                    manual.selected_at = now_unix;
+                    eprintln!(
+                        "paid-exit: funded selected manual session {session_id}; retrying seller admission"
+                    );
+                }
+                Ok(Ok(PaidExitManualFundingOutcome::AlreadyFunded)) => {
+                    queue_recovered_paid_exit_channel_open(
+                        app,
+                        config_path,
+                        &session_id,
+                        now_unix,
+                    )?;
+                    update_paid_route_store(&store_path, |store| {
+                        store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+                        Ok(())
+                    })?;
+                    manual.funding_satisfied = true;
+                    manual.selected_at = now_unix;
+                    eprintln!(
+                        "paid-exit: recovered selected manual channel open for {session_id}; retrying seller admission"
+                    );
+                }
+                Ok(Ok(PaidExitManualFundingOutcome::InsufficientBalance {
+                    mint_url,
+                    available_sat,
+                    required_sat,
+                })) => {
+                    manual.schedule_funding_retry(now_unix);
+                    eprintln!(
+                        "paid-exit: selected manual session needs {required_sat} sat at {mint_url}, wallet has {available_sat} sat; retaining free-probe attempt"
+                    );
+                }
+                Ok(Err(error)) => {
+                    manual.schedule_funding_retry(now_unix);
+                    eprintln!(
+                        "paid-exit: selected manual session funding failed: {error}; retrying"
+                    );
+                }
+                Err(error) => {
+                    manual.schedule_funding_retry(now_unix);
+                    eprintln!(
+                        "paid-exit: selected manual session funding task failed: {error}; retrying"
+                    );
+                }
+            }
+        }
     }
     if manual.probe_succeeded {
         return Ok(false);
@@ -185,5 +351,16 @@ mod tests {
             manual.timeout_reason(),
             "Seller Internet did not become usable within 30 seconds: temporary HTTPS failure"
         );
+    }
+
+    #[test]
+    fn manual_funding_retries_without_blocking_the_daemon_loop() {
+        let mut manual = PaidExitManualBuyer::default();
+        manual.select("unfunded-session", 100);
+        manual.schedule_funding_retry(105);
+
+        assert_eq!(manual.funding_retry_after, 110);
+        assert!(!manual.funding_satisfied);
+        assert!(manual.funding.is_none());
     }
 }

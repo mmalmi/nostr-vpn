@@ -11,9 +11,9 @@ mod selection;
 mod state;
 
 pub(crate) use payments::finalize_automatic_paid_exit;
-use payments::{
-    fund_automatic_paid_exit, queue_recovered_automatic_channel_open, suspend_automatic_paid_exit,
-};
+pub(crate) use payments::fund_paid_exit_session;
+pub(crate) use payments::queue_recovered_paid_exit_channel_open;
+use payments::{fund_automatic_paid_exit, suspend_automatic_paid_exit};
 pub(crate) use runtime::update_automatic_paid_exit;
 pub(crate) use runtime::{paid_exit_route_probe_measurement, record_paid_exit_probe};
 pub(crate) use selection::reconcile_automatic_paid_exit_selection;

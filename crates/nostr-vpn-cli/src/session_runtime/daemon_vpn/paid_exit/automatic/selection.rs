@@ -48,7 +48,7 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
             app.save(config_path)?;
         }
         if funded {
-            queue_recovered_automatic_channel_open(app, config_path, &session_id, now_unix)?;
+            queue_recovered_paid_exit_channel_open(app, config_path, &session_id, now_unix)?;
         }
         automatic.start_candidate(selection, seller_pubkey, session_id, funded, now_unix);
         return Ok(route_changed);

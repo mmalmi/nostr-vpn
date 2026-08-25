@@ -11,6 +11,15 @@ pub(super) async fn fund_automatic_paid_exit(
             "automatic paid exit funding cancelled by internet mode"
         ));
     }
+    fund_paid_exit_session(app, config_path, session_id, now_unix).await
+}
+
+pub(crate) async fn fund_paid_exit_session(
+    app: &AppConfig,
+    config_path: &Path,
+    session_id: &str,
+    now_unix: u64,
+) -> Result<StreamingRoutePaymentEnvelope> {
     let store_path = paid_route_store_file_path(config_path);
     let store = load_paid_route_store(&store_path)?;
     let session = store
@@ -132,7 +141,7 @@ pub(super) fn suspend_automatic_paid_exit(
     Ok(())
 }
 
-pub(super) fn queue_recovered_automatic_channel_open(
+pub(crate) fn queue_recovered_paid_exit_channel_open(
     app: &AppConfig,
     config_path: &Path,
     session_id: &str,

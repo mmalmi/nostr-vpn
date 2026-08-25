@@ -635,6 +635,14 @@ impl FipsPrivateTunnelConfig {
     }
 
     fn secure_dns_required(&self) -> bool {
+        // Until a public paid seller authenticates and admits the selected
+        // session there is no usable exit path for forwarded DNS. Keep the
+        // system resolver on the direct underlay while ordinary Internet is
+        // allowed to fall through; leak-protected configurations deliberately
+        // remain fail closed.
+        if self.public_paid_exit_waiting_for_admission && !self.exit_node_leak_protection {
+            return false;
+        }
         let active_client_path = self.secure_dns_requested
             || self.fips_host_enabled()
             || (self.wireguard_exit.enabled && self.wireguard_exit.configured())
