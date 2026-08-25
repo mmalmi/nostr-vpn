@@ -87,22 +87,29 @@ if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
   esac
 fi
 
+run_gradle() {
+  local task="$1"
+  shift
+  if [[ ${#gradle_args[@]} -gt 0 ]]; then
+    env -u NVPN_FIPS_REPO_PATH "$GRADLE" -p "$ANDROID_DIR" \
+      "${gradle_args[@]}" "$task" "$@"
+  else
+    env -u NVPN_FIPS_REPO_PATH "$GRADLE" -p "$ANDROID_DIR" "$task" "$@"
+  fi
+}
+
 case "$cmd" in
   build|assembleDebug|debug)
-    env -u NVPN_FIPS_REPO_PATH "$GRADLE" -p "$ANDROID_DIR" \
-      "${gradle_args[@]}" :app:assembleDebug "$@"
+    run_gradle :app:assembleDebug "$@"
     ;;
   release|assembleRelease)
-    env -u NVPN_FIPS_REPO_PATH "$GRADLE" -p "$ANDROID_DIR" \
-      "${gradle_args[@]}" :app:bundleRelease "$@"
+    run_gradle :app:bundleRelease "$@"
     "$ROOT/scripts/prepare-android-release-from-bundle.sh"
     ;;
   install|installDebug)
-    env -u NVPN_FIPS_REPO_PATH "$GRADLE" -p "$ANDROID_DIR" \
-      "${gradle_args[@]}" :app:installDebug "$@"
+    run_gradle :app:installDebug "$@"
     ;;
   *)
-    env -u NVPN_FIPS_REPO_PATH "$GRADLE" -p "$ANDROID_DIR" \
-      "${gradle_args[@]}" "$cmd" "$@"
+    run_gradle "$cmd" "$@"
     ;;
 esac
