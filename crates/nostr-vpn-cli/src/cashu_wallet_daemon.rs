@@ -117,6 +117,15 @@ impl DaemonCashuWallet {
         for warning in recovery.warnings {
             eprintln!("cashu-wallet: startup recovery incomplete: {warning}");
         }
+        match recover_legacy_opened_route_channels(config_path, cashu_wallet_now_unix()) {
+            Ok(recovered) if recovered > 0 => eprintln!(
+                "cashu-wallet: reattached {recovered} committed channel(s) to paid routes"
+            ),
+            Ok(_) => {}
+            Err(error) => {
+                eprintln!("cashu-wallet: paid route channel recovery incomplete: {error:#}")
+            }
+        }
         match reclaim_legacy_orphaned_channel_sends(&service, config_path, cashu_wallet_now_unix())
             .await
         {
@@ -322,6 +331,94 @@ fn cashu_wallet_now_unix() -> u64 {
 
 fn normalized_mint_for_match(value: &str) -> &str {
     value.trim().trim_end_matches('/')
+}
+
+fn legacy_route_open_recovery_requests(
+    store: &nostr_vpn_core::paid_route_store::PaidRouteStore,
+    now_unix: u64,
+) -> Vec<(
+    String,
+    cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
+)> {
+    let mut requests = store
+        .sessions
+        .iter()
+        .filter_map(|(session_id, session)| {
+            if session.session.payment.cashu_spilman_payment.is_some()
+                || session.session.payment.cashu_token_lease.is_some()
+            {
+                return None;
+            }
+            let lease = store.leases.get(&session.session.lease_id)?;
+            let channel = store.channels.get(&session.session.payment.channel_id)?;
+            let quote = store.quotes.get(&lease.lease.quote_id)?;
+            if channel.role != nostr_vpn_core::paid_route_store::PaidRouteChannelRole::Buyer
+                || lease.lease.expires_at_unix.min(channel.expires_at_unix) <= now_unix
+                || channel.mint_url.trim().is_empty()
+                || quote.quote.receiver_pubkey_hex.trim().is_empty()
+                || session.session.payment.capacity_sat == 0
+            {
+                return None;
+            }
+            let unit = if session.session.payment.cashu_unit.trim().is_empty() {
+                "sat".to_string()
+            } else {
+                session.session.payment.cashu_unit.clone()
+            };
+            Some((
+                session_id.clone(),
+                cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                    mint_url: channel.mint_url.clone(),
+                    receiver_pubkey_hex: quote.quote.receiver_pubkey_hex.clone(),
+                    capacity_sat: session.session.payment.capacity_sat,
+                    expiry_unix: channel.expires_at_unix,
+                    max_amount_per_output: 0,
+                    unit,
+                    opening_paid_msat: session.session.payment.paid_msat,
+                    keyset_id: None,
+                    keyset_info_json: None,
+                    client_request_id: Some(session_id.clone()),
+                    route_created_at_unix: Some(channel.created_at_unix),
+                },
+            ))
+        })
+        .collect::<Vec<_>>();
+    requests.sort_by(|left, right| left.0.cmp(&right.0));
+    requests
+}
+
+fn recover_legacy_opened_route_channels(config_path: &Path, now_unix: u64) -> Result<usize> {
+    let store_path = nostr_vpn_core::paid_route_store::paid_route_store_file_path(config_path);
+    let store = nostr_vpn_core::paid_route_store::load_paid_route_store(&store_path)?;
+    let requests = legacy_route_open_recovery_requests(&store, now_unix);
+    let wallet_data_dir = paid_exit_wallet_data_dir(config_path);
+    let mut recovered_count = 0;
+    for (session_id, request) in requests {
+        let Some(opened) =
+            cashu_service::recover_streaming_route_cashu_spilman_channel_from_wallet_request(
+                &wallet_data_dir,
+                &request,
+            )?
+        else {
+            continue;
+        };
+        nostr_vpn_core::paid_route_store::update_paid_route_store(&store_path, |store| {
+            store.attach_buyer_spilman_channel(
+                nostr_vpn_core::paid_route_store::AttachPaidRouteBuyerSpilmanChannelRequest {
+                    session_id: session_id.clone(),
+                    channel_id: opened.channel_id.clone(),
+                    cashu_unit: opened.unit.clone(),
+                    capacity_sat: opened.capacity_sat,
+                    paid_msat: Some(opened.opening_paid_msat),
+                    payment: opened.payment.clone(),
+                    now_unix,
+                },
+            )?;
+            Ok(())
+        })?;
+        recovered_count += 1;
+    }
+    Ok(recovered_count)
 }
 
 fn pending_cashu_sends(
@@ -721,6 +818,105 @@ mod tests {
             updated_at_unix: created_at_unix,
             error: String::new(),
         }
+    }
+
+    fn recoverable_unfunded_route_store(
+        expires_at_unix: u64,
+    ) -> nostr_vpn_core::paid_route_store::PaidRouteStore {
+        use nostr_vpn_core::paid_route_store::{
+            PaidRouteLeaseRecord, PaidRouteQuoteRecord, PaidRouteSessionRecord,
+        };
+        use nostr_vpn_core::paid_routes::{
+            PaidRouteLease, PaidRoutePaymentMode, PaidRoutePaymentState, PaidRouteQuote,
+            PaidRouteSession, PaidRouteUsage,
+        };
+
+        let mut store = nostr_vpn_core::paid_route_store::PaidRouteStore::default();
+        let mut channel = expired_unfunded_buyer_channel(1_000);
+        channel.expires_at_unix = expires_at_unix;
+        channel.status = nostr_vpn_core::paid_route_store::PaidRouteLifecycleStatus::Failed;
+        channel.payment.channel_id = "route-channel".to_string();
+        channel.counterparty_npub = "npub-seller".to_string();
+        store.channels.insert("route-channel".to_string(), channel);
+        store.quotes.insert(
+            "quote-1".to_string(),
+            PaidRouteQuoteRecord {
+                quote: PaidRouteQuote {
+                    quote_id: "quote-1".to_string(),
+                    offer_id: "offer".to_string(),
+                    payment_mode: PaidRoutePaymentMode::CashuSpilman,
+                    channel_capacity_sat: 20,
+                    expires_at_unix,
+                    receiver_pubkey_hex: "22".repeat(32),
+                },
+                created_at_unix: 1_000,
+                updated_at_unix: 1_000,
+            },
+        );
+        store.leases.insert(
+            "lease-1".to_string(),
+            PaidRouteLeaseRecord {
+                lease: PaidRouteLease {
+                    lease_id: "lease-1".to_string(),
+                    offer_id: "offer".to_string(),
+                    quote_id: "quote-1".to_string(),
+                    buyer_npub: "npub-buyer".to_string(),
+                    starts_at_unix: 1_000,
+                    expires_at_unix,
+                },
+                status: nostr_vpn_core::paid_route_store::PaidRouteLifecycleStatus::Failed,
+                created_at_unix: 1_000,
+                updated_at_unix: 1_000,
+            },
+        );
+        store.sessions.insert(
+            "session-1".to_string(),
+            PaidRouteSessionRecord {
+                session: PaidRouteSession {
+                    session_id: "session-1".to_string(),
+                    lease_id: "lease-1".to_string(),
+                    usage: PaidRouteUsage::default(),
+                    payment: PaidRoutePaymentState {
+                        mode: PaidRoutePaymentMode::CashuSpilman,
+                        channel_id: "route-channel".to_string(),
+                        cashu_unit: "sat".to_string(),
+                        capacity_sat: 20,
+                        ..Default::default()
+                    },
+                    realized_exit_ip: None,
+                    observed_country_code: None,
+                    observed_asn: None,
+                    quality: None,
+                },
+                created_at_unix: 1_000,
+                updated_at_unix: 1_000,
+            },
+        );
+        store
+    }
+
+    #[test]
+    fn startup_recovery_selects_unexpired_unattached_buyer_channels() {
+        let store = recoverable_unfunded_route_store(10_000);
+
+        let requests = legacy_route_open_recovery_requests(&store, 2_000);
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "session-1");
+        assert_eq!(
+            requests[0].1.client_request_id.as_deref(),
+            Some("session-1")
+        );
+        assert_eq!(requests[0].1.route_created_at_unix, Some(1_000));
+        assert_eq!(requests[0].1.capacity_sat, 20);
+        assert_eq!(requests[0].1.mint_url, "https://mint.example/Bitcoin/");
+    }
+
+    #[test]
+    fn startup_recovery_ignores_expired_channels() {
+        let store = recoverable_unfunded_route_store(1_500);
+
+        assert!(legacy_route_open_recovery_requests(&store, 2_000).is_empty());
     }
 
     #[test]

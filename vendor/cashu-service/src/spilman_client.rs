@@ -1094,6 +1094,50 @@ pub struct StreamingRouteOpenCashuSpilmanChannelFromWalletResult {
 }
 
 #[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
+fn wallet_open_recovery_request(
+    request: &StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
+    unit: StreamingRouteCashuUnit,
+) -> StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+    StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+        token: String::new(),
+        receiver_pubkey_hex: request.receiver_pubkey_hex.clone(),
+        sender_secret_hex: None,
+        expiry_unix: request.expiry_unix,
+        keyset_info_json: String::new(),
+        max_amount_per_output: request.max_amount_per_output,
+        unit: unit.as_str().to_string(),
+        opening_paid_msat: request.opening_paid_msat,
+        client_request_id: request.client_request_id.clone(),
+        route_created_at_unix: request.route_created_at_unix,
+        route_mint_url: Some(request.mint_url.clone()),
+        route_capacity_sat: Some(request.capacity_sat),
+    }
+}
+
+/// Recover a channel already committed for this wallet request without
+/// contacting the mint or spending another token.
+#[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
+pub fn recover_streaming_route_cashu_spilman_channel_from_wallet_request(
+    data_dir: &Path,
+    request: &StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
+) -> anyhow::Result<Option<StreamingRouteOpenCashuSpilmanChannelResult>> {
+    if request.capacity_sat == 0 {
+        anyhow::bail!("Cashu Spilman channel capacity must be greater than zero");
+    }
+    let unit =
+        StreamingRouteCashuUnit::parse(&request.unit).map_err(|error| anyhow::anyhow!(error))?;
+    if unit != StreamingRouteCashuUnit::Sat {
+        anyhow::bail!("wallet-backed Cashu Spilman channel recovery supports sat only");
+    }
+    let lock = SharedSpilmanClientStoreLock::acquire(spilman_client_store_path(data_dir))
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let (mut storage, _) =
+        FileSpilmanClientStorage::load_with_lock(lock).map_err(|error| anyhow::anyhow!(error))?;
+    recover_opened_channel_from_storage(&mut storage, &wallet_open_recovery_request(request, unit))
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
+#[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
 pub async fn open_streaming_route_cashu_spilman_channel_from_wallet(
     data_dir: &Path,
     request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
@@ -1148,20 +1192,7 @@ impl crate::wallet::CashuWalletService {
         }
         let (mut storage, storage_errors) = FileSpilmanClientStorage::load_with_lock(lock)
             .map_err(|error| anyhow::anyhow!(error))?;
-        let token_request = StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
-            token: String::new(),
-            receiver_pubkey_hex: request.receiver_pubkey_hex.clone(),
-            sender_secret_hex: None,
-            expiry_unix: request.expiry_unix,
-            keyset_info_json: String::new(),
-            max_amount_per_output: request.max_amount_per_output,
-            unit: unit.as_str().to_string(),
-            opening_paid_msat: request.opening_paid_msat,
-            client_request_id: request.client_request_id.clone(),
-            route_created_at_unix: request.route_created_at_unix,
-            route_mint_url: Some(request.mint_url.clone()),
-            route_capacity_sat: Some(request.capacity_sat),
-        };
+        let token_request = wallet_open_recovery_request(&request, unit);
         if let Some(channel) = recover_opened_channel_from_storage(&mut storage, &token_request)
             .map_err(|error| anyhow::anyhow!(error))?
         {
