@@ -105,6 +105,8 @@ async fn paid_exit_create_payment_command(args: PaidExitCreatePaymentArgs) -> Re
                     .unwrap_or(session_record.session.payment.paid_msat),
                 keyset_id: args.keyset_id,
                 keyset_info_json,
+                client_request_id: Some(args.session.clone()),
+                route_created_at_unix: Some(channel_record.created_at_unix),
             }
         };
         let opened: cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletResult =

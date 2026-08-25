@@ -57,6 +57,8 @@ pub(crate) async fn fund_paid_exit_session(
                         opening_paid_msat: 0,
                         keyset_id: None,
                         keyset_info_json: None,
+                        client_request_id: Some(session_id.to_string()),
+                        route_created_at_unix: Some(channel.created_at_unix),
                     },
                 },
             )

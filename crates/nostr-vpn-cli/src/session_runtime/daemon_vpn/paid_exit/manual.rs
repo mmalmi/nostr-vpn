@@ -31,11 +31,6 @@ struct PaidExitManualFunding {
 enum PaidExitManualFundingOutcome {
     Funded(Box<StreamingRoutePaymentEnvelope>),
     AlreadyFunded,
-    InsufficientBalance {
-        mint_url: String,
-        available_sat: u64,
-        required_sat: u64,
-    },
 }
 
 impl PaidExitManualBuyer {
@@ -81,6 +76,11 @@ impl PaidExitManualBuyer {
     fn schedule_funding_retry(&mut self, now_unix: u64) {
         self.funding_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_FUNDING_RETRY_SECS);
     }
+
+    fn health_deadline_expired(&self, now_unix: u64) -> bool {
+        self.funding.is_none()
+            && now_unix.saturating_sub(self.selected_at) >= PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS
+    }
 }
 
 async fn fund_manual_paid_exit_if_available(
@@ -94,43 +94,33 @@ async fn fund_manual_paid_exit_if_available(
         .sessions
         .get(session_id)
         .ok_or_else(|| anyhow!("manual paid exit session {session_id} does not exist"))?;
-    let channel = store
+    if !store
         .channels
-        .get(&session.session.payment.channel_id)
-        .ok_or_else(|| anyhow!("manual paid exit session {session_id} has no channel"))?;
+        .contains_key(&session.session.payment.channel_id)
+    {
+        return Err(anyhow!(
+            "manual paid exit session {session_id} has no channel"
+        ));
+    }
     if session.session.payment.cashu_spilman_payment.is_some()
         || session.session.payment.cashu_token_lease.is_some()
     {
         return Ok(PaidExitManualFundingOutcome::AlreadyFunded);
     }
 
-    let required_sat = session.session.payment.capacity_sat;
-    let mint_url = channel.mint_url.clone();
-    let value = crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
-        config_path,
-        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
-            refresh_quotes: false,
-        },
-    )
-    .await?;
-    let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(value)?;
-    let available_sat = overview
-        .entries
-        .iter()
-        .find(|entry| entry.unit == "sat" && entry.mint_url.trim() == mint_url.trim())
-        .map(|entry| entry.balance)
-        .unwrap_or_default();
-    if available_sat < required_sat {
-        return Ok(PaidExitManualFundingOutcome::InsufficientBalance {
-            mint_url,
-            available_sat,
-            required_sat,
-        });
-    }
-
     Ok(PaidExitManualFundingOutcome::Funded(Box::new(
         fund_paid_exit_session(app, config_path, session_id, now_unix).await?,
     )))
+}
+
+fn begin_or_retry_funded_manual_session(
+    store: &mut nostr_vpn_core::paid_route_store::PaidRouteStore,
+    session_id: &str,
+    now_unix: u64,
+) -> Result<()> {
+    store.retry_failed_funded_buyer_session(session_id, now_unix)?;
+    store.begin_buyer_session_open_attempt(session_id, now_unix)?;
+    Ok(())
 }
 
 pub(crate) async fn update_manual_paid_exit(
@@ -195,8 +185,7 @@ pub(crate) async fn update_manual_paid_exit(
                 Ok(Ok(PaidExitManualFundingOutcome::Funded(envelope))) => {
                     queue_paid_exit_payment(app, config_path, &envelope)?;
                     update_paid_route_store(&store_path, |store| {
-                        store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
-                        Ok(())
+                        begin_or_retry_funded_manual_session(store, &session_id, now_unix)
                     })?;
                     manual.funding_satisfied = true;
                     manual.selected_at = now_unix;
@@ -212,23 +201,12 @@ pub(crate) async fn update_manual_paid_exit(
                         now_unix,
                     )?;
                     update_paid_route_store(&store_path, |store| {
-                        store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
-                        Ok(())
+                        begin_or_retry_funded_manual_session(store, &session_id, now_unix)
                     })?;
                     manual.funding_satisfied = true;
                     manual.selected_at = now_unix;
                     eprintln!(
                         "paid-exit: recovered selected manual channel open for {session_id}; retrying seller admission"
-                    );
-                }
-                Ok(Ok(PaidExitManualFundingOutcome::InsufficientBalance {
-                    mint_url,
-                    available_sat,
-                    required_sat,
-                })) => {
-                    manual.schedule_funding_retry(now_unix);
-                    eprintln!(
-                        "paid-exit: selected manual session needs {required_sat} sat at {mint_url}, wallet has {available_sat} sat; retaining free-probe attempt"
                     );
                 }
                 Ok(Err(error)) => {
@@ -309,7 +287,11 @@ pub(crate) async fn update_manual_paid_exit(
         }
     }
 
-    if now_unix.saturating_sub(manual.selected_at) >= PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS {
+    // The health deadline starts after funding completes. The daemon wallet
+    // owns the mint operation independently, so aborting this task at the
+    // seller-health deadline could otherwise strand a successfully opened
+    // channel before the route store observes its result.
+    if manual.health_deadline_expired(now_unix) {
         let reason = manual.timeout_reason();
         return fail_manual_paid_exit(manual, app, config_path, &reason, now_unix);
     }
@@ -362,5 +344,19 @@ mod tests {
         assert_eq!(manual.funding_retry_after, 110);
         assert!(!manual.funding_satisfied);
         assert!(manual.funding.is_none());
+    }
+
+    #[tokio::test]
+    async fn seller_health_timeout_does_not_cancel_inflight_wallet_funding() {
+        let mut manual = PaidExitManualBuyer::default();
+        manual.select("funding-session", 100);
+        manual.funding = Some(PaidExitManualFunding {
+            generation: manual.generation,
+            task: tokio::spawn(std::future::pending()),
+        });
+
+        assert!(!manual.health_deadline_expired(131));
+        manual.funding.take().expect("funding task").task.abort();
+        assert!(manual.health_deadline_expired(131));
     }
 }

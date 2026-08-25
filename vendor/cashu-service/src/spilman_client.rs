@@ -25,6 +25,8 @@ use crate::spilman::{
 const SPILMAN_CLIENT_STORE_VERSION: u16 = 1;
 #[cfg(feature = "spilman-wallet")]
 const SPILMAN_SENDER_KEY_VERSION: u16 = 1;
+#[cfg(feature = "spilman-wallet")]
+const LEGACY_OPEN_REQUEST_MATCH_WINDOW_SECS: u64 = 30;
 
 pub fn spilman_client_store_path(data_dir: &Path) -> PathBuf {
     data_dir.join("spilman-client.json")
@@ -124,6 +126,14 @@ struct SpilmanClientStoreFile {
     refund_proofs_validated: BTreeSet<String>,
     #[serde(default)]
     refund_proofs_repaired: BTreeSet<String>,
+    /// Durable idempotency keys for wallet-backed channel opens.
+    ///
+    /// A route session can be cancelled after the channel has been persisted
+    /// but before the route store is updated. Keeping this association beside
+    /// the funding lets the retry recover the same channel instead of sending
+    /// another Cashu token.
+    #[serde(default)]
+    open_requests: BTreeMap<String, String>,
 }
 
 impl SpilmanClientStoreFile {
@@ -136,6 +146,7 @@ impl SpilmanClientStoreFile {
             refund_witnesses_persisted: BTreeSet::new(),
             refund_proofs_validated: BTreeSet::new(),
             refund_proofs_repaired: BTreeSet::new(),
+            open_requests: BTreeMap::new(),
         }
     }
 }
@@ -172,6 +183,7 @@ pub struct FileSpilmanClientStorage {
     path: PathBuf,
     state: SpilmanClientStoreFile,
     errors: FileSpilmanClientStorageErrorHandle,
+    current_open_request_id: Option<String>,
     _lock: SharedSpilmanClientStoreLock,
 }
 
@@ -219,6 +231,7 @@ impl FileSpilmanClientStorage {
                 path,
                 state,
                 errors: errors.clone(),
+                current_open_request_id: None,
                 _lock: lock,
             },
             errors,
@@ -284,6 +297,30 @@ impl FileSpilmanClientStorage {
             self.persist();
         }
     }
+
+    #[cfg(feature = "spilman-wallet")]
+    fn begin_open_request(&mut self, request_id: Option<&str>) -> Result<(), String> {
+        self.current_open_request_id = request_id
+            .map(str::trim)
+            .filter(|request_id| !request_id.is_empty())
+            .map(ToOwned::to_owned);
+        if self
+            .current_open_request_id
+            .as_ref()
+            .is_some_and(|request_id| request_id.len() > 256)
+        {
+            return Err("Cashu Spilman channel request id is too long".to_string());
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "spilman-wallet")]
+    fn remember_open_request(&mut self, request_id: &str, channel_id: &str) {
+        self.state
+            .open_requests
+            .insert(request_id.to_string(), channel_id.to_string());
+        self.persist();
+    }
 }
 
 impl cdk_spilman::ClientStorage for FileSpilmanClientStorage {
@@ -302,6 +339,11 @@ impl cdk_spilman::ClientStorage for FileSpilmanClientStorage {
 
     fn save_payment_state(&mut self, channel_id: &str, state: cdk_spilman::ClientPaymentState) {
         self.state.payments.insert(channel_id.to_string(), state);
+        if let Some(request_id) = self.current_open_request_id.take() {
+            self.state
+                .open_requests
+                .insert(request_id, channel_id.to_string());
+        }
         self.persist();
     }
 
@@ -328,6 +370,9 @@ impl cdk_spilman::ClientStorage for FileSpilmanClientStorage {
         self.state.funding.remove(channel_id);
         self.state.payments.remove(channel_id);
         self.state.closed.remove(channel_id);
+        self.state
+            .open_requests
+            .retain(|_, remembered_channel_id| remembered_channel_id != channel_id);
         self.persist();
     }
 }
@@ -513,6 +558,16 @@ pub struct StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
     pub unit: String,
     #[serde(default)]
     pub opening_paid_msat: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+    /// Creation time of the owning route record. Used only to recover channels
+    /// opened by versions that predate `client_request_id` persistence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_created_at_unix: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_mint_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_capacity_sat: Option<u64>,
 }
 
 #[cfg(feature = "spilman-wallet")]
@@ -563,6 +618,31 @@ where
 {
     let lock = require_lock_for_data_dir(data_dir, lock)?;
     let (storage, storage_errors) = FileSpilmanClientStorage::load_with_lock(lock)?;
+    open_streaming_route_cashu_spilman_channel_from_token_with_networking_and_storage(
+        data_dir,
+        request,
+        async_networking,
+        storage,
+        storage_errors,
+    )
+    .await
+}
+
+#[cfg(feature = "spilman-wallet")]
+async fn open_streaming_route_cashu_spilman_channel_from_token_with_networking_and_storage<N>(
+    data_dir: &Path,
+    request: StreamingRouteOpenCashuSpilmanChannelFromTokenRequest,
+    async_networking: &N,
+    mut storage: FileSpilmanClientStorage,
+    storage_errors: FileSpilmanClientStorageErrorHandle,
+) -> Result<StreamingRouteOpenCashuSpilmanChannelResult, String>
+where
+    N: cdk_spilman::SpilmanClientAsyncNetworking,
+{
+    if let Some(recovered) = recover_opened_channel_from_storage(&mut storage, &request)? {
+        return Ok(recovered);
+    }
+    storage.begin_open_request(request.client_request_id.as_deref())?;
     let sender = match request.sender_secret_hex.as_deref() {
         Some(secret_hex) => {
             let mut host =
@@ -623,6 +703,186 @@ fn normalize_spilman_receiver_pubkey_hex(value: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+#[cfg(feature = "spilman-wallet")]
+fn normalized_spilman_mint_url(value: &str) -> &str {
+    value.trim().trim_end_matches('/')
+}
+
+#[cfg(feature = "spilman-wallet")]
+fn funding_matches_open_request(
+    funding: &cdk_spilman::ClientChannelFunding,
+    request: &StreamingRouteOpenCashuSpilmanChannelFromTokenRequest,
+    require_legacy_time_match: bool,
+) -> Result<bool, String> {
+    let params: serde_json::Value = serde_json::from_str(&funding.params_json)
+        .map_err(|error| format!("failed to decode stored Spilman channel parameters: {error}"))?;
+    let unit = params
+        .get("unit")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("sat");
+    let unit = StreamingRouteCashuUnit::parse(unit)?;
+    let receiver = params
+        .get("receiver_pubkey")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let expiry_unix = params
+        .get("expiry_timestamp")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let maximum_amount = params
+        .get("maximum_amount")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default();
+    let Some(route_mint_url) = request.route_mint_url.as_deref() else {
+        return Ok(false);
+    };
+    let Some(route_capacity_sat) = request.route_capacity_sat else {
+        return Ok(false);
+    };
+    if normalized_spilman_mint_url(&funding.mint_url) != normalized_spilman_mint_url(route_mint_url)
+        || unit.as_str() != request.unit.trim().to_ascii_lowercase()
+        || unit.capacity_to_sat(funding.capacity) != route_capacity_sat
+        || normalize_spilman_receiver_pubkey_hex(receiver)
+            != normalize_spilman_receiver_pubkey_hex(&request.receiver_pubkey_hex)
+        || expiry_unix != request.expiry_unix
+        || maximum_amount != request.max_amount_per_output
+    {
+        return Ok(false);
+    }
+    if !require_legacy_time_match {
+        return Ok(true);
+    }
+    let Some(route_created_at_unix) = request.route_created_at_unix else {
+        return Ok(false);
+    };
+    Ok(funding.created_at >= route_created_at_unix
+        && funding.created_at.saturating_sub(route_created_at_unix)
+            <= LEGACY_OPEN_REQUEST_MATCH_WINDOW_SECS)
+}
+
+#[cfg(feature = "spilman-wallet")]
+fn recover_opened_channel_from_storage(
+    storage: &mut FileSpilmanClientStorage,
+    request: &StreamingRouteOpenCashuSpilmanChannelFromTokenRequest,
+) -> Result<Option<StreamingRouteOpenCashuSpilmanChannelResult>, String> {
+    let Some(request_id) = request
+        .client_request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|request_id| !request_id.is_empty())
+    else {
+        return Ok(None);
+    };
+    if request_id.len() > 256 {
+        return Err("Cashu Spilman channel request id is too long".to_string());
+    }
+
+    let mapped_channel_id = storage.state.open_requests.get(request_id).cloned();
+    let should_remember_legacy_match = mapped_channel_id.is_none();
+    let channel_id = if let Some(channel_id) = mapped_channel_id.as_ref() {
+        let funding = storage.state.funding.get(channel_id).ok_or_else(|| {
+            format!("remembered Cashu Spilman channel {channel_id} is missing its funding")
+        })?;
+        if !funding_matches_open_request(funding, request, false)? {
+            return Err(format!(
+                "Cashu Spilman channel request id {request_id} was reused with different terms"
+            ));
+        }
+        channel_id.clone()
+    } else {
+        let mapped_channels = storage
+            .state
+            .open_requests
+            .values()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let mut candidates = Vec::new();
+        for (channel_id, funding) in &storage.state.funding {
+            if !storage.state.closed.contains(channel_id)
+                && !mapped_channels.contains(channel_id)
+                && funding_matches_open_request(funding, request, true)?
+            {
+                candidates.push(channel_id.clone());
+            }
+        }
+        candidates.sort();
+        if candidates.len() > 1 {
+            return Err(format!(
+                "multiple legacy Cashu Spilman channels match route request {request_id}"
+            ));
+        }
+        let Some(channel_id) = candidates.pop() else {
+            return Ok(None);
+        };
+        channel_id
+    };
+
+    if storage.state.closed.contains(&channel_id) {
+        return Err(format!(
+            "remembered Cashu Spilman channel {channel_id} is already closed"
+        ));
+    }
+    let funding = storage
+        .state
+        .funding
+        .get(&channel_id)
+        .cloned()
+        .ok_or_else(|| format!("Cashu Spilman channel {channel_id} has no funding"))?;
+    let payment_state = storage
+        .state
+        .payments
+        .get(&channel_id)
+        .cloned()
+        .ok_or_else(|| format!("Cashu Spilman channel {channel_id} has no signed payment"))?;
+    let params: serde_json::Value = serde_json::from_str(&funding.params_json)
+        .map_err(|error| format!("failed to decode stored Spilman channel parameters: {error}"))?;
+    let funding_proofs: serde_json::Value = serde_json::from_str(&funding.funding_proofs_json)
+        .map_err(|error| format!("failed to decode stored Spilman funding proofs: {error}"))?;
+    let unit = params
+        .get("unit")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("sat");
+    let unit = StreamingRouteCashuUnit::parse(unit)?;
+    let expected_opening_balance = unit.balance_from_msat(request.opening_paid_msat);
+    if payment_state.balance != expected_opening_balance {
+        return Err(format!(
+            "remembered Cashu Spilman channel {channel_id} has advanced beyond its opening payment"
+        ));
+    }
+    let receiver_pubkey_hex = params
+        .get("receiver_pubkey")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let expires_unix = params
+        .get("expiry_timestamp")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(request.expiry_unix);
+    if should_remember_legacy_match {
+        storage.remember_open_request(request_id, &channel_id);
+        storage.errors.ensure_ok()?;
+    }
+    Ok(Some(StreamingRouteOpenCashuSpilmanChannelResult {
+        channel_id: channel_id.clone(),
+        mint_url: funding.mint_url,
+        sender_pubkey_hex: funding.sender_pubkey_hex,
+        receiver_pubkey_hex,
+        unit: unit.as_str().to_string(),
+        capacity: funding.capacity,
+        capacity_sat: unit.capacity_to_sat(funding.capacity),
+        funding_token_amount: funding.funding_token_amount,
+        expires_unix,
+        opening_paid_msat: unit.balance_to_msat(payment_state.balance),
+        payment: CashuSpilmanPayment {
+            channel_id,
+            balance: payment_state.balance,
+            signature: payment_state.signature,
+            params: Some(params),
+            funding_proofs: Some(funding_proofs),
+        },
+    }))
 }
 
 #[cfg(feature = "spilman-wallet-http")]
@@ -820,6 +1080,10 @@ pub struct StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
     pub keyset_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyset_info_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_created_at_unix: Option<u64>,
 }
 
 #[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
@@ -882,6 +1146,40 @@ impl crate::wallet::CashuWalletService {
                 "wallet-backed Cashu Spilman channel opening currently supports sat only"
             );
         }
+        let (mut storage, storage_errors) = FileSpilmanClientStorage::load_with_lock(lock)
+            .map_err(|error| anyhow::anyhow!(error))?;
+        let token_request = StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+            token: String::new(),
+            receiver_pubkey_hex: request.receiver_pubkey_hex.clone(),
+            sender_secret_hex: None,
+            expiry_unix: request.expiry_unix,
+            keyset_info_json: String::new(),
+            max_amount_per_output: request.max_amount_per_output,
+            unit: unit.as_str().to_string(),
+            opening_paid_msat: request.opening_paid_msat,
+            client_request_id: request.client_request_id.clone(),
+            route_created_at_unix: request.route_created_at_unix,
+            route_mint_url: Some(request.mint_url.clone()),
+            route_capacity_sat: Some(request.capacity_sat),
+        };
+        if let Some(channel) = recover_opened_channel_from_storage(&mut storage, &token_request)
+            .map_err(|error| anyhow::anyhow!(error))?
+        {
+            return Ok(StreamingRouteOpenCashuSpilmanChannelFromWalletResult {
+                wallet_send: crate::CashuSentPayment {
+                    mint_url: channel.mint_url.clone(),
+                    unit: channel.unit.clone(),
+                    amount_sat: channel.funding_token_amount,
+                    send_fee_sat: 0,
+                    operation_id: format!("recovered-spilman-channel:{}", channel.channel_id),
+                    token: String::new(),
+                },
+                channel,
+            });
+        }
+        storage
+            .begin_open_request(request.client_request_id.as_deref())
+            .map_err(|error| anyhow::anyhow!(error))?;
         let keyset_info_json = match request.keyset_info_json {
             Some(json) => json,
             None => fetch_spilman_keyset_info_json(
@@ -910,7 +1208,7 @@ impl crate::wallet::CashuWalletService {
             .await?;
         let networking = HttpSpilmanClientNetworking::new();
         let channel =
-            open_streaming_route_cashu_spilman_channel_from_token_with_networking_and_lock(
+            open_streaming_route_cashu_spilman_channel_from_token_with_networking_and_storage(
                 self.data_dir(),
                 StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
                     token: wallet_send.token.clone(),
@@ -921,9 +1219,14 @@ impl crate::wallet::CashuWalletService {
                     max_amount_per_output: request.max_amount_per_output,
                     unit: unit.as_str().to_string(),
                     opening_paid_msat: request.opening_paid_msat,
+                    route_mint_url: Some(request.mint_url.clone()),
+                    route_capacity_sat: Some(request.capacity_sat),
+                    client_request_id: request.client_request_id,
+                    route_created_at_unix: request.route_created_at_unix,
                 },
                 &networking,
-                lock,
+                storage,
+                storage_errors,
             )
             .await
             .map_err(|error| anyhow::anyhow!(error))?;
@@ -953,6 +1256,126 @@ fn default_streaming_route_cashu_unit() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "spilman-wallet")]
+    fn recoverable_open_request(
+        request_id: &str,
+    ) -> StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+        StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+            token: String::new(),
+            receiver_pubkey_hex: format!("02{}", "22".repeat(32)),
+            sender_secret_hex: None,
+            expiry_unix: 10_000,
+            keyset_info_json: "{}".to_string(),
+            max_amount_per_output: 0,
+            unit: "sat".to_string(),
+            opening_paid_msat: 0,
+            client_request_id: Some(request_id.to_string()),
+            route_created_at_unix: Some(1_000),
+            route_mint_url: Some("https://mint.example/Bitcoin".to_string()),
+            route_capacity_sat: Some(10),
+        }
+    }
+
+    #[cfg(feature = "spilman-wallet")]
+    fn recoverable_funding() -> cdk_spilman::ClientChannelFunding {
+        cdk_spilman::ClientChannelFunding {
+            params_json: serde_json::json!({
+                "mint": "https://mint.example/Bitcoin",
+                "unit": "sat",
+                "capacity": 10,
+                "maximum_amount": 0,
+                "receiver_pubkey": format!("02{}", "22".repeat(32)),
+                "expiry_timestamp": 10_000,
+            })
+            .to_string(),
+            funding_proofs_json: "[]".to_string(),
+            channel_secret_hex: "11".repeat(32),
+            keyset_info_json: "{}".to_string(),
+            sender_pubkey_hex: format!("02{}", "33".repeat(32)),
+            capacity: 10,
+            funding_token_amount: 10,
+            mint_url: "https://mint.example/Bitcoin/".to_string(),
+            created_at: 1_005,
+        }
+    }
+
+    #[cfg(feature = "spilman-wallet")]
+    #[test]
+    fn channel_open_request_is_durable_and_idempotent_before_caller_attachment() {
+        use cdk_spilman::ClientStorage as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("client.json");
+        let (mut storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
+        storage.begin_open_request(Some("route-session-1")).unwrap();
+        storage.save_funding("cashu-channel-1", recoverable_funding());
+        storage.save_payment_state(
+            "cashu-channel-1",
+            cdk_spilman::ClientPaymentState {
+                balance: 0,
+                signature: "opening-signature".to_string(),
+                payment_count: 1,
+                last_payment_at: 1_005,
+            },
+        );
+        errors.ensure_ok().unwrap();
+        drop(storage);
+
+        // This reload models cancellation after the daemon committed the
+        // channel but before the route task attached the returned payment.
+        let (mut storage, _) = FileSpilmanClientStorage::load(&path).unwrap();
+        let recovered = recover_opened_channel_from_storage(
+            &mut storage,
+            &recoverable_open_request("route-session-1"),
+        )
+        .unwrap()
+        .expect("the retry must recover the committed channel");
+
+        assert_eq!(recovered.channel_id, "cashu-channel-1");
+        assert_eq!(recovered.capacity_sat, 10);
+        assert!(recovered.payment.has_funding());
+        assert_eq!(storage.state.funding.len(), 1);
+        assert_eq!(
+            storage.state.open_requests["route-session-1"],
+            "cashu-channel-1"
+        );
+    }
+
+    #[cfg(feature = "spilman-wallet")]
+    #[test]
+    fn upgrade_claims_one_exact_unmapped_legacy_channel() {
+        use cdk_spilman::ClientStorage as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("client.json");
+        let (mut storage, errors) = FileSpilmanClientStorage::load(&path).unwrap();
+        storage.save_funding("legacy-channel", recoverable_funding());
+        storage.save_payment_state(
+            "legacy-channel",
+            cdk_spilman::ClientPaymentState {
+                balance: 0,
+                signature: "opening-signature".to_string(),
+                payment_count: 1,
+                last_payment_at: 1_005,
+            },
+        );
+        errors.ensure_ok().unwrap();
+
+        let recovered = recover_opened_channel_from_storage(
+            &mut storage,
+            &recoverable_open_request("upgraded-route-session"),
+        )
+        .unwrap()
+        .expect("the exact legacy match should be claimed");
+
+        assert_eq!(recovered.channel_id, "legacy-channel");
+        assert_eq!(
+            storage.state.open_requests["upgraded-route-session"],
+            "legacy-channel"
+        );
+        errors.ensure_ok().unwrap();
+    }
 
     #[test]
     fn file_spilman_client_storage_persists_refund_witness_migration() {
@@ -1071,6 +1494,8 @@ mod tests {
                 opening_paid_msat: 1,
                 keyset_id: None,
                 keyset_info_json: Some("{}".to_string()),
+                client_request_id: None,
+                route_created_at_unix: None,
             },
         )
         .await
