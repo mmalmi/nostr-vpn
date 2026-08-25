@@ -243,6 +243,67 @@ impl PaidRouteStore {
         Ok(*self != before)
     }
 
+    pub fn retry_failed_funded_buyer_session(
+        &mut self,
+        session_id: &str,
+        now_unix: u64,
+    ) -> Result<bool> {
+        let session_id = trimmed_required(session_id, "paid route session id")?;
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} does not exist"))?;
+        let lease_id = session.session.lease_id.clone();
+        let channel_id = session.session.payment.channel_id.clone();
+        let lease = self
+            .leases
+            .get(&lease_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} has no lease"))?;
+        let channel = self
+            .channels
+            .get(&channel_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} has no channel"))?;
+        if channel.role != PaidRouteChannelRole::Buyer {
+            return Err(anyhow!(
+                "paid route session {session_id} is not a buyer session"
+            ));
+        }
+        if lease.lease.expires_at_unix.min(channel.expires_at_unix) <= now_unix {
+            return Err(anyhow!("paid route buyer session {session_id} has expired"));
+        }
+        if channel.status != PaidRouteLifecycleStatus::Failed
+            && lease.status != PaidRouteLifecycleStatus::Failed
+        {
+            return Ok(false);
+        }
+        if !paid_route_session_has_payment_material(&session.session, channel) {
+            return Err(anyhow!(
+                "paid route buyer session {session_id} cannot be retried without a funded channel"
+            ));
+        }
+
+        let before = self.clone();
+        let status = if self.buyer_session_admissions.contains_key(&lease_id) {
+            PaidRouteLifecycleStatus::Active
+        } else {
+            PaidRouteLifecycleStatus::Opening
+        };
+        if let Some(lease) = self.leases.get_mut(&lease_id) {
+            lease.status = status;
+            lease.updated_at_unix = lease.updated_at_unix.max(now_unix);
+        }
+        if let Some(channel) = self.channels.get_mut(&channel_id) {
+            channel.status = status;
+            channel.updated_at_unix = channel.updated_at_unix.max(now_unix);
+            channel.error.clear();
+        }
+        self.buyer_session_open_attempts.remove(&session_id);
+        if let Some(session) = self.sessions.get_mut(&session_id) {
+            session.updated_at_unix = session.updated_at_unix.max(now_unix);
+        }
+        Ok(*self != before)
+    }
+
     pub fn acknowledge_buyer_session_open(
         &mut self,
         authenticated_seller_pubkey: &str,

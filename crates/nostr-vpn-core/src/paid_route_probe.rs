@@ -272,7 +272,19 @@ pub fn build_paid_route_probe_measurement(
         .collect::<Vec<_>>();
 
     if successful.is_empty() {
-        return Err(anyhow!("paid exit probe did not get a realized exit IP"));
+        let details = samples
+            .iter()
+            .filter_map(|sample| sample.error.as_deref())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(anyhow!(
+            "paid exit probe did not get a realized exit IP{}",
+            if details.is_empty() {
+                String::new()
+            } else {
+                format!(": {details}")
+            }
+        ));
     }
 
     let realized_exit_ip = successful
@@ -535,5 +547,24 @@ mod tests {
         assert_eq!(measurement.quality.jitter_ms, Some(10));
         assert_eq!(measurement.quality.packet_loss_ppm, Some(333_333));
         assert_eq!(measurement.quality.last_seen_unix, Some(123));
+    }
+
+    #[test]
+    fn paid_route_probe_failure_preserves_transport_errors() {
+        let error = build_paid_route_probe_measurement(
+            vec![PaidRouteProbeSample::failure(
+                "stun: timed out; https: connection reset",
+            )],
+            None,
+            None,
+            123,
+        )
+        .expect_err("all failed samples must fail the measurement");
+
+        assert!(
+            error
+                .to_string()
+                .contains("stun: timed out; https: connection reset")
+        );
     }
 }

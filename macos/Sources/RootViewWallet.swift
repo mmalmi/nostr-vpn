@@ -62,6 +62,14 @@ extension RootView {
                     if wallet.balanceKnown {
                         Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
                             .font(.system(size: 30, weight: .bold, design: .rounded))
+                        Text("Available")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !wallet.channelBalanceText.isEmpty {
+                        Text(wallet.channelBalanceText)
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(.secondary)
                     }
                     if !wallet.defaultMint.isEmpty {
                         Text(wallet.defaultMint)

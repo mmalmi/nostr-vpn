@@ -326,6 +326,78 @@ fn selected_buyer_session_fails_when_end_to_end_exit_health_check_fails() {
 }
 
 #[test]
+fn explicit_retry_reopens_a_failed_funded_buyer_session() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = sample_config();
+    let (mut store, session_id, channel_id) = buyer_store_with_session(&seller, &buyer, &config);
+    let lease_id = store.sessions[&session_id].session.lease_id.clone();
+    let payment = sample_spilman_payment("funded-channel", 0);
+    store
+        .sessions
+        .get_mut(&session_id)
+        .unwrap()
+        .session
+        .payment
+        .cashu_spilman_payment = Some(payment.clone());
+    store
+        .channels
+        .get_mut(&channel_id)
+        .unwrap()
+        .payment
+        .cashu_spilman_payment = Some(payment);
+    store
+        .begin_buyer_session_open_attempt(&session_id, 130)
+        .expect("select buyer session");
+    store
+        .acknowledge_buyer_session_open(&seller.public_key().to_hex(), &lease_id, 140)
+        .expect("acknowledge selected session");
+    store
+        .fail_selected_buyer_session("Seller exit did not return Internet traffic", 145)
+        .expect("fail selected session");
+
+    assert!(
+        store
+            .retry_failed_funded_buyer_session(&session_id, 146)
+            .expect("retry funded session")
+    );
+    assert_eq!(
+        store.channels[&channel_id].status,
+        PaidRouteLifecycleStatus::Active
+    );
+    assert_eq!(
+        store.leases[&lease_id].status,
+        PaidRouteLifecycleStatus::Active
+    );
+    assert!(store.channels[&channel_id].error.is_empty());
+    assert!(
+        store
+            .buyer_session_allows_routing(&session_id, 146)
+            .expect("retried session routing decision")
+    );
+}
+
+#[test]
+fn explicit_retry_does_not_reopen_an_unfunded_failed_probe() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = sample_config();
+    let (mut store, session_id, _) = buyer_store_with_session(&seller, &buyer, &config);
+    store
+        .begin_buyer_session_open_attempt(&session_id, 130)
+        .expect("select buyer session");
+    store
+        .fail_selected_buyer_session("Seller exit did not return Internet traffic", 145)
+        .expect("fail selected session");
+
+    let error = store
+        .retry_failed_funded_buyer_session(&session_id, 146)
+        .expect_err("unfunded failed probe must stay terminal");
+
+    assert!(error.to_string().contains("without a funded channel"));
+}
+
+#[test]
 fn session_open_requires_current_version_buyer_tunnel_ip_and_rejects_public_sources() {
     let legacy = serde_json::json!({
         "version": "2",

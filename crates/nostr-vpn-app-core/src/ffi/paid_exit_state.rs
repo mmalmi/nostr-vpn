@@ -432,7 +432,7 @@ fn paid_route_market_state(
         manual_provider_link,
         manual_provider_status_text,
         store_path: store_path.display().to_string(),
-        wallet: paid_route_wallet_state(&store.wallet, wallet_last_action),
+        wallet: paid_route_wallet_state(&store, wallet_last_action),
         last_payment_action: payment_last_action.clone(),
         filter,
         offers,
@@ -612,13 +612,19 @@ fn paid_route_offer_country_options(offers: &[NativePaidRouteOfferState]) -> Vec
 }
 
 fn paid_route_wallet_state(
-    wallet: &PaidRouteWalletState,
+    store: &PaidRouteStore,
     last_action: &NativePaidRouteWalletActionState,
 ) -> NativePaidRouteWalletState {
+    let wallet = &store.wallet;
     let total_balance_msat = wallet
         .mints
         .iter()
         .filter_map(|mint| mint.balance_msat)
+        .sum();
+    let channel_balance_msat = store
+        .channels
+        .values()
+        .map(paid_route_buyer_channel_balance_msat)
         .sum();
     // An empty wallet has a known zero balance. Once mints exist, the total is
     // only known when every mint balance is known.
@@ -648,6 +654,12 @@ fn paid_route_wallet_state(
         } else {
             String::new()
         },
+        channel_balance_msat,
+        channel_balance_text: if channel_balance_msat > 0 {
+            format!("{} in channels", paid_route_msat_text(channel_balance_msat))
+        } else {
+            String::new()
+        },
         navigation_balance_text: if balance_known && total_balance_msat > 0 {
             compact_wallet_balance_text(total_balance_msat)
         } else {
@@ -663,6 +675,32 @@ fn paid_route_wallet_state(
         mints,
         last_action: last_action.clone(),
     }
+}
+
+fn paid_route_buyer_channel_balance_msat(channel: &PaidRouteChannelRecord) -> u64 {
+    paid_route_channel_balance_msat(
+        channel.role,
+        channel.status,
+        channel.payment.cashu_spilman_payment.is_some(),
+        channel.payment.capacity_sat,
+        channel.payment.paid_msat,
+    )
+}
+
+fn paid_route_channel_balance_msat(
+    role: PaidRouteChannelRole,
+    status: PaidRouteLifecycleStatus,
+    payment_channel_ready: bool,
+    capacity_sat: u64,
+    paid_msat: u64,
+) -> u64 {
+    if role != PaidRouteChannelRole::Buyer
+        || status == PaidRouteLifecycleStatus::Closed
+        || !payment_channel_ready
+    {
+        return 0;
+    }
+    capacity_sat.saturating_mul(1_000).saturating_sub(paid_msat)
 }
 
 include!("paid_exit_state/wallet_balance.rs");
@@ -868,6 +906,7 @@ fn paid_route_session_state_with_decision(
     let status_text = paid_route_session_status_text(decision.map(|d| d.state), channel);
     let payment_channel_ready = session.payment.cashu_spilman_payment.is_some()
         || session.payment.cashu_token_lease.is_some();
+    let channel_balance_msat = channel.map_or(0, paid_route_buyer_channel_balance_msat);
     let decision_allows_routing = decision.is_some_and(|decision| decision.allow_routing);
     let lifecycle_allows_routing = channel
         .is_none_or(|channel| paid_route_lifecycle_allows_routing_for_state(channel.status))
@@ -953,6 +992,12 @@ fn paid_route_session_state_with_decision(
         amount_due_text: paid_route_due_text(amount_due_msat),
         paid_msat: session.payment.paid_msat,
         paid_text: paid_route_paid_text(session.payment.paid_msat),
+        channel_balance_msat,
+        channel_balance_text: if channel_balance_msat > 0 {
+            format!("{} in channel", paid_route_msat_text(channel_balance_msat))
+        } else {
+            String::new()
+        },
         unpaid_msat,
         unpaid_text: paid_route_unpaid_text(unpaid_msat),
         active_millis: session.usage.active_millis,

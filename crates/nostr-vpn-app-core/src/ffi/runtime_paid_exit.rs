@@ -145,7 +145,7 @@ mod paid_exit {
         #[test]
         fn empty_wallet_reports_a_known_zero_balance_without_nav_badge() {
             let state = paid_route_wallet_state(
-                &PaidRouteWalletState::default(),
+                &PaidRouteStore::default(),
                 &NativePaidRouteWalletActionState::default(),
             );
 
@@ -166,7 +166,7 @@ mod paid_exit {
             ));
 
             let state = paid_route_wallet_state(
-                &store.wallet,
+                &store,
                 &NativePaidRouteWalletActionState::default(),
             );
 
@@ -192,13 +192,47 @@ mod paid_exit {
             ));
 
             let state = paid_route_wallet_state(
-                &store.wallet,
+                &store,
                 &NativePaidRouteWalletActionState::default(),
             );
 
             assert_eq!(state.mints.len(), 2);
             assert_ne!(state.mints[0].url, state.mints[1].url);
             assert_eq!(state.mints.iter().filter(|mint| mint.is_default).count(), 1);
+        }
+
+        #[test]
+        fn buyer_channel_balance_excludes_paid_amount_and_closed_channels() {
+            assert_eq!(
+                paid_route_channel_balance_msat(
+                    PaidRouteChannelRole::Buyer,
+                    PaidRouteLifecycleStatus::Active,
+                    true,
+                    20,
+                    1_000,
+                ),
+                19_000
+            );
+            assert_eq!(
+                paid_route_channel_balance_msat(
+                    PaidRouteChannelRole::Buyer,
+                    PaidRouteLifecycleStatus::Closed,
+                    true,
+                    20,
+                    1_000,
+                ),
+                0
+            );
+            assert_eq!(
+                paid_route_channel_balance_msat(
+                    PaidRouteChannelRole::Buyer,
+                    PaidRouteLifecycleStatus::Active,
+                    false,
+                    20,
+                    1_000,
+                ),
+                0
+            );
         }
 
         #[test]

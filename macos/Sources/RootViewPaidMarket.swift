@@ -338,7 +338,7 @@ extension RootView {
                         Label("Connect", systemImage: "arrow.right.circle.fill")
                     }
                     .controlSize(.small)
-                    .disabled(manager.actionInFlight || !session.allowRouting)
+                    .disabled(manager.actionInFlight || !paidRouteSessionCanConnect(session))
                     .help("Use this seller")
                 }
                 Button {
@@ -399,6 +399,9 @@ extension RootView {
                 if session.unpaidMsat > 0 {
                     Text(fallbackText(session.unpaidText, "\(formatPaidRouteMsat(session.unpaidMsat)) behind"))
                 }
+                if !session.channelBalanceText.isEmpty {
+                    Text(session.channelBalanceText)
+                }
                 if !session.locationText.isEmpty {
                     Text(session.locationText)
                         .foregroundStyle(session.countryClaimStatus == "mismatch" ? Color.orange : Color.secondary)
@@ -455,6 +458,11 @@ extension RootView {
         session.paymentChannelReady
             && !session.sessionId.isEmpty
             && ["closed", "expired"].contains(session.lifecycleStatus) == false
+    }
+
+    func paidRouteSessionCanConnect(_ session: NativePaidRouteSessionState) -> Bool {
+        session.allowRouting
+            || (session.lifecycleStatus == "failed" && session.paymentChannelReady)
     }
 
     func paidRouteHasStreamablePayments(_ sessions: [NativePaidRouteSessionState]) -> Bool {

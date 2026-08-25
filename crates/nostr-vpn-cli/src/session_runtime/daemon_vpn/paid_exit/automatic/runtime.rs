@@ -4,23 +4,7 @@ pub(crate) async fn paid_exit_route_probe_measurement(
     app: &AppConfig,
     now_unix: u64,
 ) -> Result<PaidRouteProbeMeasurement> {
-    let args = PaidExitProbeArgs {
-        config: None,
-        session: String::new(),
-        ip_url: None,
-        stun_servers: Vec::new(),
-        no_stun: false,
-        geoip_url_template: None,
-        no_geoip: true,
-        download_url: None,
-        upload_url: None,
-        bandwidth_bytes: DEFAULT_PAID_ROUTE_BANDWIDTH_BYTES,
-        no_bandwidth: false,
-        samples: 1,
-        timeout_secs: 5,
-        no_reload_daemon: true,
-        json: false,
-    };
+    let args = paid_exit_health_probe_args();
     let (measurement, _, bandwidth_error) =
         paid_exit_probe_measurement(&args, app, now_unix).await?;
     if let Some(error) = bandwidth_error {
@@ -32,6 +16,30 @@ pub(crate) async fn paid_exit_route_probe_measurement(
         ));
     }
     Ok(measurement)
+}
+
+fn paid_exit_health_probe_args() -> PaidExitProbeArgs {
+    PaidExitProbeArgs {
+        config: None,
+        session: String::new(),
+        ip_url: None,
+        stun_servers: Vec::new(),
+        // The health gate needs to prove that ordinary routed Internet traffic
+        // works. Avoid waiting on UDP STUN before trying the HTTPS path.
+        no_stun: true,
+        geoip_url_template: None,
+        no_geoip: true,
+        download_url: None,
+        upload_url: None,
+        bandwidth_bytes: 0,
+        // A health check must not consume channel bandwidth merely to decide
+        // whether the route works. Users can run the explicit quality probe.
+        no_bandwidth: true,
+        samples: 1,
+        timeout_secs: 5,
+        no_reload_daemon: true,
+        json: false,
+    }
 }
 
 pub(super) fn automatic_probe_observed_public_ip(measurement: &PaidRouteProbeMeasurement) -> bool {
@@ -186,4 +194,19 @@ pub(crate) fn record_paid_exit_probe(
         })?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod health_probe_tests {
+    use super::*;
+
+    #[test]
+    fn health_probe_uses_fast_https_without_bandwidth_traffic() {
+        let args = paid_exit_health_probe_args();
+
+        assert!(args.no_stun);
+        assert!(args.no_bandwidth);
+        assert_eq!(args.bandwidth_bytes, 0);
+        assert_eq!(args.samples, 1);
+    }
 }

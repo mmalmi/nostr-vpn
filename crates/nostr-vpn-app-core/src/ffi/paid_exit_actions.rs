@@ -507,10 +507,13 @@ impl NativeAppRuntime {
         let store_path = self.paid_route_store_path();
         let seller_npub = update_paid_route_store(&store_path, |store| {
             let seller_npub = store.buyer_session_seller_npub(session_id)?;
-            if connect && !store.buyer_session_allows_routing(session_id, now_unix)? {
-                return Err(anyhow!(
-                    "paid route session is not ready to route yet; fund it or wait for seller admission"
-                ));
+            if connect {
+                store.retry_failed_funded_buyer_session(session_id, now_unix)?;
+                if !store.buyer_session_allows_routing(session_id, now_unix)? {
+                    return Err(anyhow!(
+                        "paid route session is not ready to route yet; fund it or wait for seller admission"
+                    ));
+                }
             }
             store.begin_buyer_session_open_attempt(session_id, now_unix)?;
             Ok(seller_npub)
