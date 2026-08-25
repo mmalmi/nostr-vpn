@@ -134,7 +134,7 @@
     }
 
     #[test]
-    fn mobile_config_identity_pins_each_default_websocket_seed_once() {
+    fn mobile_config_identity_pins_each_default_bootstrap_peer_once() {
         let app = AppConfig::generated();
         let mobile = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
@@ -159,9 +159,16 @@
                 .filter(|peer| peer.npub == *expected_npub)
                 .collect::<Vec<_>>();
             assert_eq!(matching.len(), 1, "seed PeerConfig must not be duplicated");
-            assert_eq!(matching[0].addresses.len(), 1);
-            assert_eq!(matching[0].addresses[0].transport, "websocket");
-            assert_eq!(matching[0].addresses[0].addr, *expected_url);
+            assert!(matching[0].addresses.iter().any(|address| {
+                address.transport == "websocket" && address.addr == *expected_url
+            }));
+            assert!(
+                matching[0]
+                    .addresses
+                    .iter()
+                    .any(|address| address.transport == "udp"),
+                "native bootstrap peers should retain their preferred UDP path"
+            );
         }
     }
 

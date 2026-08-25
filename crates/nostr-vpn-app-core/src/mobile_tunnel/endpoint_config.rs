@@ -225,7 +225,8 @@ fn fips_endpoint_config_for_platform(
         || mobile.join_requests_enabled
         || mobile.device_approval_pending
         || join_request_pending
-        || !mobile.websocket_seed_urls.is_empty();
+        || !mobile.websocket_seed_urls.is_empty()
+        || !mobile.bootstrap_peers.is_empty();
     let nostr_enabled = mobile_nostr_enabled(mobile);
     config.node.discovery.nostr.enabled = nostr_enabled;
     // Publish only the generic `udp:nat` overlay advert so roster peers can
@@ -284,19 +285,25 @@ fn fips_endpoint_config_for_platform(
             platform != RuntimePlatform::Ios,
         );
     }
-    if !mobile.websocket_seed_urls.is_empty() {
-        config.transports.websocket = TransportInstances::Single(WebSocketConfig {
-            seed_urls: mobile.websocket_seed_urls.clone(),
-            ..WebSocketConfig::default()
-        });
-    }
-    config.transports.udp = mobile_udp_transports(mobile.listen_port, nostr_enabled);
     config.peers = fips_peer_configs_from_mesh(
         &mobile.peers,
         &mobile.peer_hints,
         &mobile.bootstrap_peers,
         include_non_roster_transit,
     );
+    let needs_websocket = !mobile.websocket_seed_urls.is_empty()
+        || config.peers.iter().any(|peer| {
+            peer.addresses
+                .iter()
+                .any(|address| address.transport.eq_ignore_ascii_case("websocket"))
+        });
+    if needs_websocket {
+        config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            seed_urls: mobile.websocket_seed_urls.clone(),
+            ..WebSocketConfig::default()
+        });
+    }
+    config.transports.udp = mobile_udp_transports(mobile.listen_port, nostr_enabled);
     // Outbound TCP transport so peers reachable only over tcp:443 (UDP-blocked
     // networks) can still be dialed. bind_addr=None keeps it outbound-only.
     let needs_tcp = config.peers.iter().any(|peer| {
