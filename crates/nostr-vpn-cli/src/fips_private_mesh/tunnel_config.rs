@@ -664,6 +664,17 @@ impl FipsPrivateTunnelConfig {
         }
     }
 
+    fn public_paid_exit_selected(&self) -> bool {
+        #[cfg(feature = "paid-exit")]
+        {
+            !self.paid_route_accounting_peers.is_empty()
+        }
+        #[cfg(not(feature = "paid-exit"))]
+        {
+            false
+        }
+    }
+
     fn exit_dns_resolver_config(
         &self,
         wireguard_active: bool,
@@ -671,14 +682,40 @@ impl FipsPrivateTunnelConfig {
         if !self.client_dataplane_enabled || !self.secure_dns_requested {
             return ExitDnsConfig::default().resolver_config(None);
         }
-        if self.exit_dns.mode == nostr_vpn_core::config::ExitDnsMode::ThroughExit
+        let public_paid_exit_active = self.public_paid_exit_selected() && !wireguard_active;
+        if !public_paid_exit_active
+            && self.exit_dns.mode == nostr_vpn_core::config::ExitDnsMode::ThroughExit
             && self.wireguard_exit.enabled
             && !wireguard_active
         {
             return Ok(ExitDnsResolverConfig::FailClosed);
         }
         let wireguard = wireguard_active.then_some(&self.wireguard_exit);
-        self.exit_dns.resolver_config(wireguard)
+        let resolver = self.exit_dns.resolver_config(wireguard)?;
+        let ExitDnsResolverConfig::ThroughExit { servers } = resolver else {
+            return Ok(resolver);
+        };
+        if !public_paid_exit_active {
+            return Ok(ExitDnsResolverConfig::ThroughExit { servers });
+        }
+
+        // Private provider DNS addresses such as 10.64.0.1 are only
+        // reachable inside their owning WireGuard tunnel. Reusing one after
+        // selecting an unrelated public paid exit makes the localhost DNS
+        // stub wait forever while ordinary IP traffic through the seller is
+        // otherwise healthy. Preserve explicitly configured public servers;
+        // when none remain, use the encrypted public default.
+        let public_servers = servers
+            .into_iter()
+            .filter(|server| !endpoint_ip_is_private_or_local(*server))
+            .collect::<Vec<_>>();
+        if public_servers.is_empty() {
+            ExitDnsConfig::default().resolver_config(None)
+        } else {
+            Ok(ExitDnsResolverConfig::ThroughExit {
+                servers: public_servers,
+            })
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", test))]

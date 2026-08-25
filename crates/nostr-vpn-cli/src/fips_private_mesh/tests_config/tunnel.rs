@@ -445,6 +445,54 @@
         ));
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn public_paid_exit_does_not_reuse_private_wireguard_dns() {
+        let buyer = Keys::generate();
+        let seller = Keys::generate();
+        let buyer_pubkey = buyer.public_key().to_hex();
+        let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = buyer.secret_key().to_bech32().expect("buyer nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "paid-exit-private-dns".to_string();
+        app.exit_dns.mode = nostr_vpn_core::config::ExitDnsMode::ThroughExit;
+        app.exit_dns.through_exit_servers = vec!["10.99.79.53".to_string()];
+        app.select_public_paid_exit_node(&seller_npub)
+            .expect("select paid exit");
+
+        let private_dns = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "paid-exit-private-dns",
+            "utun-test",
+            Some(&buyer_pubkey),
+            None,
+            &[],
+        )
+        .expect("paid exit tunnel config");
+        assert!(matches!(
+            private_dns.exit_dns_resolver_config(false).unwrap(),
+            ExitDnsResolverConfig::Doh { .. }
+        ));
+
+        app.exit_dns.through_exit_servers = vec!["9.9.9.9".to_string()];
+        let public_dns = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "paid-exit-private-dns",
+            "utun-test",
+            Some(&buyer_pubkey),
+            None,
+            &[],
+        )
+        .expect("paid exit tunnel config with public DNS");
+        assert_eq!(
+            public_dns.exit_dns_resolver_config(false).unwrap(),
+            ExitDnsResolverConfig::ThroughExit {
+                servers: vec!["9.9.9.9".parse::<std::net::IpAddr>().unwrap()]
+            }
+        );
+    }
+
     #[test]
     fn paused_background_tunnel_keeps_control_paths_without_client_network_ownership() {
         let own = Keys::generate();
