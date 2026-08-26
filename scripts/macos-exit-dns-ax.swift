@@ -499,6 +499,39 @@ func reveal(
     if let element = findNow(application, identifier: identifier) {
         return element
     }
+    if let element = descendants(application).first(where: {
+        stringAttribute($0, kAXIdentifierAttribute) == identifier
+    }), AXUIElementPerformAction(
+        element,
+        "AXScrollToVisible" as CFString
+    ) == .success {
+        Thread.sleep(forTimeInterval: 0.2)
+        if let visibleElement = findNow(application, identifier: identifier) {
+            return visibleElement
+        }
+    }
+    for step in 0...8 {
+        let fraction = Double(step) / 8.0
+        for scrollArea in descendants(application) where
+            stringAttribute(scrollArea, kAXRoleAttribute) == kAXScrollAreaRole
+        {
+            guard let scrollBar = attribute(
+                scrollArea,
+                kAXVerticalScrollBarAttribute
+            ) else {
+                continue
+            }
+            _ = AXUIElementSetAttributeValue(
+                scrollBar as! AXUIElement,
+                kAXValueAttribute as CFString,
+                NSNumber(value: fraction)
+            )
+        }
+        Thread.sleep(forTimeInterval: 0.15)
+        if let element = findNow(application, identifier: identifier) {
+            return element
+        }
+    }
     for _ in 0..<8 {
         postKey(to: pid, keyCode: 121) // Page Down.
         Thread.sleep(forTimeInterval: 0.2)
