@@ -16,10 +16,41 @@ mod tests;
 
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
+pub(super) const PAID_EXIT_PAYMENT_OUTBOX_RETRY_SECS: u64 = 5;
 pub(super) const PAID_EXIT_SESSION_OPEN_RETRY_SECS: u64 = 5;
 pub(super) const PAID_EXIT_SESSION_OPEN_TIMEOUT_SECS: u64 = 30;
 pub(super) const PAID_EXIT_OFFER_REFRESH_SECS: u64 =
     nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_TTL_SECS / 4;
+
+pub(super) struct PaidExitPaymentOutboxRetry {
+    next_retry_at: Instant,
+    last_reported: Option<(usize, usize)>,
+}
+
+impl PaidExitPaymentOutboxRetry {
+    pub(super) fn new(now: Instant) -> Self {
+        Self {
+            next_retry_at: now,
+            last_reported: None,
+        }
+    }
+
+    pub(super) fn due(&self, now: Instant) -> bool {
+        now >= self.next_retry_at
+    }
+
+    pub(super) fn record_flush(&mut self, now: Instant, queued: usize, errors: usize) -> bool {
+        self.next_retry_at = now + Duration::from_secs(PAID_EXIT_PAYMENT_OUTBOX_RETRY_SECS);
+        let current = (queued, errors);
+        let changed = self.last_reported != Some(current);
+        let active_or_cleared = current != (0, 0)
+            || self
+                .last_reported
+                .is_some_and(|previous| previous != (0, 0));
+        self.last_reported = Some(current);
+        changed && active_or_cleared
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PaidExitOfferPublication {

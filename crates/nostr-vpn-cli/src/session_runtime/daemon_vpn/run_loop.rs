@@ -687,12 +687,19 @@ loop {
                                 }
                             }
                     }
-                    let flushed = flush_paid_exit_payment_outbox(runtime, &config_path).await;
-                    if flushed.queued > 0 || flushed.errors > 0 {
-                        eprintln!(
-                            "paid-exit: direct FIPS payment outbox queued={} errors={}",
-                            flushed.queued, flushed.errors
-                        );
+                    let outbox_now = Instant::now();
+                    if paid_exit_payment_outbox_retry.due(outbox_now) {
+                        let flushed = flush_paid_exit_payment_outbox(runtime, &config_path).await;
+                        if paid_exit_payment_outbox_retry.record_flush(
+                            outbox_now,
+                            flushed.queued,
+                            flushed.errors,
+                        ) {
+                            eprintln!(
+                                "paid-exit: direct FIPS payment outbox queued={} errors={}",
+                                flushed.queued, flushed.errors
+                            );
+                        }
                     }
                 }
             }

@@ -1,4 +1,22 @@
 use super::*;
+
+#[test]
+fn payment_outbox_retry_is_bounded_and_logs_only_state_changes() {
+    let start = Instant::now();
+    let mut retry = PaidExitPaymentOutboxRetry::new(start);
+
+    assert!(retry.due(start));
+    assert!(retry.record_flush(start, 1, 0));
+    assert!(!retry.due(start + Duration::from_secs(PAID_EXIT_PAYMENT_OUTBOX_RETRY_SECS - 1)));
+    let next = start + Duration::from_secs(PAID_EXIT_PAYMENT_OUTBOX_RETRY_SECS);
+    assert!(retry.due(next));
+    assert!(!retry.record_flush(next, 1, 0));
+    assert!(retry.record_flush(
+        next + Duration::from_secs(PAID_EXIT_PAYMENT_OUTBOX_RETRY_SECS),
+        0,
+        0
+    ));
+}
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::paid_route_store::{
     OpenPaidRouteBuyerSessionRequest, PaidRouteLifecycleStatus,
