@@ -64,6 +64,11 @@ for required in (
     "CANONICAL_DATA",
     "BACKUP_ROOT",
     "restore_profile",
+    "quiesce_system_service",
+    'sudo -n /bin/launchctl bootout "$SYSTEM_SERVICE_LABEL"',
+    "restore_system_service",
+    'sudo -n /bin/launchctl bootstrap system "$SYSTEM_SERVICE_PLIST"',
+    'sudo -n /bin/launchctl kickstart -k "$SYSTEM_SERVICE_LABEL"',
     "validate-driver",
     "create-case",
     "EXPECTED_IMPORT_VERIFICATION_SHA256",
@@ -115,6 +120,9 @@ for required in (
     "error != .failure",
     "error != .cannotComplete",
     "error != .invalidUIElement",
+    '"AXScrollToVisible" as CFString',
+    "kAXVerticalScrollBarAttribute",
+    "NSNumber(value: fraction)",
 ):
     if required not in driver:
         raise SystemExit(f"macOS DNS AX driver lacks {required}")
@@ -169,9 +177,14 @@ sidebar_calls = re.findall(
     r'try pressSidebar\(application, "([^"]+)", pid: pid\)',
     driver,
 )
-if sidebar_calls != ["sidebar-internet", "sidebar-devices", "sidebar-internet"]:
+if sidebar_calls != [
+    "sidebar-internet",
+    "sidebar-devices",
+    "sidebar-internet",
+    "sidebar-internet",
+]:
     raise SystemExit(
-        "macOS DNS AX sidebar retry is not limited to the three idempotent "
+        "macOS DNS AX sidebar retry is not limited to the four idempotent "
         f"navigation actions: {sidebar_calls}"
     )
 for required in (
@@ -192,6 +205,8 @@ for required in (
     '"appArtifactReceiptSha256"',
     '"driverReceiptSha256"',
     '"canonicalProfileRestored": True',
+    '"preexistingSystemServiceWasLoaded"',
+    '"preexistingSystemServiceRestored"',
     '"harnessGitSha"',
     '"harnessGitTree"',
 ):
@@ -452,6 +467,10 @@ restoration = write(
         "canonicalProfileRestored": True,
         "preexistingAppStateRestored": True,
         "gateAppProcessesStopped": True,
+        "preexistingSystemServiceWasLoaded": True,
+        "preexistingSystemServiceWasRunning": True,
+        "preexistingSystemServiceRestored": True,
+        "preexistingSystemServiceRunningRestored": True,
     },
 )
 subprocess.run(

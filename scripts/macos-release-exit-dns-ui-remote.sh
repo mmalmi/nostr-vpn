@@ -32,6 +32,9 @@ CANONICAL_DATA="$HOME/Library/Application Support/nvpn"
 BACKUP_ROOT="/tmp/nvpn-macos-exit-dns-profile-backup"
 INSTALLED_APP_PATH="/Applications/Nostr VPN.app"
 INSTALLED_APP="/Applications/Nostr VPN.app/Contents/MacOS/Nostr VPN"
+SYSTEM_SERVICE_LABEL="system/to.nostrvpn.nvpn"
+SYSTEM_SERVICE_NAME="to.nostrvpn.nvpn"
+SYSTEM_SERVICE_PLIST="/Library/LaunchDaemons/to.nostrvpn.nvpn.plist"
 APP_PID=""
 
 macos_open() {
@@ -59,12 +62,85 @@ installed_app_running() {
   [[ -n "$(macos_exact_executable_pids "$INSTALLED_APP")" ]]
 }
 
+system_service_loaded() {
+  /bin/launchctl print "$SYSTEM_SERVICE_LABEL" >/dev/null 2>&1
+}
+
+system_service_running() {
+  /bin/launchctl print "$SYSTEM_SERVICE_LABEL" 2>/dev/null \
+    | grep -Eq '^[[:space:]]*state = running$'
+}
+
+system_service_disabled() {
+  /bin/launchctl print-disabled system 2>/dev/null \
+    | grep -Eq "\"$SYSTEM_SERVICE_NAME\" => disabled$"
+}
+
+wait_for_system_service() {
+  local expected="$1"
+  local deadline=$((SECONDS + 10))
+  while ((SECONDS < deadline)); do
+    if [[ "$expected" == loaded ]] && system_service_loaded; then
+      return 0
+    fi
+    if [[ "$expected" == unloaded ]] && ! system_service_loaded; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "system nvpn service did not become $expected" >&2
+  return 1
+}
+
+stop_system_service() {
+  system_service_loaded || return 0
+  sudo -n /bin/launchctl bootout "$SYSTEM_SERVICE_LABEL"
+  wait_for_system_service unloaded
+}
+
+quiesce_system_service() {
+  system_service_loaded || return 0
+  system_service_disabled && {
+    echo "refusing to mutate a loaded but disabled system nvpn service" >&2
+    return 1
+  }
+  system_service_running || {
+    echo "refusing to mutate a loaded but stopped system nvpn service" >&2
+    return 1
+  }
+  touch "$BACKUP_ROOT/service-was-loaded"
+  touch "$BACKUP_ROOT/service-was-running"
+  stop_system_service
+}
+
+restore_system_service() {
+  [[ -f "$BACKUP_ROOT/service-was-loaded" ]] || return 0
+  [[ -f "$SYSTEM_SERVICE_PLIST" && ! -L "$SYSTEM_SERVICE_PLIST" ]] || {
+    echo "system nvpn service plist disappeared during the UI gate" >&2
+    return 1
+  }
+  stop_system_service
+  sudo -n /bin/launchctl bootstrap system "$SYSTEM_SERVICE_PLIST"
+  wait_for_system_service loaded
+  if [[ -f "$BACKUP_ROOT/service-was-running" ]]; then
+    sudo -n /bin/launchctl kickstart -k "$SYSTEM_SERVICE_LABEL"
+    local deadline=$((SECONDS + 10))
+    while ((SECONDS < deadline)); do
+      system_service_running && return 0
+      sleep 0.1
+    done
+    echo "system nvpn service did not resume running" >&2
+    return 1
+  fi
+}
+
 restore_profile() {
   [[ -d "$BACKUP_ROOT" ]] || {
     stop_gate_app
     return 0
   }
   stop_all_apps || true
+  stop_system_service
   if [[ -d "$BACKUP_ROOT/profile" ]]; then
     [[ "$CANONICAL_DATA" == "$HOME/Library/Application Support/nvpn" ]]
     [[ ! -L "$CANONICAL_DATA" ]]
@@ -76,6 +152,7 @@ restore_profile() {
     [[ ! -L "$CANONICAL_DATA" ]]
     rm -rf "$CANONICAL_DATA"
   fi
+  restore_system_service
   local relaunched=false
   if [[ -f "$BACKUP_ROOT/installed-was-running" && -x "$INSTALLED_APP" ]]; then
     macos_open -n -F -j "$INSTALLED_APP_PATH" --args --hidden
@@ -90,13 +167,19 @@ restore_profile() {
   fi
   if [[ -d "$BACKUP_ROOT" ]]; then
     local was_running=false
+    local service_was_loaded=false
+    local service_was_running=false
     [[ -f "$BACKUP_ROOT/installed-was-running" ]] && was_running=true
-    python3 - "$RESTORATION" "$was_running" "$relaunched" <<'PY'
+    [[ -f "$BACKUP_ROOT/service-was-loaded" ]] && service_was_loaded=true
+    [[ -f "$BACKUP_ROOT/service-was-running" ]] && service_was_running=true
+    python3 - "$RESTORATION" \
+      "$was_running" "$relaunched" \
+      "$service_was_loaded" "$service_was_running" <<'PY'
 import json
 import pathlib
 import sys
 
-output, was_running, relaunched = sys.argv[1:]
+output, was_running, relaunched, service_was_loaded, service_was_running = sys.argv[1:]
 value = {
     "receiptSchema": 1,
     "canonicalProfileRestored": True,
@@ -104,6 +187,10 @@ value = {
     "gateAppProcessesStopped": True,
     "preexistingInstalledAppWasRunning": was_running == "true",
     "preexistingInstalledAppRelaunched": relaunched == "true",
+    "preexistingSystemServiceWasLoaded": service_was_loaded == "true",
+    "preexistingSystemServiceWasRunning": service_was_running == "true",
+    "preexistingSystemServiceRestored": service_was_loaded == "true",
+    "preexistingSystemServiceRunningRestored": service_was_running == "true",
 }
 if value["preexistingInstalledAppWasRunning"] != value[
     "preexistingInstalledAppRelaunched"
@@ -184,6 +271,7 @@ prepare_profile() {
   mkdir -p "$BACKUP_ROOT"
   installed_app_running && touch "$BACKUP_ROOT/installed-was-running"
   stop_all_apps
+  quiesce_system_service
   if [[ -d "$CANONICAL_DATA" ]]; then
     mv "$CANONICAL_DATA" "$BACKUP_ROOT/profile"
   elif [[ -e "$CANONICAL_DATA" ]]; then

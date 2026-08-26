@@ -572,6 +572,19 @@ def create_summary(args: argparse.Namespace) -> None:
         ("gateAppProcessesStopped", True),
     ):
         require(restoration, name, expected)
+    for before, after in (
+        (
+            "preexistingSystemServiceWasLoaded",
+            "preexistingSystemServiceRestored",
+        ),
+        (
+            "preexistingSystemServiceWasRunning",
+            "preexistingSystemServiceRunningRestored",
+        ),
+    ):
+        if not isinstance(restoration.get(before), bool):
+            fail(f"restoration receipt lacks boolean {before}")
+        require(restoration, after, restoration[before])
     case_hashes: dict[str, str] = {}
     for case, spec in CASES.items():
         path = case_dir / f"{case}.json"
