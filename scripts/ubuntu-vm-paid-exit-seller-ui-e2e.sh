@@ -93,6 +93,8 @@ cli_hash="$(jq -er '.artifacts.cli.sha256' "$bundle_receipt")"
 "$cli" set --config "$data/config.toml" --autoconnect false >/dev/null
 
 cd "$repo"
+repo="$(pwd -P)"
+[[ "$repo" == /* ]]
 export GDK_BACKEND=x11
 export GTK_A11Y=atspi
 export NO_AT_BRIDGE=0
