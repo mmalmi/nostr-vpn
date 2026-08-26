@@ -66,9 +66,11 @@ artifact="$5"
 case_root="/tmp/nvpn-linux-paid-exit-seller-ui"
 xdg="$case_root/xdg"
 data="$xdg/nostr-vpn"
-receipt="$artifact/receipt.json"
 rm -rf "$case_root" "$artifact"
 mkdir -p "$data" "$artifact/screens"
+artifact="$(cd "$artifact" && pwd -P)"
+[[ "$artifact" == /* ]]
+receipt="$artifact/receipt.json"
 
 # shellcheck disable=SC1091
 source "$repo/scripts/lib-linux-owned-test-app.sh"
@@ -139,5 +141,9 @@ mkdir -p "$LOCAL_ARTIFACT_DIR"
 ubuntu_vm_import_scp_command
 "${NVPN_UBUNTU_IMPORT_SCP[@]}" -r \
   "$SSH_HOST:$REMOTE_ARTIFACT/." "$LOCAL_ARTIFACT_DIR/"
+[[ -f "$LOCAL_ARTIFACT_DIR/receipt.json" ]] || {
+  echo "Ubuntu VM paid-exit seller UI receipt was not copied to the host" >&2
+  exit 1
+}
 
 echo "UBUNTU_VM_PAID_EXIT_SELLER_UI_E2E_OK"
