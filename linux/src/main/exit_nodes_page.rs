@@ -153,6 +153,9 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     page.append(&offer);
     if state.paid_exit_seller.supported {
         let sell = icon_text_button("Sell internet access · Experimental", "mail-send-symbolic");
+        sell.update_property(&[gtk::accessible::Property::Label(
+            "nvpn-paid-exit-seller-open",
+        )]);
         {
             let app = app.clone();
             sell.connect_clicked(move |_| set_page(&app, Page::SellInternet));

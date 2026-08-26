@@ -41,6 +41,23 @@ pub(crate) struct PaidExitUsageFlush {
 }
 
 impl PaidExitAutomaticCandidate {
+    pub(super) fn reconcile_selection(
+        &mut self,
+        selection: nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection,
+    ) {
+        if self.selection.offer_key != selection.offer_key
+            || self.selection.mint_url != selection.mint_url
+        {
+            self.failed = true;
+            return;
+        }
+        // Funding makes the actual channel capacity authoritative, so the
+        // derived selection can legitimately change while it still refers to
+        // the same signed seller offer. Keep that route and remember the
+        // updated channel details instead of treating it as a failover.
+        self.selection = selection;
+    }
+
     pub(super) fn observe_presence(&mut self, statuses: &[MeshPeerStatus], now_unix: u64) {
         let authenticated = statuses.iter().any(|status| {
             status.connected

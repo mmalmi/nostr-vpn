@@ -23,6 +23,7 @@ const K_TEST_EXPIRY_UNIX: u64 = 4_102_444_800;
 #[derive(Debug, Clone)]
 struct LightningMockMintConnector {
     keyset: Arc<Mutex<KeySet>>,
+    additional_keysets: Arc<Mutex<Vec<KeySet>>>,
     quote_id: String,
     preimage: String,
 }
@@ -31,6 +32,7 @@ impl LightningMockMintConnector {
     fn new(keyset: KeySet, quote_id: &str, preimage: &str) -> Self {
         Self {
             keyset: Arc::new(Mutex::new(keyset)),
+            additional_keysets: Arc::new(Mutex::new(Vec::new())),
             quote_id: quote_id.to_string(),
             preimage: preimage.to_string(),
         }
@@ -49,6 +51,10 @@ impl LightningMockMintConnector {
 
     fn rotate_keyset(&self, keyset: KeySet) {
         *self.keyset.lock().unwrap() = keyset;
+    }
+
+    fn add_keyset(&self, keyset: KeySet) {
+        self.additional_keysets.lock().unwrap().push(keyset);
     }
 }
 
@@ -69,7 +75,9 @@ impl MintConnector for LightningMockMintConnector {
     }
 
     async fn get_mint_keys(&self) -> Result<Vec<KeySet>, Error> {
-        Ok(vec![self.keyset.lock().unwrap().clone()])
+        let mut keysets = vec![self.keyset.lock().unwrap().clone()];
+        keysets.extend(self.additional_keysets.lock().unwrap().clone());
+        Ok(keysets)
     }
 
     async fn get_mint_keyset(&self, keyset_id: Id) -> Result<KeySet, Error> {
@@ -77,14 +85,32 @@ impl MintConnector for LightningMockMintConnector {
         if keyset_id == keyset.id {
             Ok(keyset.clone())
         } else {
-            Err(Error::UnknownKeySet)
+            self.additional_keysets
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|candidate| candidate.id == keyset_id)
+                .cloned()
+                .ok_or(Error::UnknownKeySet)
         }
     }
 
     async fn get_mint_keysets(&self) -> Result<KeysetResponse, Error> {
-        Ok(KeysetResponse {
-            keysets: vec![self.keyset_info()],
-        })
+        let mut keysets = vec![self.keyset_info()];
+        keysets.extend(
+            self.additional_keysets
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|keyset| KeySetInfo {
+                    id: keyset.id,
+                    unit: keyset.unit.clone(),
+                    active: keyset.active.unwrap_or(true),
+                    input_fee_ppk: keyset.input_fee_ppk,
+                    final_expiry: keyset.final_expiry,
+                }),
+        );
+        Ok(KeysetResponse { keysets })
     }
 
     async fn post_mint_quote(
@@ -300,6 +326,40 @@ async fn refresh_active_keyset_replaces_stale_cached_rotation() {
     assert_eq!(
         refresh_active_keyset_id(&wallet).await.unwrap(),
         new_keyset_id
+    );
+}
+
+#[tokio::test]
+async fn refresh_active_keyset_ignores_active_keysets_for_other_units() {
+    let mut sat_keyset = build_test_keyset(16);
+    sat_keyset.input_fee_ppk = 10;
+    let sat_keyset_id = sat_keyset.id;
+    let mut usd_keyset = build_test_keyset(32);
+    usd_keyset.unit = CurrencyUnit::Usd;
+    usd_keyset.input_fee_ppk = 0;
+    let usd_keyset_id = usd_keyset.id;
+    let mint_url: MintUrl = "https://mint.example".parse().unwrap();
+    let db = cdk_sqlite::wallet::memory::empty().await.unwrap();
+    let mock = Arc::new(LightningMockMintConnector::new(
+        sat_keyset,
+        "quote-123",
+        "00ff",
+    ));
+    mock.add_keyset(usd_keyset);
+    let wallet = WalletBuilder::new()
+        .mint_url(mint_url)
+        .unit(CurrencyUnit::Sat)
+        .localstore(Arc::new(db))
+        .seed([7_u8; 64])
+        .shared_client(mock)
+        .build()
+        .unwrap();
+
+    wallet.refresh_keysets().await.unwrap();
+    assert_eq!(wallet.get_active_keyset().await.unwrap().id, usd_keyset_id);
+    assert_eq!(
+        refresh_active_keyset_id(&wallet).await.unwrap(),
+        sat_keyset_id
     );
 }
 

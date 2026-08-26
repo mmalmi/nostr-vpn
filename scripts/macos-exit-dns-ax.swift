@@ -118,6 +118,13 @@ func boolAttribute(_ element: AXUIElement, _ name: String) -> Bool? {
     attribute(element, name) as? Bool
 }
 
+func toggleValue(_ element: AXUIElement) -> Bool? {
+    if let value = attribute(element, kAXValueAttribute) as? NSNumber {
+        return value.boolValue
+    }
+    return boolAttribute(element, kAXValueAttribute)
+}
+
 func descendants(_ root: AXUIElement) -> [AXUIElement] {
     var found: [AXUIElement] = []
     var pending = [root]
@@ -299,6 +306,19 @@ func pressAndWaitForSaveCompletion(
         Thread.sleep(forTimeInterval: 0.1)
     } while Date() < completedDeadline
     throw DriverError.invalidState("Exit DNS save did not complete")
+}
+
+func pressAndWaitForSellerSaveCompletion(_ application: AXUIElement) throws {
+    let identifier = "paid-exit-seller-save"
+    let save = try find(application, identifier: identifier)
+    guard boolAttribute(save, kAXEnabledAttribute) == true else {
+        throw DriverError.invalidState("paid-exit seller save was not actionable")
+    }
+    try pressElement(save, label: identifier)
+    Thread.sleep(forTimeInterval: 0.75)
+    if let modalText = blockingModalText(application) {
+        throw DriverError.invalidState("paid-exit seller save failed: \(modalText)")
+    }
 }
 
 func blockingModalText(_ application: AXUIElement) -> String? {
@@ -525,6 +545,102 @@ func createNetworkIfNeeded(
     return true
 }
 
+func openPaidExitSeller(
+    _ application: AXUIElement,
+    pid: pid_t
+) throws -> Bool {
+    let created = try createNetworkIfNeeded(application, pid: pid)
+    try pressSidebar(application, "sidebar-internet", pid: pid)
+    _ = try reveal(application, identifier: "paid-exit-seller-open", pid: pid)
+    try press(
+        application,
+        "paid-exit-seller-open",
+        successIdentifier: "paid-exit-seller-enabled"
+    )
+    return created
+}
+
+func setPaidExitSellerEnabled(
+    _ application: AXUIElement,
+    enabled: Bool
+) throws {
+    var toggle = try find(application, identifier: "paid-exit-seller-enabled")
+    if toggleValue(toggle) != enabled {
+        try pressElement(toggle, label: "paid-exit-seller-enabled")
+        let deadline = Date().addingTimeInterval(5)
+        repeat {
+            toggle = try find(
+                application,
+                identifier: "paid-exit-seller-enabled",
+                timeout: 0.5
+            )
+            if toggleValue(toggle) == enabled {
+                Thread.sleep(forTimeInterval: 0.25)
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while Date() < deadline
+    }
+    guard toggleValue(toggle) == enabled else {
+        throw DriverError.invalidState("paid-exit seller toggle did not retain its value")
+    }
+}
+
+func observePaidExitSeller(
+    _ application: AXUIElement,
+    phase: String,
+    pid: pid_t,
+    processName: String,
+    saved: Bool,
+    networkCreated: Bool
+) throws -> [String: Any] {
+    let price = try textValue(
+        application,
+        identifier: "paid-exit-price-msat-per-gb"
+    )
+    let country = try textValue(
+        application,
+        identifier: "paid-exit-country-code"
+    )
+    let mint = try textValue(
+        application,
+        identifier: "paid-exit-accepted-mints"
+    )
+    let toggle = try find(application, identifier: "paid-exit-seller-enabled")
+    guard price == "1000000", country == "FI",
+          mint == "http://cashu-mint:3338", toggleValue(toggle) == true else {
+        throw DriverError.invalidState("paid-exit seller public values changed")
+    }
+    return [
+        "receiptSchema": 1,
+        "phase": phase,
+        "case": "paid-exit-seller",
+        "pid": Int(pid),
+        "processName": processName,
+        "publicUiOnly": true,
+        "privateStateRead": false,
+        "savedViaShippedUi": saved,
+        "enabledViaShippedUi": phase == "apply",
+        "networkCreatedViaShippedUi": networkCreated,
+        "visibleControlIdentifiers": [
+            "paid-exit-seller-enabled",
+            "paid-exit-price-msat-per-gb",
+            "paid-exit-country-code",
+            "paid-exit-accepted-mints",
+            "paid-exit-seller-save",
+        ].sorted(),
+        "values": [
+            "enabled": true,
+            "priceMsatPerGb": 1_000_000,
+            "countryCode": country,
+            "acceptedMints": [mint],
+        ],
+        "observedAtUnixMilliseconds": Int64(
+            (Date().timeIntervalSince1970 * 1_000).rounded(.down)
+        ),
+    ]
+}
+
 func assertConditionalControls(
     _ application: AXUIElement,
     spec: DnsCase,
@@ -687,7 +803,6 @@ func run() throws {
         throw DriverError.accessibilityPermission
     }
     let phase = args[2]
-    let spec = try DnsCase.named(args[3])
     let application = AXUIElementCreateApplication(pid)
     let processName = stringAttribute(application, kAXTitleAttribute)
     if !processName.isEmpty, processName != args[5] {
@@ -701,6 +816,70 @@ func run() throws {
         identifier: "main-AppWindow-1",
         timeout: 60
     )
+    if args[3] == "paid-exit-seller" {
+        let networkCreated = try openPaidExitSeller(application, pid: pid)
+        for identifier in [
+            "paid-exit-country-code",
+            "paid-exit-price-msat-per-gb",
+            "paid-exit-accepted-mints",
+            "paid-exit-seller-save",
+        ] {
+            _ = try reveal(application, identifier: identifier, pid: pid)
+        }
+        if phase == "apply" {
+            try setText(
+                application,
+                identifier: "paid-exit-country-code",
+                value: "FI",
+                pid: pid
+            )
+            try setText(
+                application,
+                identifier: "paid-exit-price-msat-per-gb",
+                value: "1000000",
+                pid: pid
+            )
+            try setText(
+                application,
+                identifier: "paid-exit-accepted-mints",
+                value: "http://cashu-mint:3338",
+                pid: pid
+            )
+            _ = try reveal(
+                application,
+                identifier: "paid-exit-seller-save",
+                pid: pid
+            )
+            try pressAndWaitForSellerSaveCompletion(application)
+            _ = try reveal(
+                application,
+                identifier: "paid-exit-seller-enabled",
+                pid: pid
+            )
+            try setPaidExitSellerEnabled(application, enabled: true)
+        }
+        for identifier in [
+            "paid-exit-country-code",
+            "paid-exit-price-msat-per-gb",
+            "paid-exit-accepted-mints",
+            "paid-exit-seller-save",
+            "paid-exit-seller-enabled",
+        ] {
+            _ = try reveal(application, identifier: identifier, pid: pid)
+        }
+        let receipt = try observePaidExitSeller(
+            application,
+            phase: phase,
+            pid: pid,
+            processName: processName.isEmpty ? args[5] : processName,
+            saved: phase == "apply",
+            networkCreated: networkCreated
+        )
+        try writeJSON(receipt, path: args[4])
+        print("MACOS_PAID_EXIT_SELLER_AX_\(phase.uppercased())_OK")
+        return
+    }
+    let spec = try DnsCase.named(args[3])
     let networkCreated = try createNetworkIfNeeded(application, pid: pid)
     _ = try reveal(application, identifier: "exit-dns-mode", pid: pid)
     if phase == "apply" {

@@ -494,11 +494,31 @@ impl PaidRouteStore {
         context: &BuyerPaymentApplyContext<'_>,
         payment: CashuSpilmanPayment,
     ) -> Result<()> {
+        let previous_payment = self
+            .sessions
+            .get(context.session_id)
+            .and_then(|record| record.session.payment.cashu_spilman_payment.as_ref())
+            .or_else(|| {
+                self.channels
+                    .get(context.channel_id)
+                    .and_then(|channel| channel.payment.cashu_spilman_payment.as_ref())
+            });
+        let mut stored_payment = payment;
+        if let Some(previous) =
+            previous_payment.filter(|previous| previous.channel_id == stored_payment.channel_id)
+        {
+            if stored_payment.params.is_none() {
+                stored_payment.params = previous.params.clone();
+            }
+            if stored_payment.funding_proofs.is_none() {
+                stored_payment.funding_proofs = previous.funding_proofs.clone();
+            }
+        }
         if let Some(channel) = self.channels.get_mut(context.channel_id) {
             channel.payment.cashu_unit = context.unit.to_string();
             channel.payment.paid_msat = context.paid_msat;
             channel.payment.updated_at_unix = context.now_unix;
-            channel.payment.cashu_spilman_payment = Some(payment.clone());
+            channel.payment.cashu_spilman_payment = Some(stored_payment.clone());
             channel.payment.cashu_token_lease = None;
             channel.updated_at_unix = context.now_unix;
             if context.kind == BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose {
@@ -519,7 +539,7 @@ impl PaidRouteStore {
         record.session.payment.cashu_unit = context.unit.to_string();
         record.session.payment.paid_msat = context.paid_msat;
         record.session.payment.updated_at_unix = context.now_unix;
-        record.session.payment.cashu_spilman_payment = Some(payment);
+        record.session.payment.cashu_spilman_payment = Some(stored_payment);
         record.session.payment.cashu_token_lease = None;
         record.updated_at_unix = context.now_unix;
         Ok(())

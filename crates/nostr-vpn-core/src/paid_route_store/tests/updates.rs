@@ -251,6 +251,63 @@ fn buyer_signed_payment_envelope_uses_cashu_service_signer() {
 }
 
 #[test]
+fn buyer_balance_update_retains_channel_funding_in_persisted_state() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
+    let (mut store, session_id, channel_id) =
+        buyer_store_with_session(&seller, &buyer, &sample_config());
+
+    store
+        .build_buyer_payment_envelope(BuildPaidRouteBuyerPaymentEnvelopeRequest {
+            session_id: session_id.clone(),
+            buyer_npub: buyer_npub.clone(),
+            kind: BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
+            payment: sample_spilman_payment(&channel_id, 0),
+            delivered_units: Some(0),
+            paid_msat: Some(0),
+            now_unix: 130,
+        })
+        .expect("persist funded channel open");
+
+    let update = store
+        .build_buyer_signed_payment_envelope(
+            &FakePaymentSigner,
+            BuildPaidRouteBuyerSignedPaymentEnvelopeRequest {
+                session_id: session_id.clone(),
+                buyer_npub,
+                kind: BuildPaidRouteBuyerPaymentEnvelopeKind::BalanceUpdate,
+                delivered_units: Some(100),
+                paid_msat: Some(1_000),
+                now_unix: 131,
+            },
+        )
+        .expect("persist balance update");
+
+    let StreamingRoutePaymentPayload::BalanceUpdate(wire_update) = update.envelope.payload else {
+        panic!("expected balance update payload");
+    };
+    assert!(!wire_update.payment.has_funding());
+    assert!(
+        store.sessions[&session_id]
+            .session
+            .payment
+            .cashu_spilman_payment
+            .as_ref()
+            .expect("stored session payment")
+            .has_funding()
+    );
+    assert!(
+        store.channels[&channel_id]
+            .payment
+            .cashu_spilman_payment
+            .as_ref()
+            .expect("stored channel payment")
+            .has_funding()
+    );
+}
+
+#[test]
 fn buyer_cooperative_close_remains_pending_until_refund_recovery() {
     let seller = Keys::generate();
     let buyer = Keys::generate();

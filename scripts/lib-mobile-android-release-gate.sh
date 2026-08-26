@@ -1018,6 +1018,7 @@ run_android_release_blackbox_cycle() {
   local direct_transition_pid
   android_release_ensure_network_ui || return 1
   android_release_disconnect_ui || return 1
+  configure_android_paid_exit_seller_ui || return 1
   if ! truthy "$ANDROID_RELEASE_DNS_ONLY_CYCLE"; then
     run_android_release_direct_network_probe before-connect 0 || return 1
     configure_android_release_wireguard_ui || return 1

@@ -476,6 +476,8 @@ struct StatusArgs {
 struct SetArgs {
     #[arg(long)]
     config: Option<PathBuf>,
+    #[arg(long, conflicts_with = "exit_node")]
+    internet_source: Option<String>,
     #[arg(long)]
     network_id: Option<String>,
     #[arg(long)]

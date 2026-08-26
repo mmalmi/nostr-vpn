@@ -40,6 +40,36 @@ public sealed partial class AppViewModel
             if (SetField(ref _paidExitPriceMsatPerGb, value))
             {
                 OnPropertyChanged(nameof(CanSavePaidExitPrice));
+                OnPropertyChanged(nameof(CanSavePaidExitSettings));
+            }
+        }
+    }
+
+    public string PaidExitCountryCode
+    {
+        get => _paidExitCountryCode;
+        set
+        {
+            var normalized = new string((value ?? "")
+                .ToUpperInvariant()
+                .Where(char.IsAsciiLetter)
+                .Take(2)
+                .ToArray());
+            if (SetField(ref _paidExitCountryCode, normalized))
+            {
+                OnPropertyChanged(nameof(CanSavePaidExitSettings));
+            }
+        }
+    }
+
+    public string PaidExitAcceptedMints
+    {
+        get => _paidExitAcceptedMints;
+        set
+        {
+            if (SetField(ref _paidExitAcceptedMints, value))
+            {
+                OnPropertyChanged(nameof(CanSavePaidExitSettings));
             }
         }
     }
@@ -49,6 +79,8 @@ public sealed partial class AppViewModel
 
     public bool CanSavePaidExitPrice =>
         PaidExitSellerVisible && !ActionInFlight && ulong.TryParse(PaidExitPriceMsatPerGb.Trim(), out _);
+
+    public bool CanSavePaidExitSettings => CanSavePaidExitPrice;
 
     public string PaidRouteMintUrl
     {

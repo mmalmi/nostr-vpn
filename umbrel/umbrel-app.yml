@@ -3,7 +3,7 @@ id: nostr-vpn
 category: networking
 name: Nostr VPN
 icon: https://raw.githubusercontent.com/mmalmi/nostr-vpn/master/umbrel/icon.svg
-version: "v4.1.8"
+version: "v4.1.9"
 tagline: Admin-approved mesh VPN over Nostr
 description: >-
   Nostr VPN turns your Umbrel into a private mesh VPN node for your own devices

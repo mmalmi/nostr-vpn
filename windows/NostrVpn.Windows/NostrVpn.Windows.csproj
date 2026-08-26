@@ -10,7 +10,7 @@
     <AssemblyName>NostrVpn.Windows</AssemblyName>
     <RootNamespace>NostrVpn.Windows</RootNamespace>
     <ApplicationIcon>Assets\nostr-vpn.ico</ApplicationIcon>
-    <Version>4.1.8</Version>
+    <Version>4.1.9</Version>
     <NvpnCargoArtifactsDir Condition="'$(NvpnCargoArtifactsDir)' == ''">..\..\target\$(Configuration)</NvpnCargoArtifactsDir>
   </PropertyGroup>
 

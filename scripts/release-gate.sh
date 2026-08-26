@@ -39,6 +39,7 @@ WINDOWS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE_TIMEOUT_SE
 DESKTOP_MANUAL_JOIN_UI_TIMEOUT_SECS="${NVPN_RELEASE_GATE_DESKTOP_MANUAL_JOIN_UI_TIMEOUT_SECS:-1800}"
 DESKTOP_SERVICE_TOGGLE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_DESKTOP_SERVICE_TOGGLE_TIMEOUT_SECS:-1800}"
 DESKTOP_DNS_UI_TIMEOUT_SECS="${NVPN_RELEASE_GATE_DESKTOP_DNS_UI_TIMEOUT_SECS:-900}"
+PAID_EXIT_SELLER_UI_TIMEOUT_SECS="${NVPN_RELEASE_GATE_PAID_EXIT_SELLER_UI_TIMEOUT_SECS:-900}"
 DESKTOP_UNDERLAY_NETWORK_CHANGE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_DESKTOP_UNDERLAY_NETWORK_CHANGE_TIMEOUT_SECS:-2400}"
 ANDROID_LEGACY_REPLACEMENT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_ANDROID_LEGACY_REPLACEMENT_TIMEOUT_SECS:-600}"
 IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS:-180}"
@@ -800,6 +801,10 @@ run_windows_platform_lane() {
   run_windows_app_launch_gate
   run_windows_manual_join_ui_gate
   run_windows_exit_dns_ui_gate
+  release_gate_run_with_timeout "Windows paid-exit seller UI save/relaunch/readback" \
+    "$PAID_EXIT_SELLER_UI_TIMEOUT_SECS" \
+    env NVPN_PAID_EXIT_SELLER_UI_ARTIFACT_DIR="$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/windows" \
+    ./scripts/windows-vm-paid-exit-seller-ui-e2e.sh "${NVPN_WINDOWS_SSH_HOST:-}"
   run_windows_service_toggle_gate
 }
 
@@ -1202,6 +1207,10 @@ run_linux_platform_lane() {
   fi
   run_linux_manual_join_ui_gate
   run_linux_exit_dns_ui_gate
+  release_gate_run_with_timeout "Linux paid-exit seller UI save/relaunch/readback" \
+    "$PAID_EXIT_SELLER_UI_TIMEOUT_SECS" \
+    env NVPN_PAID_EXIT_SELLER_UI_ARTIFACT_DIR="$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/linux" \
+    ./scripts/ubuntu-vm-paid-exit-seller-ui-e2e.sh "${NVPN_UBUNTU_SSH_HOST:-}"
   run_linux_service_toggle_gate
 }
 
@@ -1552,6 +1561,21 @@ run_mobile_wireguard_exit_gates() {
   release_gate_parallel_wait_group "${lanes[@]}"
   MOBILE_ANDROID_APP_READY=1
   MOBILE_IOS_APP_READY=1
+}
+
+verify_paid_exit_seller_ui_gates() {
+  local app_sha app_tree output
+  app_sha="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+  app_tree="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
+  output="$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/summary.json"
+  python3 "$ROOT_DIR/scripts/verify-paid-exit-seller-ui-receipts.py" \
+    --app-git-sha "$app_sha" \
+    --app-git-tree "$app_tree" \
+    --output "$output" \
+    "linux=$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/linux/receipt.json" \
+    "macos=$RELEASE_GATE_PARALLEL_LOG_DIR/desktop-dns-ui/macos/cases/paid-exit-seller.json" \
+    "windows=$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/windows/receipt.json" \
+    "android=$RELEASE_GATE_PARALLEL_LOG_DIR/mobile-network/android-wireguard-dns-artifacts/paid-exit-seller.json"
 }
 
 run_mobile_underlay_change_gates() {
@@ -2061,6 +2085,24 @@ run_docker_isolated_functional_gates() {
     ./scripts/e2e-paid-exit-docker.sh
   lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
+  release_gate_parallel_start "Docker automatic Spilman paid exit" \
+    env \
+    NVPN_EXIT_NODE_E2E_IMAGE="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_IMAGE:-nostr-vpn-release-gate-paid-exit-auto-node}" \
+    NVPN_EXIT_NODE_E2E_PROJECT_NAME="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PROJECT_NAME:-nostr-vpn-release-gate-paid-exit-auto}" \
+    NVPN_E2E_INTERNET_SUBNET="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PUBLIC_SUBNET:-198.19.246.0/24}" \
+    NVPN_E2E_INTERNET_TARGET_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_TARGET_IP:-198.19.246.100}" \
+    NVPN_EXIT_NODE_E2E_PUBLIC_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_TARGET_IP:-198.19.246.100}" \
+    NVPN_E2E_CASHU_MINT_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_MINT_IP:-198.19.246.50}" \
+    NVPN_E2E_WG_UPSTREAM_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_WG_UPSTREAM_IP:-198.19.246.20}" \
+    NVPN_E2E_NODE_A_PUBLIC_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_NODE_A_IP:-198.19.246.10}" \
+    NVPN_E2E_NAT_B_PUBLIC_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_NAT_B_IP:-198.19.246.11}" \
+    NVPN_E2E_PRIVATE_B_SUBNET="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PRIVATE_SUBNET:-172.31.246.0/24}" \
+    NVPN_E2E_PRIVATE_B_GATEWAY_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PRIVATE_GATEWAY_IP:-172.31.246.1}" \
+    NVPN_E2E_NAT_B_PRIVATE_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_NAT_B_PRIVATE_IP:-172.31.246.2}" \
+    NVPN_E2E_NODE_B_PRIVATE_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_NODE_B_PRIVATE_IP:-172.31.246.3}" \
+    ./scripts/e2e-paid-exit-automatic-docker.sh
+  lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+
   release_gate_parallel_wait_group "${lanes[@]}"
 }
 
@@ -2317,6 +2359,7 @@ main() {
   run_macos_daemon_idle_cpu_gate
   run_mobile_idle_cpu_gates
   run_mobile_wireguard_exit_gates
+  verify_paid_exit_seller_ui_gates
   run_android_legacy_replacement_gate
   run_mobile_underlay_change_gates
 

@@ -330,6 +330,11 @@ def read_text(name: str) -> str:
     raise RuntimeError(f"public GTK value is empty: {name}")
 
 
+def checked(name: str) -> bool:
+    node = find_named(name)
+    return node.getState().contains(pyatspi.STATE_CHECKED)
+
+
 def read_npub(name: str) -> str:
     value = read_text(name)
     match = NPUB.search(value)
@@ -857,6 +862,80 @@ class Driver:
         )
         self.write_evidence()
 
+    def paid_exit_seller(self) -> None:
+        if self.args.cli is None:
+            raise RuntimeError("PaidExitSeller requires the exact release CLI")
+        cli = self.args.cli.resolve()
+        if not cli.is_file() or cli.is_symlink():
+            raise RuntimeError("exact release CLI is missing")
+        if not self.args.seller_price.isdigit():
+            raise RuntimeError("seller price must be an unsigned integer")
+        if not re.fullmatch(r"[A-Z]{2}", self.args.seller_country):
+            raise RuntimeError("seller country must be a two-letter uppercase code")
+        if not self.args.seller_mint.startswith(("http://", "https://")):
+            raise RuntimeError("seller mint must be an HTTP(S) URL")
+
+        def open_seller() -> None:
+            self.launch()
+            invoke("Internet", stable_focus=0.5)
+            invoke("nvpn-paid-exit-seller-open", stable_focus=0.5)
+            find_named("nvpn-paid-exit-seller-enabled")
+
+        open_seller()
+        set_text("nvpn-paid-exit-price-msat-per-gb", self.args.seller_price)
+        set_text("nvpn-paid-exit-country-code", self.args.seller_country)
+        set_text("nvpn-paid-exit-accepted-mints", self.args.seller_mint)
+        invoke("nvpn-paid-exit-seller-save")
+        time.sleep(0.75)
+        if not checked("nvpn-paid-exit-seller-enabled"):
+            invoke("nvpn-paid-exit-seller-enabled")
+            time.sleep(0.75)
+        if not checked("nvpn-paid-exit-seller-enabled"):
+            raise RuntimeError("seller enable switch did not remain on")
+        screenshot(self.artifact_root, "paid-exit-seller-saved")
+        self.stop()
+
+        open_seller()
+        observed_price = read_text("nvpn-paid-exit-price-msat-per-gb")
+        observed_country = read_text("nvpn-paid-exit-country-code")
+        observed_mint = read_text("nvpn-paid-exit-accepted-mints")
+        observed_enabled = checked("nvpn-paid-exit-seller-enabled")
+        if (
+            observed_price != self.args.seller_price
+            or observed_country != self.args.seller_country
+            or observed_mint != self.args.seller_mint
+            or not observed_enabled
+        ):
+            raise RuntimeError(
+                "relaunch changed seller UI values: "
+                f"enabled={observed_enabled}, price={observed_price!r}, "
+                f"country={observed_country!r}, mint={observed_mint!r}"
+            )
+        screenshot(self.artifact_root, "paid-exit-seller-readback")
+        self.evidence.update(
+            {
+                "receiptSchema": 1,
+                "platform": "linux",
+                "case": "paid-exit-seller",
+                "evidenceSource": "shipped-ui-restart-readback",
+                "savedViaShippedUi": True,
+                "enabledViaShippedUi": True,
+                "uiRestartReadback": True,
+                "releaseBlackbox": True,
+                "publicUiOnly": True,
+                "privateStateRead": False,
+                "paidExitEnabled": True,
+                "paidExitPriceMsatPerGb": int(self.args.seller_price),
+                "paidExitCountryCode": self.args.seller_country,
+                "paidExitAcceptedMints": [self.args.seller_mint],
+                "appGitSha": self.args.app_git_sha,
+                "appGitTree": self.args.app_git_tree,
+                "appExecutableSha256": sha256(self.app),
+                "cliExecutableSha256": sha256(cli),
+            }
+        )
+        self.write_evidence()
+
     def run(self) -> None:
         self.artifact_root.mkdir(parents=True, exist_ok=True)
         if self.args.mode == "Reset":
@@ -871,6 +950,8 @@ class Driver:
             self.manual_join()
         elif self.args.mode == "DnsPolicy":
             self.dns_policy()
+        elif self.args.mode == "PaidExitSeller":
+            self.paid_exit_seller()
         else:
             self.verify()
 
@@ -886,6 +967,7 @@ def parser() -> argparse.ArgumentParser:
             "AdminAdd",
             "ManualJoin",
             "DnsPolicy",
+            "PaidExitSeller",
             "Verify",
         ),
     )
@@ -905,6 +987,9 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--dns-custom-url", default="")
     result.add_argument("--dns-bootstrap-ips", default="")
     result.add_argument("--dns-through-servers", default="")
+    result.add_argument("--seller-price", default="1000000")
+    result.add_argument("--seller-country", default="FI")
+    result.add_argument("--seller-mint", default="")
     result.add_argument("--app-git-sha", default="")
     result.add_argument("--app-git-tree", default="")
     result.add_argument("--ui-timeout", type=int, default=15)

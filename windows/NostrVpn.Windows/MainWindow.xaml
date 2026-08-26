@@ -474,7 +474,7 @@
               <StackPanel>
                 <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Share this device's internet" IsChecked="{Binding State.AdvertiseExitNode, Mode=OneWay}" Click="AdvertiseExit_Click" />
                 <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Block internet if source disconnects" IsChecked="{Binding State.ExitNodeLeakProtection, Mode=OneWay}" Click="ExitLeakProtection_Click" Margin="0,10,0,0" />
-                <Button Content="Sell internet access · Experimental" Command="{Binding ShowSellAccessCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}" />
+                <Button Content="Sell internet access · Experimental" Command="{Binding ShowSellAccessCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="PaidExitSellerOpen" />
               </StackPanel>
             </Border>
 
@@ -607,16 +607,20 @@
                 <TextBlock Text="Share My Internet" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <TextBlock Text="{Binding PaidExitSellerStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}">
-                  <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Share my internet" IsChecked="{Binding State.PaidExitSeller.Enabled, Mode=OneWay}" Click="PaidExitEnabled_Click" />
+                  <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Share my internet" IsChecked="{Binding State.PaidExitSeller.Enabled, Mode=OneWay}" Click="PaidExitEnabled_Click" AutomationProperties.AutomationId="PaidExitSellerEnabled" />
                   <TextBlock Text="{Binding PaidExitSellerChannelCreditText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
                   <TextBlock Text="{Binding PaidExitSellerChannelCreditHelpText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerChannelCreditHelpText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                   <TextBlock Text="{Binding PaidExitSellerPaymentStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerPaymentStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                   <TextBlock Text="{Binding PaidExitSellerSummary}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
                   <DockPanel LastChildFill="True" Margin="0,0,0,6">
-                    <Button DockPanel.Dock="Right" Content="Save price" Click="SavePaidExitPrice_Click" IsEnabled="{Binding CanSavePaidExitPrice}" Margin="8,0,0,0" />
                     <TextBlock DockPanel.Dock="Right" Text="msat/GB" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" Margin="6,0,0,0" />
                     <TextBox Text="{Binding PaidExitPriceMsatPerGb, UpdateSourceTrigger=PropertyChanged}" ToolTip="Price in msat/GB" AutomationProperties.AutomationId="PaidExitPriceMsatPerGb" />
                   </DockPanel>
+                  <TextBlock Text="Country code" Foreground="{StaticResource TextSecondary}" />
+                  <TextBox Text="{Binding PaidExitCountryCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="Seller country code" Margin="0,0,0,6" AutomationProperties.AutomationId="PaidExitCountryCode" />
+                  <TextBlock Text="Accepted Cashu mints" Foreground="{StaticResource TextSecondary}" />
+                  <TextBox Text="{Binding PaidExitAcceptedMints, UpdateSourceTrigger=PropertyChanged}" ToolTip="Accepted Cashu mints, comma separated" Margin="0,0,0,6" AutomationProperties.AutomationId="PaidExitAcceptedMints" />
+                  <Button Content="Save seller settings" Click="SavePaidExitSettings_Click" IsEnabled="{Binding CanSavePaidExitSettings}" HorizontalAlignment="Left" Margin="0,0,0,8" AutomationProperties.AutomationId="PaidExitSellerSave" />
                   <DockPanel LastChildFill="True" Margin="0,0,0,6" Visibility="{Binding State.PaidExitSeller.ProviderLink, Converter={StaticResource NonEmptyStringToVisibility}}">
                     <Button DockPanel.Dock="Right" Content="Copy link" Tag="{Binding State.PaidExitSeller.ProviderLink}" Click="CopyWalletValue_Click" Margin="8,0,0,0" />
                     <TextBox Text="{Binding State.PaidExitSeller.ProviderLink}" IsReadOnly="True" />

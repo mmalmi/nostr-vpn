@@ -79,6 +79,8 @@ Use `just run-macos` or `just run-linux` when you want a specific desktop target
 - Supports MagicDNS, authenticated DNS-over-HTTPS for exit routes, route advertisement, exit-node selection, and WireGuard upstream egress
 - Exposes native desktop apps, JSON status, network diagnostics, doctor bundles, desktop updates, and Linux-focused Docker e2e coverage
 
+Cashu paid exits settle byte-metered usage through a Spilman channel: every buyer-to-exit IP packet is counted immediately. Exit-to-buyer UDP is counted only for recent buyer-initiated flows, while TCP counts payload only after the buyer acknowledges it (without double-counting retransmitted download data); other inbound protocols are not billed.
+
 ## Platform Status
 
 | Platform | Status |

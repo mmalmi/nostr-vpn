@@ -26,6 +26,7 @@ extension RootView {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .accessibilityIdentifier("paid-exit-seller-enabled")
                 .disabled(manager.actionInFlight || !state.paidExitSeller.supported)
             }
             if !state.paidExitSeller.supported {

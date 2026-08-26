@@ -215,6 +215,25 @@ run_case() {
     --output "$RESULTS/$case.json"
 }
 
+run_seller_case() {
+  local apply="$OBSERVATIONS/paid-exit-seller-apply.json"
+  local readback="$OBSERVATIONS/paid-exit-seller-readback.json"
+  launch_app
+  "$DRIVER" "$APP_PID" apply paid-exit-seller "$apply" "Nostr VPN"
+  stop_gate_app
+  launch_app
+  "$DRIVER" "$APP_PID" readback paid-exit-seller "$readback" "Nostr VPN"
+  stop_gate_app
+  python3 "$ROOT/scripts/macos_exit_dns_ui_receipt.py" create-seller \
+    --apply-observation "$apply" \
+    --readback-observation "$readback" \
+    --app-receipt "$APP_RECEIPT" \
+    --driver-receipt "$DRIVER_RECEIPT" \
+    --import-verification "$IMPORT_VERIFICATION" \
+    --driver-verification "$DRIVER_VERIFICATION" \
+    --output "$RESULTS/paid-exit-seller.json"
+}
+
 run_gate() {
   verify_artifacts
   rm -rf "$OBSERVATIONS" "$RESULTS"
@@ -226,6 +245,7 @@ run_gate() {
   for case in automatic cloudflare quad9 custom through-exit; do
     run_case "$case"
   done
+  run_seller_case
   restore_profile
   trap - EXIT
   [[ -s "$RESTORATION" ]]

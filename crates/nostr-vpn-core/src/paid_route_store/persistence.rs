@@ -438,8 +438,16 @@ pub(super) fn paid_route_session_has_payment_material(
 ) -> bool {
     match session.payment.mode {
         PaidRoutePaymentMode::CashuSpilman => {
-            session.payment.cashu_spilman_payment.is_some()
-                || channel.payment.cashu_spilman_payment.is_some()
+            session
+                .payment
+                .cashu_spilman_payment
+                .as_ref()
+                .is_some_and(CashuSpilmanPayment::has_funding)
+                || channel
+                    .payment
+                    .cashu_spilman_payment
+                    .as_ref()
+                    .is_some_and(CashuSpilmanPayment::has_funding)
         }
         PaidRoutePaymentMode::CashuTokenLease => {
             session.payment.cashu_token_lease.is_some()

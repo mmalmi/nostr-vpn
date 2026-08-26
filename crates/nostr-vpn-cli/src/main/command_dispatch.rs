@@ -226,6 +226,7 @@ async fn run_command(command: Command) -> Result<()> {
                         "device_id": app.nostr.public_key.clone(),
                         "magic_dns_suffix": app.magic_dns_suffix,
                         "autoconnect": app.autoconnect,
+                        "internet_source": app.internet_source.as_str(),
                         "node_id": app.node.id,
                         "tunnel_ip": runtime_local_tunnel_ip(&app, &network_id),
                         "endpoint": endpoint,
@@ -396,6 +397,12 @@ async fn run_command(command: Command) -> Result<()> {
             let mut app = load_or_default_config(&config_path)?;
             let previous_app = app.clone();
 
+            if let Some(value) = args.internet_source {
+                let source = value
+                    .parse::<InternetSource>()
+                    .map_err(anyhow::Error::msg)?;
+                app.set_internet_source(source);
+            }
             if let Some(value) = args.network_id {
                 app.set_active_network_id(&value)?;
             }

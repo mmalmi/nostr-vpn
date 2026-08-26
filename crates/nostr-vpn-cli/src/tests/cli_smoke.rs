@@ -396,6 +396,11 @@ fn clap_set_supports_route_advertisement_flags() {
     );
     assert!(
         set.get_arguments()
+            .any(|argument| argument.get_long() == Some("internet-source")),
+        "missing --internet-source on set command"
+    );
+    assert!(
+        set.get_arguments()
             .any(|argument| argument.get_long() == Some("exit-node-leak-protection")),
         "missing --exit-node-leak-protection on set command"
     );

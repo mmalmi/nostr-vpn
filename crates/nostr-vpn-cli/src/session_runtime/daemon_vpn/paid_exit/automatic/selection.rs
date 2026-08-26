@@ -23,9 +23,7 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         }
     };
     if let Some(candidate) = automatic.candidate.as_mut() {
-        if candidate.selection != selection {
-            candidate.failed = true;
-        }
+        candidate.reconcile_selection(selection);
         return Ok(false);
     }
 
@@ -128,7 +126,12 @@ fn recover_automatic_paid_exit_session(
             .then_some((
                 session.updated_at_unix,
                 session.session.session_id.clone(),
-                session.session.payment.cashu_spilman_payment.is_some(),
+                session
+                    .session
+                    .payment
+                    .cashu_spilman_payment
+                    .as_ref()
+                    .is_some_and(CashuSpilmanPayment::has_funding),
             ))
         })
         .max_by_key(|candidate| candidate.0)

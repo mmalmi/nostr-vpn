@@ -340,6 +340,7 @@ required_steps=(
   run_macos_daemon_idle_cpu_gate
   run_mobile_idle_cpu_gates
   run_mobile_wireguard_exit_gates
+  verify_paid_exit_seller_ui_gates
   run_android_legacy_replacement_gate
   run_mobile_underlay_change_gates
   run_mobile_join_e2e_gate
@@ -369,10 +370,15 @@ done
 docker_functional_body="$(sed -n '/^run_docker_isolated_functional_gates() {$/,/^}$/p' "$release_gate")"
 for contract in \
   './scripts/e2e-paid-exit-docker.sh' \
+  './scripts/e2e-paid-exit-automatic-docker.sh' \
   'NVPN_RELEASE_GATE_PAID_EXIT_IMAGE' \
+  'NVPN_RELEASE_GATE_PAID_EXIT_AUTO_IMAGE' \
   'NVPN_RELEASE_GATE_PAID_EXIT_PROJECT_NAME' \
+  'NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PROJECT_NAME' \
   'NVPN_RELEASE_GATE_PAID_EXIT_PUBLIC_SUBNET' \
-  'NVPN_RELEASE_GATE_PAID_EXIT_PRIVATE_SUBNET'; do
+  'NVPN_RELEASE_GATE_PAID_EXIT_PRIVATE_SUBNET' \
+  'NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PUBLIC_SUBNET' \
+  'NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PRIVATE_SUBNET'; do
   grep -Fq "$contract" <<<"$docker_functional_body" \
     || fail "isolated Docker gates omit paid-exit contract: $contract"
 done

@@ -431,6 +431,130 @@ def create_case(args: argparse.Namespace) -> None:
     write_json(pathlib.Path(args.output), output)
 
 
+def create_seller(args: argparse.Namespace) -> None:
+    apply_path = pathlib.Path(args.apply_observation)
+    readback_path = pathlib.Path(args.readback_observation)
+    apply = load_json(apply_path)
+    readback = load_json(readback_path)
+    expected_controls = sorted(
+        [
+            "paid-exit-seller-enabled",
+            "paid-exit-price-msat-per-gb",
+            "paid-exit-country-code",
+            "paid-exit-accepted-mints",
+            "paid-exit-seller-save",
+        ]
+    )
+    expected_values = {
+        "enabled": True,
+        "priceMsatPerGb": 1_000_000,
+        "countryCode": "FI",
+        "acceptedMints": ["http://cashu-mint:3338"],
+    }
+    for value, phase in ((apply, "apply"), (readback, "readback")):
+        for name, expected in (
+            ("receiptSchema", 1),
+            ("phase", phase),
+            ("case", "paid-exit-seller"),
+            ("processName", "Nostr VPN"),
+            ("publicUiOnly", True),
+            ("privateStateRead", False),
+            ("savedViaShippedUi", phase == "apply"),
+            ("enabledViaShippedUi", phase == "apply"),
+            ("networkCreatedViaShippedUi", False),
+            ("visibleControlIdentifiers", expected_controls),
+            ("values", expected_values),
+        ):
+            require(value, name, expected)
+        if not isinstance(value.get("pid"), int) or value["pid"] <= 0:
+            fail(f"paid-exit seller {phase} observation has no real app PID")
+    if apply["pid"] == readback["pid"]:
+        fail("paid-exit seller was not read from a relaunched app process")
+    if readback["observedAtUnixMilliseconds"] < apply["observedAtUnixMilliseconds"]:
+        fail("paid-exit seller readback predates its save")
+
+    app_receipt_path = pathlib.Path(args.app_receipt)
+    driver_receipt_path = pathlib.Path(args.driver_receipt)
+    import_path = pathlib.Path(args.import_verification)
+    driver_verification_path = pathlib.Path(args.driver_verification)
+    app_receipt = load_json(app_receipt_path)
+    driver_receipt = load_json(driver_receipt_path)
+    imported = load_json(import_path)
+    driver_verified = load_json(driver_verification_path)
+    app_receipt_sha = sha256_file(app_receipt_path)
+    driver_receipt_sha = sha256_file(driver_receipt_path)
+    for name, expected in (
+        ("receiptSchema", 1),
+        ("remoteImportVerified", True),
+        ("artifactReceiptSha256", app_receipt_sha),
+        ("appGitSha", app_receipt["appGitSha"]),
+        ("appGitTree", app_receipt["appGitTree"]),
+    ):
+        require(imported, name, expected)
+    for name, expected in (
+        ("receiptSchema", 1),
+        ("remoteDriverVerified", True),
+        ("driverReceiptSha256", driver_receipt_sha),
+        ("appArtifactReceiptSha256", app_receipt_sha),
+        ("appGitSha", app_receipt["appGitSha"]),
+        ("appGitTree", app_receipt["appGitTree"]),
+    ):
+        require(driver_verified, name, expected)
+    for name in (
+        "appExecutableSha256",
+        "appBundleTreeSha256",
+        "appGitSha",
+        "appGitTree",
+        "fipsGitSha",
+        "fipsGitTree",
+        "fipsCoreVersion",
+    ):
+        require(driver_receipt, name, app_receipt[name])
+
+    output = {
+        "receiptSchema": 1,
+        "platform": "macos",
+        "case": "paid-exit-seller",
+        "evidenceSource": "shipped-ui-restart-readback",
+        "releaseBlackbox": True,
+        "savedViaShippedUi": True,
+        "enabledViaShippedUi": True,
+        "uiRestartReadback": True,
+        "publicUiOnly": True,
+        "privateStateRead": False,
+        "privateAppStateRead": False,
+        "appLaunchArgumentsOrEnvironment": False,
+        "canonicalProfile": True,
+        "paidExitEnabled": True,
+        "paidExitPriceMsatPerGb": 1_000_000,
+        "paidExitCountryCode": "FI",
+        "paidExitAcceptedMints": ["http://cashu-mint:3338"],
+        "appGitSha": app_receipt["appGitSha"],
+        "appGitTree": app_receipt["appGitTree"],
+        "fipsGitSha": app_receipt["fipsGitSha"],
+        "fipsGitTree": app_receipt["fipsGitTree"],
+        "fipsCoreVersion": app_receipt["fipsCoreVersion"],
+        "appExecutableSha256": app_receipt["appExecutableSha256"],
+        "cliExecutableSha256": app_receipt["cliExecutableSha256"],
+        "appBundleTreeSha256": app_receipt["appBundleTreeSha256"],
+        "appArtifactReceiptSha256": app_receipt_sha,
+        "remoteImportVerificationSha256": sha256_file(import_path),
+        "driverExecutableSha256": driver_receipt["driverExecutableSha256"],
+        "driverSourceSha256": driver_receipt["driverSourceSha256"],
+        "driverReceiptSha256": driver_receipt_sha,
+        "remoteDriverVerificationSha256": sha256_file(driver_verification_path),
+        "applyObservationSha256": sha256_file(apply_path),
+        "readbackObservationSha256": sha256_file(readback_path),
+        "applyPid": apply["pid"],
+        "readbackPid": readback["pid"],
+        "relaunchPidChanged": True,
+        "builtOnHost": True,
+        "builtOnTestVm": False,
+        "companySigningVerified": True,
+    }
+    write_json(pathlib.Path(args.output), output)
+
+
 def create_summary(args: argparse.Namespace) -> None:
     case_dir = pathlib.Path(args.case_dir)
     app_receipt_path = pathlib.Path(args.app_receipt)
@@ -568,6 +692,17 @@ def parser() -> argparse.ArgumentParser:
         "output",
     ):
         case.add_argument(f"--{name.replace('_', '-')}", required=True)
+    seller = commands.add_parser("create-seller")
+    for name in (
+        "apply_observation",
+        "readback_observation",
+        "app_receipt",
+        "driver_receipt",
+        "import_verification",
+        "driver_verification",
+        "output",
+    ):
+        seller.add_argument(f"--{name.replace('_', '-')}", required=True)
     summary = commands.add_parser("create-summary")
     for name in (
         "case_dir",
@@ -591,6 +726,8 @@ def main() -> int:
             validate_driver(args)
         elif args.command == "create-case":
             create_case(args)
+        elif args.command == "create-seller":
+            create_seller(args)
         else:
             create_summary(args)
     except (

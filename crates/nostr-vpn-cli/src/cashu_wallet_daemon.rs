@@ -344,7 +344,12 @@ fn legacy_route_open_recovery_requests(
         .sessions
         .iter()
         .filter_map(|(session_id, session)| {
-            if session.session.payment.cashu_spilman_payment.is_some()
+            if session
+                .session
+                .payment
+                .cashu_spilman_payment
+                .as_ref()
+                .is_some_and(cashu_service::CashuSpilmanPayment::has_funding)
                 || session.session.payment.cashu_token_lease.is_some()
             {
                 return None;
@@ -917,6 +922,39 @@ mod tests {
         let store = recoverable_unfunded_route_store(1_500);
 
         assert!(legacy_route_open_recovery_requests(&store, 2_000).is_empty());
+    }
+
+    #[test]
+    fn startup_recovery_retries_signature_only_channel_state() {
+        let mut store = recoverable_unfunded_route_store(10_000);
+        let payment = cashu_service::CashuSpilmanPayment {
+            channel_id: "route-channel".to_string(),
+            balance: 1,
+            signature: "signed-update".to_string(),
+            params: None,
+            funding_proofs: None,
+        };
+        let mut session_payment = store.sessions["session-1"].session.payment.clone();
+        session_payment.paid_msat = 1_000;
+        session_payment.cashu_spilman_payment = Some(payment.clone());
+        store
+            .sessions
+            .get_mut("session-1")
+            .expect("buyer session")
+            .session
+            .payment = session_payment;
+        let channel = store
+            .channels
+            .get_mut("route-channel")
+            .expect("buyer channel");
+        channel.payment.paid_msat = 1_000;
+        channel.payment.cashu_spilman_payment = Some(payment);
+
+        let requests = legacy_route_open_recovery_requests(&store, 2_000);
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].0, "session-1");
+        assert_eq!(requests[0].1.opening_paid_msat, 1_000);
     }
 
     #[test]

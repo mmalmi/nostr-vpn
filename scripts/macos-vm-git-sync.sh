@@ -45,29 +45,31 @@ sync_repo() {
     return 0
   fi
   ssh -o BatchMode=yes "$SSH_HOST" \
-    "mkdir -p '$(dirname "$guest_bare")'; test -d '$guest_bare' || git init --bare '$guest_bare'"
+    "mkdir -p '$(dirname "$guest_bare")'; test -d '$guest_bare' || /usr/bin/git init --bare '$guest_bare'"
   if [[ -z "$(git -C "$local_repo" status --porcelain)" ]]; then
     sync_commit="$(git -C "$local_repo" rev-parse HEAD)"
   else
     sync_commit="$(make_sync_commit "$local_repo")"
   fi
   GIT_SSH_COMMAND="ssh -o BatchMode=yes" \
-    git -C "$local_repo" push --force "$SSH_HOST:$guest_bare" "$sync_commit:$REMOTE_REF"
+    git -C "$local_repo" push --force \
+      --receive-pack=/usr/bin/git-receive-pack \
+      "$SSH_HOST:$guest_bare" "$sync_commit:$REMOTE_REF"
   ssh -o BatchMode=yes "$SSH_HOST" "
     set -e
     if [ ! -d '$guest_repo/.git' ]; then
       rm -rf '$guest_repo'
-      git clone '$guest_bare' '$guest_repo'
+      /usr/bin/git clone '$guest_bare' '$guest_repo'
     fi
     # The VM checkout is disposable release-gate scratch space. Interrupted
     # builds and UI gates can leave tracked files modified, so discard those
     # before switching it to the exact candidate tree.
-    git -C '$guest_repo' reset --hard HEAD
-    git -C '$guest_repo' remote set-url origin '$guest_bare'
-    git -C '$guest_repo' fetch origin '$REMOTE_REF'
-    git -C '$guest_repo' checkout -B '${REMOTE_REF#refs/heads/}' FETCH_HEAD
-    git -C '$guest_repo' reset --hard FETCH_HEAD
-    git -C '$guest_repo' clean -ffd -e target/ -e dist/ -e artifacts/ -e macos/.build/
+    /usr/bin/git -C '$guest_repo' reset --hard HEAD
+    /usr/bin/git -C '$guest_repo' remote set-url origin '$guest_bare'
+    /usr/bin/git -C '$guest_repo' fetch origin '$REMOTE_REF'
+    /usr/bin/git -C '$guest_repo' checkout -B '${REMOTE_REF#refs/heads/}' FETCH_HEAD
+    /usr/bin/git -C '$guest_repo' reset --hard FETCH_HEAD
+    /usr/bin/git -C '$guest_repo' clean -ffd -e target/ -e dist/ -e artifacts/ -e macos/.build/
   "
   echo "MACOS_VM_GIT_SYNC_OK $label"
 }

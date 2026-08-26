@@ -143,6 +143,7 @@ extension RootView {
                 } label: {
                     Label("Sell Internet · Experimental", systemImage: "bitcoinsign.circle.fill")
                 }
+                .accessibilityIdentifier("paid-exit-seller-open")
                 .buttonStyle(.bordered)
             }
         }

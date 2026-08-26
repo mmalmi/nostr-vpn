@@ -273,12 +273,17 @@ public sealed partial class AppViewModel
             "Saving listing");
     }
 
-    public Task SavePaidExitPriceAsync()
+    public Task SavePaidExitSettingsAsync()
     {
         return ulong.TryParse(PaidExitPriceMsatPerGb.Trim(), out var price)
             ? DispatchAsync(
-                NativeActions.UpdateSettings(new SettingsPatch { PaidExitPriceMsatPerGb = price }),
-                "Saving price")
+                NativeActions.UpdateSettings(new SettingsPatch
+                {
+                    PaidExitPriceMsatPerGb = price,
+                    PaidExitCountryCode = PaidExitCountryCode,
+                    PaidExitAcceptedMints = PaidExitAcceptedMints,
+                }),
+                "Saving seller settings")
              : Task.CompletedTask;
     }
 }

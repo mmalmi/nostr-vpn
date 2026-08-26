@@ -217,6 +217,42 @@ fn automatic_failed_offer_is_retried_after_cooldown() {
 }
 
 #[test]
+fn automatic_candidate_keeps_same_offer_when_funded_capacity_becomes_authoritative() {
+    let seller = Keys::generate();
+    let mut candidate = test_candidate(&seller.public_key().to_hex());
+    let funded = serde_json::from_value(json!({
+        "offer_key": "offer",
+        "mint_url": "https://mint.example",
+        "channel_capacity_sat": 7,
+    }))
+    .expect("funded selection");
+
+    candidate.reconcile_selection(funded);
+
+    assert!(!candidate.failed);
+    assert_eq!(candidate.selection.channel_capacity_sat, 7);
+
+    let replacement = serde_json::from_value(json!({
+        "offer_key": "replacement",
+        "mint_url": "https://mint.example",
+        "channel_capacity_sat": 7,
+    }))
+    .expect("replacement selection");
+    candidate.reconcile_selection(replacement);
+    assert!(candidate.failed);
+
+    let mut candidate = test_candidate(&seller.public_key().to_hex());
+    let changed_mint = serde_json::from_value(json!({
+        "offer_key": "offer",
+        "mint_url": "https://other-mint.example",
+        "channel_capacity_sat": 7,
+    }))
+    .expect("changed mint selection");
+    candidate.reconcile_selection(changed_mint);
+    assert!(candidate.failed);
+}
+
+#[test]
 fn automatic_probe_health_does_not_require_a_vendor_bandwidth_sample() {
     let measurement = PaidRouteProbeMeasurement {
         realized_exit_ip: Some("203.0.113.10".to_string()),

@@ -163,12 +163,11 @@ pub(super) async fn refresh_active_keyset_id(wallet: &cdk::Wallet) -> Result<Id>
     wallet
         .refresh_keysets()
         .await
-        .context("Failed to refresh Cashu mint keysets")?;
-    Ok(wallet
-        .get_active_keyset()
-        .await
-        .context("Failed to load the refreshed active Cashu keyset")?
-        .id)
+        .context("Failed to refresh Cashu mint keysets")?
+        .into_iter()
+        .min_by_key(|keyset| keyset.input_fee_ppk)
+        .map(|keyset| keyset.id)
+        .context("Refreshed Cashu mint has no active keyset for the wallet unit")
 }
 
 pub(super) fn proofs_require_keyset_consolidation(

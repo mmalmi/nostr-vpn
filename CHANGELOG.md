@@ -2,10 +2,41 @@
 
 All notable changes to this project are documented in this file.
 
-## Unreleased
+## 4.1.9 - 2026-08-27
+
+### Release notes
+
+Cashu paid exits now connect, recover, and bill reliably with either manual or
+automatic selection.
+
+- Added complete Selling Internet settings to Android and strengthened the
+  seller settings on every supported desktop app.
+- Improved paid-route activation, health checks, DNS safety, and recovery from
+  interrupted or rotated Cashu channels.
+
+### Added
+
+- Add exact shipped-GUI release checks for saving, enabling, and restoring
+  paid-exit seller price, country, and accepted mints on Android, Linux, macOS,
+  and Windows.
+- Add a production-path automatic paid-exit E2E alongside the manual E2E,
+  proving signed offer discovery, tunnel-bound health, automatic Cashu
+  funding, routed traffic, and streaming seller payments.
 
 ### Fixed
 
+- Fund paid exits before relying on billable routing, bind automatic health
+  checks to the paid tunnel, bound failed connection and payment retries, and
+  preserve the selected Internet mode during cancellation and fallback.
+- Refresh and select Cashu keysets for the wallet's exact currency unit before
+  channel funding, so mints exposing several active units cannot reject an
+  otherwise valid paid-exit purchase.
+- Recover delayed, cancelled, and orphaned Spilman channels and refund proofs
+  across daemon restarts and mint key rotation without losing funded value.
+- Keep Cashu control traffic outside the macOS paid tunnel, preserve MagicDNS
+  after paid-exit fallback, and fail closed when safe exit DNS is unavailable.
+- Keep the daemon responsive while its owned Cashu wallet repairs or recovers,
+  and retry funded paid routes without activating an unverified exit.
 - Grant StartOS packages virtual networking access for `/dev/net/tun` and
   `CAP_NET_ADMIN`, validate the permission in signed release artifacts, and
   restore StartOS/Umbrel image builds after vendoring `cashu-service`.

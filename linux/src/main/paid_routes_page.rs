@@ -517,6 +517,9 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
     spacer.set_hexpand(true);
     header.append(&spacer);
     let enabled = gtk::Switch::builder().active(seller.enabled).build();
+    enabled.update_property(&[gtk::accessible::Property::Label(
+        "nvpn-paid-exit-seller-enabled",
+    )]);
     enabled.set_sensitive(seller.supported);
     {
         let app = app.clone();
@@ -561,9 +564,15 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
         "0",
         &app.borrow().drafts.paid_exit_price_msat_per_gb,
     );
+    price.update_property(&[gtk::accessible::Property::Label(
+        "nvpn-paid-exit-price-msat-per-gb",
+    )]);
     price_row.append(&price);
     price_row.append(&gtk::Label::new(Some("Country")));
     let country = entry("2-letter code", &app.borrow().drafts.paid_exit_country_code);
+    country.update_property(&[gtk::accessible::Property::Label(
+        "nvpn-paid-exit-country-code",
+    )]);
     country.set_hexpand(false);
     country.set_width_chars(4);
     price_row.append(&country);
@@ -576,12 +585,18 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
         "Mint URLs, comma-separated",
         &app.borrow().drafts.paid_exit_accepted_mints,
     );
+    mints.update_property(&[gtk::accessible::Property::Label(
+        "nvpn-paid-exit-accepted-mints",
+    )]);
     mints_row.append(&mints);
     seller_card.append(&mints_row);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_valign(gtk::Align::Center);
     let save = icon_text_button("Save", "document-save-symbolic");
+    save.update_property(&[gtk::accessible::Property::Label(
+        "nvpn-paid-exit-seller-save",
+    )]);
     let price_error = gtk::Label::new(Some(PAID_EXIT_PRICE_ERROR));
     price_error.add_css_class("caption");
     price_error.add_css_class("warning");

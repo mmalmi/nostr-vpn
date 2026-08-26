@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("Reset", "Bootstrap", "CreateAdmin", "AdminAdd", "ManualJoin", "DnsPolicy", "Verify")]
+  [ValidateSet("Reset", "Bootstrap", "CreateAdmin", "AdminAdd", "ManualJoin", "DnsPolicy", "PaidExitSeller", "Verify")]
   [string]$Mode,
   [Parameter(Mandatory = $true)]
   [string]$AppExe,
@@ -20,6 +20,9 @@ param(
   [string]$DnsCustomUrl = "",
   [string]$DnsBootstrapIps = "",
   [string]$DnsThroughServers = "",
+  [string]$SellerPrice = "",
+  [string]$SellerCountry = "",
+  [string]$SellerMint = "",
   [string]$AppGitSha = "",
   [string]$AppGitTree = "",
   [int]$UiTimeoutSeconds = 15,
@@ -96,14 +99,14 @@ function Start-App {
     throw "Windows Release app is missing: $AppExe"
   }
   if (
-    $Mode -ne "DnsPolicy" -and
+    $Mode -notin @("DnsPolicy", "PaidExitSeller") -and
     ($env:NVPN_APP_DATA_DIR -or $env:NVPN_CLI_PATH)
   ) {
     throw "public-UI gate refuses NVPN_APP_DATA_DIR or NVPN_CLI_PATH overrides"
   }
-  if ($Mode -eq "DnsPolicy") {
+  if ($Mode -in @("DnsPolicy", "PaidExitSeller")) {
     if ([string]::IsNullOrWhiteSpace($DataDir)) {
-      throw "DnsPolicy requires an isolated production data directory"
+      throw "$Mode requires an isolated production data directory"
     }
     $env:NVPN_APP_DATA_DIR = $DataDir
     Remove-Item Env:NVPN_CLI_PATH -ErrorAction SilentlyContinue
@@ -322,6 +325,38 @@ function Read-ControlValue {
     [System.Windows.Automation.ValuePattern]::Pattern
   )
   return $Pattern.Current.Value
+}
+
+function Read-ToggleValue {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$AutomationId
+  )
+  $Element = Find-Control $AutomationId
+  $Pattern = $Element.GetCurrentPattern(
+    [System.Windows.Automation.TogglePattern]::Pattern
+  )
+  return $Pattern.Current.ToggleState -eq [System.Windows.Automation.ToggleState]::On
+}
+
+function Set-ToggleValue {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$AutomationId,
+    [Parameter(Mandatory = $true)]
+    [bool]$Value
+  )
+  if ((Read-ToggleValue $AutomationId) -ne $Value) {
+    $Element = Find-Control $AutomationId
+    $Pattern = $Element.GetCurrentPattern(
+      [System.Windows.Automation.TogglePattern]::Pattern
+    )
+    $Pattern.Toggle()
+    Start-Sleep -Milliseconds 750
+  }
+  if ((Read-ToggleValue $AutomationId) -ne $Value) {
+    throw "Windows UI Automation did not retain $AutomationId toggle"
+  }
 }
 
 function ConvertTo-CanonicalIpCsv {
@@ -612,6 +647,69 @@ try {
       ).Hash.ToLowerInvariant()
       $Evidence.productionDataDirOverride = $true
     }
+    "PaidExitSeller" {
+      if (
+        !(Test-Path -LiteralPath $CliExe -PathType Leaf) -or
+        $SellerPrice -notmatch '^\d+$' -or
+        $SellerCountry -notmatch '^[A-Z]{2}$' -or
+        $SellerMint -notmatch '^https?://' -or
+        $AppGitSha -notmatch '^[0-9a-f]{40}$' -or
+        $AppGitTree -notmatch '^[0-9a-f]{40}$'
+      ) {
+        throw "PaidExitSeller exact artifact identity or seller settings are incomplete"
+      }
+      Invoke-Control "ManualJoinCreateNetworkChoice"
+      Set-ControlValue "ManualJoinCreateNetworkName" "Release Seller UI"
+      Invoke-Control "ManualJoinCreateNetworkSubmit"
+      $null = Find-Control "ManualJoinAdminOpen"
+      Invoke-Control "ExitDnsInternetNavigation"
+      Invoke-Control "PaidExitSellerOpen"
+      Set-ControlValue "PaidExitPriceMsatPerGb" $SellerPrice
+      Set-ControlValue "PaidExitCountryCode" $SellerCountry
+      Set-ControlValue "PaidExitAcceptedMints" $SellerMint
+      Invoke-Control "PaidExitSellerSave"
+      Start-Sleep -Milliseconds 750
+      Set-ToggleValue "PaidExitSellerEnabled" $true
+      Save-WindowScreenshot "paid-exit-seller-saved"
+      Stop-App
+      Start-App
+      Invoke-Control "ExitDnsInternetNavigation"
+      Invoke-Control "PaidExitSellerOpen"
+      $ObservedPrice = Read-ControlValue "PaidExitPriceMsatPerGb"
+      $ObservedCountry = Read-ControlValue "PaidExitCountryCode"
+      $ObservedMint = Read-ControlValue "PaidExitAcceptedMints"
+      $ObservedEnabled = Read-ToggleValue "PaidExitSellerEnabled"
+      if (
+        $ObservedPrice -ne $SellerPrice -or
+        $ObservedCountry -ne $SellerCountry -or
+        $ObservedMint -ne $SellerMint -or
+        !$ObservedEnabled
+      ) {
+        throw "Windows relaunch changed paid-exit seller settings"
+      }
+      Save-WindowScreenshot "paid-exit-seller-readback"
+      $Evidence.receiptSchema = 1
+      $Evidence.platform = "windows"
+      $Evidence.case = "paid-exit-seller"
+      $Evidence.evidenceSource = "shipped-ui-restart-readback"
+      $Evidence.savedViaShippedUi = $true
+      $Evidence.enabledViaShippedUi = $true
+      $Evidence.uiRestartReadback = $true
+      $Evidence.releaseBlackbox = $true
+      $Evidence.paidExitEnabled = $ObservedEnabled
+      $Evidence.paidExitPriceMsatPerGb = [UInt64]$ObservedPrice
+      $Evidence.paidExitCountryCode = $ObservedCountry
+      $Evidence.paidExitAcceptedMints = @($ObservedMint)
+      $Evidence.appGitSha = $AppGitSha
+      $Evidence.appGitTree = $AppGitTree
+      $Evidence.appExecutableSha256 = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath $AppExe
+      ).Hash.ToLowerInvariant()
+      $Evidence.cliExecutableSha256 = (
+        Get-FileHash -Algorithm SHA256 -LiteralPath $CliExe
+      ).Hash.ToLowerInvariant()
+      $Evidence.productionDataDirOverride = $true
+    }
     "Verify" {
       Assert-ValidNpub $ParticipantNpub "expected accepted participant"
       $null = Find-Control `
@@ -626,7 +724,7 @@ try {
   Write-Evidence
 } finally {
   Stop-App
-  if ($Mode -eq "DnsPolicy") {
+  if ($Mode -in @("DnsPolicy", "PaidExitSeller")) {
     Remove-Item Env:NVPN_APP_DATA_DIR -ErrorAction SilentlyContinue
     Remove-Item Env:NVPN_CLI_PATH -ErrorAction SilentlyContinue
   }
