@@ -213,8 +213,22 @@ impl FipsPrivateTunnelRuntime {
         #[cfg(feature = "paid-exit")]
         self.mesh
             .set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
+        let endpoint_peers_to_refresh = endpoint_peers_with_changed_addresses(
+            &self.config.endpoint_peers,
+            &config.endpoint_peers,
+        );
         if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
             eprintln!("fips: update_peers during apply_config failed: {error}");
+        }
+        if !endpoint_peers_to_refresh.is_empty() {
+            match self.mesh.refresh_peer_paths(&endpoint_peers_to_refresh).await {
+                Ok(refreshed) => eprintln!(
+                    "fips: refreshed {refreshed} peer path(s) after endpoint address update"
+                ),
+                Err(error) => {
+                    eprintln!("fips: peer path refresh after endpoint address update failed: {error}");
+                }
+            }
         }
         if self.config.nostr_relays != config.nostr_relays {
             self.mesh.update_relays(&config.nostr_relays).await?;
@@ -526,6 +540,24 @@ impl FipsPrivateTunnelRuntime {
             config.interface_mtu(),
         )
         .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
+        // macOS may rewrite the route table while split defaults are added.
+        // Re-read and repair the seller/relay underlay escape routes after
+        // that mutation so a paid tunnel can never route its own transport
+        // back into itself.
+        if active_ipv4_exit
+            && has_peer_endpoint_hosts
+            && let Err(error) = self.reconcile_macos_endpoint_bypass_for_config(config).await
+        {
+            let rollback = crate::delete_macos_default_route_for_interface(&self.iface);
+            return match rollback {
+                Ok(()) => Err(error.context(
+                    "reassert macOS endpoint bypass after default route update; paid default route rolled back",
+                )),
+                Err(rollback_error) => Err(error.context(format!(
+                    "reassert macOS endpoint bypass after default route update; paid default route rollback failed: {rollback_error:#}"
+                ))),
+            };
+        }
         Ok(())
     }
 
@@ -541,10 +573,24 @@ impl FipsPrivateTunnelRuntime {
         // Peer events are frequent and normally leave both bypasses and the
         // physical underlay unchanged. Only a real link/config transition
         // invalidates the populated ownership cache.
+        let current_routes_present = self
+            .endpoint_bypass_underlay
+            .as_ref()
+            .is_some_and(|underlay| {
+                crate::macos_network::macos_managed_routes_present_in_system(
+                    &self.endpoint_bypass_routes,
+                    underlay,
+                )
+                .unwrap_or_else(|error| {
+                    eprintln!("fips: failed to verify cached macOS endpoint bypasses: {error}");
+                    false
+                })
+            });
         if !macos_endpoint_bypass_underlay_refresh_required(
             &self.endpoint_bypass_routes,
             self.endpoint_bypass_underlay.as_ref(),
             &routes,
+            current_routes_present,
         ) && !force_underlay_refresh
         {
             return Ok((!hosts.is_empty(), self.endpoint_bypass_underlay.clone()));
@@ -563,6 +609,7 @@ impl FipsPrivateTunnelRuntime {
         self.reconcile_macos_endpoint_bypass_routes(
             underlay.as_ref().map_or(&[], |_| routes.as_slice()),
             underlay.as_ref(),
+            !current_routes_present,
         )?;
         self.macos_underlay_refresh_pending = false;
         Ok((!hosts.is_empty(), underlay))
@@ -573,6 +620,7 @@ impl FipsPrivateTunnelRuntime {
         &mut self,
         routes: &[String],
         underlay: Option<&crate::MacosRouteSpec>,
+        force_reapply: bool,
     ) -> Result<()> {
         // Reassert the currently owned identity before removing anything.
         // This also makes a previously successful runtime crash-repairable
@@ -632,6 +680,7 @@ impl FipsPrivateTunnelRuntime {
             &mut self.endpoint_bypass_underlay,
             routes,
             underlay,
+            force_reapply,
             |route, gateway| crate::apply_macos_route_spec(route, gateway, interface),
         ) {
             failures.push(format!("install endpoint bypass route {route}: {error:#}"));
@@ -642,7 +691,7 @@ impl FipsPrivateTunnelRuntime {
     #[cfg(target_os = "macos")]
     fn cleanup_macos_network_state(&mut self) -> Result<()> {
         let mut failures = Vec::new();
-        if let Err(error) = self.reconcile_macos_endpoint_bypass_routes(&[], None) {
+        if let Err(error) = self.reconcile_macos_endpoint_bypass_routes(&[], None, false) {
             failures.push(error.to_string());
         }
         if let Err(error) = crate::delete_macos_default_route_for_interface(&self.iface)

@@ -82,17 +82,15 @@ destination: default
 }
 
 #[test]
-fn macos_gateway_route_args_scope_host_routes_to_the_recorded_interface() {
+fn macos_endpoint_bypass_route_args_are_global_host_routes() {
     assert_eq!(
-        macos_gateway_route_args("add", "65.109.48.91/32", "192.168.64.1", Some("en0"),),
+        macos_global_gateway_route_args("add", "65.109.48.91/32", "192.168.64.1"),
         vec![
             "-n".to_string(),
             "add".to_string(),
             "-host".to_string(),
             "65.109.48.91".to_string(),
             "192.168.64.1".to_string(),
-            "-ifscope".to_string(),
-            "en0".to_string(),
         ]
     );
     assert_eq!(
@@ -190,6 +188,52 @@ Destination        Gateway            Flags               Netif Expire\n\
     assert!(
         !macos_managed_route_present(routes, "65.109.48.91/32", None, None),
         "cleanup without an owner must fail closed"
+    );
+}
+
+#[test]
+fn managed_route_set_detects_a_bypass_removed_during_default_route_update() {
+    let owner = MacosRouteSpec {
+        gateway: Some("192.168.64.1".to_string()),
+        interface: "en0".to_string(),
+    };
+    let desired = vec![
+        "65.109.48.91/32".to_string(),
+        "65.109.48.92/32".to_string(),
+    ];
+    let complete = "\
+Destination        Gateway            Flags               Netif Expire\n\
+65.109.48.91       192.168.64.1       UGHS                  en0\n\
+65.109.48.92       192.168.64.1       UGHS                  en0\n\
+0/1                utun6              USc                 utun6\n";
+    let missing_one = "\
+Destination        Gateway            Flags               Netif Expire\n\
+65.109.48.91       192.168.64.1       UGHS                  en0\n\
+0/1                utun6              USc                 utun6\n";
+
+    assert!(macos_global_managed_routes_present(
+        complete, &desired, &owner
+    ));
+    assert!(!macos_global_managed_routes_present(
+        missing_one,
+        &desired,
+        &owner,
+    ));
+
+    let scoped = "\
+Destination        Gateway            Flags               Netif Expire\n\
+65.109.48.91       192.168.64.1       UGHSI                 en0\n\
+65.109.48.92       192.168.64.1       UGHSI                 en0\n\
+0/1                utun6              USc                 utun6\n";
+    assert!(macos_managed_route_present(
+        scoped,
+        "65.109.48.91/32",
+        owner.gateway.as_deref(),
+        Some(owner.interface.as_str()),
+    ));
+    assert!(
+        !macos_global_managed_routes_present(scoped, &desired, &owner),
+        "interface-scoped bypasses do not protect global transport sockets"
     );
 }
 

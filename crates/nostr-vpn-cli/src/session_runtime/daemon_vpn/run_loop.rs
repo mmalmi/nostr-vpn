@@ -647,15 +647,7 @@ loop {
                             )
                             .await
                             {
-                                Ok(changed) => {
-                                    manual_paid_exit_route_changed |= changed;
-                                    if changed {
-                                        refresh_or_start_split_magic_dns(
-                                            &mut magic_dns_runtime,
-                                            &app,
-                                        );
-                                    }
-                                }
+                                Ok(changed) => manual_paid_exit_route_changed |= changed,
                                 Err(error) => eprintln!(
                                     "paid-exit: manual buyer health update failed: {error}"
                                 ),
@@ -705,10 +697,11 @@ loop {
                 }
             }
                 #[cfg(feature = "paid-exit")]
-                if (automatic_paid_exit_route_changed
-                    || manual_paid_exit_route_changed
-                    || paid_exit_payment_outbox_changed)
-                    && let Err(error) = sync_fips_private_runtime(
+                {
+                    let paid_exit_route_changed = automatic_paid_exit_route_changed
+                        || manual_paid_exit_route_changed;
+                    if paid_exit_route_changed || paid_exit_payment_outbox_changed {
+                        match sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {
                             app: &app,
@@ -725,8 +718,23 @@ loop {
                         },
                     )
                     .await
-                {
-                    vpn_status = format!("paid-exit runtime reconciliation failed ({error})");
+                        {
+                            Ok(()) => {
+                                // The FIPS reconciliation owns secure exit DNS teardown.
+                                // Start split MagicDNS only after that port has been released.
+                                if paid_exit_route_changed {
+                                    refresh_or_start_split_magic_dns(
+                                        &mut magic_dns_runtime,
+                                        &app,
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                vpn_status =
+                                    format!("paid-exit runtime reconciliation failed ({error})");
+                            }
+                        }
+                    }
                 }
             }
             if let Some(request) = pending_control_request {

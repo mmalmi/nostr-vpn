@@ -78,6 +78,21 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) discovery_fallback_transit: bool,
 }
 
+fn endpoint_peers_with_changed_addresses(
+    previous: &[FipsEndpointPeerTransportConfig],
+    next: &[FipsEndpointPeerTransportConfig],
+) -> Vec<FipsEndpointPeerTransportConfig> {
+    next.iter()
+        .filter(|peer| {
+            previous
+                .iter()
+                .find(|candidate| candidate.npub == peer.npub)
+                .is_none_or(|candidate| candidate.addresses != peer.addresses)
+        })
+        .cloned()
+        .collect()
+}
+
 pub(crate) fn prioritize_fips_control_recipient(
     peers: Vec<FipsEndpointPeerTransportConfig>,
     recipient_pubkey: &str,

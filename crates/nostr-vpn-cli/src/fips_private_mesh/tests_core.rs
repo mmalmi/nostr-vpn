@@ -24,6 +24,7 @@
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         control_frame_destination_peer, control_frame_source_pubkey, decode_endpoint_control_frame,
         drain_event_batch,
+        endpoint_peers_with_changed_addresses,
         endpoint_identity_for_send,
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints_with_policy,
         filter_static_tunnel_endpoints_with_policy_and_route_check,
@@ -195,15 +196,52 @@
             &routes,
             Some(&underlay),
             &routes,
+            true,
         ));
         assert!(macos_endpoint_bypass_underlay_refresh_required(
-            &routes, None, &routes,
+            &routes, None, &routes, true,
         ));
         assert!(macos_endpoint_bypass_underlay_refresh_required(
             &routes,
             Some(&underlay),
             &["198.51.100.9".to_string()],
+            true,
         ));
+        assert!(macos_endpoint_bypass_underlay_refresh_required(
+            &routes,
+            Some(&underlay),
+            &routes,
+            false,
+        ));
+    }
+
+    #[test]
+    fn adding_authenticated_endpoint_address_forces_an_immediate_path_refresh() {
+        let npub = Keys::generate().public_key().to_bech32().unwrap();
+        let previous = vec![FipsEndpointPeerTransportConfig {
+            npub: npub.clone(),
+            addresses: Vec::new(),
+            connect_on_start: true,
+            auto_reconnect: true,
+            discovery_fallback_transit: false,
+        }];
+        let updated = vec![FipsEndpointPeerTransportConfig {
+            npub,
+            addresses: vec![FipsPeerAddressHint {
+                addr: "185.18.221.232:2122".to_string(),
+                seen_at_ms: None,
+                priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+            }],
+            connect_on_start: true,
+            auto_reconnect: true,
+            discovery_fallback_transit: false,
+        }];
+
+        assert_eq!(
+            endpoint_peers_with_changed_addresses(&previous, &updated),
+            updated
+        );
+        assert!(endpoint_peers_with_changed_addresses(&updated, &updated).is_empty());
     }
 
     #[test]

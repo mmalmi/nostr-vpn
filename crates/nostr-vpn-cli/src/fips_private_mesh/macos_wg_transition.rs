@@ -3,8 +3,9 @@ fn macos_endpoint_bypass_underlay_refresh_required(
     current_routes: &[String],
     current_underlay: Option<&crate::MacosRouteSpec>,
     desired_routes: &[String],
+    current_routes_present: bool,
 ) -> bool {
-    current_underlay.is_none() || current_routes != desired_routes
+    current_underlay.is_none() || current_routes != desired_routes || !current_routes_present
 }
 
 #[cfg(target_os = "macos")]

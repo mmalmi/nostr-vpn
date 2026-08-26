@@ -4,6 +4,7 @@ fn apply_macos_endpoint_bypass_route_changes<Apply>(
     current_underlay: &mut Option<crate::MacosRouteSpec>,
     desired_routes: &[String],
     desired_underlay: Option<&crate::MacosRouteSpec>,
+    force_reapply: bool,
     mut apply: Apply,
 ) -> Vec<(String, anyhow::Error)>
 where
@@ -11,7 +12,7 @@ where
 {
     let underlay_changed = current_underlay.as_ref() != desired_underlay;
     let mut failures = Vec::new();
-    if underlay_changed {
+    if underlay_changed || force_reapply {
         current_routes.clear();
     } else {
         current_routes.retain(|route| desired_routes.contains(route));
@@ -19,7 +20,7 @@ where
     if let Some(underlay) = desired_underlay {
         let missing = desired_routes
             .iter()
-            .filter(|route| underlay_changed || !current_routes.contains(*route))
+            .filter(|route| underlay_changed || force_reapply || !current_routes.contains(*route))
             .cloned()
             .collect::<Vec<_>>();
         for route in missing {

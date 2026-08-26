@@ -14,6 +14,7 @@ fn failed_macos_endpoint_bypass_install_is_retried_by_production_reconciler() {
         &mut cached_underlay,
         &desired,
         Some(&underlay),
+        false,
         |_route, _gateway| {
             attempts += 1;
             Err(anyhow::anyhow!("synthetic transient route-add failure"))
@@ -28,6 +29,7 @@ fn failed_macos_endpoint_bypass_install_is_retried_by_production_reconciler() {
             &cached_routes,
             cached_underlay.as_ref(),
             &desired,
+            false,
         )
     );
 
@@ -36,6 +38,7 @@ fn failed_macos_endpoint_bypass_install_is_retried_by_production_reconciler() {
         &mut cached_underlay,
         &desired,
         Some(&underlay),
+        false,
         |_route, _gateway| {
             attempts += 1;
             Ok(())
@@ -49,6 +52,32 @@ fn failed_macos_endpoint_bypass_install_is_retried_by_production_reconciler() {
             &cached_routes,
             cached_underlay.as_ref(),
             &desired,
+            true,
         )
     );
+
+    assert!(
+        super::macos_endpoint_bypass_underlay_refresh_required(
+            &cached_routes,
+            cached_underlay.as_ref(),
+            &desired,
+            false,
+        ),
+        "a matching in-memory cache must not hide a route removed by macOS"
+    );
+
+    let mut reassertions = 0;
+    let failures = super::apply_macos_endpoint_bypass_route_changes(
+        &mut cached_routes,
+        &mut cached_underlay,
+        &desired,
+        Some(&underlay),
+        true,
+        |_route, _gateway| {
+            reassertions += 1;
+            Ok(())
+        },
+    );
+    assert!(failures.is_empty());
+    assert_eq!(reassertions, 1, "missing live route must be reasserted");
 }
