@@ -4,11 +4,12 @@ pub(crate) async fn paid_exit_route_probe_measurement(
     dns_health: &crate::secure_dns_runtime::SecureDnsHealthProbe,
     app: &AppConfig,
     now_unix: u64,
+    bind_interface: &str,
 ) -> Result<PaidRouteProbeMeasurement> {
     dns_health.check_paid_exit().await?;
     let args = paid_exit_health_probe_args();
     let (measurement, _, bandwidth_error) =
-        paid_exit_probe_measurement(&args, app, now_unix).await?;
+        paid_exit_probe_measurement(&args, app, now_unix, Some(bind_interface)).await?;
     if let Some(error) = bandwidth_error {
         eprintln!("paid-exit: automatic bandwidth sample incomplete: {error}");
     }
@@ -76,6 +77,7 @@ pub(crate) async fn update_automatic_paid_exit(
     {
         let probe_app = app.clone();
         let dns_health = runtime.paid_exit_dns_health_probe();
+        let bind_interface = runtime.iface().to_string();
         if let Some(candidate) = automatic.candidate.as_mut() {
             candidate.probe_started_at = Some(now_unix);
             candidate.last_tx_at = None;
@@ -85,7 +87,13 @@ pub(crate) async fn update_automatic_paid_exit(
             generation: automatic.generation,
             task: tokio::spawn(async move {
                 let dns_health = dns_health?;
-                paid_exit_route_probe_measurement(&dns_health, &probe_app, now_unix).await
+                paid_exit_route_probe_measurement(
+                    &dns_health,
+                    &probe_app,
+                    now_unix,
+                    &bind_interface,
+                )
+                .await
             }),
         });
     }
@@ -212,5 +220,56 @@ mod health_probe_tests {
         assert!(args.no_bandwidth);
         assert_eq!(args.bandwidth_bytes, 0);
         assert_eq!(args.samples, 1);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn health_probe_http_client_cannot_fall_back_from_bound_interface() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind loopback test server");
+        let address = listener.local_addr().expect("read test server address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept test request");
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).await.expect("read test request");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+                .await
+                .expect("write test response");
+        });
+
+        #[cfg(target_os = "linux")]
+        let loopback_interface = "lo";
+        #[cfg(target_os = "macos")]
+        let loopback_interface = "lo0";
+        let client = paid_exit_probe_http_client(Duration::from_secs(2), Some(loopback_interface))
+            .expect("build interface-bound client");
+        let response = client
+            .get(format!("http://{address}"))
+            .send()
+            .await
+            .expect("request through loopback interface");
+        assert_eq!(response.text().await.expect("read response"), "ok");
+        server.await.expect("test server task");
+
+        let missing_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind missing-interface test server");
+        let missing_address = missing_listener
+            .local_addr()
+            .expect("read missing-interface server address");
+        let missing_interface =
+            paid_exit_probe_http_client(Duration::from_secs(2), Some("nvpn-missing"))
+                .expect("build missing-interface client");
+        assert!(
+            missing_interface
+                .get(format!("http://{missing_address}"))
+                .send()
+                .await
+                .is_err(),
+            "an unavailable paid tunnel must fail instead of falling back"
+        );
     }
 }

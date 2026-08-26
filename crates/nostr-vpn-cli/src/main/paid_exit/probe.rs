@@ -33,7 +33,7 @@ async fn paid_exit_probe_once(args: PaidExitProbeArgs) -> Result<PaidExitProbeRe
     let app = load_or_default_config(&config_path)?;
     let now_unix = unix_timestamp();
     let (measurement, geoip_error, bandwidth_error) =
-        paid_exit_probe_measurement(&args, &app, now_unix).await?;
+        paid_exit_probe_measurement(&args, &app, now_unix, None).await?;
     let record = paid_exit_record_probe_once(PaidExitRecordProbeArgs {
         config: Some(config_path.clone()),
         session: args.session,
@@ -64,12 +64,10 @@ async fn paid_exit_probe_measurement(
     args: &PaidExitProbeArgs,
     app: &AppConfig,
     now_unix: u64,
+    bind_interface: Option<&str>,
 ) -> Result<(PaidRouteProbeMeasurement, Option<String>, Option<String>)> {
     let timeout = Duration::from_secs(args.timeout_secs.max(1));
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .build()
-        .context("failed to build paid exit probe HTTP client")?;
+    let client = paid_exit_probe_http_client(timeout, bind_interface)?;
     let ip_url = args
         .ip_url
         .as_deref()
@@ -119,6 +117,50 @@ async fn paid_exit_probe_measurement(
         build_paid_route_probe_measurement(samples, observed_country_code, observed_asn, now_unix)?;
     let bandwidth_error = paid_exit_probe_bandwidth(&client, args, &mut measurement).await;
     Ok((measurement, geoip_error, bandwidth_error))
+}
+
+fn paid_exit_probe_http_client(
+    timeout: Duration,
+    bind_interface: Option<&str>,
+) -> Result<reqwest::Client> {
+    let builder = reqwest::Client::builder().timeout(timeout);
+    // Daemon health gates bind to the paid tunnel so a route refresh cannot
+    // let an in-flight probe escape over the physical underlay and produce a
+    // false "Connected" result. The interactive CLI probe intentionally uses
+    // the ordinary routing table by passing None.
+    #[cfg(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    ))]
+    let builder = if let Some(interface) = bind_interface {
+        builder.interface(interface)
+    } else {
+        builder
+    };
+    #[cfg(not(any(
+        target_os = "android",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "solaris",
+        target_os = "tvos",
+        target_os = "visionos",
+        target_os = "watchos",
+    )))]
+    let _ = bind_interface;
+    builder
+        .build()
+        .context("failed to build paid exit probe HTTP client")
 }
 
 fn paid_exit_probe_stun_servers(args: &PaidExitProbeArgs, app: &AppConfig) -> Vec<String> {

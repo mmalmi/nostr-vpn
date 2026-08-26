@@ -287,11 +287,18 @@ pub(crate) async fn update_manual_paid_exit(
     {
         let probe_app = app.clone();
         let dns_health = runtime.paid_exit_dns_health_probe();
+        let bind_interface = runtime.iface().to_string();
         manual.probe = Some(PaidExitManualProbe {
             generation: manual.generation,
             task: tokio::spawn(async move {
                 let dns_health = dns_health?;
-                paid_exit_route_probe_measurement(&dns_health, &probe_app, now_unix).await
+                paid_exit_route_probe_measurement(
+                    &dns_health,
+                    &probe_app,
+                    now_unix,
+                    &bind_interface,
+                )
+                .await
             }),
         });
         eprintln!("paid-exit: checking selected manual seller Internet egress");
