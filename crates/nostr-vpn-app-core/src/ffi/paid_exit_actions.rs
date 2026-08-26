@@ -103,7 +103,9 @@ impl NativeAppRuntime {
                 ))
             })
             .max_by_key(|(updated_at, _)| *updated_at)
-            .map(|(_, realized_exit_ip)| realized_exit_ip)
+            .and_then(|(_, realized_exit_ip)| {
+                (!realized_exit_ip.trim().is_empty()).then_some(realized_exit_ip)
+            })
     }
 
     fn mutate_paid_route_store(

@@ -5,13 +5,14 @@ use super::macos::{
 use super::*;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, RecordType};
-use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
+use hickory_proto::serialize::binary::BinEncoder;
 use nostr_vpn_core::secure_dns::SecureDnsResolver;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
 struct FixtureResolver {
     fail: bool,
+    answer: Option<Ipv4Addr>,
 }
 
 #[async_trait::async_trait]
@@ -28,7 +29,14 @@ impl SecureDnsLookup for FixtureResolver {
             Message::new(request.id, MessageType::Response, request.metadata.op_code);
         response.metadata.recursion_available = true;
         for query in request.queries {
-            response.add_query(query);
+            response.add_query(query.clone());
+            if let Some(address) = self.answer {
+                response.add_answer(hickory_proto::rr::Record::from_rdata(
+                    query.name,
+                    30,
+                    RData::A(hickory_proto::rr::rdata::A(address)),
+                ));
+            }
         }
         let mut packet = Vec::new();
         response
@@ -53,6 +61,50 @@ fn query_packet_with_type(name: &str, id: u16, record_type: RecordType) -> Vec<u
 
 fn query_packet(name: &str, id: u16) -> Vec<u8> {
     query_packet_with_type(name, id, RecordType::A)
+}
+
+#[tokio::test]
+async fn paid_exit_health_probe_requires_secure_dns_address_answer() {
+    let healthy = SecureDnsHealthProbe {
+        resolver: Arc::new(FixtureResolver {
+            fail: false,
+            answer: Some(Ipv4Addr::new(198, 51, 100, 42)),
+        }),
+    };
+    healthy
+        .check_paid_exit()
+        .await
+        .expect("address answer is healthy");
+
+    let empty = SecureDnsHealthProbe {
+        resolver: Arc::new(FixtureResolver {
+            fail: false,
+            answer: None,
+        }),
+    };
+    assert!(
+        empty
+            .check_paid_exit()
+            .await
+            .expect_err("empty DNS answer must fail health")
+            .to_string()
+            .contains("no IPv4 address")
+    );
+
+    let failed = SecureDnsHealthProbe {
+        resolver: Arc::new(FixtureResolver {
+            fail: true,
+            answer: None,
+        }),
+    };
+    assert!(
+        failed
+            .check_paid_exit()
+            .await
+            .expect_err("resolver failure must fail health")
+            .to_string()
+            .contains("secure DNS did not answer")
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -765,7 +817,10 @@ async fn local_stub_serves_udp_and_fails_closed() {
             .expect("UDP server"),
     );
     let address = server.local_addr().expect("UDP address");
-    let resolver: ResolverState = Arc::new(RwLock::new(Arc::new(FixtureResolver { fail: true })));
+    let resolver: ResolverState = Arc::new(RwLock::new(Arc::new(FixtureResolver {
+        fail: true,
+        answer: None,
+    })));
     let records = Arc::new(RwLock::new(HashMap::new()));
     let task = tokio::spawn(run_udp(server, resolver, records, None));
     let client = tokio::net::UdpSocket::bind("127.0.0.1:0")
@@ -848,7 +903,10 @@ async fn local_stub_serves_framed_tcp_dns() {
         .await
         .expect("TCP server");
     let address = listener.local_addr().expect("TCP address");
-    let resolver: ResolverState = Arc::new(RwLock::new(Arc::new(FixtureResolver { fail: false })));
+    let resolver: ResolverState = Arc::new(RwLock::new(Arc::new(FixtureResolver {
+        fail: false,
+        answer: None,
+    })));
     let records = Arc::new(RwLock::new(HashMap::new()));
     let task = tokio::spawn(run_tcp(listener, resolver, records, None));
     let mut client = tokio::net::TcpStream::connect(address)

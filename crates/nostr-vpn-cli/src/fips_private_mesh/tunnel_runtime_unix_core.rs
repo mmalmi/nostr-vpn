@@ -1,5 +1,15 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FipsPrivateTunnelRuntime {
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn paid_exit_dns_health_probe(
+        &self,
+    ) -> Result<crate::secure_dns_runtime::SecureDnsHealthProbe> {
+        self.secure_dns
+            .as_ref()
+            .ok_or_else(|| anyhow!("secure DNS is unavailable for paid exit health"))?
+            .health_probe()
+    }
+
     fn persist_network_cleanup_ownership(&self) -> Result<()> {
         crate::daemon_runtime::persist_fips_daemon_network_cleanup_state(
             &self.cleanup_journal_config_path,

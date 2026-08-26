@@ -40,8 +40,10 @@ impl NativeAppRuntime {
                     self.config.internet_source,
                     InternetSource::PaidAutomatic | InternetSource::PaidManual
                 ) {
+                    // Public paid sellers are authenticated endpoint peers,
+                    // not members of the user's private network roster. A
+                    // fresh end-to-end probe is the readiness evidence.
                     active_paid_exit_ip.is_some()
-                        && selected_peer.is_some_and(|peer| peer.reachable)
                 } else {
                     selected_peer.is_some_and(|peer| {
                         peer.reachable && peer_offers_exit_node(&peer.advertised_routes)

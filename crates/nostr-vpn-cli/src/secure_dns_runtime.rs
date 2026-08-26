@@ -11,6 +11,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{FipsEndpoint, PeerIdentity};
+use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
+use hickory_proto::rr::{Name, RData, RecordType};
+use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
 use nostr_vpn_core::config::ExitDnsResolverConfig;
 use nostr_vpn_core::secure_dns::{
     SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, build_servfail_response,
@@ -66,6 +69,46 @@ type SharedResolver = Arc<dyn SecureDnsLookup>;
 type ResolverState = Arc<RwLock<SharedResolver>>;
 type FipsDnsEndpoint = Option<Arc<FipsEndpoint>>;
 const FIPS_DNS_TTL_SECS: u32 = 30;
+const PAID_EXIT_DNS_HEALTH_HOST: &str = "api.ipify.org.";
+
+#[derive(Clone)]
+pub(crate) struct SecureDnsHealthProbe {
+    resolver: SharedResolver,
+}
+
+impl SecureDnsHealthProbe {
+    pub(crate) async fn check_paid_exit(&self) -> Result<()> {
+        let mut query = Message::new(0x4e56, MessageType::Query, OpCode::Query);
+        query.metadata.recursion_desired = true;
+        query.add_query(Query::query(
+            Name::from_ascii(PAID_EXIT_DNS_HEALTH_HOST)
+                .expect("paid exit DNS health host is valid"),
+            RecordType::A,
+        ));
+        let mut packet = Vec::with_capacity(64);
+        query
+            .emit(&mut BinEncoder::new(&mut packet))
+            .context("encode paid exit DNS health query")?;
+        let response = self
+            .resolver
+            .resolve(&packet)
+            .await
+            .context("secure DNS did not answer through the selected exit")?;
+        let response = Message::from_vec(&response)
+            .context("secure DNS returned an invalid paid exit health response")?;
+        if response.metadata.response_code != ResponseCode::NoError
+            || !response
+                .answers
+                .iter()
+                .any(|answer| matches!(answer.data, RData::A(_)))
+        {
+            return Err(anyhow!(
+                "secure DNS returned no IPv4 address through the selected exit"
+            ));
+        }
+        Ok(())
+    }
+}
 
 pub(crate) struct SecureDnsRuntime {
     udp_task: Option<JoinHandle<()>>,
@@ -77,6 +120,12 @@ pub(crate) struct SecureDnsRuntime {
 }
 
 impl SecureDnsRuntime {
+    pub(crate) fn health_probe(&self) -> Result<SecureDnsHealthProbe> {
+        let resolver = current_resolver(&self.resolver)
+            .ok_or_else(|| anyhow!("secure DNS resolver lock poisoned"))?;
+        Ok(SecureDnsHealthProbe { resolver })
+    }
+
     pub(crate) async fn start_into(
         slot: &mut Option<Self>,
         interface: &str,

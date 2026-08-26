@@ -44,6 +44,13 @@ impl PaidRouteStore {
         }
         if let Some(session) = self.sessions.get_mut(&session_id) {
             session.updated_at_unix = session.updated_at_unix.max(now_unix);
+            // A reconnect must earn fresh end-to-end evidence. Keeping the
+            // previous probe here can make the UI report Connected while the
+            // newly installed route is blackholing traffic.
+            session.session.realized_exit_ip = None;
+            session.session.observed_country_code = None;
+            session.session.observed_asn = None;
+            session.session.quality = None;
         }
         Ok(*self != before)
     }

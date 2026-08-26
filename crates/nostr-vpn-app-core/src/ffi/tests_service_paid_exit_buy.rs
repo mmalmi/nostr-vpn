@@ -52,7 +52,7 @@
     }
 
     #[cfg(feature = "paid-exit")]
-    fn assert_paid_route_activation_requires_admission_and_reachability(
+    fn assert_paid_route_activation_requires_fresh_end_to_end_probe(
         runtime: &mut NativeAppRuntime,
         store_path: &Path,
         seller: &Keys,
@@ -90,24 +90,42 @@
         })
         .expect("acknowledge seller admission");
         let state = runtime.state();
-        assert!(!state.exit_node_active, "an admitted but offline seller is pending");
+        assert!(
+            !state.exit_node_active,
+            "admission without an end-to-end probe is pending"
+        );
         assert!(state.exit_node_status_text.ends_with("Pending"));
 
+        update_paid_route_store(store_path, |store| {
+            store.update_session_probe(
+                nostr_vpn_core::paid_route_store::UpdatePaidRouteSessionProbeRequest {
+                    session_id: session_id.clone(),
+                    realized_exit_ip: Some("198.51.100.42".to_string()),
+                    observed_country_code: None,
+                    observed_asn: None,
+                    quality: None,
+                    now_unix: unix_timestamp(),
+                },
+            )?;
+            Ok(())
+        })
+        .expect("record fresh end-to-end health probe");
         runtime.daemon_state = Some(DaemonRuntimeState {
             vpn_enabled: true,
             vpn_active: true,
-            peers: vec![DaemonPeerState {
-                participant_pubkey: seller.public_key().to_hex(),
-                reachable: true,
-                ..DaemonPeerState::default()
-            }],
+            peers: Vec::new(),
             ..DaemonRuntimeState::default()
         });
         let state = runtime.state();
-        assert!(state.exit_node_active);
+        assert!(
+            state.exit_node_active,
+            "a public paid seller does not need to be in the private peer roster"
+        );
         assert!(!state.exit_node_blocked);
         assert!(
-            state.exit_node_status_text.starts_with("Manual paid exit · "),
+            state
+                .exit_node_status_text
+                .ends_with("198.51.100.42 · Connected"),
             "{}",
             state.exit_node_status_text
         );
@@ -382,7 +400,7 @@
         let saved = AppConfig::load(&runtime.config_path).expect("load saved config");
         assert_eq!(saved.internet_source, InternetSource::PaidManual);
         assert_eq!(saved.exit_node, seller.public_key().to_hex());
-        assert_paid_route_activation_requires_admission_and_reachability(
+        assert_paid_route_activation_requires_fresh_end_to_end_probe(
             &mut runtime,
             &store_path,
             &seller,

@@ -1,9 +1,11 @@
 use super::*;
 
 pub(crate) async fn paid_exit_route_probe_measurement(
+    dns_health: &crate::secure_dns_runtime::SecureDnsHealthProbe,
     app: &AppConfig,
     now_unix: u64,
 ) -> Result<PaidRouteProbeMeasurement> {
+    dns_health.check_paid_exit().await?;
     let args = paid_exit_health_probe_args();
     let (measurement, _, bandwidth_error) =
         paid_exit_probe_measurement(&args, app, now_unix).await?;
@@ -73,6 +75,7 @@ pub(crate) async fn update_automatic_paid_exit(
         })
     {
         let probe_app = app.clone();
+        let dns_health = runtime.paid_exit_dns_health_probe();
         if let Some(candidate) = automatic.candidate.as_mut() {
             candidate.probe_started_at = Some(now_unix);
             candidate.last_tx_at = None;
@@ -81,7 +84,8 @@ pub(crate) async fn update_automatic_paid_exit(
         automatic.probe = Some(PaidExitAutomaticProbe {
             generation: automatic.generation,
             task: tokio::spawn(async move {
-                paid_exit_route_probe_measurement(&probe_app, now_unix).await
+                let dns_health = dns_health?;
+                paid_exit_route_probe_measurement(&dns_health, &probe_app, now_unix).await
             }),
         });
     }

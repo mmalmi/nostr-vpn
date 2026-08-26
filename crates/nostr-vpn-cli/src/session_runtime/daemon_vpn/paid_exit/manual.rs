@@ -2,6 +2,8 @@ use super::*;
 
 const PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS: u64 = 30;
 const PAID_EXIT_MANUAL_HEALTH_RETRY_SECS: u64 = 2;
+const PAID_EXIT_MANUAL_HEALTH_MONITOR_SECS: u64 = 5 * 60;
+const PAID_EXIT_MANUAL_HEALTH_FAILURE_LIMIT: u8 = 2;
 const PAID_EXIT_MANUAL_FUNDING_RETRY_SECS: u64 = 5;
 
 #[derive(Default)]
@@ -12,6 +14,7 @@ pub(crate) struct PaidExitManualBuyer {
     probe_succeeded: bool,
     probe_retry_after: u64,
     last_probe_error: String,
+    consecutive_probe_failures: u8,
     probe: Option<PaidExitManualProbe>,
     funding_satisfied: bool,
     funding_retry_after: u64,
@@ -47,6 +50,7 @@ impl PaidExitManualBuyer {
         self.probe_succeeded = false;
         self.probe_retry_after = 0;
         self.last_probe_error.clear();
+        self.consecutive_probe_failures = 0;
         self.funding_satisfied = false;
         self.funding_retry_after = 0;
     }
@@ -60,6 +64,41 @@ impl PaidExitManualBuyer {
     fn schedule_probe_retry(&mut self, error: &str, now_unix: u64) {
         self.last_probe_error = error.to_string();
         self.probe_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_HEALTH_RETRY_SECS);
+    }
+
+    fn record_probe_success(&mut self, now_unix: u64) {
+        self.probe_succeeded = true;
+        self.probe_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_HEALTH_MONITOR_SECS);
+        self.last_probe_error.clear();
+        self.consecutive_probe_failures = 0;
+    }
+
+    fn require_fresh_probe_if_evidence_missing(
+        &mut self,
+        has_persisted_probe_evidence: bool,
+        now_unix: u64,
+    ) {
+        if !self.probe_succeeded || has_persisted_probe_evidence {
+            return;
+        }
+        if let Some(probe) = self.probe.take() {
+            probe.task.abort();
+        }
+        self.generation = self.generation.wrapping_add(1);
+        self.probe_succeeded = false;
+        self.probe_retry_after = now_unix;
+        self.last_probe_error.clear();
+        self.consecutive_probe_failures = 0;
+        self.selected_at = now_unix;
+    }
+
+    fn record_probe_failure(&mut self, error: &str, now_unix: u64) -> bool {
+        if self.probe_succeeded {
+            self.consecutive_probe_failures = self.consecutive_probe_failures.saturating_add(1);
+        }
+        self.schedule_probe_retry(error, now_unix);
+        self.probe_succeeded
+            && self.consecutive_probe_failures >= PAID_EXIT_MANUAL_HEALTH_FAILURE_LIMIT
     }
 
     fn timeout_reason(&self) -> String {
@@ -78,7 +117,8 @@ impl PaidExitManualBuyer {
     }
 
     fn health_deadline_expired(&self, now_unix: u64) -> bool {
-        self.funding.is_none()
+        !self.probe_succeeded
+            && self.funding.is_none()
             && now_unix.saturating_sub(self.selected_at) >= PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS
     }
 }
@@ -148,6 +188,16 @@ pub(crate) async fn update_manual_paid_exit(
     if manual.session_id != session_id {
         manual.select(&session_id, now_unix);
     }
+    let has_persisted_probe_evidence = store
+        .sessions
+        .get(&session_id)
+        .and_then(|record| record.session.realized_exit_ip.as_deref())
+        .is_some_and(|ip| !ip.trim().is_empty());
+    // `paid-exit use` deliberately clears the old exit-IP evidence before
+    // reconnecting. The selected session can stay the same, so mirror the
+    // durable readiness state instead of retaining an in-memory success that
+    // would leave the UI in Connecting forever.
+    manual.require_fresh_probe_if_evidence_missing(has_persisted_probe_evidence, now_unix);
 
     if manual.funding.is_none()
         && !manual.funding_satisfied
@@ -224,10 +274,6 @@ pub(crate) async fn update_manual_paid_exit(
             }
         }
     }
-    if manual.probe_succeeded {
-        return Ok(false);
-    }
-
     let seller_admitted = store.buyer_session_is_seller_admitted(&session_id)?;
     let seller_authenticated = runtime.peer_statuses().iter().any(|status| {
         status.connected
@@ -240,13 +286,31 @@ pub(crate) async fn update_manual_paid_exit(
         && seller_authenticated
     {
         let probe_app = app.clone();
+        let dns_health = runtime.paid_exit_dns_health_probe();
         manual.probe = Some(PaidExitManualProbe {
             generation: manual.generation,
             task: tokio::spawn(async move {
-                paid_exit_route_probe_measurement(&probe_app, now_unix).await
+                let dns_health = dns_health?;
+                paid_exit_route_probe_measurement(&dns_health, &probe_app, now_unix).await
             }),
         });
         eprintln!("paid-exit: checking selected manual seller Internet egress");
+    }
+
+    if manual.probe.is_none()
+        && manual.probe_succeeded
+        && now_unix >= manual.probe_retry_after
+        && (!seller_admitted || !seller_authenticated)
+    {
+        let reason = if !seller_admitted {
+            "Seller withdrew paid session admission"
+        } else {
+            "Seller transport is no longer authenticated"
+        };
+        if manual.record_probe_failure(reason, now_unix) {
+            return fail_manual_paid_exit(manual, app, config_path, reason, now_unix);
+        }
+        eprintln!("paid-exit: selected seller health check failed: {reason}; retrying");
     }
 
     if manual
@@ -256,29 +320,33 @@ pub(crate) async fn update_manual_paid_exit(
     {
         let probe = manual.probe.take().expect("finished manual probe exists");
         let generation = probe.generation;
-        let result = match probe.task.await {
-            Ok(result) => result,
-            Err(error) => {
-                return fail_manual_paid_exit(
-                    manual,
-                    app,
-                    config_path,
-                    &format!("Seller Internet health-check task failed: {error}"),
-                    now_unix,
-                );
-            }
-        };
+        let result = probe
+            .task
+            .await
+            .map_err(|error| anyhow!("Seller Internet health-check task failed: {error}"))
+            .and_then(|result| result);
         if generation == manual.generation {
             match result {
                 Ok(measurement) => {
                     record_paid_exit_probe(config_path, &session_id, measurement, now_unix)?;
-                    manual.probe_succeeded = true;
+                    manual.record_probe_success(now_unix);
                     eprintln!("paid-exit: selected manual seller Internet egress is healthy");
                     return Ok(false);
                 }
                 Err(error) => {
                     let error = error.to_string();
-                    manual.schedule_probe_retry(&error, now_unix);
+                    if manual.record_probe_failure(&error, now_unix) {
+                        return fail_manual_paid_exit(
+                            manual,
+                            app,
+                            config_path,
+                            &format!(
+                                "Seller Internet failed {} consecutive health checks: {error}",
+                                PAID_EXIT_MANUAL_HEALTH_FAILURE_LIMIT
+                            ),
+                            now_unix,
+                        );
+                    }
                     eprintln!(
                         "paid-exit: selected seller Internet health probe failed: {error}; retrying"
                     );
@@ -333,6 +401,36 @@ mod tests {
             manual.timeout_reason(),
             "Seller Internet did not become usable within 30 seconds: temporary HTTPS failure"
         );
+    }
+
+    #[test]
+    fn healthy_manual_exit_is_rechecked_and_two_failures_force_rollback() {
+        let mut manual = PaidExitManualBuyer::default();
+        manual.select("funded-session", 100);
+        manual.record_probe_success(105);
+
+        assert!(manual.probe_succeeded);
+        assert_eq!(manual.probe_retry_after, 405);
+        assert!(!manual.health_deadline_expired(200));
+        assert!(!manual.record_probe_failure("DNS failed", 405));
+        assert_eq!(manual.consecutive_probe_failures, 1);
+        assert_eq!(manual.probe_retry_after, 407);
+        assert!(manual.record_probe_failure("DNS still failed", 407));
+    }
+
+    #[test]
+    fn same_session_reconnect_without_persisted_evidence_requires_fresh_probe() {
+        let mut manual = PaidExitManualBuyer::default();
+        manual.select("funded-session", 100);
+        manual.record_probe_success(105);
+
+        manual.require_fresh_probe_if_evidence_missing(false, 200);
+
+        assert!(!manual.probe_succeeded);
+        assert_eq!(manual.probe_retry_after, 200);
+        assert_eq!(manual.selected_at, 200);
+        assert_eq!(manual.consecutive_probe_failures, 0);
+        assert!(manual.last_probe_error.is_empty());
     }
 
     #[test]

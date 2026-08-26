@@ -1,5 +1,15 @@
 #[cfg(target_os = "windows")]
 impl FipsPrivateTunnelRuntime {
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn paid_exit_dns_health_probe(
+        &self,
+    ) -> Result<crate::secure_dns_runtime::SecureDnsHealthProbe> {
+        self.secure_dns
+            .as_ref()
+            .ok_or_else(|| anyhow!("secure DNS is unavailable for paid exit health"))?
+            .health_probe()
+    }
+
     pub(crate) fn wireguard_exit_ready(&self) -> bool {
         self.wg_upstream.is_some()
     }

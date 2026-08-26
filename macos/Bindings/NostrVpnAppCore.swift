@@ -3591,6 +3591,8 @@ public struct NativePaidRouteSessionState {
     public var amountDueText: String
     public var paidMsat: UInt64
     public var paidText: String
+    public var channelBalanceMsat: UInt64
+    public var channelBalanceText: String
     public var unpaidMsat: UInt64
     public var unpaidText: String
     public var activeMillis: UInt64
@@ -3615,7 +3617,7 @@ public struct NativePaidRouteSessionState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sessionId: String, leaseId: String, channelId: String, statusText: String, lifecycleStatus: String, accessState: String, titleText: String, detailText: String, settlementText: String, collectActionText: String, collectActionHelpText: String, paymentChannelReady: Bool, allowRouting: Bool, deliveredUnits: UInt64, usageText: String, amountDueMsat: UInt64, amountDueText: String, paidMsat: UInt64, paidText: String, unpaidMsat: UInt64, unpaidText: String, activeMillis: UInt64, bytes: UInt64, packets: UInt64, realizedExitIp: String, claimedCountryCode: String, observedCountryCode: String, countryClaimStatus: String, locationText: String, observedAsn: UInt32, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, updatedAtUnix: UInt64, expiresAtUnix: UInt64) {
+    public init(sessionId: String, leaseId: String, channelId: String, statusText: String, lifecycleStatus: String, accessState: String, titleText: String, detailText: String, settlementText: String, collectActionText: String, collectActionHelpText: String, paymentChannelReady: Bool, allowRouting: Bool, deliveredUnits: UInt64, usageText: String, amountDueMsat: UInt64, amountDueText: String, paidMsat: UInt64, paidText: String, channelBalanceMsat: UInt64, channelBalanceText: String, unpaidMsat: UInt64, unpaidText: String, activeMillis: UInt64, bytes: UInt64, packets: UInt64, realizedExitIp: String, claimedCountryCode: String, observedCountryCode: String, countryClaimStatus: String, locationText: String, observedAsn: UInt32, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, updatedAtUnix: UInt64, expiresAtUnix: UInt64) {
         self.sessionId = sessionId
         self.leaseId = leaseId
         self.channelId = channelId
@@ -3635,6 +3637,8 @@ public struct NativePaidRouteSessionState {
         self.amountDueText = amountDueText
         self.paidMsat = paidMsat
         self.paidText = paidText
+        self.channelBalanceMsat = channelBalanceMsat
+        self.channelBalanceText = channelBalanceText
         self.unpaidMsat = unpaidMsat
         self.unpaidText = unpaidText
         self.activeMillis = activeMillis
@@ -3723,6 +3727,12 @@ extension NativePaidRouteSessionState: Equatable, Hashable {
         if lhs.paidText != rhs.paidText {
             return false
         }
+        if lhs.channelBalanceMsat != rhs.channelBalanceMsat {
+            return false
+        }
+        if lhs.channelBalanceText != rhs.channelBalanceText {
+            return false
+        }
         if lhs.unpaidMsat != rhs.unpaidMsat {
             return false
         }
@@ -3809,6 +3819,8 @@ extension NativePaidRouteSessionState: Equatable, Hashable {
         hasher.combine(amountDueText)
         hasher.combine(paidMsat)
         hasher.combine(paidText)
+        hasher.combine(channelBalanceMsat)
+        hasher.combine(channelBalanceText)
         hasher.combine(unpaidMsat)
         hasher.combine(unpaidText)
         hasher.combine(activeMillis)
@@ -3861,6 +3873,8 @@ public struct FfiConverterTypeNativePaidRouteSessionState: FfiConverterRustBuffe
                 amountDueText: FfiConverterString.read(from: &buf),
                 paidMsat: FfiConverterUInt64.read(from: &buf),
                 paidText: FfiConverterString.read(from: &buf),
+                channelBalanceMsat: FfiConverterUInt64.read(from: &buf),
+                channelBalanceText: FfiConverterString.read(from: &buf),
                 unpaidMsat: FfiConverterUInt64.read(from: &buf),
                 unpaidText: FfiConverterString.read(from: &buf),
                 activeMillis: FfiConverterUInt64.read(from: &buf),
@@ -3905,6 +3919,8 @@ public struct FfiConverterTypeNativePaidRouteSessionState: FfiConverterRustBuffe
         FfiConverterString.write(value.amountDueText, into: &buf)
         FfiConverterUInt64.write(value.paidMsat, into: &buf)
         FfiConverterString.write(value.paidText, into: &buf)
+        FfiConverterUInt64.write(value.channelBalanceMsat, into: &buf)
+        FfiConverterString.write(value.channelBalanceText, into: &buf)
         FfiConverterUInt64.write(value.unpaidMsat, into: &buf)
         FfiConverterString.write(value.unpaidText, into: &buf)
         FfiConverterUInt64.write(value.activeMillis, into: &buf)
@@ -4242,6 +4258,8 @@ public struct NativePaidRouteWalletState {
     public var balanceKnown: Bool
     public var totalBalanceMsat: UInt64
     public var totalBalanceText: String
+    public var channelBalanceMsat: UInt64
+    public var channelBalanceText: String
     public var navigationBalanceText: String
     public var fiatCurrency: String
     public var fiatBalanceText: String
@@ -4255,11 +4273,13 @@ public struct NativePaidRouteWalletState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(defaultMint: String, balanceKnown: Bool, totalBalanceMsat: UInt64, totalBalanceText: String, navigationBalanceText: String, fiatCurrency: String, fiatBalanceText: String, exchangeRateText: String, exchangeRateStatus: String, exchangeRateSources: String, exchangeRateStale: Bool, exchangeRateUpdatedAtUnix: UInt64, mints: [NativePaidRouteWalletMintState], lastAction: NativePaidRouteWalletActionState) {
+    public init(defaultMint: String, balanceKnown: Bool, totalBalanceMsat: UInt64, totalBalanceText: String, channelBalanceMsat: UInt64, channelBalanceText: String, navigationBalanceText: String, fiatCurrency: String, fiatBalanceText: String, exchangeRateText: String, exchangeRateStatus: String, exchangeRateSources: String, exchangeRateStale: Bool, exchangeRateUpdatedAtUnix: UInt64, mints: [NativePaidRouteWalletMintState], lastAction: NativePaidRouteWalletActionState) {
         self.defaultMint = defaultMint
         self.balanceKnown = balanceKnown
         self.totalBalanceMsat = totalBalanceMsat
         self.totalBalanceText = totalBalanceText
+        self.channelBalanceMsat = channelBalanceMsat
+        self.channelBalanceText = channelBalanceText
         self.navigationBalanceText = navigationBalanceText
         self.fiatCurrency = fiatCurrency
         self.fiatBalanceText = fiatBalanceText
@@ -4290,6 +4310,12 @@ extension NativePaidRouteWalletState: Equatable, Hashable {
             return false
         }
         if lhs.totalBalanceText != rhs.totalBalanceText {
+            return false
+        }
+        if lhs.channelBalanceMsat != rhs.channelBalanceMsat {
+            return false
+        }
+        if lhs.channelBalanceText != rhs.channelBalanceText {
             return false
         }
         if lhs.navigationBalanceText != rhs.navigationBalanceText {
@@ -4330,6 +4356,8 @@ extension NativePaidRouteWalletState: Equatable, Hashable {
         hasher.combine(balanceKnown)
         hasher.combine(totalBalanceMsat)
         hasher.combine(totalBalanceText)
+        hasher.combine(channelBalanceMsat)
+        hasher.combine(channelBalanceText)
         hasher.combine(navigationBalanceText)
         hasher.combine(fiatCurrency)
         hasher.combine(fiatBalanceText)
@@ -4356,6 +4384,8 @@ public struct FfiConverterTypeNativePaidRouteWalletState: FfiConverterRustBuffer
                 balanceKnown: FfiConverterBool.read(from: &buf),
                 totalBalanceMsat: FfiConverterUInt64.read(from: &buf),
                 totalBalanceText: FfiConverterString.read(from: &buf),
+                channelBalanceMsat: FfiConverterUInt64.read(from: &buf),
+                channelBalanceText: FfiConverterString.read(from: &buf),
                 navigationBalanceText: FfiConverterString.read(from: &buf),
                 fiatCurrency: FfiConverterString.read(from: &buf),
                 fiatBalanceText: FfiConverterString.read(from: &buf),
@@ -4374,6 +4404,8 @@ public struct FfiConverterTypeNativePaidRouteWalletState: FfiConverterRustBuffer
         FfiConverterBool.write(value.balanceKnown, into: &buf)
         FfiConverterUInt64.write(value.totalBalanceMsat, into: &buf)
         FfiConverterString.write(value.totalBalanceText, into: &buf)
+        FfiConverterUInt64.write(value.channelBalanceMsat, into: &buf)
+        FfiConverterString.write(value.channelBalanceText, into: &buf)
         FfiConverterString.write(value.navigationBalanceText, into: &buf)
         FfiConverterString.write(value.fiatCurrency, into: &buf)
         FfiConverterString.write(value.fiatBalanceText, into: &buf)

@@ -291,6 +291,37 @@ fn seller_acknowledgment_activates_only_the_selected_buyer_session() {
 }
 
 #[test]
+fn reconnect_clears_stale_end_to_end_health_evidence() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = sample_config();
+    let (mut store, session_id, _) = buyer_store_with_session(&seller, &buyer, &config);
+    let session = &mut store
+        .sessions
+        .get_mut(&session_id)
+        .expect("buyer session")
+        .session;
+    session.realized_exit_ip = Some("198.51.100.42".to_string());
+    session.observed_country_code = Some("IE".to_string());
+    session.observed_asn = Some(64512);
+    session.quality = Some(PaidRouteQualityMetrics {
+        latency_ms: Some(42),
+        last_seen_unix: Some(120),
+        ..PaidRouteQualityMetrics::default()
+    });
+
+    store
+        .begin_buyer_session_open_attempt(&session_id, 130)
+        .expect("begin reconnect");
+
+    let session = &store.sessions[&session_id].session;
+    assert_eq!(session.realized_exit_ip, None);
+    assert_eq!(session.observed_country_code, None);
+    assert_eq!(session.observed_asn, None);
+    assert_eq!(session.quality, None);
+}
+
+#[test]
 fn selected_buyer_session_fails_when_end_to_end_exit_health_check_fails() {
     let seller = Keys::generate();
     let buyer = Keys::generate();

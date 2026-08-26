@@ -29,6 +29,15 @@ impl FipsPrivateTunnelRuntime {
         false
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn paid_exit_dns_health_probe(
+        &self,
+    ) -> Result<crate::secure_dns_runtime::SecureDnsHealthProbe> {
+        Err(anyhow!(
+            "secure DNS is unavailable for paid exit health on this platform"
+        ))
+    }
+
     pub(crate) fn client_dataplane_enabled(&self) -> bool {
         false
     }
