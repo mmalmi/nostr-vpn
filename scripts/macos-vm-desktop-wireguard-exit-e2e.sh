@@ -142,6 +142,7 @@ remote_phase() {
   done < <(ssh_args "$lane")
   remote_env=(
     NVPN_MACOS_VM_IMPORT_ONLY=1
+    RUST_LOG=info,nvpn::secure_dns_runtime=debug
     "NVPN_E2E_BINARY=$PACKAGE/Nostr VPN.app/Contents/Resources/nvpn"
     "NVPN_MACOS_NETWORK_STATE_DIR=$REMOTE_DIR"
     "NVPN_E2E_CONFIG=$REMOTE_DIR/config.toml"

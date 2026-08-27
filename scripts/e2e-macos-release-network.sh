@@ -1126,9 +1126,16 @@ set_dns_case() {
     --exit-dns-custom-doh-url "$DNS_CUSTOM_URL" \
     --exit-dns-custom-doh-bootstrap-ips "$DNS_BOOTSTRAP_IPS" \
     --exit-dns-through-exit-servers "$DNS_THROUGH_SERVERS"
-  wait_until "$DNS_LABEL exact runtime DNS settings" \
+  if ! wait_until "$DNS_LABEL exact runtime DNS settings" \
     runtime_dns_state_matches
-  wait_until "$DNS_LABEL production resolver" dns_case_live
+  then
+    capture_dns_case_failure
+    return 1
+  fi
+  if ! wait_until "$DNS_LABEL production resolver" dns_case_live; then
+    capture_dns_case_failure
+    return 1
+  fi
   {
     printf 'label=%s\n' "$DNS_LABEL"
     printf 'mode=%s\n' "$DNS_MODE"
@@ -1138,6 +1145,27 @@ set_dns_case() {
     printf 'forwarded_probe_live=true\n'
   } >"$RESULT_DIR/dns-$DNS_LABEL.receipt"
   echo "MACOS_RELEASE_NETWORK_DNS_OK=$DNS_LABEL"
+}
+
+capture_dns_case_failure() {
+  cp -p "$STATE_DIR/daemon.log" \
+    "$RESULT_DIR/dns-$DNS_LABEL-daemon.log" 2>/dev/null || true
+  nvpn status --config "$CONFIG" --json --discover-secs 0 \
+    >"$RESULT_DIR/dns-$DNS_LABEL-status.json" 2>&1 || true
+  /usr/sbin/scutil --dns \
+    >"$RESULT_DIR/dns-$DNS_LABEL-scutil.txt" 2>&1 || true
+  {
+    for path in "$SECURE_RESOLVER" "$MAGIC_RESOLVER"; do
+      printf 'path=%s\n' "$path"
+      if [[ -f "$path" && ! -L "$path" ]]; then
+        /bin/cat "$path"
+      else
+        printf 'absent\n'
+      fi
+    done
+    printf 'dynamic_store\n'
+    secure_dns_store_state 2>&1 || true
+  } >"$RESULT_DIR/dns-$DNS_LABEL-resolver-state.txt"
 }
 
 dns_case_live() {
