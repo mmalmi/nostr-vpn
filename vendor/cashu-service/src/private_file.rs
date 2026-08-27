@@ -28,6 +28,8 @@ pub(crate) fn create_atomic_private(path: &Path, content: &[u8]) -> io::Result<b
 }
 
 pub(crate) fn open_private_lock_file(path: &Path, owner_source: &Path) -> io::Result<File> {
+    #[cfg(not(unix))]
+    let _ = owner_source;
     require_nofollow_platform()?;
     let parent = path
         .parent()

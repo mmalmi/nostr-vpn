@@ -78,6 +78,7 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) discovery_fallback_transit: bool,
 }
 
+#[cfg(any(unix, test))]
 fn endpoint_peers_with_changed_addresses(
     previous: &[FipsEndpointPeerTransportConfig],
     next: &[FipsEndpointPeerTransportConfig],
