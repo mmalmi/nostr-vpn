@@ -1,11 +1,8 @@
 # nostr-vpn-wintun
 
-WinTun helper crate for Nostr VPN.
+Windows-only helper that locates and loads the bundled `wintun.dll` from the
+supported CLI/app layouts, falling back to the Cargo build artifact.
 
-This crate locates the bundled `wintun.dll` next to the installed `nvpn.exe`,
-under `binaries\wintun.dll`, or in Cargo build output and loads it for the
-Windows tunnel adapter path.
-
-## Repository
+## Source
 
 https://github.com/mmalmi/nostr-vpn

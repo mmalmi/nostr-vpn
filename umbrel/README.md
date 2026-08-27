@@ -1,67 +1,62 @@
-# Umbrel packaging
+# Umbrel
 
-This directory contains:
+This directory contains the Umbrel app template:
 
-- `docker-compose.yml`: template for the real Umbrel app. The browser-facing
-  web service sits behind Umbrel's app proxy while a separate daemon service
-  uses host networking and `/dev/net/tun`.
-- `exports.sh`: empty exports file for Umbrel's app skeleton; Nostr VPN does
-  not expose variables to dependent apps.
-- `docker-compose.local.yml`: local-only Compose file that builds the same image
-  with the same web/daemon split in an ordinary bridged Docker network for
-  safer UI and API testing
-- `umbrel-app.yml`: app metadata template
+- `docker-compose.yml` runs `nvpn` with host networking and `/dev/net/tun`, and
+  serves the control panel through Umbrel's app proxy.
+- `docker-compose.local.yml` keeps the web service on loopback for local Docker
+  testing.
+- `umbrel-app.yml`, `icon.svg`, and `exports.sh` provide app metadata.
+- `Dockerfile` builds the Svelte control panel, `nvpn`, and `nvpn-web` into one
+  multi-stage image.
 
 ## Local validation
 
-From the repo root:
+From the repository root:
 
 ```sh
-docker compose -f umbrel/docker-compose.local.yml up --build
+docker compose -f umbrel/docker-compose.local.yml up --build -d
+curl http://127.0.0.1:38080/api/health
+curl -X POST http://127.0.0.1:38080/api/tick
 ```
 
-Then open [http://localhost:38080](http://localhost:38080) and verify:
+Open <http://127.0.0.1:38080> for the UI. Stop the stack with:
 
 ```sh
-curl http://localhost:38080/api/health
-curl -X POST http://localhost:38080/api/tick
+docker compose -f umbrel/docker-compose.local.yml down
 ```
 
-The image builds the responsive Svelte control panel from
-`web/control-panel` and serves it from `/usr/share/nostr-vpn/web`.
-
-To run the Docker-backed web parity smoke test:
+The focused browser/API test is:
 
 ```sh
 just e2e-umbrel-web
 ```
 
-That test exercises the bundled UI plus config-level `nvpn-web` actions. Mesh
-packet-path behavior stays covered by the existing backend Docker e2es.
+Mesh packet-path behavior is covered by the backend Docker end-to-end tests.
 
 ## Release bundle
 
-Umbrel app submissions need a pinned remote image reference, not a local build
-tag. Generate a submission-ready app directory with:
-
-```sh
-node scripts/umbrel-release.mjs \
-  --image-ref ghcr.io/example/nostr-vpn-umbrel:v0.3.4@sha256:... \
-  --output-dir dist/umbrel-v0.3.4
-```
-
-Or build and push the multi-arch image first:
+Umbrel submissions require a public, digest-pinned multi-architecture image.
+Build, push, anonymously verify, and render the bundle with:
 
 ```sh
 node scripts/umbrel-release.mjs \
   --push \
-  --image-repo ghcr.io/example/nostr-vpn-umbrel
+  --image-repo registry.example/namespace/nostr-vpn-umbrel
 ```
 
-That writes a ready-to-submit app folder with a pinned `docker-compose.yml`.
+To reuse an already published image, pass its full
+`repository:vX.Y.Z@sha256:...` reference:
 
-## Current limitation
+```sh
+node scripts/umbrel-release.mjs --image-ref "$IMAGE_REF"
+```
 
-The Umbrel container can manage the mesh tunnel and routes, but host split-DNS
-integration is not wired up yet. MagicDNS aliases are therefore not installed on
-the Umbrel host itself in this package.
+The script requires `linux/amd64` and `linux/arm64`, verifies anonymous registry
+readback, checks that the image tag matches the workspace version, and writes a
+submission bundle under `dist/` without replacing an existing bundle.
+
+## Limitation
+
+The container manages the mesh tunnel and routes, but it does not install
+MagicDNS split-DNS aliases on the Umbrel host.

@@ -1,24 +1,26 @@
-# macOS Native Shell
+# macOS
 
-This is the first native front end for the Rust-owned app architecture.
+The macOS app is a SwiftUI/AppKit shell over `nostr-vpn-app-core` through
+UniFFI. Rust owns state, configuration, and VPN actions; Swift owns presentation
+and macOS integrations such as the menu-bar item, deep links, QR scanning,
+startup registration, sharing, and update installation.
 
-The app is SwiftUI/AppKit over `nostr-vpn-app-core` through UniFFI:
+## Build and run
 
-- `FfiApp.state()` returns typed native state.
-- `FfiApp.dispatch(_:)` accepts typed `NativeAppAction`.
-- Swift owns rendering, clipboard, URL handling, and macOS app lifecycle.
-- Rust owns config mutation, daemon/session commands, state projection, and action outcomes.
+With Xcode and the Rust toolchain installed, run from the repository root:
 
-Build locally:
-
-```bash
-just build
+```sh
+just macos-build
+just run-macos
 ```
 
-Run locally:
+The build regenerates the UniFFI bindings and xcframework, refreshes the Xcode
+project when XcodeGen is available, and builds the unsigned development app.
+`run-macos` rebuilds and launches it.
 
-```bash
-just run
-```
+Use `just macos-gen-swift`, `just macos-rust`, `just macos-xcframework`, or
+`just macos-xcodeproj` for focused work. Release signing, notarization, and DMG
+creation are handled by the release workflow.
 
-The parity checklist is in `docs/native-ui-parity-matrix.md`.
+See the [native UI parity matrix](../docs/native-ui-parity-matrix.md) for the
+shared platform contract.

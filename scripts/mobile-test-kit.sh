@@ -19,8 +19,9 @@ Modes:
 Device identifiers are intentionally not stored in the repo. Use environment
 variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
 .env.mobile.example to .env.mobile.local for local ignored values. Device mode
-builds/installs the exact current iOS development-signed app and uses local iOS
-Packet Tunnel coverage without a private enrollment fixture by default.
+builds and installs the exact current iOS app with company Ad Hoc signing by
+default, then exercises the local Packet Tunnel without a private enrollment
+fixture.
 Android --vpn-cycle validates the app-private Rust runtime-state file after the
 OS VPN network becomes active; tune with NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS
 or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it. It also
@@ -36,8 +37,9 @@ behind.
 Simulator mode verifies app build/install/launch. Real VPN dataplane checks
 need physical devices. Device mode uses debug-created local networks for OS
 VPN/TUN coverage without private peer fixtures: Android may tap the system VPN
-consent prompt on a trusted local test device, and iOS builds/installs the
-current development-signed app before launch, requiring local signing env.
+consent prompt on a trusted local test device. The iOS run requires local
+signing credentials; set NVPN_IOS_DEVICE_SIGNING_MODE=development only for
+Xcode-managed development signing.
 EOF
 }
 

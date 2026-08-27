@@ -1,13 +1,30 @@
 # Path Maintenance Architecture
 
-This document used to describe the legacy Unix WireGuard path-maintenance plan.
-That runtime has been removed from the main nostr-vpn mesh mode.
+FIPS owns private-mesh path maintenance. The removed Unix WireGuard mesh path
+manager is not a fallback.
 
-Current path maintenance belongs to the FIPS private mesh runtime:
+`nostr-vpn` supplies:
 
-- FIPS owns peer transport selection and link probing.
-- `nostr-vpn` supplies roster-derived peers, route targets, configured static FIPS endpoints, and NAT-discovered local endpoint hints.
-- Daemon state reports FIPS link status through `fips_*` fields and `last_fips_seen_at`.
-- WireGuard exit-node upstream support is a local provider-side outbound leg. It does not participate in FIPS peer path selection or resurrect the legacy WireGuard mesh path manager.
+- roster and paid-route identities that may carry tunnel traffic
+- operator endpoint hints, bootstrap peers, WebSocket settings, LAN discovery,
+  Nostr discovery settings, STUN servers, and the active underlay interface
+- recent authenticated endpoint hints and peer capability updates
+- platform routes that keep control/transport endpoints outside a selected
+  default exit
 
-The current implementation is centered in `crates/nostr-vpn-cli/src/fips_private_mesh.rs`.
+FIPS owns transport probing, direct-versus-transit selection, NAT traversal,
+reconnect, rekey, liveness, and recovery after an underlay change. nvpn updates
+the endpoint configuration and invalidates stale cached path state when the
+network changes; it does not select a UDP path per packet.
+
+Discovery or bootstrap adjacency is transport-only. `FipsMeshRuntime` still
+admits tunnel packets only from the active roster or an explicit paid-route
+session.
+
+WireGuard can be a local internet source or a paid/private exit provider's
+upstream egress. It does not participate in FIPS peer path selection.
+
+The integration is centered in `crates/nostr-vpn-cli/src/fips_private_mesh/`
+and `crates/nostr-vpn-cli/src/session_runtime/fips_status_helpers/`. Validate
+path changes with the routed-UDP, NAT-safe-MTU, roaming, and host-pair runners
+listed in [the dataplane safety net](fips-dataplane-safety-net.md).

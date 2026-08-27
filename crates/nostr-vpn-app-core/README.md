@@ -1,11 +1,9 @@
 # nostr-vpn-app-core
 
-Native shells use this crate as the shared app contract.
+Shared application runtime for the native shells and web control panel.
 
-It currently owns:
+It provides:
 
-- the UI snapshot structs that mirror the legacy app model
-- the typed native state used by the macOS SwiftUI shell
-- the complete typed action set corresponding to current app behavior
-- platform capability projection for desktop, Android, and iPhone
-- a UniFFI `FfiApp` object with `state`, `refresh`, and `dispatch`
+- typed state, settings, actions, and platform capabilities
+- the UniFFI `FfiApp` API and C ABI used by platform shells
+- the Android and iOS packet-tunnel runtime

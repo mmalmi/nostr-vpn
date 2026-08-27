@@ -1,133 +1,170 @@
 # Protocol
 
-This document describes the protocol shape that `nostr-vpn` currently implements after the FIPS-only private mesh cleanup.
-
-The `README.md` stays product-facing. Protocol details live here so they can track the code more closely.
+This document describes the protocol shape currently implemented by
+`nostr-vpn`. FIPS wire formats are owned by FIPS; nvpn adds membership, routing,
+and application control above the FIPS endpoint API.
 
 ## Scope
 
-`nostr-vpn` is split into three layers:
+The system has four related layers:
 
-- Out-of-band signed join requests carried as links or QR codes
-- Network membership and admin roster state
-- A FIPS-backed private mesh data plane for tunnel traffic
+- signed device enrollment and admin-managed network rosters
+- FIPS discovery and authenticated peer connectivity
+- roster-gated private IP routing over the FIPS dataplane
+- optional private, paid, or local WireGuard internet egress
 
-Only the active network participates in the live runtime. `nostr-vpn` no longer runs its legacy relay-announced peer roster or WireGuard mesh mode.
+Only one configured network is active in the live runtime. The legacy relay
+peer-announcement and WireGuard mesh modes are removed.
 
-## Identities And Stable IDs
+## Identity And Network IDs
 
-| Name | Purpose | Format |
-| --- | --- | --- |
-| Nostr identity keypair | Authenticates device identity, join requests, admin actions, and FIPS discovery identity | `nsec`/`npub` at the edges, normalized to hex internally |
-| `network_id` | Stable mesh identifier used for roster scope and tunnel-IP derivation | String |
+The Nostr identity key authenticates the device, signed rosters, admin actions,
+FIPS identity, and paid-exit offers/control. User-facing `nsec`/`npub` values
+are normalized to hex internally.
 
-Important details:
+`network_id` scopes the roster, LAN discovery, and deterministic tunnel
+addresses. Runtime normalization trims the legacy `nostr-vpn:` prefix. UUID-like
+hex IDs also ignore whitespace and hyphens and normalize to lowercase.
 
-- `network_id` is normalized at runtime by stripping the legacy `nostr-vpn:` prefix if present.
-- Each configured network carries its own participant and admin set.
-- If tunnel IP auto-configuration is enabled, the local node derives its `/32` as:
-  - `SHA256(network_id + "\n" + own_nostr_pubkey_hex)`
-  - `10.44.(digest[0] % 254 + 1).(digest[1] % 254 + 1)/32`
+The derived IPv4 address is:
 
-## Join Requests
+```text
+digest = SHA256(normalized_network_id + "\n" + device_pubkey_hex)
+address = 10.44.(digest[0] % 254 + 1).(digest[1] % 254 + 1)/32
+```
 
-A device that has no approved network creates a signed `nvpn://join-request` link. The request carries only the identity and reply information needed for an admin to approve that device:
+The address is deterministic, not an identity credential. Packet admission is
+still tied to the authenticated FIPS source and current route map.
 
-- the device's stable application identity
-- an ephemeral request identity and secret
-- the device name
-- reply endpoints used to deliver approval
+## Join Approval
 
-An admin verifies the request, adds the application identity to the active network, signs the resulting roster, and delivers it to the requester. The joining device persists that roster before acknowledging delivery. Network membership, network identifiers, admin identities, and relay configuration come only from the signed roster; they are never accepted from an unsigned bootstrap payload.
+An unapproved device creates a short-lived `nvpn://join-request/…` bootstrap.
+It contains the stable device AppKey, a separate ephemeral request identity and
+secret, timestamps, and an optional device label. It contains no network ID,
+membership, admin list, or trusted relay configuration, and ordinary join
+requests do not nominate Nostr approval relays.
 
-## Admin Roster Sync
+An admin imports the request, adds the device to an administered network, and
+creates a fresh Nostr-signed roster bound to that request secret. Delivery is a
+stateful FIPS-TCP control exchange. The joiner accepts it only when the request
+matches, the signature is valid, the signer is listed as an admin, the joiner
+is in the roster, and freshness checks pass. The joiner persists the roster
+before acknowledging it; the admin retains the durable delivery outbox until
+that exact receipt arrives.
 
-Network membership is represented as an admin-signed roster. Operationally, the roster is the authority for:
+Receipt-backed manual join uses an out-of-band network/admin/device tuple, but
+the admin's roster signature remains the authority.
 
-- network name
-- participants
-- admins
-- join-request settings
-- per-peer aliases and route settings
+## Signed Rosters And Capabilities
 
-When a newer valid roster arrives, peers reload the active network membership and keep the FIPS mesh runtime aligned with that roster.
+A version-1 signed roster event contains:
 
-## FIPS Private Mesh
+- network ID and name
+- device and admin public keys
+- per-member aliases
+- signing time and signer identity
 
-`nvpn` uses FIPS as the only private mesh data plane.
+For an existing network, a newer roster is accepted only from a configured
+admin. Removing the local device removes that network locally. Stale, duplicate,
+invalid, or far-future updates are ignored or rejected.
 
-The CLI builds FIPS peer configuration from the active network participants:
+Routes and transport addresses are deliberately not roster fields. Connected
+members exchange authenticated capability frames containing advertised routes,
+endpoint hints, and a timestamp. Capabilities expire from runtime use and never
+grant membership.
 
-- each participant is mapped to its derived tunnel address
-- advertised routes are included in peer allowed IPs
-- static FIPS peer endpoints may be supplied with `fips_peer_endpoints`
-- FIPS discovery may use configured Nostr relays internally
+## FIPS Connectivity And Control
 
-The daemon reports each peer with FIPS-specific state:
+FIPS is the only private-mesh dataplane. Depending on configuration it can use
+UDP, LAN discovery, static endpoints, authenticated bootstrap/transit peers,
+Nostr-assisted endpoint discovery, WebSocket, and optional WebRTC transport.
+Nostr relays carry signed discovery/pubsub events, not private IP datagrams.
 
-- `endpoint` and `runtime_endpoint` are `"fips"` or a FIPS transport address
-- `fips_endpoint_npub`, `fips_transport_addr`, and `fips_transport_type` describe the selected FIPS link
-- `last_mesh_seen_at` and `last_fips_seen_at` replace the legacy presence/signal timestamps
-- packet and byte counters are read from FIPS link state
+Public bootstrap or discovered peers may relay/connect FIPS traffic without
+joining the private network. Before an IP packet reaches the TUN,
+`FipsMeshRuntime` maps the authenticated FIPS identity to a roster or paid-route
+admission and validates the packet source and destination.
 
-`nostr-vpn` should not publish or consume its old Nostr relay peer announcements. If FIPS uses relays, that behavior belongs to FIPS discovery/rendezvous, not to a separate nostr-vpn signaling model.
+`FipsControlFrame` is a versioned nvpn application envelope carried as opaque
+FIPS payload. Stateful roster, capability, approval, and paid-exit messages use
+FIPS-TCP. Ping/pong probes may use endpoint datagrams. This envelope is not a
+FIPS protocol message or wire-format extension.
 
-## NAT Discovery
+## Discovery And NAT
 
-NAT discovery remains a local endpoint aid:
+nvpn passes configured endpoint hints, STUN servers, discovery policy, and the
+listen port into FIPS. FIPS observes and advertises its overlay endpoints and
+performs NAT traversal/path recovery. Publishing the operator-supplied exact
+UDP endpoint publicly is opt-in and off by default; FIPS can still share
+observed endpoints through its configured discovery paths.
 
-- STUN servers can discover a public UDP endpoint
-- discovery is bound to the active listen port when possible
-- port-mapping state is surfaced in diagnostics
+PCP, NAT-PMP, and UPnP mapping remains an nvpn runtime aid and diagnostic. The
+daemon state's `advertised_endpoint` mirrors the local endpoint and is not a
+separate precomputed STUN result.
 
-The discovered endpoint is input to FIPS configuration. It is not a WireGuard endpoint announcement.
+## Routing And Exits
 
-## Routing
+Each roster member receives its derived `/32`. Fresh authenticated capability
+frames can add subnet or default routes. Outbound selection uses longest-prefix
+matching; equal-specificity routes from different peers are ambiguous and are
+dropped. A selected private exit becomes usable only when the advertising peer
+is connected. Leak protection withholds or blocks default routing while the
+requested protected path is not ready.
 
-Route targets come from the active network roster and local node settings. FIPS receives the route map and carries private mesh traffic for the selected peers.
+An exit provider forwards admitted member traffic through its selected local
+internet source: the host's direct path, a local WireGuard upstream, or another
+private FIPS exit. WireGuard can also be selected directly as this device's
+internet source. It is never a private-mesh transport.
 
-Exit-node behavior is represented in config and UI state. A node can optionally use a local WireGuard upstream while offering FIPS exit-node service. The provider routes its own default internet traffic and forwarded member exit traffic through that upstream, while peers still see only the normal FIPS exit-node route advertisement. WireGuard is not a mesh data plane and nostr-vpn does not announce or signal WireGuard peers through its old relay model.
+## Paid Exits
 
-## Exit DNS privacy
+Paid-exit offers are separate expiring, parameterized Nostr events signed by the
+seller. They advertise price, Cashu mint/channel terms, IP support, coarse
+location, and endpoint hints without granting roster membership.
 
-When a default exit route is active, MagicDNS names are always answered by
-nostr-vpn's local DNS responder. Public DNS follows the independent Exit DNS
-policy. Existing configurations default to `automatic`: a ready WireGuard exit
-uses DNS IPs supplied by its profile, while every other exit uses the built-in
-Cloudflare DNS-over-HTTPS resolver. Profile DNS is not installed before the
-WireGuard data path is ready and is removed before the exit is torn down.
+A buyer selects an offer, establishes a Cashu Spilman payment channel, and sends
+a paid-route session-open frame over authenticated FIPS-TCP. The seller validates
+the authenticated buyer and terms before returning an admission. Default-route
+traffic is not enabled for that seller until the admission is current. The
+admission is scoped to the paid session and does not expose the seller's private
+network.
 
-`encrypted` selects a built-in DoH preset or a custom HTTPS endpoint and
-overrides a WireGuard profile's `DNS =` line. Custom endpoints require literal
-bootstrap IPs, use normal TLS certificate and hostname verification, reject
-redirects, ignore system proxies, and never fall back to system or plaintext
-DNS. `through_exit` sends DNS wire messages to explicit IP resolvers only over
-the selected exit route. If the selected resolver or exit is unavailable,
-public DNS fails closed.
+Usage is byte-metered at the FIPS/nvpn boundary. Buyer-to-exit IP packets are
+billable immediately. Exit-to-buyer UDP is billable only for a recent
+buyer-originated flow. TCP download payload becomes billable when acknowledged
+by the buyer, without billing retransmitted bytes twice; other inbound protocols
+are not billed. Signed payment updates and acknowledgements use FIPS control,
+while durable channel/session state governs whether routing remains admitted.
 
-With DoH, this prevents the exit operator from reading or spoofing DNS questions
-and answers. With a WireGuard profile resolver, the WireGuard provider can
-process those questions and answers, matching the profile's explicit DNS
-policy, while the underlay cannot read them outside the encrypted tunnel. This
-is not anonymity: the selected DNS provider can process the question, and the
-exit can still observe destination IP addresses, traffic timing and volume, and
-possibly TLS hostnames when the destination connection does not use ECH.
+## Exit DNS And Inbound Safety
 
-Selected FIPS exit peers are also treated as hostile inbound networks. The
-buyer admits TCP, UDP, and echo replies only for locally originated flows, plus
-ICMP errors that quote a tracked flow. Unsolicited connections, malformed or
-fragmented packets, and packets with private, loopback, link-local, multicast,
-or spoofed mesh sources are dropped before reaching the TUN. This state
-survives route-table refreshes and applies equally to IPv4 and IPv6.
+MagicDNS names are always answered locally. With an active exit, `automatic`
+uses DNS IPs from a ready WireGuard profile or built-in Cloudflare DNS-over-HTTPS
+for other exits. `encrypted` selects Cloudflare, Quad9, or a custom HTTPS
+resolver with literal bootstrap IPs. `through_exit` sends DNS wire messages to
+explicit IP resolvers over the selected exit. Resolver or path failure is
+fail-closed; secure DNS does not fall back to system or plaintext DNS.
+
+DoH hides DNS contents from the exit, but the resolver sees the query and the
+exit still sees destination IPs, timing, volume, and sometimes TLS hostnames.
+A WireGuard profile resolver is visible to that WireGuard provider.
+
+Selected FIPS exits are treated as hostile inbound networks. TCP, UDP, and echo
+replies are admitted only for locally originated flows, along with valid ICMP
+errors quoting tracked flows. Unsolicited, malformed, fragmented, private,
+loopback, link-local, multicast, or spoofed mesh-source traffic is dropped
+before the TUN for IPv4 and IPv6.
 
 ## Canonical Source
 
-If this document and the code diverge, the code wins. The main protocol implementations currently live in:
+If this document and code differ, code wins. The main implementations are:
 
-- `crates/nostr-vpn-core/src/fips_control.rs`
+- `crates/nostr-vpn-core/src/join_requests.rs`, `signed_rosters.rs`, and
+  `fips_control.rs`
 - `crates/nostr-vpn-core/src/fips_mesh.rs`
-- `crates/nostr-vpn-core/src/join_requests.rs`
-- `crates/nostr-vpn-core/src/config.rs`
-- `crates/nostr-vpn-cli/src/fips_private_mesh.rs`
-- `crates/nostr-vpn-cli/src/session_runtime.rs`
-- `crates/nostr-vpn-app-core/src/ffi.rs`
+- `crates/nostr-vpn-core/src/paid_routes.rs`, `paid_route_store/`, and
+  `paid_route_accounting.rs`
+- `crates/nostr-vpn-cli/src/fips_private_mesh/`
+- `crates/nostr-vpn-cli/src/session_runtime/`
+- `crates/nostr-vpn-cli/src/secure_dns_runtime.rs`
+- `crates/nostr-vpn-app-core/src/join_approval.rs` and `mobile_tunnel/`

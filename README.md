@@ -27,17 +27,17 @@ Desktop apps target Apple Silicon macOS and x64 Linux/Windows; mobile builds tar
 Create a network on the first device:
 
 ```bash
-cargo install nvpn --force
 nvpn init
-MY_NPUB='<paste nostr_pubkey from nvpn init>'
-nvpn set --participant "$MY_NPUB"
+DEVICE_ID='<paste nostr_pubkey from nvpn init>'
+nvpn set --device "$DEVICE_ID"
 nvpn start --daemon --connect
 ```
 
-To add another device, generate a signed join request and scan or paste it into a Nostr VPN app for admin approval:
+On another device, start its daemon, generate a signed join request, and scan or paste the request into an admin's Nostr VPN app:
 
 ```bash
 nvpn init
+nvpn start --daemon --connect
 nvpn join-request
 ```
 
@@ -53,9 +53,9 @@ For startup at boot, run `sudo nvpn service install`; on Windows, run `nvpn serv
 
 ## Paid Exits
 
-Providers publish paid-exit offers over Nostr, and buyers settle byte-metered usage through Cashu Spilman channels. Every buyer-to-exit IP packet is counted immediately; exit-to-buyer UDP is counted only for recent buyer-initiated flows, while TCP payload is counted only after the buyer acknowledges it, without double-counting retransmitted download data. Other inbound protocols are not billed.
+Providers publish byte-priced offers over Nostr, and buyers settle usage through Cashu Spilman channels. Uploads are counted immediately; matched UDP replies and buyer-acknowledged TCP downloads are also billed without double-counting TCP retransmissions.
 
-Public DNS uses authenticated DNS-over-HTTPS by default, preventing the exit provider from reading or spoofing DNS questions and answers; MagicDNS names remain local. See [Exit DNS privacy](docs/protocol.md#exit-dns-privacy) for resolver options and limitations.
+Public DNS uses authenticated DNS-over-HTTPS by default, preventing the exit provider from reading or spoofing DNS questions and answers; MagicDNS names remain local. See [Exit DNS and inbound safety](docs/protocol.md#exit-dns-and-inbound-safety) for resolver options and limitations.
 
 As with a Tor exit node, treat an unknown paid exit provider as an untrusted network. It can observe destination IPs and traffic metadata, and can read or modify plaintext HTTP and other traffic without end-to-end encryption. Use HTTPS or another authenticated, end-to-end encrypted protocol for sensitive traffic.
 
@@ -72,7 +72,7 @@ Use `just run-macos` or `just run-linux` for a specific desktop target. See [ver
 ## Documentation
 
 - [Protocol](docs/protocol.md): enrollment, roster sync, routing, and DNS privacy
-- [Contributing](CONTRIBUTING.md): contributor and package notes
+- [StartOS packaging](CONTRIBUTING.md): contributor build and validation notes
 - [Changelog](CHANGELOG.md): release history
 - [Experiments](docs/EXPERIMENTS.md): performance and reliability results
 - [Native UI parity](docs/native-ui-parity-matrix.md): platform implementation status

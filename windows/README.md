@@ -1,29 +1,32 @@
-# Windows Native Shell
+# Windows
 
-Target shell: WPF/.NET.
+The Windows app is a WPF/.NET 8 shell over `nostr-vpn-app-core`'s JSON C ABI.
+It ships with `nvpn.exe` and Wintun, and owns Windows integrations including
+service/UAC actions, the notification-area menu, startup registration,
+single-instance deep-link routing, QR image import, and updates.
 
-Responsibilities:
+## Build and run
 
-- bind to `nostr-vpn-app-core` through the explicit C ABI JSON bridge in `crates/nostr-vpn-app-core/src/c_abi.rs`
-- render `UiState` with native WPF views
-- dispatch `NativeAppAction` values into the shared Rust core
-- own Credential Manager access, UAC/service prompts, tray integration, camera/image QR scanning, startup registration, and installer/update UX
-- preserve current Windows service, Wintun/userspace tunnel, config import, join-request deep links, and exit-node behavior
-
-The parity checklist is in `docs/native-ui-parity-matrix.md`.
-
-## Run
-
-From Windows:
+Use a Windows checkout with Rust, .NET 8, and LLVM installed:
 
 ```powershell
+.\scripts\windows-build.ps1
 .\scripts\windows-build.ps1 -Run
 ```
 
-From Git Bash or `just` on Windows:
+From Git Bash or a Windows environment with `just`:
 
-```bash
+```sh
+just windows-build
 just run-windows
 ```
 
-The build first compiles `nostr-vpn-app-core` and `nvpn`, then builds the WPF shell and copies `nostr_vpn_app_core.dll`, `nvpn.exe`, and helper binaries such as `binaries\wintun.dll` into the app output.
+The build compiles `nostr-vpn-app-core` and `nvpn`, then copies
+`nostr_vpn_app_core.dll`, `nvpn.exe`, and `binaries\wintun.dll` into the WPF
+output. Add `-Configuration Release -Publish` for a published directory.
+
+The release workflow installs Inno Setup and invokes `-Installer` to produce the
+release installer; ordinary development builds do not require Inno Setup.
+
+See the [native UI parity matrix](../docs/native-ui-parity-matrix.md) for the
+shared platform contract.

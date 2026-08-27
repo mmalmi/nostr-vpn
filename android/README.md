@@ -1,59 +1,46 @@
-# Android Native Shell
+# Android
 
-Target shell: Kotlin with Jetpack Compose.
+The Android app is a Kotlin/Jetpack Compose shell over
+`nostr-vpn-app-core`. JNI calls the shared JSON C ABI, and
+`NostrVpnService` connects Android's TUN interface to the Rust mobile tunnel.
+The current build targets Android 8.0+ (`minSdk 26`) on `arm64-v8a`.
 
-Responsibilities:
+The source of truth for cross-platform behavior is the
+[native UI parity matrix](../docs/native-ui-parity-matrix.md).
 
-- bind to `nostr-vpn-app-core` through the shared JSON C ABI and Android JNI exports
-- render `UiState` with native Compose screens
-- dispatch `NativeAppAction` values into the shared Rust core
-- own Keystore access, camera/image QR scanning, share intents, deep links, and Android `VpnService` permission/control
-- preserve the Android VPN runtime behavior while replacing the legacy webview UI
+## Build and install
 
-The parity checklist is in `docs/native-ui-parity-matrix.md`.
+Install the Android SDK/NDK, Rust, `cargo-ndk`, and Gradle, then run from the
+repository root:
 
-## Build
-
-```bash
+```sh
 just android-build
-```
-
-The build task cross-compiles `nostr-vpn-app-core` for `arm64-v8a` with `cargo-ndk`
-and packages it into the debug APK.
-
-## Install
-
-```bash
 just android-install
 ```
 
-## Smoke
+`android-build` compiles the Rust core and packages a debug APK. `android-install`
+installs that APK on the selected adb target.
 
-```bash
+## Smoke tests
+
+```sh
 just android-smoke
+just android-smoke-vpn
 ```
 
-Use `NVPN_ANDROID_SERIAL=<adb-serial>` or `ANDROID_SERIAL=<adb-serial>` when more
-than one device or emulator is online. `just android-smoke-vpn` also cycles the
-debug VPN action and expects the VPN permission/config path to be usable on that
-device. On a fresh install, approve its signed join request from an admin device,
-or use `scripts/mobile-android-smoke.sh --vpn-cycle --create-network` for local
-OS VPN/TUN coverage without peer dataplane coverage. On trusted local test
-devices, add `--accept-vpn-dialog` to tap Android's system VPN consent prompt.
-A WireGuard config can be layered on with
-`NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG(_FILE)`, but it does not create the
-required nvpn network by itself. The command verifies that both `NostrVpnService`
-and an Android VPN network become active after debug connect, then saves the
-runtime-state JSON, Android VPN `ip -s link` counters, ping-probe output, a
-ping latency/loss summary JSON, and a native TUN counter summary JSON under
-`artifacts/mobile-android`.
+The first command builds, installs, launches, and checks the current app. The VPN
+variant also exercises Android VPN permission, the foreground `VpnService`, the
+Rust runtime, and native TUN counters. A fresh install needs an active Nostr VPN
+network; for isolated OS/TUN coverage, use:
 
-The native shell includes state, join-request, roster, routing, diagnostics,
-deep-link, VPN permission surfaces, and Android `VpnService` packet handling
-backed by the shared Rust core.
+```sh
+./scripts/mobile-android-smoke.sh \
+  --create-network --accept-vpn-dialog --vpn-cycle
+```
 
-For a production-like physical-device exit test, run
-`just mobile-test-kit-exit`. It starts a LAN-reachable WireGuard provider and
-profile DNS in Docker, proves default-route and DNS traffic at the provider,
-checks public Internet access, disconnects, and requires native device DNS and
-Internet to work again. The same command runs the corresponding iOS test.
+Only use `--accept-vpn-dialog` on a trusted test device. Set
+`NVPN_ANDROID_SERIAL` (or `ANDROID_SERIAL`) when adb exposes more than one target.
+VPN evidence is written under `artifacts/mobile-android/`.
+
+For shared, simulator, physical-device, and exit-path coverage, see the
+[mobile test kit](../docs/mobile-test-kit.md).

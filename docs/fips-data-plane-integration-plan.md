@@ -1,55 +1,62 @@
-# FIPS Private Mesh Integration Notes
+# FIPS Private Mesh Integration
 
-This document tracks the current FIPS-only private mesh architecture. Older
-drafts described a selectable private data plane and a legacy mesh fallback;
-that model has been removed from `nostr-vpn`.
+This document records the current integration boundary. FIPS is the only
+private-mesh dataplane; the former selectable or WireGuard-mesh design is
+historical.
 
-## Current Shape
+## Ownership
 
-`nostr-vpn` owns:
+`nostr-vpn` owns identity, signed enrollment, admin rosters, aliases, IP route
+policy, tunnel admission, the platform VPN adapter, exit policy, DNS, and paid
+route accounting. FIPS owns authenticated packet transport, encryption,
+sessions, path selection, NAT traversal, discovery, rekey, and transport-level
+queueing.
 
-- device identity, signed join requests, admin rosters, aliases, and route policy
-- the visible VPN adapter on each platform
-- packet admission from the active roster into the local tunnel
+The desktop daemon embeds `nvpn-fips-endpoint` without its system TUN. Mobile
+uses the same roster/admission and endpoint configuration through app-core.
 
-FIPS owns:
+## Trust Boundaries
 
-- private mesh packet transport
-- peer reachability, path selection, NAT traversal, and rendezvous
-- optional Nostr relay use inside its own discovery layer
+- A signed active-network roster grants private-mesh membership.
+- FIPS discovery, static hints, public bootstrap peers, and WebSocket routers
+  provide connectivity only. Non-roster adjacency does not grant TUN access.
+- Authenticated capability frames carry current advertised routes and endpoint
+  hints; they do not replace signed membership.
+- Explicit paid-route admissions are session-scoped exceptions for public exit
+  traffic. They do not add a buyer to the seller's private roster.
+- Equal-specificity route ambiguity, an unavailable leak-protected exit, and an
+  unauthenticated or unadmitted source fail closed.
 
-The app gives FIPS an active roster-derived peer map. FIPS may discover paths
-through its configured mechanisms, but discovery is not membership authority.
+## Control And Data
 
-## Boundaries
+Private IP packets use the embedded FIPS endpoint. nvpn application control is
+encoded as `FipsControlFrame`; stateful roster, capability, join-approval, and
+paid-exit messages use FIPS-TCP, while probe ping/pong may use endpoint
+datagrams. These envelopes are FIPS payloads, not changes to the FIPS wire
+protocol.
 
-- Only active-network roster members can deliver packets into the private
-  tunnel.
-- FIPS relays or rendezvous peers are connectivity aids, not nostr-vpn roster
-  peers.
-- Relay discovery is connectivity only; membership and relay settings arrive
-  from an admin-signed roster after join-request approval.
-- `nostr-vpn` must not publish or consume legacy peer announcements.
-- Exit-node work belongs in a separate component later, not in the main private
-  mesh runtime.
+Join approval is delivered from a durable outbox and removed only after the
+joiner has verified and persisted the admin-signed roster and returned the
+matching receipt.
 
-## Implementation Notes
+Exit nodes are implemented now, not deferred work. A private roster peer may
+advertise default routes. Paid exits publish separate expiring signed offers,
+then receive explicit buyer admission after the seller accepts a FIPS control
+session. A seller can forward to its direct host path, local WireGuard upstream,
+or selected private FIPS exit. WireGuard remains a local egress leg, never a
+mesh transport.
 
-- `crates/nostr-vpn-cli/src/fips_private_mesh.rs` embeds the FIPS endpoint and
-  maps active roster participants into FIPS peer config.
-- `crates/nostr-vpn-core/src/fips_mesh.rs` contains private packet routing and
-  peer admission helpers.
-- `crates/nostr-vpn-core/src/join_requests.rs` keeps admin-signed roster state
-  without relay presence helpers.
-- Native shells consume FIPS-specific runtime state through
-  `crates/nostr-vpn-app-core`.
+## Implementation Map
 
-## Verification
+- `crates/nostr-vpn-cli/src/fips_private_mesh/`: endpoint configuration,
+  roster/paid-route maps, packet send/receive, platform TUNs, and status
+- `crates/nostr-vpn-core/src/fips_mesh.rs`: route selection and source admission
+- `crates/nostr-vpn-core/src/fips_control.rs` and `fips_control_tcp.rs`:
+  application control envelopes and stateful delivery
+- `crates/nostr-vpn-app-core/src/mobile_tunnel/`: mobile endpoint integration
+- `crates/nostr-vpn-cli/src/session_runtime/`: daemon reconciliation and
+  durable control delivery
 
-The cleanup is covered by:
-
-- Rust workspace tests and clippy
-- Docker private-mesh e2e scripts under `scripts/e2e-*-docker.sh`
-- native smoke tests for Android, iOS, macOS, Linux, and Windows
-
-When this document and the code diverge, the code wins.
+See [the dataplane architecture](fips-dataplane-architecture-plan.md) and
+[protocol](protocol.md) for the maintained behavior. Code and integration tests
+win if this summary diverges.

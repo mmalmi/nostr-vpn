@@ -1,37 +1,42 @@
-# Linux Native Shell
+# Linux
 
-Rust GTK4/libadwaita shell over `nostr-vpn-app-core`.
+The Linux app is a Rust GTK4/libadwaita shell that uses
+`nostr-vpn-app-core` directly. It includes native device, Internet, optional
+wallet, settings, tray, deep-link, updater, and QR import/scanning surfaces.
 
-Run it from the repo root:
+## Development
 
-```bash
+Docker is required. From the repository root:
+
+```sh
 just run-linux
-```
-
-The dev target runs inside Docker with a small Xvfb/Fluxbox desktop and VNC on
-`localhost:5902`. The VNC password is `nostrvpn`.
-
-Useful commands:
-
-```bash
 just linux-build
-./tools/run-linux cargo check
-./tools/run-linux cargo run
+just linux-e2e-gui
 ```
 
-The shell follows the current native app structure: Devices, Share, Exit Nodes,
-Settings, and an Advanced diagnostics disclosure. It owns the same core flows
-for connect/disconnect, roster presence, participant management, join-request
-QR/import, saved networks, internet-source selection,
-service/CLI actions, and diagnostics. Remaining
-Linux-native work is desktop portal integration, live camera QR scanning,
-tray/status notifier support, and packaged update UX.
+The runner builds the development image, starts an Xvfb/Fluxbox desktop, and
+runs commands inside the Linux workspace. With no explicit command it launches
+the app. The Compose file publishes VNC on port `5902` on all host interfaces,
+with the development password `nostrvpn`; use it only on a trusted development
+host or firewall the port.
 
-Installed packages register `nvpn://` links through the desktop entry. From the
-repo root, pass a link into the dev shell as an argument:
+Run focused Cargo commands through the same environment:
 
-```bash
+```sh
+./tools/run-linux cargo check
+./tools/run-linux cargo test
+```
+
+Installed packages register `nvpn://` through the desktop entry. A development
+deep link can be passed directly to the app:
+
+```sh
 ./tools/run-linux cargo run -- nvpn://debug/tick
 ```
 
-The parity checklist is in `../docs/native-ui-parity-matrix.md`.
+Live camera scanning uses `zbarcam` when a camera is available; QR image import
+works without it. Release packaging currently produces a Debian package through
+the release workflow.
+
+See the [native UI parity matrix](../docs/native-ui-parity-matrix.md) for the
+shared platform contract.

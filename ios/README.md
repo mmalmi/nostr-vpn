@@ -1,54 +1,48 @@
-# iOS Native Shell
+# iOS
 
-Target shell: SwiftUI with NetworkExtension Packet Tunnel integration.
+The iOS app is a SwiftUI shell over `nostr-vpn-app-core`'s JSON C ABI. Its
+NetworkExtension target connects `NEPacketTunnelFlow` to the Rust mobile tunnel;
+the app also owns VPN consent, deep links, sharing, and live camera QR scanning.
+The deployment target is iOS 17.
 
-Responsibilities:
+The source of truth for cross-platform behavior is the
+[native UI parity matrix](../docs/native-ui-parity-matrix.md).
 
-- bind to `nostr-vpn-app-core` through the shared JSON C ABI
-- render `UiState` with native SwiftUI navigation and sheets
-- dispatch `NativeAppAction` values into the shared Rust core
-- own platform effects such as share sheets, deep links, Packet Tunnel permission/control, and later Keychain plus live camera QR scanning
-- keep iPhone simulator capability differences visible through runtime capabilities
+## Build and run
 
-The parity checklist is in `docs/native-ui-parity-matrix.md`.
+On macOS, install Xcode, XcodeGen, and the required Rust iOS targets, then run:
 
-## Build
-
-```bash
+```sh
 just ios-build
-```
-
-The build task cross-compiles `nostr-vpn-app-core` for iOS simulator and device
-static libraries, creates an xcframework, generates the Xcode project with
-XcodeGen, and builds the app for the iOS simulator.
-
-## Run
-
-```bash
 just ios-run
 ```
 
-## Smoke
+Both commands build simulator and device Rust libraries, create
+`NostrVpnAppCore.xcframework`, and generate the Xcode project. `ios-build` builds
+the simulator app; `ios-run` also installs and launches it.
 
-```bash
+## Smoke tests
+
+```sh
 just ios-smoke
 ```
 
-The simulator smoke verifies build, install, launch, and screenshot capture. Use
-`NVPN_IOS_DEVICE=<device-id> just ios-smoke-device` or
-`scripts/mobile-ios-smoke.sh device --device <device-id> --vpn-cycle --create-network`
-for the physical-device VPN permission and Packet Tunnel path; keep local device
-identifiers out of git. A passing physical VPN cycle asks the debug app to
-disconnect afterwards unless `--leave-vpn-active` is set. The packet probe target,
-port, count, and wait can be overridden with `NVPN_IOS_TUN_PACKET_PROBE_*`.
-Physical VPN cycles save the raw debug result and TUN packet-probe summary JSON
-under `artifacts/mobile-ios`.
+This checks the simulator build, install, launch, UI gate, lifecycle behavior,
+idle CPU, and screenshot capture. A simulator cannot validate VPN permission or
+the Packet Tunnel dataplane.
 
-`just mobile-test-kit-exit` runs the full physical Android/iOS WireGuard exit
-test. It verifies profile DNS with a fixture-only hostname, public HTTPS through
-the exit, provider-side forwarded traffic, and native DNS/HTTPS before connect
-and after a complete packet-tunnel disconnect.
+For an iOS-only physical-device run of the current signed app:
 
-The native shell includes SwiftUI state/action surfaces, join-request QR,
-copy/share/import, roster, routing, settings, diagnostics, deep links, app icon,
-and Packet Tunnel integration backed by the shared Rust core.
+```sh
+./scripts/mobile-ios-smoke.sh device \
+  --install --create-network --vpn-cycle
+```
+
+It installs the current build, creates an isolated test network, cycles the
+Packet Tunnel, and validates native TUN traffic. Device and signing values belong
+in the shell environment or ignored `.env.mobile.local`, never in the repository.
+Evidence is written under `artifacts/mobile-ios/`.
+
+`just mobile-test-kit-device` runs the corresponding physical Android and iOS
+checks together. See the [mobile test kit](../docs/mobile-test-kit.md) for
+requirements and the full WireGuard exit/DNS gate.
