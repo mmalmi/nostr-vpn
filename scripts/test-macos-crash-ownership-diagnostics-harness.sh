@@ -31,12 +31,19 @@ fi
 while IFS= read -r sudo_line; do
   sudo_line="${sudo_line#*sudo -n }"
   case "$sudo_line" in
-    '"$NVPN_BIN" '*|'/usr/sbin/networksetup '*|'/usr/sbin/networksetup \'|'/bin/kill '*) ;;
+    '"$NVPN_BIN" '* \
+      | '/usr/sbin/networksetup '* \
+      | '/usr/sbin/networksetup \' \
+      | '/bin/kill '* \
+      | '/bin/launchctl bootout "$SYSTEM_SERVICE_LABEL"' \
+      | '/bin/launchctl bootstrap system "$SYSTEM_SERVICE_PLIST"' \
+      | '/bin/launchctl kickstart -k "$SYSTEM_SERVICE_LABEL"') ;;
     *) fail "guest harness sudo command is outside its explicit allowlist: $sudo_line" ;;
   esac
 done < <(grep -F 'sudo -n ' "$GUEST")
 
 sed '/^validate_inputs$/,$d' "$GUEST" >"$DEFINITIONS"
+export NVPN_MACOS_NETWORK_ROOT="$ROOT"
 export NVPN_MACOS_NETWORK_STATE_DIR="$TMP_ROOT/state"
 mkdir -p "$NVPN_MACOS_NETWORK_STATE_DIR/results"
 # shellcheck disable=SC1090

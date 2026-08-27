@@ -1199,11 +1199,28 @@ def validate_desktop_dns_ui_receipts(
         root.is_dir() and not root.is_symlink(),
         f"{platform} desktop DNS UI evidence directory is missing",
     )
-    receipt_paths = list(root.glob("*.json"))
+    all_receipt_paths = list(root.glob("*.json"))
+    expected_receipt_names = {
+        f"{case}.json" for case in DESKTOP_DNS_UI_SETTINGS
+    }
+    allowed_sidecar_names = (
+        {"paid-exit-seller.json"}
+        if platform == "macos"
+        else set()
+    )
+    observed_receipt_names = {path.name for path in all_receipt_paths}
     require(
-        len(receipt_paths) == len(DESKTOP_DNS_UI_SETTINGS),
+        expected_receipt_names <= observed_receipt_names
+        and observed_receipt_names
+        <= expected_receipt_names | allowed_sidecar_names,
         f"{platform} desktop DNS UI receipts do not cover exactly five policies",
     )
+    for path in all_receipt_paths:
+        if path.name in allowed_sidecar_names:
+            load_json(path)
+    receipt_paths = [
+        root / name for name in sorted(expected_receipt_names)
+    ]
     observed: dict[str, Any] = {}
     evidence: dict[str, str] = {}
     artifact_identity: tuple[str, str] | None = None

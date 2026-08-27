@@ -383,6 +383,35 @@ with tempfile.TemporaryDirectory() as temporary:
         assert source == (app_sha, app_tree)
         assert reused_hash is None
 
+    seller_sidecar = base / "seller-sidecar"
+    shutil.copytree(base / "macos", seller_sidecar)
+    (seller_sidecar / "paid-exit-seller.json").write_text(
+        json.dumps({"case": "paid-exit-seller"}) + "\n",
+        encoding="utf-8",
+    )
+    cases, hashes, source, reused_hash = module.validate_desktop_dns_ui_receipts(
+        seller_sidecar, "macos", app_sha, app_tree
+    )
+    assert set(cases) == set(settings)
+    assert set(hashes) == {f"{case}.json" for case in settings}
+    assert source == (app_sha, app_tree)
+    assert reused_hash is None
+
+    unexpected_sidecar = base / "unexpected-sidecar"
+    shutil.copytree(base / "linux", unexpected_sidecar)
+    (unexpected_sidecar / "unrelated.json").write_text(
+        json.dumps({"case": "unrelated"}) + "\n",
+        encoding="utf-8",
+    )
+    try:
+        module.validate_desktop_dns_ui_receipts(
+            unexpected_sidecar, "linux", app_sha, app_tree
+        )
+    except ValueError:
+        pass
+    else:
+        raise SystemExit("unexpected desktop DNS UI sidecar was accepted")
+
     bad = base / "bad-bootstrap"
     shutil.copytree(base / "linux", bad)
     path = bad / "custom.json"
