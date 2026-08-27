@@ -247,12 +247,17 @@ fn macos_wg_endpoint_bypass_route(
     let IpAddr::V4(endpoint) = endpoint else {
         return None;
     };
-    let gateway = underlay.gateway.as_ref().filter(|gateway| {
-        gateway.parse::<IpAddr>().ok() != Some(IpAddr::V4(endpoint))
-    });
+    if underlay
+        .gateway
+        .as_deref()
+        .and_then(|gateway| gateway.parse::<IpAddr>().ok())
+        == Some(IpAddr::V4(endpoint))
+    {
+        return None;
+    }
     Some(crate::MacosManagedRoute {
         target: format!("{endpoint}/32"),
-        gateway: gateway.cloned(),
+        gateway: underlay.gateway.clone(),
         interface: Some(underlay.interface.clone()),
     })
 }
@@ -275,8 +280,9 @@ fn install_macos_wg_endpoint_bypass(
                 "no physical macOS underlay route is available for WireGuard endpoint {endpoint}"
             )
         })?;
-    let route = macos_wg_endpoint_bypass_route(endpoint, &underlay)
-        .expect("IPv4 endpoint produces an endpoint bypass");
+    let Some(route) = macos_wg_endpoint_bypass_route(endpoint, &underlay) else {
+        return Ok(None);
+    };
     for current in current_routes
         .iter()
         .filter(|current| current.target == route.target && *current != &route)
