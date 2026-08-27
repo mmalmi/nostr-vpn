@@ -91,19 +91,21 @@ def matching_nodes(name: str) -> list[Any]:
     desktop = pyatspi.Registry.getDesktop(0)
     for node in walk(desktop):
         try:
-            if name.startswith("nvpn-exit-dns-"):
-                selector_matches = node.get_accessible_id() == name
-            else:
-                selector_matches = node.name == name
             if (
                 node.get_process_id() == TARGET_PID
-                and selector_matches
+                and node_matches_name(node, name)
                 and visible(node)
             ):
                 matches.append(node)
         except Exception:
             continue
     return matches
+
+
+def node_matches_name(node: Any, name: str) -> bool:
+    if name.startswith("nvpn-exit-dns-"):
+        return node.get_accessible_id() == name
+    return node.name == name
 
 
 def ancestor_with_accessible_id(node: Any, accessible_id: str) -> Any | None:
@@ -120,11 +122,40 @@ def ancestor_with_accessible_id(node: Any, accessible_id: str) -> Any | None:
     return None
 
 
+def focused_target(node: Any, name: str) -> Any | None:
+    if name.startswith("nvpn-exit-dns-"):
+        return ancestor_with_accessible_id(node, name)
+    return node if node_matches_name(node, name) else None
+
+
 def has_action(node: Any) -> bool:
     try:
         return node.queryAction().nActions > 0
     except Exception:
         return False
+
+
+def focused_actionable_nodes() -> list[Any]:
+    focused = []
+    for node in walk(pyatspi.Registry.getDesktop(0)):
+        try:
+            if (
+                node.get_process_id() == TARGET_PID
+                and visible(node)
+                and has_action(node)
+                and node.getState().contains(pyatspi.STATE_FOCUSED)
+            ):
+                focused.append(node)
+        except Exception:
+            continue
+    return focused
+
+
+def accessible_description(node: Any) -> str:
+    try:
+        return f"{node.getRoleName()}:{node.name}"
+    except Exception:
+        return "stale"
 
 
 def find_named(
@@ -176,6 +207,7 @@ def focus_named_with_keyboard(name: str, max_tabs: int = 100) -> Any:
         check=True,
     )
     focused_names = []
+    saw_non_target_focus = False
     for _ in range(max_tabs):
         if not target_window_has_focus():
             subprocess.run(
@@ -183,51 +215,21 @@ def focus_named_with_keyboard(name: str, max_tabs: int = 100) -> Any:
                 check=True,
             )
             time.sleep(0.1)
-        pyatspi.Registry.pumpQueuedEvents()
-        if name.startswith("nvpn-exit-dns-"):
-            for candidate in walk(pyatspi.Registry.getDesktop(0)):
-                try:
-                    if (
-                        candidate.get_process_id() == TARGET_PID
-                        and candidate.getState().contains(pyatspi.STATE_FOCUSED)
-                    ):
-                        target = ancestor_with_accessible_id(candidate, name)
-                        if target is not None and visible(target):
-                            time.sleep(0.1)
-                            pyatspi.Registry.pumpQueuedEvents()
-                            if (
-                                target_window_has_focus()
-                                and candidate.getState().contains(
-                                    pyatspi.STATE_FOCUSED
-                                )
-                            ):
-                                return target
-                except Exception:
-                    continue
-        else:
-            for node in matching_nodes(name):
-                try:
-                    if node.getState().contains(pyatspi.STATE_FOCUSED):
-                        return node
-                except Exception:
-                    continue
         subprocess.run(
             ["xdotool", "key", "--clearmodifiers", "Tab"],
             check=True,
         )
         time.sleep(0.05)
-        for candidate in walk(pyatspi.Registry.getDesktop(0)):
-            try:
-                if (
-                    candidate.get_process_id() == TARGET_PID
-                    and candidate.getState().contains(pyatspi.STATE_FOCUSED)
-                ):
-                    focused_names.append(
-                        f"{candidate.getRoleName()}:{candidate.name}"
-                    )
-                    break
-            except Exception:
-                continue
+        pyatspi.Registry.pumpQueuedEvents()
+        focused = focused_actionable_nodes()
+        target = focused_target(focused[0], name) if len(focused) == 1 else None
+        if target is not None and saw_non_target_focus:
+            return target
+        if focused and not any(focused_target(node, name) for node in focused):
+            saw_non_target_focus = True
+        focused_names.append(
+            ",".join(accessible_description(node) for node in focused) or "none"
+        )
     raise RuntimeError(
         f"keyboard focus did not reach {name}; focused sequence: "
         + ", ".join(focused_names)

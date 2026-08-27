@@ -181,7 +181,7 @@ if "set_dropdown_accessible_label" in source:
 for required in (
     'name.startswith("nvpn-exit-dns-")',
     "node.get_accessible_id() == name",
-    "ancestor_with_accessible_id(candidate, name)",
+    "return ancestor_with_accessible_id(node, name)",
     '"nvpn-exit-dns-mode": (',
     '"Automatic (recommended)"',
     '"Encrypted DNS"',
@@ -203,6 +203,10 @@ for required in (
     "wait_dropdown_popup_ready(name)",
     "expected_items = len(DNS_DROPDOWN_LABELS[name])",
     'node.getRoleName() != "list box"',
+    "def focused_actionable_nodes() -> list[Any]:",
+    "saw_non_target_focus = False",
+    "target = focused_target(focused[0], name) if len(focused) == 1 else None",
+    "if focused and not any(focused_target(node, name) for node in focused):",
 ):
     if required not in driver:
         raise SystemExit(
