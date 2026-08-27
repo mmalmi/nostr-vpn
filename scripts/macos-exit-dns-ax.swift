@@ -825,6 +825,29 @@ func run() throws {
         print("MACOS_EXIT_DNS_AX_ACCESSIBILITY_READY")
         return
     }
+    if args.count == 4,
+       let pid = pid_t(args[1]),
+       args[2] == "--wait-window" {
+        guard AXIsProcessTrusted() else {
+            throw DriverError.accessibilityPermission
+        }
+        let application = AXUIElementCreateApplication(pid)
+        let processName = stringAttribute(application, kAXTitleAttribute)
+        if !processName.isEmpty, processName != args[3] {
+            throw DriverError.invalidState(
+                "AX PID \(pid) belongs to \(processName), expected \(args[3])"
+            )
+        }
+        NSRunningApplication(processIdentifier: pid)?.activate(
+            options: [.activateAllWindows]
+        )
+        _ = try find(
+            application,
+            identifier: "main-AppWindow-1"
+        )
+        print("MACOS_EXIT_DNS_AX_WINDOW_READY")
+        return
+    }
     guard args.count == 6,
           let pid = pid_t(args[1]),
           ["apply", "readback"].contains(args[2]) else {

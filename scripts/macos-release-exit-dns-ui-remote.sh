@@ -216,19 +216,28 @@ launch_app() {
     return 1
   }
   codesign --verify --deep --strict "$APP_PATH"
-  macos_open -n -F \
-    --stdout "$ARTIFACT_DIR/app.log" \
-    --stderr "$ARTIFACT_DIR/app.log" \
-    "$APP_PATH"
-  local deadline=$((SECONDS + 20))
+  local deadline=$((SECONDS + 75))
   while ((SECONDS < deadline)); do
-    APP_PID="$(macos_exact_executable_pids "$APP_EXE" | tail -n 1)"
-    if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.1
+    macos_open -n -F \
+      --stdout "$ARTIFACT_DIR/app.log" \
+      --stderr "$ARTIFACT_DIR/app.log" \
+      "$APP_PATH"
+    local process_deadline=$((SECONDS + 20))
+    while ((SECONDS < process_deadline && SECONDS < deadline)); do
+      APP_PID="$(macos_exact_executable_pids "$APP_EXE" | tail -n 1)"
+      if [[ -n "$APP_PID" ]] && kill -0 "$APP_PID" >/dev/null 2>&1; then
+        if "$DRIVER" "$APP_PID" --wait-window "Nostr VPN"; then
+          return 0
+        fi
+        stop_gate_app || return 1
+        break
+      fi
+      sleep 0.1
+    done
+    stop_gate_app || return 1
   done
-  echo "exact imported macOS Release app did not launch through LaunchServices" >&2
+  stop_gate_app || return 1
+  echo "exact imported macOS Release app did not expose its main window through LaunchServices" >&2
   return 1
 }
 
