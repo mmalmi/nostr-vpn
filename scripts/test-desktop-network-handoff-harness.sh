@@ -1011,6 +1011,11 @@ endpoint_route_body="$(
 grep -Fq '[[ "$endpoint_iface" == "$expected_underlay"' \
   <<<"$endpoint_route_body" \
   || fail "macOS network gate does not require the global endpoint bypass"
+grep -Fq '[[ "$ENDPOINT_HOST" == "$expected_gateway" ]]' \
+  <<<"$endpoint_route_body" \
+  || fail "macOS network gate does not recognize a direct gateway endpoint route"
+grep -Fq 'direct_gateway_endpoint' <<<"$endpoint_route_body" \
+  || fail "macOS network gate does not distinguish direct gateway endpoints"
 if grep -Fq '"$endpoint_iface" == "$wg_iface"' <<<"$endpoint_route_body"; then
   fail "macOS network gate still expects the obsolete scoped endpoint bypass"
 fi

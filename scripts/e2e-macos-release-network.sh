@@ -190,6 +190,7 @@ wireguard_endpoint_route_absent() {
 wireguard_endpoint_route_state_valid() {
   local expected_underlay="${1:-$PRIMARY_IFACE}"
   local endpoint_iface expected_gateway physical_default_iface
+  local direct_gateway_endpoint=false
   [[ "$expected_underlay" == "$PRIMARY_IFACE" \
     || "$expected_underlay" == "$SECONDARY_IFACE" ]] \
     || return 1
@@ -200,9 +201,13 @@ wireguard_endpoint_route_state_valid() {
   fi
   physical_default_iface="$(route_value default interface)" || return 1
   expected_gateway="$(route_value default gateway)" || return 1
-  # The global /32 must beat the two WireGuard /1s for an ordinary endpoint
-  # lookup. IP_BOUND_IF then pins the encrypted UDP socket to the same selected
-  # underlay, while the recorded interface makes route ownership exact.
+  if [[ "$ENDPOINT_HOST" == "$expected_gateway" ]]; then
+    direct_gateway_endpoint=true
+  fi
+  # An ordinary endpoint needs the exact global /32 through the physical
+  # gateway. When the endpoint is the gateway itself, macOS represents the
+  # correct direct /32 as a neighbor route instead. IP_BOUND_IF pins the
+  # encrypted UDP socket to the same selected underlay in both cases.
   [[ "$endpoint_iface" == "$expected_underlay" \
     && "$physical_default_iface" == "$expected_underlay" \
     && -n "$expected_gateway" \
@@ -211,10 +216,14 @@ wireguard_endpoint_route_state_valid() {
       | awk \
         -v endpoint="$ENDPOINT_HOST" \
         -v gateway="$expected_gateway" \
-        -v interface="$expected_underlay" '
+        -v interface="$expected_underlay" \
+        -v direct_gateway_endpoint="$direct_gateway_endpoint" '
           $1 == endpoint {
             routes += 1
-            if ($2 == gateway && $4 == interface) {
+            if ($4 == interface \
+                && ((direct_gateway_endpoint == "true" && $2 != gateway) \
+                    || (direct_gateway_endpoint != "true" \
+                        && $2 == gateway && $3 !~ /I/))) {
               matching += 1
             }
           }
