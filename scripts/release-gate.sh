@@ -986,10 +986,24 @@ run_macos_platform_lane() {
   run_macos_service_toggle_gate
 }
 
+ubuntu_ssh_command() {
+  local host="$1"
+  UBUNTU_SSH_CMD=(ssh -o BatchMode=yes -o ConnectTimeout=5)
+  if [[ -n "${NVPN_UBUNTU_SSH_PROXY_COMMAND:-}" ]]; then
+    UBUNTU_SSH_CMD+=(
+      -o "ProxyCommand=${NVPN_UBUNTU_SSH_PROXY_COMMAND}"
+    )
+  elif [[ -n "${NVPN_UBUNTU_SSH_JUMP:-}" ]]; then
+    UBUNTU_SSH_CMD+=(-J "$NVPN_UBUNTU_SSH_JUMP")
+  fi
+  UBUNTU_SSH_CMD+=("$host")
+}
+
 ubuntu_vm_reachable() {
-  [[ -n "${NVPN_UBUNTU_SSH_HOST:-}" ]] || return 1
-  ssh -o BatchMode=yes -o ConnectTimeout=5 \
-    "$NVPN_UBUNTU_SSH_HOST" hostname >/dev/null 2>&1
+  local host="${NVPN_UBUNTU_SSH_HOST:-}"
+  [[ -n "$host" ]] || return 1
+  ubuntu_ssh_command "$host"
+  "${UBUNTU_SSH_CMD[@]}" hostname >/dev/null 2>&1
 }
 
 linux_platform_lane_requested() {

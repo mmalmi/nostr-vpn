@@ -275,6 +275,10 @@ grep -Fq 'SSH_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"' "$ROOT_DIR/scripts/windows-vm-a
   || fail "Windows VM app smoke cannot traverse the configured VM host"
 grep -Fq 'windows_ssh_command "$host"' "$RELEASE_GATE" \
   || fail "release gate Windows reachability checks ignore the configured VM host"
+grep -Fq 'ubuntu_ssh_command "$host"' "$RELEASE_GATE" \
+  || fail "release gate Linux reachability checks ignore the configured VM proxy"
+grep -Fq 'ProxyCommand=${NVPN_UBUNTU_SSH_PROXY_COMMAND}' "$RELEASE_GATE" \
+  || fail "release gate Linux reachability cannot traverse the configured VM proxy"
 grep -Fq 'Remove-Item -Force \$installer' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "Windows VM smoke can reuse a stale installer after a failed build"
 grep -Fq '\$env:CARGO_TARGET_DIR = Join-Path' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
