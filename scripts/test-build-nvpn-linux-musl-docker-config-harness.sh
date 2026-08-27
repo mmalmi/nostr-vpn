@@ -40,8 +40,12 @@ fi
 output_mount=""
 bound_target=0
 image=""
+platform=""
 previous=""
 for argument in "$@"; do
+  if [[ "$previous" == --platform ]]; then
+    platform="$argument"
+  fi
   if [[ "$previous" == -v && "$argument" == *:/home/rust/src/target ]]; then
     bound_target=1
   fi
@@ -63,9 +67,11 @@ case "$image" in
     fi
     [[ -d "$config_dir" && ! -e "$config_dir/config.json" ]] || exit 90
     printf '%s\n' "$config_dir" >"$NVPN_TEST_STATE_DIR/public-config"
+    [[ "$platform" == linux/amd64 ]] || exit 98
     ;;
   registry.invalid/*)
     [[ -z "$config_dir" ]] || exit 91
+    [[ -z "$platform" ]] || exit 99
     : >"$NVPN_TEST_STATE_DIR/custom-used-normal-config"
     ;;
   *)

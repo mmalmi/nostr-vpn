@@ -11,6 +11,7 @@ NOSTR_PUBSUB_REPO_PATH=${NVPN_NOSTR_PUBSUB_REPO_PATH:-}
 CASHU_SERVICE_REPO_PATH=${NVPN_CASHU_SERVICE_REPO_PATH:-}
 CDK_SPILMAN_REPO_PATH=${NVPN_CDK_SPILMAN_REPO_PATH:-${NVPN_CASHU_SPILMAN_REPO_PATH:-}}
 DOCKER_ENV=()
+DOCKER_PLATFORM=""
 
 if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
   DOCKER_ENV+=(-e NVPN_LINUX_MUSL_STRIP=1)
@@ -54,6 +55,10 @@ PUBLIC_DOCKER_CONFIG=""
 if [[ "$IMAGE" == "$DEFAULT_IMAGE" ]]; then
   PUBLIC_DOCKER_CONFIG="$WORK_DIR/.docker-public"
   mkdir -p "$PUBLIC_DOCKER_CONFIG"
+  # The public cross-builder's arm64 manifest currently contains x86_64
+  # executables. Pin its known-good amd64 variant so Apple Silicon does not
+  # select that mislabeled image and fail with an exec-format error.
+  DOCKER_PLATFORM=linux/amd64
 fi
 
 run_builder_docker() {
@@ -61,6 +66,14 @@ run_builder_docker() {
     docker --config "$PUBLIC_DOCKER_CONFIG" "$@"
   else
     docker "$@"
+  fi
+}
+
+run_builder_container() {
+  if [[ -n "$DOCKER_PLATFORM" ]]; then
+    run_builder_docker run --rm -i --platform "$DOCKER_PLATFORM" "$@"
+  else
+    run_builder_docker run --rm -i "$@"
   fi
 }
 
@@ -159,7 +172,7 @@ perl -0pi -e 's#exclude = \["linux"\]#exclude = ["linux", ".fips-patch", ".nostr
 
 mkdir -p "$TARGET_DIR/$TARGET/release"
 rm -f "$TARGET_DIR/$TARGET/release/nvpn"
-run_builder_docker run --rm -i \
+run_builder_container \
   -u "$(id -u):$(id -g)" \
   -v "$WORK_DIR":/home/rust/src \
   -v "$TARGET_DIR":/home/rust/output \
