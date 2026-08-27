@@ -221,13 +221,17 @@ wireguard_endpoint_route_state_valid() {
           $1 == endpoint {
             routes += 1
             if ($4 == interface \
-                && ((direct_gateway_endpoint == "true" && $2 != gateway) \
+                && ((direct_gateway_endpoint == "true" \
+                    && $2 != gateway && $3 ~ /H/) \
                     || (direct_gateway_endpoint != "true" \
                         && $2 == gateway && $3 !~ /I/))) {
               matching += 1
             }
           }
-          END { exit (routes == 1 && matching == 1) ? 0 : 1 }
+          END {
+            if (direct_gateway_endpoint == "true" && matching >= 1) exit 0
+            exit (routes == 1 && matching == 1) ? 0 : 1
+          }
         '
 }
 
