@@ -315,6 +315,21 @@ if launch.index("open -n -F") > launch.index("macos_exact_executable_pids"):
     raise SystemExit("manual-join VM looks for its exact PID before launching")
 if "Date().addingTimeInterval(20)" not in manual_join_driver:
     raise SystemExit("manual-join AX driver lacks a bounded cold-import readiness window")
+press_driver = manual_join_driver.split("func press(", 1)[1].split(
+    "\n}\n\nfunc setValue", 1
+)[0]
+for required in (
+    "let candidates = visible.filter",
+    "for candidate in candidates",
+):
+    if required not in press_driver:
+        raise SystemExit(
+            f"manual-join AX driver does not try every responsive-layout match: {required}"
+        )
+if "visible.first(where:" in press_driver:
+    raise SystemExit(
+        "manual-join AX driver can wedge on the first stale responsive-layout match"
+    )
 
 if 'pgrep -f "$APP_EXE"' in texts["e2e-macos-service-toggle.sh"]:
     raise SystemExit("service-toggle gate still uses substring process matching")

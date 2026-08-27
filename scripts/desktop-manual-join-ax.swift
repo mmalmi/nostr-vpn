@@ -150,30 +150,34 @@ func press(
     var lastError = AXError.actionUnsupported
     repeat {
         let visible = visibleElements(application)
-        if var element = visible.first(where: {
+        let candidates = visible.filter {
             stringAttribute($0, kAXIdentifierAttribute) == identifier
-        }) {
-            for _ in 0..<8 {
-                var actionNames: CFArray?
-                let actionError = AXUIElementCopyActionNames(element, &actionNames)
-                if actionError == .success,
-                   let names = actionNames as? [String],
-                   names.contains(kAXPressAction) {
-                    let error = AXUIElementPerformAction(element, kAXPressAction as CFString)
-                    if error == .success {
-                        Thread.sleep(forTimeInterval: 0.25)
-                        return
-                    }
-                    lastError = error
-                    break
-                }
-                guard let parent = attribute(element, kAXParentAttribute) else {
-                    break
-                }
-                element = parent as! AXUIElement
-            }
-        } else {
+        }
+        if candidates.isEmpty {
             lastError = .cannotComplete
+        } else {
+            for candidate in candidates {
+                var element = candidate
+                for _ in 0..<8 {
+                    var actionNames: CFArray?
+                    let actionError = AXUIElementCopyActionNames(element, &actionNames)
+                    if actionError == .success,
+                       let names = actionNames as? [String],
+                       names.contains(kAXPressAction) {
+                        let error = AXUIElementPerformAction(element, kAXPressAction as CFString)
+                        if error == .success {
+                            Thread.sleep(forTimeInterval: 0.25)
+                            return
+                        }
+                        lastError = error
+                        break
+                    }
+                    guard let parent = attribute(element, kAXParentAttribute) else {
+                        break
+                    }
+                    element = parent as! AXUIElement
+                }
+            }
         }
         Thread.sleep(forTimeInterval: 0.1)
     } while Date() < deadline
