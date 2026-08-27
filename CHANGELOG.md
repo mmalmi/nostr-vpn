@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.9 - 2026-08-27
+## 4.1.9 - 2026-08-28
 
 ### Release notes
 
@@ -46,6 +46,9 @@ automatic selection.
   WSS as a fallback on UDP-blocked networks, and migrate prior WSS-only native
   defaults without making the WebSocket transport dial independently. Resolve
   UDP hostnames before selecting a family-specific local socket.
+- Re-arm an authenticated direct-path handshake after repeated network outages
+  or source-address changes, avoiding a full handshake-timeout stall when the
+  underlay returns.
 - Deliver the signed roster when an admin accepts an inbound device request,
   so the joining device completes instead of remaining at the approval prompt.
 - Print join-request reachability once, keep the approval wait quiet through
