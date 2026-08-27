@@ -973,6 +973,21 @@ require_tokens "$MACOS_NETWORK_GUEST" "production macOS transition evidence" \
   'forwarded_probe_live=true' \
   'endpoint_route_interface' \
   'MACOS_RELEASE_NETWORK_DIRECT_OK'
+require_tokens "$MACOS_NETWORK_GUEST" "underlay timeout diagnostics" \
+  'capture_underlay_recovery_failure' \
+  'underlay-failure-$label.txt' \
+  'underlay-failure-$label-daemon.log' \
+  'expected_carrier_rebinds=' \
+  'actual_carrier_rebinds=' \
+  'expected_wireguard_rebinds=' \
+  'actual_wireguard_rebinds=' \
+  'endpoint_route_state_valid=' \
+  'payload_after_cut=' \
+  'runtime_dns_state_matches=' \
+  'wireguard_last_rebind_target_matches=' \
+  'capture_underlay_recovery_failure \
+        "$label" "$expected_iface" "$requested_ms"' \
+  'capture_underlay_routes'
 require_tokens "$MACOS_NETWORK_GUEST" "preexisting installed-state isolation" \
   'lib-macos-owned-test-app.sh' \
   'quiesce_installed_state' \

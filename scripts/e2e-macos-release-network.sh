@@ -1256,6 +1256,57 @@ underlay_recovered() {
     && wireguard_last_rebind_target_is "$expected_iface"
 }
 
+probe_boolean() {
+  if "$@" >/dev/null 2>&1; then
+    printf 'true\n'
+  else
+    printf 'false\n'
+  fi
+}
+
+capture_underlay_recovery_failure() {
+  local label="$1" expected_iface="$2" requested_ms="$3"
+  local expected_rebind="$4" expected_wg_rebind="$5" now
+  now="$(monotonic_ms)"
+  {
+    printf 'label=%s\n' "$label"
+    printf 'expected_interface=%s\n' "$expected_iface"
+    printf 'requested_monotonic_ms=%s\n' "$requested_ms"
+    printf 'captured_monotonic_ms=%s\n' "$now"
+    printf 'elapsed_ms=%s\n' "$((now - requested_ms))"
+    printf 'endpoint_route_interface=%s\n' \
+      "$(endpoint_route_interface 2>/dev/null || true)"
+    printf 'endpoint_route_state_valid=%s\n' \
+      "$(probe_boolean wireguard_endpoint_route_state_valid "$expected_iface")"
+    printf 'wireguard_interface_present=%s\n' \
+      "$(probe_boolean wireguard_interface)"
+    printf 'payload_after_cut=%s\n' \
+      "$(probe_boolean payload_after "$requested_ms")"
+    printf 'runtime_dns_state_matches=%s\n' \
+      "$(probe_boolean runtime_dns_state_matches)"
+    printf 'isolated_zero_peer_runtime=%s\n' \
+      "$(probe_boolean runtime_has_no_fips_peers)"
+    printf 'expected_carrier_rebinds=%s\n' "$expected_rebind"
+    printf 'actual_carrier_rebinds=%s\n' "$(rebind_count)"
+    printf 'expected_wireguard_rebinds=%s\n' "$expected_wg_rebind"
+    printf 'actual_wireguard_rebinds=%s\n' "$(wireguard_rebind_count)"
+    printf 'wireguard_last_rebind_target_matches=%s\n' \
+      "$(probe_boolean wireguard_last_rebind_target_is "$expected_iface")"
+    printf 'primary_service_state=%s\n' "$(service_state "$PRIMARY_SERVICE")"
+    printf 'secondary_service_state=%s\n' "$(service_state "$SECONDARY_SERVICE")"
+    printf 'primary_interface_ipv4=%s\n' \
+      "$(interface_ipv4 "$PRIMARY_IFACE" 2>/dev/null || true)"
+    printf 'secondary_interface_ipv4=%s\n' \
+      "$(interface_ipv4 "$SECONDARY_IFACE" 2>/dev/null || true)"
+  } >"$RESULT_DIR/underlay-failure-$label.txt"
+  capture_underlay_routes \
+    >"$RESULT_DIR/underlay-failure-$label-routes.txt" 2>&1 || true
+  cp -p "$STATE_DIR/daemon.log" \
+    "$RESULT_DIR/underlay-failure-$label-daemon.log" 2>/dev/null || true
+  nvpn status --config "$CONFIG" --json --discover-secs 0 \
+    >"$RESULT_DIR/underlay-failure-$label-status.json" 2>&1 || true
+}
+
 wait_for_underlay_recovery() {
   local label="$1" expected_iface="$2" requested_ms="$3"
   local expected_rebind="$4" expected_wg_rebind="$5"
@@ -1268,6 +1319,9 @@ wait_for_underlay_recovery() {
       now="$(monotonic_ms)"
       elapsed=$((now - requested_ms))
       if (( elapsed < 0 || elapsed > RECOVERY_DEADLINE_MS )); then
+        capture_underlay_recovery_failure \
+          "$label" "$expected_iface" "$requested_ms" \
+          "$expected_rebind" "$expected_wg_rebind"
         fail "$label recovered in ${elapsed}ms (limit ${RECOVERY_DEADLINE_MS}ms)"
         return 1
       fi
@@ -1276,6 +1330,9 @@ wait_for_underlay_recovery() {
     fi
     now="$(monotonic_ms)"
     if (( now - requested_ms > RECOVERY_DEADLINE_MS )); then
+      capture_underlay_recovery_failure \
+        "$label" "$expected_iface" "$requested_ms" \
+        "$expected_rebind" "$expected_wg_rebind"
       fail "$label did not restore WireGuard payload, carrier rebind, DNS, and a fresh handshake on $expected_iface in ${RECOVERY_DEADLINE_MS}ms"
       return 1
     fi
