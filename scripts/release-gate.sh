@@ -1019,6 +1019,13 @@ prepare_host_linux_vm_bundle_and_record() {
   then
     export NVPN_HOST_LINUX_VM_BUILDER_MODE=remote-native
     export NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST="${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST:-$NVPN_UBUNTU_SSH_HOST}"
+    if [[ "$NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST" == "$NVPN_UBUNTU_SSH_HOST" \
+      && -z "${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_PROXY_COMMAND:-}" \
+      && -z "${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_JUMP:-}" ]]
+    then
+      export NVPN_HOST_LINUX_VM_NATIVE_BUILDER_PROXY_COMMAND="${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_PROXY_COMMAND:-${NVPN_UBUNTU_SSH_PROXY_COMMAND:-}}"
+      export NVPN_HOST_LINUX_VM_NATIVE_BUILDER_JUMP="${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_JUMP:-${NVPN_UBUNTU_SSH_JUMP:-}}"
+    fi
   fi
   bundle="$(./scripts/prepare-host-linux-vm-bundle.sh)"
   [[ "$bundle" == /* && -d "$bundle" && ! -L "$bundle" ]] \
