@@ -126,6 +126,17 @@ impl SecureDnsResolver {
 
     async fn resolve_query_inner(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
         let request = validated_query(query)?;
+        match self.resolve_query_once(query, &request).await {
+            Err(SecureDnsError::Request(_)) => self.resolve_query_once(query, &request).await,
+            result => result,
+        }
+    }
+
+    async fn resolve_query_once(
+        &self,
+        query: &[u8],
+        request: &Message,
+    ) -> Result<Vec<u8>, SecureDnsError> {
         let mut response = self
             .client
             .post(self.endpoint.clone())
@@ -162,7 +173,7 @@ impl SecureDnsResolver {
             }
             packet.extend_from_slice(&chunk);
         }
-        validated_response(&request, &packet)?;
+        validated_response(request, &packet)?;
         Ok(packet)
     }
 
@@ -401,6 +412,32 @@ mod tests {
     use hickory_proto::op::{OpCode, Query};
     use hickory_proto::rr::{Name, RecordType};
 
+    async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+        let mut request = Vec::new();
+        let header_end = loop {
+            let mut chunk = [0_u8; 512];
+            let length = stream.read(&mut chunk).await.expect("fixture request");
+            assert!(length > 0, "request ended before HTTP headers");
+            request.extend_from_slice(&chunk[..length]);
+            if let Some(offset) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break offset + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("content-length:"))
+            .and_then(|length| length.trim().parse::<usize>().ok())
+            .expect("content length");
+        while request.len() - header_end < content_length {
+            let mut chunk = [0_u8; 512];
+            let length = stream.read(&mut chunk).await.expect("fixture body");
+            assert!(length > 0, "request ended before DNS body");
+            request.extend_from_slice(&chunk[..length]);
+        }
+        request
+    }
+
     fn dns_query(id: u16) -> Vec<u8> {
         let mut message = Message::new(id, MessageType::Query, OpCode::Query);
         message.metadata.recursion_desired = true;
@@ -512,16 +549,12 @@ mod tests {
         let response_packet = dns_response(&query, 912);
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("fixture connection");
-            let mut request = Vec::new();
-            let header_end = loop {
-                let mut chunk = [0_u8; 512];
-                let length = stream.read(&mut chunk).await.expect("fixture request");
-                assert!(length > 0, "request ended before HTTP headers");
-                request.extend_from_slice(&chunk[..length]);
-                if let Some(offset) = request.windows(4).position(|window| window == b"\r\n\r\n") {
-                    break offset + 4;
-                }
-            };
+            let request = read_http_request(&mut stream).await;
+            let header_end = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .expect("HTTP headers")
+                + 4;
             let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
             assert!(headers.starts_with("post /dns-query http/1.1\r\n"));
             assert!(headers.contains("content-type: application/dns-message\r\n"));
@@ -531,12 +564,6 @@ mod tests {
                 .find_map(|line| line.strip_prefix("content-length:"))
                 .and_then(|length| length.trim().parse::<usize>().ok())
                 .expect("content length");
-            while request.len() - header_end < content_length {
-                let mut chunk = [0_u8; 512];
-                let length = stream.read(&mut chunk).await.expect("fixture body");
-                assert!(length > 0, "request ended before DNS body");
-                request.extend_from_slice(&chunk[..length]);
-            }
             assert_eq!(
                 &request[header_end..header_end + content_length],
                 expected_query.as_slice()
@@ -572,6 +599,53 @@ mod tests {
                 failures: 0,
             }
         );
+        server.await.expect("fixture task");
+    }
+
+    #[tokio::test]
+    async fn doh_retries_one_transient_request_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        let query = dns_query(914);
+        let expected_query = query.clone();
+        let response_packet = dns_response(&query, 914);
+        let server = tokio::spawn(async move {
+            let (mut failed, _) = listener.accept().await.expect("first connection");
+            let first_request = read_http_request(&mut failed).await;
+            assert!(first_request.ends_with(&expected_query));
+            drop(failed);
+
+            let (mut recovered, _) = listener.accept().await.expect("retry connection");
+            let second_request = read_http_request(&mut recovered).await;
+            assert!(second_request.ends_with(&expected_query));
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/dns-message\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_packet.len()
+            );
+            recovered
+                .write_all(headers.as_bytes())
+                .await
+                .expect("retry response headers");
+            recovered
+                .write_all(&response_packet)
+                .await
+                .expect("retry response body");
+        });
+        let endpoint = Box::leak(format!("http://{address}/dns-query").into_boxed_str());
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("fixture client");
+        let resolver = SecureDnsResolver::with_test_endpoint(client, endpoint);
+
+        let response = resolver
+            .resolve_query(&query)
+            .await
+            .expect("transient request recovered");
+        assert_eq!(Message::from_vec(&response).expect("DNS response").id, 914);
         server.await.expect("fixture task");
     }
 

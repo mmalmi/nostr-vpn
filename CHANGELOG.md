@@ -35,6 +35,8 @@ automatic selection.
   across daemon restarts and mint key rotation without losing funded value.
 - Keep Cashu control traffic outside the macOS paid tunnel, preserve MagicDNS
   after paid-exit fallback, and fail closed when safe exit DNS is unavailable.
+- Retry one transient authenticated DNS request before failing closed, avoiding
+  a cached resolver outage when a provider connection is briefly interrupted.
 - Keep the daemon responsive while its owned Cashu wallet repairs or recovers,
   and retry funded paid routes without activating an unverified exit.
 - Grant StartOS packages virtual networking access for `/dev/net/tun` and
