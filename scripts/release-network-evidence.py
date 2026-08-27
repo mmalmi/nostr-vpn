@@ -1534,7 +1534,8 @@ def build_desktop(args: argparse.Namespace) -> None:
                 "exact_candidate_binary_restarted",
                 "cleanup_journal_present_before_crash",
                 "cleanup_journal_survived_forced_termination",
-                "cleanup_journal_removed_after_restart",
+                "paid_exit_cleanup_ownership_removed_after_restart",
+                "crash_cleanup_journal_replaced_after_restart",
                 "native_wireguard_owner_directory_layout",
                 "native_wireguard_owned_files_survived_forced_termination",
                 "native_wireguard_owned_files_removed_after_restart",
@@ -1554,6 +1555,13 @@ def build_desktop(args: argparse.Namespace) -> None:
                 and crash.get("daemon_process_count") == 1
                 and isinstance(crash_recovery, int)
                 and 0 <= crash_recovery <= 30_000
+                and isinstance(
+                    crash.get("active_direct_cleanup_journal_present"), bool
+                )
+                and isinstance(
+                    crash.get("active_direct_cleanup_route_count"), int
+                )
+                and crash["active_direct_cleanup_route_count"] >= 0
                 and all(crash.get(field) is True for field in crash_true_fields),
                 "Windows crash/owner-file repair receipt is incomplete",
             )

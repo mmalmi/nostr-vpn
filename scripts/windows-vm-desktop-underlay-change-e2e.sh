@@ -661,7 +661,11 @@ run_dns_matrix_and_crash_restore() {
     and .exact_candidate_binary_restarted == true
     and .cleanup_journal_present_before_crash == true
     and .cleanup_journal_survived_forced_termination == true
-    and .cleanup_journal_removed_after_restart == true
+    and .paid_exit_cleanup_ownership_removed_after_restart == true
+    and .crash_cleanup_journal_replaced_after_restart == true
+    and (.active_direct_cleanup_journal_present | type) == "boolean"
+    and (.active_direct_cleanup_route_count | type) == "number"
+    and .active_direct_cleanup_route_count >= 0
     and (.native_wireguard_config_path | type == "string" and length > 0)
     and (.native_wireguard_owner_marker_path | type == "string" and length > 0)
     and (.native_wireguard_owner_directory_path | type == "string" and length > 0)

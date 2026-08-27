@@ -102,7 +102,10 @@ require_tokens "$WINDOWS_GUEST_CRASH_LIB" "granular Direct startup-recovery evid
   'native WireGuard service remains' \
   'endpoint bypass route remains' \
   'secure DNS policy remains' \
-  'cleanup journal remains' \
+  'paid-exit default route remains in cleanup journal' \
+  'paid-exit endpoint route remains in cleanup journal' \
+  'native WireGuard ownership remains in cleanup journal' \
+  'secure DNS ownership remains in cleanup journal' \
   'public DNS is unavailable' \
   'verified HTTPS is unavailable'
 require_tokens "$WINDOWS_HOST_ENTRY" "native WireGuard ownership regression harness" \
@@ -469,7 +472,9 @@ require_tokens "$WINDOWS_GUEST" "power-loss startup recovery evidence" \
   '$CleanupJournalPath = Join-Path $StateDir "daemon.cleanup.json"' \
   'cleanup_journal_present_before_crash' \
   'cleanup_journal_survived_forced_termination' \
-  'cleanup_journal_removed_after_restart' \
+  'paid_exit_cleanup_ownership_removed_after_restart' \
+  'crash_cleanup_journal_replaced_after_restart' \
+  'active_direct_cleanup_route_count' \
   'Read-CandidateNativeWireGuardOwnership' \
   '$markerPath = "$configPath.nvpn-owner"' \
   'native WireGuard config is not in its exact owner directory' \
@@ -558,7 +563,8 @@ require_tokens "$WINDOWS_HOST" "power-loss receipt enforcement" \
   '.replacement_daemon_pid != .crashed_daemon_pid' \
   '.daemon_process_count == 1' \
   '.startup_recovery_milliseconds <= 30000' \
-  '.cleanup_journal_removed_after_restart == true' \
+  '.paid_exit_cleanup_ownership_removed_after_restart == true' \
+  '.crash_cleanup_journal_replaced_after_restart == true' \
   '.native_wireguard_owner_directory_layout == true' \
   '.native_wireguard_owned_files_survived_forced_termination == true' \
   '.native_wireguard_owned_files_removed_after_restart == true' \
