@@ -127,10 +127,12 @@ function Test-PhysicalUnderlay {
     $defaultRoute = @(Get-NetRoute -InterfaceIndex $InterfaceIndex `
       -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" `
       -ErrorAction Stop)
+    $selectedPhysicalIndex = Get-SelectedPhysicalDefaultInterfaceIndex
     return (
       $adapter.Status -eq "Up" -and
       $address.Count -gt 0 -and
-      $defaultRoute.Count -gt 0
+      $defaultRoute.Count -gt 0 -and
+      $selectedPhysicalIndex -eq $InterfaceIndex
     )
   }
   catch {

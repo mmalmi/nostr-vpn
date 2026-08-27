@@ -143,6 +143,44 @@ function Get-PhysicalDefaultRoute {
   return $routes[0]
 }
 
+function Get-SelectedPhysicalDefaultInterfaceIndex {
+  $excluded = @(
+    Get-NetAdapter -IncludeHidden -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -in @($TunnelInterface, $WireGuardInterface) } |
+      ForEach-Object { [int]$_.ifIndex }
+  )
+  $routeOutput = @(& route.exe print -4 0.0.0.0 2>$null)
+  if ($LASTEXITCODE -ne 0) {
+    throw "route print failed while selecting the physical underlay"
+  }
+  $candidates = @(
+    $routeOutput | ForEach-Object {
+      if (
+        $_ -match
+          '^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+(\S+)\s+(\S+)\s+(\d+)\s*$' -and
+        $Matches[1] -notmatch '^(?i:On-link)$'
+      ) {
+        [PSCustomObject]@{
+          interface_address = [string]$Matches[2]
+          metric = [int]$Matches[3]
+        }
+      }
+    } | Sort-Object metric
+  )
+  foreach ($candidate in $candidates) {
+    $addresses = @(Get-NetIPAddress -AddressFamily IPv4 `
+      -IPAddress $candidate.interface_address -ErrorAction SilentlyContinue)
+    if ($addresses.Count -ne 1) {
+      continue
+    }
+    $interfaceIndex = [int]$addresses[0].InterfaceIndex
+    if ($excluded -notcontains $interfaceIndex) {
+      return $interfaceIndex
+    }
+  }
+  throw "Windows has no selected physical IPv4 default route"
+}
+
 function Assert-WireGuardEndpointRoute {
   param([int]$ExpectedPhysicalIndex)
   $hostAddress = Get-WireGuardEndpointHost

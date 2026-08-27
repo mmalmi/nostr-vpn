@@ -714,6 +714,10 @@ done
 require_tokens "$WINDOWS_GUEST" "timestamped recovery receipt" \
   'One deadline-edge read accepts a delayed log write' \
   'source_address = [string]$routeDecision.source_address'
+require_tokens "$WINDOWS_GUEST" "selected physical-route readiness" \
+  'function Get-SelectedPhysicalDefaultInterfaceIndex {' \
+  '$selectedPhysicalIndex = Get-SelectedPhysicalDefaultInterfaceIndex' \
+  '$selectedPhysicalIndex -eq $InterfaceIndex'
 python3 - "$WINDOWS_GUEST" "$WINDOWS_HOST_ENTRY" "$WINDOWS_HOST_LIB" <<'PY'
 import pathlib
 import sys
