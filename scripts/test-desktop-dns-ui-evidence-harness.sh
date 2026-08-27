@@ -204,9 +204,11 @@ for required in (
     "expected_items = len(DNS_DROPDOWN_LABELS[name])",
     'node.getRoleName() != "list box"',
     "def focused_actionable_nodes() -> list[Any]:",
+    "def sole_focused_target(name: str) -> Any | None:",
     "saw_non_target_focus = False",
-    "target = focused_target(focused[0], name) if len(focused) == 1 else None",
+    "target = sole_focused_target(name)",
     "if focused and not any(focused_target(node, name) for node in focused):",
+    "target_window_has_focus() and sole_focused_target(name) is not None",
 ):
     if required not in driver:
         raise SystemExit(

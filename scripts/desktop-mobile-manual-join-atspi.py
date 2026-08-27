@@ -151,6 +151,13 @@ def focused_actionable_nodes() -> list[Any]:
     return focused
 
 
+def sole_focused_target(name: str) -> Any | None:
+    focused = focused_actionable_nodes()
+    if len(focused) != 1:
+        return None
+    return focused_target(focused[0], name)
+
+
 def accessible_description(node: Any) -> str:
     try:
         return f"{node.getRoleName()}:{node.name}"
@@ -222,7 +229,7 @@ def focus_named_with_keyboard(name: str, max_tabs: int = 100) -> Any:
         time.sleep(0.05)
         pyatspi.Registry.pumpQueuedEvents()
         focused = focused_actionable_nodes()
-        target = focused_target(focused[0], name) if len(focused) == 1 else None
+        target = sole_focused_target(name)
         if target is not None and saw_non_target_focus:
             return target
         if focused and not any(focused_target(node, name) for node in focused):
@@ -254,18 +261,9 @@ def invoke(name: str, *, stable_focus: float = 0) -> None:
         stable_since: float | None = None
         while time.monotonic() < deadline:
             pyatspi.Registry.pumpQueuedEvents()
-            focused = False
-            if target_window_has_focus():
-                for node in matching_nodes(name):
-                    try:
-                        if (
-                            has_action(node)
-                            and node.getState().contains(pyatspi.STATE_FOCUSED)
-                        ):
-                            focused = True
-                            break
-                    except Exception:
-                        continue
+            focused = (
+                target_window_has_focus() and sole_focused_target(name) is not None
+            )
             if focused:
                 if stable_since is None:
                     stable_since = time.monotonic()
