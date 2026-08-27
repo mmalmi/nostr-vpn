@@ -282,6 +282,28 @@ def invoke(name: str, *, stable_focus: float = 0) -> None:
     time.sleep(0.25)
 
 
+def wait_named_visible(name: str, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if matching_nodes(name):
+            return True
+        pyatspi.Registry.pumpQueuedEvents()
+        time.sleep(0.1)
+    return False
+
+
+def invoke_until_visible(name: str, expected: str, attempts: int = 4) -> None:
+    for _ in range(attempts):
+        invoke(name, stable_focus=0.5)
+        if wait_named_visible(expected, 2):
+            return
+        if target_window_has_focus():
+            subprocess.run(["xdotool", "key", "--clearmodifiers", "Escape"], check=True)
+            time.sleep(0.25)
+    find_named(expected, timeout=0.1)
+    raise RuntimeError(f"invoking {name} did not reveal {expected}")
+
+
 def set_text(name: str, value: str) -> None:
     node = find_named(name)
     try:
@@ -772,8 +794,7 @@ class Driver:
 
         def open_dns() -> None:
             self.launch()
-            invoke("Internet", stable_focus=0.5)
-            find_named("nvpn-exit-dns-mode")
+            invoke_until_visible("Internet", "nvpn-exit-dns-mode")
 
         open_dns()
         select_dns_index(
@@ -877,9 +898,11 @@ class Driver:
 
         def open_seller() -> None:
             self.launch()
-            invoke("Internet", stable_focus=0.5)
-            invoke("nvpn-paid-exit-seller-open", stable_focus=0.5)
-            find_named("nvpn-paid-exit-seller-enabled")
+            invoke_until_visible("Internet", "nvpn-paid-exit-seller-open")
+            invoke_until_visible(
+                "nvpn-paid-exit-seller-open",
+                "nvpn-paid-exit-seller-enabled",
+            )
 
         open_seller()
         set_text("nvpn-paid-exit-price-msat-per-gb", self.args.seller_price)

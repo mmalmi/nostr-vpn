@@ -12,8 +12,7 @@ required_source=(
   'windows/NostrVpn.Windows/MainWindow.xaml:AutomationProperties.AutomationId="ExitDnsMode"'
   'windows/NostrVpn.Windows/MainWindow.xaml:AutomationProperties.AutomationId="ExitDnsSave"'
   'scripts/desktop-mobile-manual-join-atspi.py:uiRestartReadback'
-  'scripts/desktop-mobile-manual-join-atspi.py:invoke("Internet", stable_focus=0.5)'
-  'scripts/desktop-mobile-manual-join-atspi.py:find_named("nvpn-exit-dns-mode")'
+  'scripts/desktop-mobile-manual-join-atspi.py:invoke_until_visible("Internet", "nvpn-exit-dns-mode")'
   'scripts/desktop-mobile-manual-join-windows-ui.ps1:uiRestartReadback'
   'scripts/ubuntu-vm-exit-dns-ui-e2e.sh:DnsPolicy'
   'scripts/ubuntu-vm-exit-dns-ui-e2e.sh:source "$repo/scripts/lib-linux-owned-test-app.sh"'
@@ -209,6 +208,8 @@ for required in (
     "target = sole_focused_target(name)",
     "if focused and not any(focused_target(node, name) for node in focused):",
     "target_window_has_focus() and sole_focused_target(name) is not None",
+    "def invoke_until_visible(name: str, expected: str, attempts: int = 4)",
+    'subprocess.run(["xdotool", "key", "--clearmodifiers", "Escape"]',
 ):
     if required not in driver:
         raise SystemExit(
