@@ -114,25 +114,6 @@ public sealed partial class AppViewModel
             }
             _lastSyncedPaidExitPriceMsatPerGb = state.PaidExitSeller.PriceMsatPerGb;
         }
-        if (_lastSyncedPaidExitCountryCode != state.PaidExitSeller.CountryCode)
-        {
-            if (_lastSyncedPaidExitCountryCode is null
-                || PaidExitCountryCode == _lastSyncedPaidExitCountryCode)
-            {
-                PaidExitCountryCode = state.PaidExitSeller.CountryCode;
-            }
-            _lastSyncedPaidExitCountryCode = state.PaidExitSeller.CountryCode;
-        }
-        var acceptedMints = string.Join(", ", state.PaidExitSeller.AcceptedMints);
-        if (_lastSyncedPaidExitAcceptedMints != acceptedMints)
-        {
-            if (_lastSyncedPaidExitAcceptedMints is null
-                || PaidExitAcceptedMints == _lastSyncedPaidExitAcceptedMints)
-            {
-                PaidExitAcceptedMints = acceptedMints;
-            }
-            _lastSyncedPaidExitAcceptedMints = acceptedMints;
-        }
         NetworkNameDraft = active?.Name ?? "";
         NetworkMeshIdDraft = DisplayNetworkId(active?.NetworkId ?? "");
     }
@@ -259,7 +240,6 @@ public sealed partial class AppViewModel
     {
         OnPropertyChanged(nameof(CanSetManualPaidExitProvider));
         OnPropertyChanged(nameof(CanSavePaidExitPrice));
-        OnPropertyChanged(nameof(CanSavePaidExitSettings));
         OnPropertyChanged(nameof(CanAddPaidRouteWalletMint));
         OnPropertyChanged(nameof(CanTopUpPaidRouteWallet));
         OnPropertyChanged(nameof(CanSendPaidRouteWalletToken));

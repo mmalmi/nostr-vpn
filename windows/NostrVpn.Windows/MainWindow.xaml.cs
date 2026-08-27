@@ -291,9 +291,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void SavePaidExitSettings_Click(object sender, RoutedEventArgs e)
+    private async void SavePaidExitPrice_Click(object sender, RoutedEventArgs e)
     {
-        await ViewModel.SavePaidExitSettingsAsync();
+        await ViewModel.SavePaidExitPriceAsync();
     }
     private async void RelayEnabled_Click(object sender, RoutedEventArgs e)
     {

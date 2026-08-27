@@ -95,7 +95,6 @@ EXIT_DNS_CUSTOM_DOH_URL="${NVPN_ANDROID_EXIT_DNS_CUSTOM_DOH_URL:-}"
 EXIT_DNS_CUSTOM_DOH_BOOTSTRAP_IPS="${NVPN_ANDROID_EXIT_DNS_CUSTOM_DOH_BOOTSTRAP_IPS:-}"
 EXIT_DNS_THROUGH_EXIT_SERVERS="${NVPN_ANDROID_EXIT_DNS_THROUGH_EXIT_SERVERS:-}"
 EXIT_DNS_USE_SHIPPED_UI="${NVPN_ANDROID_EXIT_DNS_USE_SHIPPED_UI:-0}"
-PAID_EXIT_SELLER_UI_GATE="${NVPN_ANDROID_PAID_EXIT_SELLER_UI_GATE:-0}"
 ANDROID_UI_WAIT_SECS="${NVPN_ANDROID_UI_WAIT_SECS:-15}"
 SWITCH_TO_DIRECT_WHILE_CONNECTED="${NVPN_ANDROID_SWITCH_TO_DIRECT_WHILE_CONNECTED:-0}"
 EXIT_DNS_RESULT_FILE="debug-exit-dns-state.json"
@@ -125,10 +124,6 @@ vpn_cleanup_armed=0
 DIRECT_UNDERLYING_DNS_BASELINE=""
 ANDROID_CAPTURED_PROBE_BUILD_DIR=""
 ANDROID_CAPTURED_PROBE_REMOTE_JAR=""
-ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED=""
-ANDROID_PAID_EXIT_SELLER_INITIAL_PRICE=""
-ANDROID_PAID_EXIT_SELLER_INITIAL_COUNTRY=""
-ANDROID_PAID_EXIT_SELLER_INITIAL_MINTS=""
 
 usage() {
   cat >&2 <<'EOF'
@@ -1136,141 +1131,6 @@ replace_android_ui_multiline_text() {
     echo "Android shipped multiline field entry mismatch: $selector" >&2
     return 1
   fi
-}
-
-write_android_paid_exit_seller_ui_receipt() {
-  local output="$RUNTIME_STATE_RESULT_DIR/paid-exit-seller.json"
-  local apk_sha
-  apk_sha="$(shasum -a 256 "$APK_PATH" | awk '{ print $1 }')"
-  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
-  python3 - \
-    "$output" \
-    "$EXPECTED_ANDROID_APP_GIT_HEAD" \
-    "$EXPECTED_ANDROID_APP_GIT_TREE" \
-    "$apk_sha" \
-    "$ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED" <<'PY'
-import json
-import pathlib
-import sys
-
-output, app_sha, app_tree, apk_sha, initial_enabled = sys.argv[1:]
-value = {
-    "receiptSchema": 1,
-    "platform": "android",
-    "case": "paid-exit-seller",
-    "evidenceSource": "shipped-ui-restart-readback",
-    "releaseBlackbox": True,
-    "savedViaShippedUi": True,
-    "enabledViaShippedUi": True,
-    "uiRestartReadback": True,
-    "publicUiOnly": True,
-    "privateStateRead": False,
-    "paidExitEnabled": True,
-    "paidExitPriceMsatPerGb": 1_000_000,
-    "paidExitCountryCode": "FI",
-    "paidExitAcceptedMints": ["http://cashu-mint:3338"],
-    "appGitSha": app_sha,
-    "appGitTree": app_tree,
-    "apkSha256": apk_sha,
-    "preexistingEnabled": initial_enabled == "true",
-    "finalStateRestored": True,
-}
-path = pathlib.Path(output)
-temporary = path.with_name(f".{path.name}.tmp")
-temporary.write_text(
-    json.dumps(value, indent=2, sort_keys=True) + "\n",
-    encoding="utf-8",
-)
-temporary.replace(path)
-PY
-}
-
-configure_android_paid_exit_seller_ui() {
-  truthy "$PAID_EXIT_SELLER_UI_GATE" || return 0
-  truthy "$RELEASE_BLACKBOX_GATE" || {
-    echo "Android paid-exit seller UI gate requires the Release black-box path" >&2
-    return 1
-  }
-  android_open_internet_settings_ui "paid-exit seller configuration" || return 1
-  android_ui_reset_scroll || return 1
-  android_ui_scroll_to resource paid-exit-seller-enabled || return 1
-  ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED="$(
-    android_ui_query resource paid-exit-seller-enabled selected
-  )" || return 1
-  [[ "$ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED" == "true" \
-    || "$ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED" == "false" ]] || return 1
-  android_ui_scroll_to resource paid-exit-price-msat-per-gb || return 1
-  ANDROID_PAID_EXIT_SELLER_INITIAL_PRICE="$(
-    android_ui_query resource paid-exit-price-msat-per-gb text
-  )" || return 1
-  android_ui_scroll_to resource paid-exit-country-code || return 1
-  ANDROID_PAID_EXIT_SELLER_INITIAL_COUNTRY="$(
-    android_ui_query resource paid-exit-country-code text
-  )" || return 1
-  android_ui_scroll_to resource paid-exit-accepted-mints || return 1
-  ANDROID_PAID_EXIT_SELLER_INITIAL_MINTS="$(
-    android_ui_query resource paid-exit-accepted-mints text
-  )" || return 1
-  replace_android_ui_text paid-exit-price-msat-per-gb 1000000 || return 1
-  replace_android_ui_text paid-exit-country-code FI || return 1
-  replace_android_ui_text paid-exit-accepted-mints http://cashu-mint:3338 || return 1
-  android_ui_scroll_to resource paid-exit-seller-save || return 1
-  tap_android_ui resource paid-exit-seller-save || return 1
-  sleep 0.75
-  android_ui_scroll_to resource paid-exit-seller-enabled || return 1
-  if [[ "$(android_ui_query resource paid-exit-seller-enabled selected)" != "true" ]]; then
-    tap_android_ui resource paid-exit-seller-enabled || return 1
-    sleep 0.75
-  fi
-  [[ "$(android_ui_query resource paid-exit-seller-enabled selected)" == "true" ]] || {
-    echo "Android paid-exit seller toggle did not enable through shipped UI" >&2
-    return 1
-  }
-  "$ADB" -s "$serial" exec-out screencap -p \
-    >"$RUNTIME_STATE_RESULT_DIR/paid-exit-seller-saved.png"
-  "$ADB" -s "$serial" shell am force-stop "$PACKAGE_NAME"
-  android_open_internet_settings_ui "paid-exit seller restart readback" || return 1
-  android_ui_reset_scroll || return 1
-  android_ui_scroll_to resource paid-exit-price-msat-per-gb || return 1
-  [[ "$(android_ui_query resource paid-exit-price-msat-per-gb text)" == "1000000" ]] || return 1
-  android_ui_scroll_to resource paid-exit-country-code || return 1
-  [[ "$(android_ui_query resource paid-exit-country-code text)" == "FI" ]] || return 1
-  android_ui_scroll_to resource paid-exit-accepted-mints || return 1
-  [[ "$(android_ui_query resource paid-exit-accepted-mints text)" == "http://cashu-mint:3338" ]] || return 1
-  android_ui_scroll_to resource paid-exit-seller-enabled || return 1
-  [[ "$(android_ui_query resource paid-exit-seller-enabled selected)" == "true" ]] || return 1
-  "$ADB" -s "$serial" exec-out screencap -p \
-    >"$RUNTIME_STATE_RESULT_DIR/paid-exit-seller-readback.png"
-  replace_android_ui_text \
-    paid-exit-price-msat-per-gb "$ANDROID_PAID_EXIT_SELLER_INITIAL_PRICE" || return 1
-  replace_android_ui_text \
-    paid-exit-country-code "$ANDROID_PAID_EXIT_SELLER_INITIAL_COUNTRY" || return 1
-  replace_android_ui_text \
-    paid-exit-accepted-mints "$ANDROID_PAID_EXIT_SELLER_INITIAL_MINTS" || return 1
-  android_ui_scroll_to resource paid-exit-seller-save || return 1
-  tap_android_ui resource paid-exit-seller-save || return 1
-  sleep 0.75
-  android_ui_scroll_to resource paid-exit-seller-enabled || return 1
-  if [[ "$ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED" == "false" ]]; then
-    tap_android_ui resource paid-exit-seller-enabled || return 1
-    sleep 0.75
-  fi
-  [[ "$(android_ui_query resource paid-exit-seller-enabled selected)" \
-    == "$ANDROID_PAID_EXIT_SELLER_INITIAL_ENABLED" ]] || {
-    echo "Android paid-exit seller UI did not restore its pre-gate toggle state" >&2
-    return 1
-  }
-  android_ui_scroll_to resource paid-exit-price-msat-per-gb || return 1
-  [[ "$(android_ui_query resource paid-exit-price-msat-per-gb text)" \
-    == "$ANDROID_PAID_EXIT_SELLER_INITIAL_PRICE" ]] || return 1
-  android_ui_scroll_to resource paid-exit-country-code || return 1
-  [[ "$(android_ui_query resource paid-exit-country-code text)" \
-    == "$ANDROID_PAID_EXIT_SELLER_INITIAL_COUNTRY" ]] || return 1
-  android_ui_scroll_to resource paid-exit-accepted-mints || return 1
-  [[ "$(android_ui_query resource paid-exit-accepted-mints text)" \
-    == "$ANDROID_PAID_EXIT_SELLER_INITIAL_MINTS" ]] || return 1
-  write_android_paid_exit_seller_ui_receipt
-  echo "Android shipped paid-exit seller UI save/enable/restart readback passed"
 }
 
 assert_android_ui_validation() {

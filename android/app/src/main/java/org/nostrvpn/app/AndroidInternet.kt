@@ -2,23 +2,19 @@ package org.nostrvpn.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -148,9 +144,6 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
     } else if (state.internetSource == "paid_manual") {
         item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Market) }
     }
-    if (state.paidExitSeller.supported) {
-        item { PaidExitSellerCard(state, dispatch) }
-    }
     item {
         AppCard {
             Text("Share Internet", style = MaterialTheme.typography.titleMedium)
@@ -171,113 +164,5 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
     }
     if (state.internetSource != "direct") {
         item { ExitDnsSettingsCard(state, dispatch) }
-    }
-}
-
-@Composable
-private fun PaidExitSellerCard(
-    state: AppState,
-    dispatch: (JSONObject) -> Unit,
-) {
-    val seller = state.paidExitSeller
-    var price by remember { mutableStateOf(seller.priceMsatPerGb.toString()) }
-    var country by remember { mutableStateOf(seller.countryCode) }
-    var mints by remember { mutableStateOf(seller.acceptedMints.joinToString(", ")) }
-    LaunchedEffect(seller.priceMsatPerGb, seller.countryCode, seller.acceptedMints) {
-        price = seller.priceMsatPerGb.toString()
-        country = seller.countryCode
-        mints = seller.acceptedMints.joinToString(", ")
-    }
-    val parsedPrice = price.trim().toLongOrNull()
-
-    AppCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Sell Internet", style = MaterialTheme.typography.titleMedium)
-                Text("Experimental", color = Muted, style = MaterialTheme.typography.labelSmall)
-            }
-            Switch(
-                checked = seller.enabled,
-                onCheckedChange = { enabled ->
-                    dispatch(NativeActions.updateSettings("paidExitEnabled" to enabled))
-                },
-                modifier = Modifier.mobileUiSelector(
-                    id = "paid-exit-seller-enabled",
-                    description = "Sell internet",
-                ),
-            )
-        }
-        Text(
-            paidExitSellerStatusText(seller),
-            modifier = Modifier.mobileUiSelector(
-                id = "paid-exit-seller-status",
-                description = "Sell internet status",
-            ),
-            color = Muted,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        OutlinedTextField(
-            value = price,
-            onValueChange = { price = it.filter(Char::isDigit) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .mobileUiSelector(
-                    id = "paid-exit-price-msat-per-gb",
-                    description = "Price in msat per GB",
-                ),
-            singleLine = true,
-            label = { Text("Price (msat/GB)") },
-            isError = parsedPrice == null,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = country,
-                onValueChange = { value ->
-                    country = value.uppercase().filter(Char::isLetter).take(2)
-                },
-                modifier = Modifier
-                    .width(112.dp)
-                    .mobileUiSelector(
-                        id = "paid-exit-country-code",
-                        description = "Seller country code",
-                    ),
-                singleLine = true,
-                label = { Text("Country") },
-            )
-            OutlinedTextField(
-                value = mints,
-                onValueChange = { mints = it },
-                modifier = Modifier
-                    .weight(1f)
-                    .mobileUiSelector(
-                        id = "paid-exit-accepted-mints",
-                        description = "Accepted Cashu mints",
-                    ),
-                singleLine = true,
-                label = { Text("Cashu mints") },
-            )
-        }
-        Button(
-            enabled = parsedPrice != null,
-            onClick = {
-                dispatch(
-                    NativeActions.updateSettings(
-                        "paidExitPriceMsatPerGb" to parsedPrice,
-                        "paidExitCountryCode" to country,
-                        "paidExitAcceptedMints" to mints,
-                    ),
-                )
-            },
-            modifier = Modifier.mobileUiSelector(
-                id = "paid-exit-seller-save",
-                description = "Save seller settings",
-            ),
-        ) {
-            Text("Save")
-        }
     }
 }

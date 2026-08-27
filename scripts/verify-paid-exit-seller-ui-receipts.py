@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate cross-platform shipped-UI paid-exit seller receipts."""
+"""Validate shipped-UI paid-exit seller receipts on supported platforms."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pathlib
 import re
 
 
-EXPECTED_PLATFORMS = {"linux", "macos", "windows", "android"}
+EXPECTED_PLATFORMS = {"linux", "macos"}
 
 
 def digest(path: pathlib.Path) -> str:
@@ -77,9 +77,9 @@ def main() -> int:
         json.dumps(
             {
                 "receiptSchema": 1,
-                "gate": "cross-platform paid-exit seller shipped UI",
+                "gate": "supported-platform paid-exit seller shipped UI",
                 "platforms": hashes,
-                "allPlatformsSavedEnabledAndRestartRead": True,
+                "allSupportedPlatformsSavedEnabledAndRestartRead": True,
                 "sellerContract": {
                     "priceMsatPerGb": 1_000_000,
                     "countryCode": "FI",

@@ -382,6 +382,19 @@ for contract in \
   grep -Fq "$contract" <<<"$docker_functional_body" \
     || fail "isolated Docker gates omit paid-exit contract: $contract"
 done
+seller_ui_body="$(sed -n '/^verify_paid_exit_seller_ui_gates() {$/,/^}$/p' "$release_gate")"
+for platform in linux macos; do
+  grep -Fq "\"$platform=" <<<"$seller_ui_body" \
+    || fail "seller UI receipt gate omits supported platform: $platform"
+done
+for platform in android windows; do
+  if grep -Fq "\"$platform=" <<<"$seller_ui_body"; then
+    fail "seller UI receipt gate requires unsupported platform: $platform"
+  fi
+done
+grep -Fq 'EXPECTED_PLATFORMS = {"linux", "macos"}' \
+  "$ROOT_DIR/scripts/verify-paid-exit-seller-ui-receipts.py" \
+  || fail "seller UI receipt verifier differs from the product support matrix"
 grep -Fq 'run_umbrel_release_gate' <<<"$docker_functional_body" \
   || fail "isolated Docker gates omit the authenticated Umbrel release gate"
 umbrel_function="$(sed -n '/^run_umbrel_release_gate() {$/,/^}$/p' "$release_gate")"

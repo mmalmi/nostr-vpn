@@ -70,12 +70,8 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _paidRouteWithdrawInvoice = "";
     private string _manualPaidExitProvider = "";
     private string _paidExitPriceMsatPerGb = "0";
-    private string _paidExitCountryCode = "";
-    private string _paidExitAcceptedMints = "";
     private string? _lastSyncedManualPaidExitProvider;
     private ulong? _lastSyncedPaidExitPriceMsatPerGb;
-    private string? _lastSyncedPaidExitCountryCode;
-    private string? _lastSyncedPaidExitAcceptedMints;
     private string _networkSetupMode = "";
     private string _updateStatus = "";
     private Uri? _updateAssetUrl;

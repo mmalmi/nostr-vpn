@@ -801,10 +801,6 @@ run_windows_platform_lane() {
   run_windows_app_launch_gate
   run_windows_manual_join_ui_gate
   run_windows_exit_dns_ui_gate
-  release_gate_run_with_timeout "Windows paid-exit seller UI save/relaunch/readback" \
-    "$PAID_EXIT_SELLER_UI_TIMEOUT_SECS" \
-    env NVPN_PAID_EXIT_SELLER_UI_ARTIFACT_DIR="$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/windows" \
-    ./scripts/windows-vm-paid-exit-seller-ui-e2e.sh "${NVPN_WINDOWS_SSH_HOST:-}"
   run_windows_service_toggle_gate
 }
 
@@ -1573,9 +1569,7 @@ verify_paid_exit_seller_ui_gates() {
     --app-git-tree "$app_tree" \
     --output "$output" \
     "linux=$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/linux/receipt.json" \
-    "macos=$RELEASE_GATE_PARALLEL_LOG_DIR/desktop-dns-ui/macos/cases/paid-exit-seller.json" \
-    "windows=$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/windows/receipt.json" \
-    "android=$RELEASE_GATE_PARALLEL_LOG_DIR/mobile-network/android-wireguard-dns-artifacts/paid-exit-seller.json"
+    "macos=$RELEASE_GATE_PARALLEL_LOG_DIR/desktop-dns-ui/macos/cases/paid-exit-seller.json"
 }
 
 run_mobile_underlay_change_gates() {

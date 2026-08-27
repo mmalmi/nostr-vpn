@@ -9,16 +9,16 @@ All notable changes to this project are documented in this file.
 Cashu paid exits now connect, recover, and bill reliably with either manual or
 automatic selection.
 
-- Added complete Selling Internet settings to Android and strengthened the
-  seller settings on every supported desktop app.
+- Strengthened Selling Internet settings and release coverage on every
+  platform that supports acting as a paid exit.
 - Improved paid-route activation, health checks, DNS safety, and recovery from
   interrupted or rotated Cashu channels.
 
 ### Added
 
-- Add exact shipped-GUI release checks for saving, enabling, and restoring
-  paid-exit seller price, country, and accepted mints on Android, Linux, macOS,
-  and Windows.
+- Add exact shipped-GUI release checks for saving, enabling, restarting, and
+  restoring paid-exit seller price, country, and accepted mints on Linux and
+  macOS, the platforms where selling internet is supported.
 - Add a production-path automatic paid-exit E2E alongside the manual E2E,
   proving signed offer discovery, tunnel-bound health, automatic Cashu
   funding, routed traffic, and streaming seller payments.

@@ -96,6 +96,20 @@ fn paid_exit_seller_supported_for_target(target_os: &str, mobile: bool) -> bool 
     !mobile && matches!(target_os, "macos" | "linux")
 }
 
+#[cfg(test)]
+mod supported_target_tests {
+    use super::paid_exit_seller_supported_for_target;
+
+    #[test]
+    fn seller_support_matches_the_shipped_gui_release_matrix() {
+        assert!(paid_exit_seller_supported_for_target("linux", false));
+        assert!(paid_exit_seller_supported_for_target("macos", false));
+        assert!(!paid_exit_seller_supported_for_target("windows", false));
+        assert!(!paid_exit_seller_supported_for_target("android", true));
+        assert!(!paid_exit_seller_supported_for_target("ios", true));
+    }
+}
+
 fn paid_exit_public_ip_text(port_mapping: Option<&PortMappingStatus>) -> String {
     let Some(endpoint) = port_mapping.and_then(|status| status.external_endpoint.as_deref()) else {
         return String::new();
