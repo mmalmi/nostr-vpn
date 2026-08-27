@@ -174,18 +174,43 @@ function Assert-CrashRecoveredDirectState {
   $wireGuardService = Get-Service `
     -Name ('WireGuardTunnel$' + $WireGuardInterface) `
     -ErrorAction SilentlyContinue
-  if (
-    [int]$route.InterfaceIndex -ne $ExpectedPhysicalIndex -or
-    (Get-NetAdapter -Name $WireGuardInterface `
-      -IncludeHidden -ErrorAction SilentlyContinue) -or
-    $wireGuardService -or
-    $endpointRoutes.Count -ne 0 -or
-    (Get-SecureDnsRules).Count -ne 0 -or
-    (Test-Path -LiteralPath $CleanupJournalPath) -or
-    !(Test-PublicDns) -or
-    !(Test-ExternalHttps)
-  ) {
-    throw "startup recovery has not restored a clean native Direct network"
+  $wireGuardAdapter = Get-NetAdapter -Name $WireGuardInterface `
+    -IncludeHidden -ErrorAction SilentlyContinue
+  $secureDnsRules = @(Get-SecureDnsRules)
+  $publicDnsAvailable = Test-PublicDns
+  $externalHttpsAvailable = Test-ExternalHttps
+  $failures = [Collections.Generic.List[string]]::new()
+  if ([int]$route.InterfaceIndex -ne $ExpectedPhysicalIndex) {
+    $failures.Add(
+      "best route interface $($route.InterfaceIndex) is not physical interface $ExpectedPhysicalIndex"
+    )
+  }
+  if ($wireGuardAdapter) {
+    $failures.Add("native WireGuard adapter remains")
+  }
+  if ($wireGuardService) {
+    $failures.Add("native WireGuard service remains")
+  }
+  if ($endpointRoutes.Count -ne 0) {
+    $failures.Add("endpoint bypass route remains ($($endpointRoutes.Count))")
+  }
+  if ($secureDnsRules.Count -ne 0) {
+    $failures.Add("secure DNS policy remains ($($secureDnsRules.Count))")
+  }
+  if (Test-Path -LiteralPath $CleanupJournalPath) {
+    $failures.Add("cleanup journal remains")
+  }
+  if (!$publicDnsAvailable) {
+    $failures.Add("public DNS is unavailable")
+  }
+  if (!$externalHttpsAvailable) {
+    $failures.Add("verified HTTPS is unavailable")
+  }
+  if ($failures.Count -ne 0) {
+    throw (
+      "startup recovery has not restored a clean native Direct network: " +
+      ($failures -join "; ")
+    )
   }
   Assert-CandidateNativeWireGuardOwnershipRemoved
   Assert-SingleExactCandidateDaemon $ExpectedDaemonPid

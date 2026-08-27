@@ -96,6 +96,15 @@ require_tokens "$WINDOWS_HOST_ENTRY" "helper module" \
 require_tokens "$WINDOWS_GUEST_ENTRY" "helper module" \
   'desktop-windows-underlay-change-e2e.lib.ps1' \
   'desktop-windows-underlay-crash-recovery.lib.ps1'
+require_tokens "$WINDOWS_GUEST_CRASH_LIB" "granular Direct startup-recovery evidence" \
+  'best route interface' \
+  'native WireGuard adapter remains' \
+  'native WireGuard service remains' \
+  'endpoint bypass route remains' \
+  'secure DNS policy remains' \
+  'cleanup journal remains' \
+  'public DNS is unavailable' \
+  'verified HTTPS is unavailable'
 require_tokens "$WINDOWS_HOST_ENTRY" "native WireGuard ownership regression harness" \
   'test-desktop-windows-wireguard-ownership.ps1' \
   'windows-wireguard-ownership-harness.log'
