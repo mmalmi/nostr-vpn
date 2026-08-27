@@ -4,6 +4,10 @@
 # host-local WireGuard fixture. This guest runner never builds or signs anything.
 set -euo pipefail
 
+ROOT="${NVPN_MACOS_NETWORK_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/lib-macos-owned-test-app.sh"
+
 ACTION="${1:-${NVPN_MACOS_NETWORK_ACTION:-}}"
 NVPN_BIN="${NVPN_E2E_BINARY:-}"
 STATE_DIR="${NVPN_MACOS_NETWORK_STATE_DIR:-}"
@@ -35,6 +39,12 @@ EXPECTED_FIPS_REV="${NVPN_MACOS_FIPS_EXPECTED_REV:-}"
 SECURE_RESOLVER="/etc/resolver/nvpn-secure-dns"
 MAGIC_RESOLVER="/etc/resolver/nvpn"
 SECURE_DNS_STORE_KEY="State:/Network/Service/to.nostrvpn.nvpn-secure-dns/DNS"
+INSTALLED_STATE_DIR="$STATE_DIR/preexisting-installed-state"
+INSTALLED_APP_PATH="/Applications/Nostr VPN.app"
+INSTALLED_APP="$INSTALLED_APP_PATH/Contents/MacOS/Nostr VPN"
+SYSTEM_SERVICE_LABEL="system/to.nostrvpn.nvpn"
+SYSTEM_SERVICE_NAME="to.nostrvpn.nvpn"
+SYSTEM_SERVICE_PLIST="/Library/LaunchDaemons/to.nostrvpn.nvpn.plist"
 
 truthy() {
   case "${1:-}" in
@@ -253,6 +263,177 @@ secure_dns_owned() {
 resolver_files_absent() {
   [[ ! -e "$SECURE_RESOLVER" && ! -e "$MAGIC_RESOLVER" ]] \
     && secure_dns_store_absent
+}
+
+system_service_loaded() {
+  /bin/launchctl print "$SYSTEM_SERVICE_LABEL" >/dev/null 2>&1
+}
+
+system_service_running() {
+  /bin/launchctl print "$SYSTEM_SERVICE_LABEL" 2>/dev/null \
+    | grep -Eq '^[[:space:]]*state = running$'
+}
+
+system_service_disabled() {
+  /bin/launchctl print-disabled system 2>/dev/null \
+    | grep -Eq "\"$SYSTEM_SERVICE_NAME\" => disabled$"
+}
+
+wait_for_system_service() {
+  local expected="$1" deadline=$((SECONDS + 10))
+  while ((SECONDS < deadline)); do
+    if [[ "$expected" == loaded ]] && system_service_loaded; then
+      return 0
+    fi
+    if [[ "$expected" == unloaded ]] && ! system_service_loaded; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  fail "system nvpn service did not become $expected"
+}
+
+resolver_snapshot_name() {
+  case "$1" in
+    "$MAGIC_RESOLVER") printf '%s\n' magic-resolver ;;
+    "$SECURE_RESOLVER") printf '%s\n' secure-resolver ;;
+    *) fail "unsupported resolver snapshot path" ;;
+  esac
+}
+
+snapshot_resolver_file() {
+  local path="$1" name
+  name="$(resolver_snapshot_name "$path")"
+  if [[ -e "$path" ]]; then
+    [[ -f "$path" && ! -L "$path" ]] \
+      || fail "preexisting nvpn resolver is not a regular owned-state file"
+    shasum -a 256 "$path" | awk '{ print $1 }' \
+      >"$INSTALLED_STATE_DIR/$name.sha256"
+  else
+    touch "$INSTALLED_STATE_DIR/$name.absent"
+  fi
+}
+
+resolver_file_matches_snapshot() {
+  local path="$1" name expected
+  name="$(resolver_snapshot_name "$path")"
+  if [[ -f "$INSTALLED_STATE_DIR/$name.absent" ]]; then
+    [[ ! -e "$path" ]]
+    return
+  fi
+  [[ -f "$INSTALLED_STATE_DIR/$name.sha256" \
+    && -f "$path" && ! -L "$path" ]] || return 1
+  expected="$(<"$INSTALLED_STATE_DIR/$name.sha256")"
+  [[ "$(shasum -a 256 "$path" | awk '{ print $1 }')" == "$expected" ]]
+}
+
+installed_state_matches_snapshot() {
+  local app_running=false service_loaded=false service_running=false
+  [[ -n "$(macos_exact_executable_pids "$INSTALLED_APP")" ]] \
+    && app_running=true
+  system_service_loaded && service_loaded=true
+  system_service_running && service_running=true
+  [[ "$app_running" == "$(
+      [[ -f "$INSTALLED_STATE_DIR/app-was-running" ]] && echo true || echo false
+    )" \
+    && "$service_loaded" == "$(
+      [[ -f "$INSTALLED_STATE_DIR/service-was-loaded" ]] && echo true || echo false
+    )" \
+    && "$service_running" == "$(
+      [[ -f "$INSTALLED_STATE_DIR/service-was-running" ]] && echo true || echo false
+    )" ]] \
+    && resolver_file_matches_snapshot "$MAGIC_RESOLVER" \
+    && resolver_file_matches_snapshot "$SECURE_RESOLVER"
+}
+
+quiesce_installed_state() {
+  [[ ! -e "$INSTALLED_STATE_DIR" ]] \
+    || fail "installed macOS state was already snapshotted"
+  mkdir -p "$INSTALLED_STATE_DIR" "$RESULT_DIR"
+  chmod 700 "$INSTALLED_STATE_DIR"
+
+  if [[ -n "$(macos_exact_executable_pids "$INSTALLED_APP")" ]]; then
+    touch "$INSTALLED_STATE_DIR/app-was-running"
+  fi
+  if system_service_loaded; then
+    system_service_disabled \
+      && fail "refusing to mutate a loaded but disabled system nvpn service"
+    system_service_running \
+      || fail "refusing to mutate a loaded but stopped system nvpn service"
+    touch "$INSTALLED_STATE_DIR/service-was-loaded"
+    touch "$INSTALLED_STATE_DIR/service-was-running"
+  elif pgrep -x nvpn >/dev/null 2>&1; then
+    fail "an nvpn process exists outside the installed system service"
+  fi
+  snapshot_resolver_file "$MAGIC_RESOLVER"
+  snapshot_resolver_file "$SECURE_RESOLVER"
+  touch "$INSTALLED_STATE_DIR/snapshot-complete"
+
+  macos_stop_exact_test_app "$INSTALLED_APP"
+  if system_service_loaded; then
+    sudo -n /bin/launchctl bootout "$SYSTEM_SERVICE_LABEL"
+    wait_for_system_service unloaded
+  fi
+  wait_until "the installed daemon's resolver ownership to quiesce" \
+    resolver_files_absent
+  [[ -z "$(macos_exact_executable_pids "$INSTALLED_APP")" ]] \
+    || fail "installed app survived gate quiescence"
+  ! pgrep -x nvpn >/dev/null 2>&1 \
+    || fail "installed daemon survived gate quiescence"
+  touch "$INSTALLED_STATE_DIR/quiesced"
+  echo "MACOS_RELEASE_NETWORK_INSTALLED_STATE_QUIESCED"
+}
+
+restore_installed_state() {
+  [[ -f "$INSTALLED_STATE_DIR/snapshot-complete" ]] || return 0
+  mkdir -p "$RESULT_DIR"
+  ! pgrep -x nvpn >/dev/null 2>&1 \
+    || fail "owned network daemon survived before installed-state restoration"
+
+  if [[ -f "$INSTALLED_STATE_DIR/service-was-loaded" ]]; then
+    [[ -f "$SYSTEM_SERVICE_PLIST" && ! -L "$SYSTEM_SERVICE_PLIST" ]] \
+      || fail "system nvpn service plist disappeared during the network gate"
+    sudo -n /bin/launchctl bootstrap system "$SYSTEM_SERVICE_PLIST"
+    wait_for_system_service loaded
+    if [[ -f "$INSTALLED_STATE_DIR/service-was-running" ]]; then
+      sudo -n /bin/launchctl kickstart -k "$SYSTEM_SERVICE_LABEL"
+    fi
+  fi
+  if [[ -f "$INSTALLED_STATE_DIR/app-was-running" ]]; then
+    [[ -x "$INSTALLED_APP" ]] \
+      || fail "preexisting installed app disappeared during the network gate"
+    /usr/bin/open -n -F -j "$INSTALLED_APP_PATH" --args --hidden
+  fi
+  wait_until "the exact preexisting installed app, service, and resolver state" \
+    installed_state_matches_snapshot
+  python3 - "$RESULT_DIR/installed-state-restoration.json" \
+    "$INSTALLED_STATE_DIR/app-was-running" \
+    "$INSTALLED_STATE_DIR/service-was-loaded" \
+    "$INSTALLED_STATE_DIR/service-was-running" <<'PY'
+import json
+import pathlib
+import sys
+
+output, app_marker, loaded_marker, running_marker = sys.argv[1:]
+pathlib.Path(output).write_text(
+    json.dumps(
+        {
+            "receiptSchema": 1,
+            "preexistingInstalledAppWasRunning": pathlib.Path(app_marker).is_file(),
+            "preexistingSystemServiceWasLoaded": pathlib.Path(loaded_marker).is_file(),
+            "preexistingSystemServiceWasRunning": pathlib.Path(running_marker).is_file(),
+            "preexistingInstalledStateRestored": True,
+            "preexistingResolverStateRestored": True,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+PY
+  touch "$INSTALLED_STATE_DIR/restored"
+  echo "MACOS_RELEASE_NETWORK_INSTALLED_STATE_RESTORED"
 }
 
 flush_dns_cache() {
@@ -1509,6 +1690,8 @@ cleanup_gate() {
 
 validate_inputs
 case "$ACTION" in
+  quiesce-installed-state) quiesce_installed_state ;;
+  restore-installed-state) restore_installed_state ;;
   initialize) initialize_gate ;;
   prepare) prepare_gate ;;
   dns-case) set_dns_case ;;

@@ -60,6 +60,9 @@ MACOS_NPUB=""
 MACOS_TUNNEL_IP=""
 APP_GIT_SHA=""
 APP_GIT_TREE=""
+INSTALLED_STATE_SNAPSHOT_STARTED=0
+GUEST_NETWORK_CLEANED=0
+INSTALLED_STATE_RESTORED=0
 
 fail() {
   echo "macOS VM Release network gate failed: $*" >&2
@@ -294,11 +297,23 @@ cleanup() {
   if [[ -n "$REMOTE_DIR" ]]; then
     local lane=primary
     [[ -n "$SECONDARY_IP" ]] && lane=secondary
-    if remote_phase "$lane" cleanup; then
+    if [[ "$GUEST_NETWORK_CLEANED" -eq 1 ]]; then
       :
+    elif remote_phase "$lane" cleanup; then
+      GUEST_NETWORK_CLEANED=1
     else
       echo "macOS guest production cleanup failed" >&2
       cleanup_failed=1
+    fi
+    if [[ "$INSTALLED_STATE_SNAPSHOT_STARTED" -eq 1 \
+      && "$INSTALLED_STATE_RESTORED" -eq 0 ]]
+    then
+      if remote_phase "$lane" restore-installed-state; then
+        INSTALLED_STATE_RESTORED=1
+      else
+        echo "preexisting macOS installed state could not be restored" >&2
+        cleanup_failed=1
+      fi
     fi
     if ! copy_guest_results; then
       echo "macOS guest network receipts could not be copied" >&2
@@ -469,6 +484,8 @@ SECONDARY_IP="$(
 remote_shell secondary 'true'
 
 mkdir -p "$ARTIFACT_DIR"
+INSTALLED_STATE_SNAPSHOT_STARTED=1
+remote_phase primary quiesce-installed-state
 macos_identity_output="$(remote_phase primary initialize)"
 printf '%s\n' "$macos_identity_output" \
   >"$ARTIFACT_DIR/macos-fips-identity.txt"
@@ -583,8 +600,11 @@ DNS_CASE_THROUGH_SERVERS=""
 DNS_CASE_PROBE_HOST=example.com
 DNS_CASE_EXPECTED_IP=""
 remote_phase secondary direct
-copy_guest_results
 remote_phase secondary cleanup
+GUEST_NETWORK_CLEANED=1
+remote_phase secondary restore-installed-state
+INSTALLED_STATE_RESTORED=1
+copy_guest_results
 remove_remote_dir
 remove_forward_target
 mobile_wg_fixture_cleanup "$CONTAINER" "$IMAGE"

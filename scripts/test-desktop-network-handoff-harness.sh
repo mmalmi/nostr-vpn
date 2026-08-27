@@ -893,6 +893,28 @@ require_tokens "$MACOS_WIREGUARD" "real imported macOS network gate" \
   'DNS_CASE_PROBE_HOST="measure-$PPID-$RANDOM.$transition_probe_host"' \
   'mobile_wg_fixture_assert_dns_case_evidence' \
   'mobile_wg_fixture_cleanup'
+require_tokens "$MACOS_WIREGUARD" "installed macOS service isolation" \
+  'remote_phase primary quiesce-installed-state' \
+  'remote_phase "$lane" restore-installed-state'
+python3 - "$MACOS_WIREGUARD" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if source.index("remote_phase primary quiesce-installed-state") > source.index(
+    'remote_phase primary initialize'
+):
+    raise SystemExit("macOS network gate initializes before quiescing installed state")
+cleanup = source.split("cleanup() {", 1)[1].split("\n}\ntrap cleanup", 1)[0]
+if cleanup.index('remote_phase "$lane" cleanup') > cleanup.index(
+    'remote_phase "$lane" restore-installed-state'
+):
+    raise SystemExit("macOS network gate restores installed state before owned cleanup")
+if cleanup.index('remote_phase "$lane" restore-installed-state') > cleanup.index(
+    "copy_guest_results"
+):
+    raise SystemExit("macOS network gate copies results before restoration evidence")
+PY
 if grep -Fq 'requires the remote Vader fixture' "$MACOS_WIREGUARD" \
   || grep -Fq 'discover_remote_fixture_ipv4' "$MACOS_WIREGUARD" \
   || grep -Fq 'mobile_wg_remote_exec' "$MACOS_WIREGUARD" \
@@ -946,6 +968,18 @@ require_tokens "$MACOS_NETWORK_GUEST" "production macOS transition evidence" \
   'forwarded_probe_live=true' \
   'endpoint_route_interface' \
   'MACOS_RELEASE_NETWORK_DIRECT_OK'
+require_tokens "$MACOS_NETWORK_GUEST" "preexisting installed-state isolation" \
+  'lib-macos-owned-test-app.sh' \
+  'quiesce_installed_state' \
+  'restore_installed_state' \
+  'macos_stop_exact_test_app "$INSTALLED_APP"' \
+  'sudo -n /bin/launchctl bootout "$SYSTEM_SERVICE_LABEL"' \
+  'sudo -n /bin/launchctl bootstrap system "$SYSTEM_SERVICE_PLIST"' \
+  'sudo -n /bin/launchctl kickstart -k "$SYSTEM_SERVICE_LABEL"' \
+  'snapshot_resolver_file "$MAGIC_RESOLVER"' \
+  'resolver_file_matches_snapshot "$MAGIC_RESOLVER"' \
+  'installed-state-restoration.json' \
+  'preexistingResolverStateRestored'
 crash_restart_transport_body="$(
   sed -n '/^crash_restart_transport_live() {$/,/^}$/p' \
     "$MACOS_NETWORK_GUEST"
@@ -978,7 +1012,8 @@ done
   || fail "macOS release evidence does not preserve the isolated zero-peer runtime contract"
 
 MACOS_DEFINITIONS="$COMBINED_DIR/macos-network-definitions.sh"
-sed '/^validate_inputs$/,$d' "$MACOS_NETWORK_GUEST" >"$MACOS_DEFINITIONS"
+printf 'export NVPN_MACOS_NETWORK_ROOT=%q\n' "$ROOT" >"$MACOS_DEFINITIONS"
+sed '/^validate_inputs$/,$d' "$MACOS_NETWORK_GUEST" >>"$MACOS_DEFINITIONS"
 
 SCUTIL_FIXTURES="$COMBINED_DIR/scutil"
 mkdir -p "$SCUTIL_FIXTURES"
