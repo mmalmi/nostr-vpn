@@ -84,13 +84,20 @@ destination: default
 #[test]
 fn macos_endpoint_bypass_route_args_are_global_host_routes() {
     assert_eq!(
-        macos_global_gateway_route_args("add", "65.109.48.91/32", "192.168.64.1"),
+        macos_global_gateway_route_args(
+            "add",
+            "65.109.48.91/32",
+            "192.168.64.1",
+            Some("en2"),
+        ),
         vec![
             "-n".to_string(),
             "add".to_string(),
             "-host".to_string(),
             "65.109.48.91".to_string(),
             "192.168.64.1".to_string(),
+            "-ifp".to_string(),
+            "en2".to_string(),
         ]
     );
     assert_eq!(
@@ -101,6 +108,41 @@ fn macos_endpoint_bypass_route_args_are_global_host_routes() {
             "default".to_string(),
             "192.168.64.1".to_string(),
         ]
+    );
+}
+
+#[test]
+fn macos_same_gateway_handoff_changes_only_an_owned_global_route() {
+    let current = MacosManagedRoute {
+        target: "203.0.113.9/32".to_string(),
+        gateway: Some("192.168.64.1".to_string()),
+        interface: Some("en2".to_string()),
+    };
+    let desired = MacosManagedRoute {
+        interface: Some("en0".to_string()),
+        ..current.clone()
+    };
+    let owned = "\
+Destination        Gateway            Flags               Netif Expire\n\
+203.0.113.9       192.168.64.1       UGHS                  en2\n";
+    assert_eq!(
+        macos_owned_global_gateway_route_transition(owned, &current, &desired),
+        MacosOwnedGlobalGatewayRouteTransition::ChangeOwned,
+    );
+
+    let foreign = "\
+Destination        Gateway            Flags               Netif Expire\n\
+203.0.113.9       192.168.64.1       UGHS                  en7\n";
+    assert_eq!(
+        macos_owned_global_gateway_route_transition(foreign, &current, &desired),
+        MacosOwnedGlobalGatewayRouteTransition::MissingOrUnowned,
+        "same destination and gateway do not authorize changing a foreign interface",
+    );
+
+    let already_moved = owned.replace("en2", "en0");
+    assert_eq!(
+        macos_owned_global_gateway_route_transition(&already_moved, &current, &desired),
+        MacosOwnedGlobalGatewayRouteTransition::AlreadyDesired,
     );
 }
 

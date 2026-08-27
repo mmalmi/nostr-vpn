@@ -190,10 +190,13 @@ pub fn apply_full_default_route(
         install_endpoint_bypass(target, &original_default)?;
     }
     #[cfg(target_os = "macos")]
-    let endpoint_bypass_routes =
-        install_macos_wg_endpoint_bypass(upstream_endpoint.ip(), _underlay_interface)?
-            .into_iter()
-            .collect();
+    let endpoint_bypass_routes = install_macos_wg_endpoint_bypass(
+        upstream_endpoint.ip(),
+        _underlay_interface,
+        &[],
+    )?
+    .into_iter()
+    .collect();
 
     let mut full_route = FullDefaultRoute {
         #[cfg(target_os = "macos")]
@@ -255,6 +258,7 @@ fn macos_wg_endpoint_bypass_route(
 fn install_macos_wg_endpoint_bypass(
     endpoint: IpAddr,
     preferred_interface: Option<&str>,
+    current_routes: &[crate::MacosManagedRoute],
 ) -> Result<Option<crate::MacosManagedRoute>> {
     if !endpoint.is_ipv4() {
         return Ok(None);
@@ -270,6 +274,14 @@ fn install_macos_wg_endpoint_bypass(
         })?;
     let route = macos_wg_endpoint_bypass_route(endpoint, &underlay)
         .expect("IPv4 endpoint produces an endpoint bypass");
+    for current in current_routes
+        .iter()
+        .filter(|current| current.target == route.target && *current != &route)
+    {
+        if crate::macos_network::migrate_macos_owned_global_gateway_route(current, &route)? {
+            return Ok(Some(route));
+        }
+    }
     crate::macos_network::apply_macos_route_spec(
         &route.target,
         route.gateway.as_deref(),
@@ -440,7 +452,11 @@ impl FullDefaultRoute {
         endpoint: IpAddr,
         underlay_interface: &str,
     ) -> Result<Option<crate::MacosManagedRoute>> {
-        let route = install_macos_wg_endpoint_bypass(endpoint, Some(underlay_interface))?;
+        let route = install_macos_wg_endpoint_bypass(
+            endpoint,
+            Some(underlay_interface),
+            &self.endpoint_bypass_routes,
+        )?;
         if let Some(route) = route.as_ref()
             && !self.endpoint_bypass_routes.contains(route)
         {
