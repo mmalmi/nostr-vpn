@@ -576,8 +576,9 @@ impl FipsPrivateTunnelRuntime {
         })
     }
 
-    include!("tunnel_runtime_linux/exit_upstream.rs");
 }
+
+include!("tunnel_runtime_linux/exit_upstream.rs");
 
 #[cfg(target_os = "linux")]
 fn apply_linux_tun_tx_queue_len(iface: &str) -> Result<()> {

@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+impl FipsPrivateTunnelRuntime {
     fn reconcile_linux_exit_node_forwarding(
         &mut self,
         config: &FipsPrivateTunnelConfig,
@@ -469,3 +471,4 @@
         self.linux_network_state_initialized = false;
         cleanup_linux_network_state_with_actions(self)
     }
+}
