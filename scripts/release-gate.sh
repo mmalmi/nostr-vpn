@@ -614,7 +614,7 @@ run_windows_wireguard_exit_gate() {
     0|false|FALSE|False|no|NO|No|off|OFF|Off)
       echo "Skipping Windows WG exit e2e because NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E=${NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E}"
       ;;
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On|windows-vm)
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On|windows-vm|required)
       release_gate_run_with_timeout "Windows WG exit e2e" "$WINDOWS_WG_EXIT_TIMEOUT_SECS" \
         env NVPN_WINDOWS_REQUIRE_WG_DIRECT_E2E=1 \
         NVPN_WINDOWS_HOST_INSTALLER_RECEIPT_PATH="$installer_receipt" \
@@ -1492,7 +1492,7 @@ run_mobile_wireguard_exit_gates() {
       echo "Skipping mobile WireGuard exit e2e because NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E=$mode"
       return
       ;;
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On|required)
       ;;
     auto|AUTO|Auto|"")
       if [[ "$(uname -s)" != "Darwin" ]] \
@@ -1617,7 +1617,7 @@ run_mobile_underlay_change_gates() {
       echo "Skipping physical mobile underlay-change e2e because NVPN_RELEASE_GATE_MOBILE_UNDERLAY_E2E=$mode"
       return
       ;;
-    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On|required)
       ;;
     auto|AUTO|Auto|"")
       if [[ -z "${NVPN_MOBILE_WG_EXIT_HOST_IP:-}" ]]; then

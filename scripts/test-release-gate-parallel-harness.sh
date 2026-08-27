@@ -197,6 +197,27 @@ fi
 release_gate="$ROOT_DIR/scripts/release-gate.sh"
 local_release="$ROOT_DIR/scripts/local-release.mjs"
 release_tooling_contracts="$ROOT_DIR/scripts/test-release-tooling-contracts.sh"
+
+# Complete mode normalizes auto-detected network lanes to the literal
+# "required" value. Every dispatcher receiving that normalized value must
+# treat it like its explicit enabled mode rather than rejecting it after the
+# expensive platform lanes have already completed.
+windows_wg_dispatcher="$(sed -n \
+  '/^run_windows_wireguard_exit_gate()/,/^}/p' "$release_gate")"
+grep -Fq \
+  '1|true|TRUE|True|yes|YES|Yes|on|ON|On|windows-vm|required)' \
+  <<<"$windows_wg_dispatcher" \
+  || fail "Windows WireGuard dispatcher rejects complete-mode required"
+for dispatcher in \
+  run_mobile_wireguard_exit_gates \
+  run_mobile_underlay_change_gates
+do
+  dispatcher_body="$(sed -n "/^${dispatcher}()/,/^}/p" "$release_gate")"
+  grep -Fq \
+    '1|true|TRUE|True|yes|YES|Yes|on|ON|On|required)' \
+    <<<"$dispatcher_body" \
+    || fail "$dispatcher rejects complete-mode required"
+done
 [[ -x "$release_tooling_contracts" ]] \
   || fail "release tooling contracts have no standalone executable"
 grep -Fq 'name: Release tooling contracts' "$ROOT_DIR/.github/workflows/ci.yml" \
