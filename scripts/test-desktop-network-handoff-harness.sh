@@ -896,6 +896,11 @@ require_tokens "$MACOS_WIREGUARD" "real imported macOS network gate" \
 require_tokens "$MACOS_WIREGUARD" "installed macOS service isolation" \
   'remote_phase primary quiesce-installed-state' \
   'remote_phase "$lane" restore-installed-state'
+require_tokens "$MACOS_WIREGUARD" "privileged private-state cleanup" \
+  '/tmp/nvpn-macos-release-network.*)' \
+  'test -d $quoted && test ! -L $quoted' \
+  'sudo -n /bin/rm -rf -- $quoted' \
+  'test ! -e $quoted'
 python3 - "$MACOS_WIREGUARD" <<'PY'
 import pathlib
 import sys
@@ -980,6 +985,16 @@ require_tokens "$MACOS_NETWORK_GUEST" "preexisting installed-state isolation" \
   'resolver_file_matches_snapshot "$MAGIC_RESOLVER"' \
   'installed-state-restoration.json' \
   'preexistingResolverStateRestored'
+endpoint_route_body="$(
+  sed -n '/^wireguard_endpoint_route_state_valid() {$/,/^}$/p' \
+    "$MACOS_NETWORK_GUEST"
+)"
+grep -Fq '[[ "$endpoint_iface" == "$expected_underlay"' \
+  <<<"$endpoint_route_body" \
+  || fail "macOS network gate does not require the global endpoint bypass"
+if grep -Fq '"$endpoint_iface" == "$wg_iface"' <<<"$endpoint_route_body"; then
+  fail "macOS network gate still expects the obsolete scoped endpoint bypass"
+fi
 crash_restart_transport_body="$(
   sed -n '/^crash_restart_transport_live() {$/,/^}$/p' \
     "$MACOS_NETWORK_GUEST"

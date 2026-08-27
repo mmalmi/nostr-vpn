@@ -105,8 +105,9 @@ pub struct ScopedHostRoute {
 /// Full default-route replacement: bring up the userspace WG tun and
 /// route **all** outbound traffic through it (Mullvad/Proton-style).
 /// Linux and macOS install a bypass /32 route for an IPv4 WG endpoint.
-/// The macOS route is scoped to the selected physical interface because
-/// binding the UDP socket alone does not override the two covering /1s.
+/// The macOS route uses the selected physical gateway as a global host route;
+/// an interface-scoped route would not override the two covering /1s for an
+/// ordinary transport socket.
 ///
 /// **This is the dangerous mode** — if the WG handshake fails after
 /// this call returns, the host has lost its way to the internet

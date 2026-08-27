@@ -189,7 +189,7 @@ wireguard_endpoint_route_absent() {
 
 wireguard_endpoint_route_state_valid() {
   local expected_underlay="${1:-$PRIMARY_IFACE}"
-  local endpoint_iface expected_gateway physical_default_iface wg_iface
+  local endpoint_iface expected_gateway physical_default_iface
   [[ "$expected_underlay" == "$PRIMARY_IFACE" \
     || "$expected_underlay" == "$SECONDARY_IFACE" ]] \
     || return 1
@@ -198,12 +198,12 @@ wireguard_endpoint_route_state_valid() {
     [[ "$endpoint_iface" == "$expected_underlay" ]]
     return
   fi
-  wg_iface="$(wireguard_interface)" || return 1
   physical_default_iface="$(route_value default interface)" || return 1
   expected_gateway="$(route_value default gateway)" || return 1
-  # The global lookup remains covered by the WireGuard /1s, while exactly
-  # one interface-scoped /32 keeps encrypted UDP on the selected underlay.
-  [[ "$endpoint_iface" == "$wg_iface" \
+  # The global /32 must beat the two WireGuard /1s for an ordinary endpoint
+  # lookup. IP_BOUND_IF then pins the encrypted UDP socket to the same selected
+  # underlay, while the recorded interface makes route ownership exact.
+  [[ "$endpoint_iface" == "$expected_underlay" \
     && "$physical_default_iface" == "$expected_underlay" \
     && -n "$expected_gateway" \
     && "$expected_gateway" != link#* ]] \

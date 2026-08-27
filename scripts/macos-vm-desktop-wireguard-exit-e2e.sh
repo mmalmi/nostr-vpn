@@ -268,11 +268,17 @@ remove_forward_target() {
 
 remove_remote_dir() {
   [[ -n "$REMOTE_DIR" ]] || return 0
+  case "$REMOTE_DIR" in
+    /tmp/nvpn-macos-release-network.*) ;;
+    *) fail "refusing to remove an unsafe macOS guest state path" ;;
+  esac
   local lane=primary
   [[ -n "$SECONDARY_IP" ]] && lane=secondary
   local quoted
   printf -v quoted '%q' "$REMOTE_DIR"
-  remote_shell "$lane" "rm -rf -- $quoted" >/dev/null
+  remote_shell "$lane" \
+    "test -d $quoted && test ! -L $quoted \
+      && sudo -n /bin/rm -rf -- $quoted" >/dev/null
   remote_shell "$lane" "test ! -e $quoted"
   REMOTE_DIR=""
 }
