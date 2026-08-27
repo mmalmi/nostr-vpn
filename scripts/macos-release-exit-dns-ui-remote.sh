@@ -229,6 +229,19 @@ launch_app() {
         if "$DRIVER" "$APP_PID" --wait-window "Nostr VPN"; then
           return 0
         fi
+        # A just-terminated SwiftUI app can be relaunched by LaunchServices
+        # with a live process but no WindowGroup. Reopening that exact running
+        # app is the real Dock/Finder recovery path and asks SwiftUI to create
+        # its main window before we discard the process and retry the launch.
+        echo "Requesting the existing macOS app to reopen its main window." >&2
+        macos_open "$APP_PATH" || true
+        APP_PID="$(macos_exact_executable_pids "$APP_EXE" | tail -n 1)"
+        if [[ -n "$APP_PID" ]] \
+          && kill -0 "$APP_PID" >/dev/null 2>&1 \
+          && "$DRIVER" "$APP_PID" --wait-window "Nostr VPN"
+        then
+          return 0
+        fi
         stop_gate_app || return 1
         break
       fi
