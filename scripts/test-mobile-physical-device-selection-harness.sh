@@ -48,4 +48,140 @@ if select_physical_android_serial "$tmp/adb" "" >/dev/null 2>&1; then
   fail "physical-only selection fell back to an emulator"
 fi
 
+cat >"$tmp/xcrun" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "devicectl" && "${2:-}" == "list" && "${3:-}" == "devices" ]]; then
+  output=""
+  shift 3
+  while (( $# > 0 )); do
+    case "$1" in
+      --json-output)
+        output="$2"
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  cp "$NVPN_FAKE_DEVICE_LIST" "$output"
+  exit 0
+fi
+
+if [[ "${1:-}" == "devicectl" && "${2:-}" == "device" \
+  && "${3:-}" == "info" && "${4:-}" == "details" ]]; then
+  exit 0
+fi
+
+if [[ "${1:-}" == "xctrace" && "${2:-}" == "list" \
+  && "${3:-}" == "devices" ]]; then
+  printf '== Devices ==\n'
+  printf '== Devices Offline ==\n'
+  printf 'Connected iPhone (17.0) (00000000-0000000000000000)\n'
+  printf '== Simulators ==\n'
+  exit 0
+fi
+
+exit 2
+EOF
+chmod +x "$tmp/xcrun"
+
+cat >"$tmp/devices.json" <<'EOF'
+{
+  "result": {
+    "devices": [
+      {
+        "hardwareProperties": {
+          "platform": "iOS",
+          "udid": "00000000-0000000000000001"
+        },
+        "connectionProperties": {
+          "transportType": "wired"
+        }
+      }
+    ]
+  }
+}
+EOF
+
+selected="$(
+  PATH="$tmp:$PATH" \
+    NVPN_FAKE_DEVICE_LIST="$tmp/devices.json" \
+    select_physical_ios_device ""
+)"
+[[ "$selected" == "00000000-0000000000000001" ]] \
+  || fail "iOS selection ignored the connected devicectl device"
+
+cat >"$tmp/devices.json" <<'EOF'
+{
+  "result": {
+    "devices": [
+      {
+        "hardwareProperties": {
+          "platform": "iOS",
+          "udid": "00000000-0000000000000001"
+        },
+        "connectionProperties": {
+          "transportType": "localNetwork"
+        }
+      },
+      {
+        "hardwareProperties": {
+          "platform": "iOS",
+          "udid": "00000000-0000000000000001"
+        },
+        "connectionProperties": {
+          "transportType": "wired"
+        }
+      }
+    ]
+  }
+}
+EOF
+
+selected="$(
+  PATH="$tmp:$PATH" \
+    NVPN_FAKE_DEVICE_LIST="$tmp/devices.json" \
+    select_physical_ios_device ""
+)"
+[[ "$selected" == "00000000-0000000000000001" ]] \
+  || fail "iOS selection did not deduplicate one device across transports"
+
+cat >"$tmp/devices.json" <<'EOF'
+{
+  "result": {
+    "devices": [
+      {
+        "hardwareProperties": {
+          "platform": "iOS",
+          "udid": "00000000-0000000000000001"
+        },
+        "connectionProperties": {
+          "transportType": "localNetwork"
+        }
+      },
+      {
+        "hardwareProperties": {
+          "platform": "iOS",
+          "udid": "00000000-0000000000000002"
+        },
+        "connectionProperties": {
+          "transportType": "wired"
+        }
+      }
+    ]
+  }
+}
+EOF
+
+selected="$(
+  PATH="$tmp:$PATH" \
+    NVPN_FAKE_DEVICE_LIST="$tmp/devices.json" \
+    select_physical_ios_device ""
+)"
+[[ "$selected" == "00000000-0000000000000002" ]] \
+  || fail "iOS selection did not prefer the single wired physical device"
+
 printf 'mobile physical-device selection harness passed\n'

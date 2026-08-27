@@ -45,6 +45,85 @@ select_physical_android_serial() {
   printf '%s\n' "$selected"
 }
 
+select_physical_ios_device_with_devicectl() {
+  local devices_file candidates_file ready_file candidate wired
+  local count wired_count selected
+  devices_file="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-devices.XXXXXX")"
+  candidates_file="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-candidates.XXXXXX")"
+  ready_file="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-ready.XXXXXX")"
+
+  if ! xcrun devicectl list devices \
+    --json-output "$devices_file" >/dev/null 2>&1
+  then
+    rm -f "$devices_file" "$candidates_file" "$ready_file"
+    return 1
+  fi
+
+  if ! python3 - "$devices_file" >"$candidates_file" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+devices = payload.get("result", {}).get("devices", [])
+candidates = {}
+for device in devices:
+    hardware = device.get("hardwareProperties", {})
+    platform = str(hardware.get("platform", "")).lower()
+    if platform not in {"ios", "ipados"}:
+        continue
+    udid = hardware.get("udid")
+    if not isinstance(udid, str) or not re.fullmatch(r"[0-9A-Fa-f-]{8,}", udid):
+        continue
+    connection = device.get("connectionProperties", {})
+    wired = str(connection.get("transportType", "")).lower() == "wired"
+    candidates[udid] = candidates.get(udid, False) or wired
+
+for udid, wired in sorted(candidates.items()):
+    print(f"{int(wired)}\t{udid}")
+PY
+  then
+    rm -f "$devices_file" "$candidates_file" "$ready_file"
+    return 1
+  fi
+
+  while IFS="$(printf '\t')" read -r wired candidate; do
+    [[ -n "$candidate" ]] || continue
+    if xcrun devicectl device info details \
+      --device "$candidate" >/dev/null 2>&1
+    then
+      printf '%s\t%s\n' "$wired" "$candidate" >>"$ready_file"
+    fi
+  done <"$candidates_file"
+  rm -f "$devices_file" "$candidates_file"
+
+  count="$(awk 'NF { count++ } END { print count + 0 }' "$ready_file")"
+  if [[ "$count" == "1" ]]; then
+    selected="$(awk 'NF { print $2; exit }' "$ready_file")"
+    rm -f "$ready_file"
+    printf '%s\n' "$selected"
+    return 0
+  fi
+
+  if (( count > 1 )); then
+    wired_count="$(awk '$1 == 1 { count++ } END { print count + 0 }' "$ready_file")"
+    if [[ "$wired_count" == "1" ]]; then
+      selected="$(awk '$1 == 1 { print $2; exit }' "$ready_file")"
+      rm -f "$ready_file"
+      printf '%s\n' "$selected"
+      return 0
+    fi
+    rm -f "$ready_file"
+    printf 'Multiple physical iOS devices are online; set NVPN_IOS_DEVICE\n' >&2
+    return 2
+  fi
+
+  rm -f "$ready_file"
+  return 1
+}
+
 select_physical_ios_device() {
   local requested="${1:-${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}}"
   local selected=""
@@ -59,6 +138,18 @@ select_physical_ios_device() {
     return
   fi
 
+  selected="$(select_physical_ios_device_with_devicectl)" || status=$?
+  case "$status" in
+    0)
+      printf '%s\n' "$selected"
+      return
+      ;;
+    2)
+      return 1
+      ;;
+  esac
+
+  status=0
   selected="$(xcrun xctrace list devices 2>/dev/null | awk '
     /^== Devices ==/ { in_devices = 1; next }
     /^== Devices Offline ==/ || /^== Simulators ==/ { in_devices = 0 }
