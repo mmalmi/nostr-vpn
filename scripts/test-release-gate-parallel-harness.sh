@@ -337,6 +337,7 @@ ios_policy_check_line="$(
 ((ios_framework_build_line < ios_policy_check_line)) \
   || fail "packaged iOS policy is checked before its release XCFramework is built"
 required_steps=(
+  seal_release_gate_app_candidate
   run_release_gate_candidate_preflight
   release_gate_enforce_complete_real_network_modes
   prepare_windows_platform_lane_sync
@@ -375,6 +376,10 @@ for step in "${required_steps[@]}"; do
 done
 
 required_contracts=(
+  'export NVPN_EXPECTED_APP_GIT_SHA="$app_sha"'
+  'export NVPN_EXPECTED_APP_GIT_TREE="$app_tree"'
+  'candidate_root="$(cd "$ROOT_DIR" && pwd -P)"'
+  'export NVPN_RELEASE_APP_REPO_PATH="$candidate_root"'
   'release_gate_parallel_cancel_all || cleanup_failed=1'
   'release_gate_cleanup_private_build_dirs || cleanup_failed=1'
   'platform_preparation_receipt_valid'
@@ -388,6 +393,23 @@ for contract in "${required_contracts[@]}"; do
   grep -Fq "$contract" "$release_gate" \
     || fail "release gate omits artifact/cleanup contract: $contract"
 done
+
+seal_candidate_line="$(
+  grep -nF 'seal_release_gate_app_candidate' <<<"$main_body" \
+    | head -n1 \
+    | cut -d: -f1 \
+    || true
+)"
+candidate_preflight_line="$(
+  grep -nF 'run_release_gate_candidate_preflight' <<<"$main_body" \
+    | head -n1 \
+    | cut -d: -f1 \
+    || true
+)"
+[[ -n "$seal_candidate_line" && -n "$candidate_preflight_line" ]] \
+  || fail "release gate does not seal the app candidate before preflight"
+((seal_candidate_line < candidate_preflight_line)) \
+  || fail "release gate snapshots the candidate before sealing its app revision"
 docker_functional_body="$(sed -n '/^run_docker_isolated_functional_gates() {$/,/^}$/p' "$release_gate")"
 for contract in \
   './scripts/e2e-paid-exit-docker.sh' \

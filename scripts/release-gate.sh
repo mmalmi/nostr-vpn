@@ -378,6 +378,43 @@ run_release_gate_candidate_preflight() {
   ./scripts/check-source-file-lines.sh
 }
 
+seal_release_gate_app_candidate() {
+  local candidate_root app_sha app_tree configured_root
+  candidate_root="$(cd "$ROOT_DIR" && pwd -P)" || return 1
+  app_sha="$(git -C "$candidate_root" rev-parse HEAD)" || return 1
+  app_tree="$(git -C "$candidate_root" rev-parse 'HEAD^{tree}')" || return 1
+
+  if [[ -n "${NVPN_EXPECTED_APP_GIT_SHA:-}" \
+    && "$NVPN_EXPECTED_APP_GIT_SHA" != "$app_sha" ]]
+  then
+    echo "Release gate app revision differs from NVPN_EXPECTED_APP_GIT_SHA." >&2
+    return 1
+  fi
+  if [[ -n "${NVPN_EXPECTED_APP_GIT_TREE:-}" \
+    && "$NVPN_EXPECTED_APP_GIT_TREE" != "$app_tree" ]]
+  then
+    echo "Release gate app tree differs from NVPN_EXPECTED_APP_GIT_TREE." >&2
+    return 1
+  fi
+  if [[ -n "${NVPN_RELEASE_APP_REPO_PATH:-}" ]]; then
+    configured_root="$(cd "$NVPN_RELEASE_APP_REPO_PATH" && pwd -P)" || {
+      echo "Release gate could not resolve NVPN_RELEASE_APP_REPO_PATH." >&2
+      return 1
+    }
+    [[ "$configured_root" == "$candidate_root" ]] || {
+      echo "Release gate app path differs from its exact candidate checkout." >&2
+      return 1
+    }
+  fi
+
+  assert_release_checkout_state \
+    "$candidate_root" "$app_sha" "$app_tree" "Release gate app candidate" \
+    || return 1
+  export NVPN_EXPECTED_APP_GIT_SHA="$app_sha"
+  export NVPN_EXPECTED_APP_GIT_TREE="$app_tree"
+  export NVPN_RELEASE_APP_REPO_PATH="$candidate_root"
+}
+
 run_release_gate_static_preflight() {
   npm ci
   npm run check
@@ -2202,6 +2239,7 @@ main() {
 
   release_gate_enforce_complete_real_network_modes
   release_gate_require_complete_fixture_inputs
+  seal_release_gate_app_candidate
 
   # Validate generated version metadata before any remote lane snapshots the
   # candidate. The remaining preflight leaves tracked source unchanged and can
