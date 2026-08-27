@@ -4,7 +4,7 @@
   <img src="icon.svg" alt="nostr-vpn logo" width="112">
 </p>
 
-`nostr-vpn` is a Tailscale-style private mesh VPN with a [FIPS](https://github.com/jmcorgan/fips)-backed data plane. It also experiments with byte-metered public exit nodes paid in Bitcoin through Cashu.
+`nostr-vpn` is a Tailscale-style private mesh VPN with a [FIPS](https://github.com/jmcorgan/fips)-backed data plane. It also includes an experimental marketplace for byte-metered public exit nodes paid in Bitcoin through Cashu.
 
 Nostr identities and signed rosters control enrollment; peers connect directly when possible and route through FIPS neighbors when direct UDP is unavailable. MagicDNS, subnet routes, exit nodes, and WireGuard upstream egress are built in. The project includes the `nvpn` CLI and daemon plus native apps for macOS, Linux, Windows, Android, and iOS.
 
@@ -53,7 +53,7 @@ For startup at boot, run `sudo nvpn service install`; on Windows, run `nvpn serv
 
 ## Paid Exits
 
-Paid exits settle byte-metered usage through Cashu Spilman channels. Every buyer-to-exit IP packet is counted immediately; exit-to-buyer UDP is counted only for recent buyer-initiated flows, while TCP payload is counted only after the buyer acknowledges it, without double-counting retransmitted download data. Other inbound protocols are not billed.
+Providers publish paid-exit offers over Nostr, and buyers settle byte-metered usage through Cashu Spilman channels. Every buyer-to-exit IP packet is counted immediately; exit-to-buyer UDP is counted only for recent buyer-initiated flows, while TCP payload is counted only after the buyer acknowledges it, without double-counting retransmitted download data. Other inbound protocols are not billed.
 
 Public DNS uses authenticated DNS-over-HTTPS by default, preventing the exit provider from reading or spoofing DNS questions and answers; MagicDNS names remain local. See [Exit DNS privacy](docs/protocol.md#exit-dns-privacy) for resolver options and limitations.
 
