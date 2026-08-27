@@ -247,9 +247,12 @@ fn macos_wg_endpoint_bypass_route(
     let IpAddr::V4(endpoint) = endpoint else {
         return None;
     };
+    let gateway = underlay.gateway.as_ref().filter(|gateway| {
+        gateway.parse::<IpAddr>().ok() != Some(IpAddr::V4(endpoint))
+    });
     Some(crate::MacosManagedRoute {
         target: format!("{endpoint}/32"),
-        gateway: underlay.gateway.clone(),
+        gateway: gateway.cloned(),
         interface: Some(underlay.interface.clone()),
     })
 }
