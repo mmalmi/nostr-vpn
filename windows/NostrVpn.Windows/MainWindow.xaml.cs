@@ -177,6 +177,16 @@ public partial class MainWindow : Window
         await ViewModel.DiscoverPaidRouteOffersAsync();
     }
 
+    private async void ApplyPaidRouteFilter_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.ApplyPaidRouteMarketFilterAsync();
+    }
+
+    private async void ClearPaidRouteFilter_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.ClearPaidRouteMarketFilterAsync();
+    }
+
     private async void SetManualPaidExitProvider_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.SetManualPaidExitProviderAsync();

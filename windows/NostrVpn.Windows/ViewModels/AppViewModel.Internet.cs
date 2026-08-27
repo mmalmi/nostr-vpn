@@ -95,6 +95,28 @@ public sealed partial class AppViewModel
     public Task DiscoverPaidRouteOffersAsync() =>
         DispatchAsync(NativeActions.DiscoverPaidRouteOffers(), "Finding sellers");
 
+    public async Task ApplyPaidRouteMarketFilterAsync()
+    {
+        _paidRouteFilterEditing = false;
+        await DispatchAsync(
+            NativeActions.SetPaidRouteMarketFilter(
+                PaidRouteFilterCountryCode,
+                PaidRouteFilterRequireIpv4,
+                PaidRouteFilterRequireIpv6,
+                PaidRouteFilterSort),
+            "Filtering sellers");
+        SyncPaidRouteFilterDraft(State.PaidRouteMarket.Filter, force: true);
+    }
+
+    public async Task ClearPaidRouteMarketFilterAsync()
+    {
+        _paidRouteFilterEditing = false;
+        await DispatchAsync(
+            NativeActions.SetPaidRouteMarketFilter("", false, false, "quality"),
+            "Clearing seller filters");
+        SyncPaidRouteFilterDraft(State.PaidRouteMarket.Filter, force: true);
+    }
+
     public Task SetManualPaidExitProviderAsync()
     {
         var provider = ManualPaidExitProvider.Trim();

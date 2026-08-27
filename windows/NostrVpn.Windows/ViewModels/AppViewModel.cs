@@ -69,6 +69,11 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _paidRouteReceiveToken = "";
     private string _paidRouteWithdrawInvoice = "";
     private string _manualPaidExitProvider = "";
+    private string _paidRouteFilterCountryCode = "";
+    private string _paidRouteFilterSort = "quality";
+    private bool _paidRouteFilterRequireIpv4;
+    private bool _paidRouteFilterRequireIpv6;
+    private bool _paidRouteFilterEditing;
     private string _paidExitPriceMsatPerGb = "0";
     private string? _lastSyncedManualPaidExitProvider;
     private ulong? _lastSyncedPaidExitPriceMsatPerGb;

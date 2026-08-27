@@ -113,11 +113,19 @@ internal fun PaidRouteMarketCard(
                 }
             }
             if (mode == PaidRouteCardMode.Market) {
-                Button(
-                    enabled = market.supported,
-                    onClick = { dispatch(NativeActions.discoverPaidRouteOffers()) },
-                ) {
-                    Text("Find")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        enabled = market.sessions.any(::paidRouteSessionCanSignPayment),
+                        onClick = { dispatch(NativeActions.streamPaidRoutePayments()) },
+                    ) {
+                        Text("Pay")
+                    }
+                    Button(
+                        enabled = market.supported,
+                        onClick = { dispatch(NativeActions.discoverPaidRouteOffers()) },
+                    ) {
+                        Text("Find")
+                    }
                 }
             }
         }

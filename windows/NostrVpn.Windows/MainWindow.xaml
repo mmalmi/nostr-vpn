@@ -548,10 +548,33 @@
                   <TextBox Text="{Binding ManualPaidExitProvider, UpdateSourceTrigger=PropertyChanged}" ToolTip="Provider npub or paid exit link" AutomationProperties.AutomationId="ManualPaidExitProvider" />
                 </DockPanel>
                 <TextBlock Text="{Binding State.PaidRouteMarket.ManualProviderStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" Visibility="{Binding State.PaidRouteMarket.ManualProviderStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                <Grid Margin="0,0,0,8">
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="80" />
+                    <ColumnDefinition Width="140" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox Grid.Column="0" Text="{Binding PaidRouteFilterCountryCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="Two-letter country" Margin="0,0,8,0" MaxLength="2" AutomationProperties.AutomationId="PaidRouteFilterCountry" />
+                  <ComboBox Grid.Column="1" SelectedValue="{Binding PaidRouteFilterSort, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Tag" Margin="0,0,8,0" AutomationProperties.AutomationId="PaidRouteFilterSort">
+                    <ComboBoxItem Tag="quality" Content="Quality" />
+                    <ComboBoxItem Tag="price" Content="Price" />
+                    <ComboBoxItem Tag="newest" Content="Newest" />
+                  </ComboBox>
+                  <CheckBox Grid.Column="2" Content="IPv4" IsChecked="{Binding PaidRouteFilterRequireIpv4}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                  <CheckBox Grid.Column="3" Content="IPv6" IsChecked="{Binding PaidRouteFilterRequireIpv6}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                  <StackPanel Grid.Column="5" Orientation="Horizontal">
+                    <Button Content="Clear filters" Click="ClearPaidRouteFilter_Click" Margin="0,0,8,0" />
+                    <Button Content="Apply" Click="ApplyPaidRouteFilter_Click" />
+                  </StackPanel>
+                </Grid>
+                <TextBlock Text="{Binding PaidRouteHiddenOffersText}" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8" Visibility="{Binding PaidRouteHiddenOffersText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                 <TextBlock Text="{Binding State.PaidRouteMarket.LastPaymentAction.DisplayStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding State.PaidRouteMarket.LastPaymentAction.DisplayStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                 <Button Content="Send payment" Click="SendPaidRoutePaymentEnvelope_Click" HorizontalAlignment="Left" Margin="0,6,0,10" Visibility="{Binding State.PaidRouteMarket.LastPaymentAction.EnvelopeJson, Converter={StaticResource NonEmptyStringToVisibility}}" />
                 <TextBlock Text="Available" FontWeight="SemiBold" Margin="0,8,0,6" />
-                <ItemsControl ItemsSource="{Binding State.PaidRouteMarket.Offers}">
+                <ItemsControl ItemsSource="{Binding PaidRouteVisibleOffers}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <DockPanel Margin="0,0,0,8" LastChildFill="True">

@@ -404,6 +404,16 @@ public sealed class NativePaidRouteSessionState
         && !string.Equals(LifecycleStatus, "expired", System.StringComparison.Ordinal);
 }
 
+public sealed class NativePaidRouteMarketFilterState
+{
+    public string Query { get; set; } = "";
+    public string CountryCode { get; set; } = "";
+    public string MintUrl { get; set; } = "";
+    public bool RequireIpv4 { get; set; }
+    public bool RequireIpv6 { get; set; }
+    public string Sort { get; set; } = "quality";
+}
+
 public sealed class NativePaidRouteMarketState
 {
     public bool Supported { get; set; }
@@ -413,7 +423,11 @@ public sealed class NativePaidRouteMarketState
     public string StorePath { get; set; } = "";
     public NativePaidRouteWalletState Wallet { get; set; } = new();
     public NativePaidRoutePaymentActionState LastPaymentAction { get; set; } = new();
+    public NativePaidRouteMarketFilterState Filter { get; set; } = new();
     public List<NativePaidRouteOfferState> Offers { get; set; } = [];
+    public List<NativePaidRouteOfferState> VisibleOffers { get; set; } = [];
+    public ulong HiddenOfferCount { get; set; }
+    public List<string> CountryOptions { get; set; } = [];
     public List<NativePaidRouteChannelState> Channels { get; set; } = [];
     public List<NativePaidRouteSessionState> Sessions { get; set; } = [];
 }

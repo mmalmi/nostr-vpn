@@ -33,7 +33,8 @@ start_lane "mobile contracts" run_contract_batch \
   scripts/test-android-release-network-evidence-harness.sh \
   scripts/test-{ios-vpn-desired-state,ios-packet-tunnel-replacement}.sh
 start_lane "cross-platform artifact contracts" run_contract_batch \
-  scripts/test-{desktop-mobile-manual-join-receipt,mobile-ios-release-runner,windows-release-mobile-join}-harness.sh
+  scripts/test-{desktop-mobile-manual-join-receipt,mobile-ios-release-runner,windows-release-mobile-join}-harness.sh \
+  scripts/test-native-paid-exit-ui-parity.py
 start_lane "Apple and desktop contracts" run_contract_batch \
   scripts/test-{macos-vm-import-only,desktop-network-handoff,desktop-dns-ui-evidence,desktop-underlay-host-peer-import,macos-release-fips-roaming,macos-crash-ownership-diagnostics,macos-release-exit-dns-ui,ios-frozen-archive,macos-sdk-compat}-harness.sh
 foreground_status=0
