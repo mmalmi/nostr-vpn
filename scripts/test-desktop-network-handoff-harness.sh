@@ -313,7 +313,8 @@ grep -Fq '$(rebind_count) == rebind_before + 1' "$LINUX_GUEST" \
   || fail "Linux host does not independently require one rebind for both switches"
 
 require_tokens "$WINDOWS_GUEST" "PID-bound continuous payload" \
-  'Get-DaemonPid' '[Net.NetworkInformation.Ping]::new()'
+  'Get-DaemonPid' \
+  'Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE"'
 require_tokens "$LINUX_GUEST" "PID-bound continuous payload" \
   'daemon_pid()' 'ping -D -n -i 0.1'
 require_tokens "$LINUX_GUEST" "production SIGKILL/startup-repair evidence" \
@@ -441,6 +442,19 @@ require_tokens "$WINDOWS_GUEST" "independent cleanup evidence" \
   '"WireGuardProbe"' \
   'Test-WireGuardHandshake' \
   'Assert-WireGuardEndpointRoute'
+require_tokens "$WINDOWS_GUEST" "bounded real payload probes" \
+  'function Invoke-BoundedProbeProcess {' \
+  '$process.WaitForExit($TimeoutMilliseconds)' \
+  'Stop-Process -Id $process.Id -Force' \
+  'Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE"' \
+  'Invoke-BoundedProbeProcess "curl.exe"'
+bounded_windows_probe="$({
+  sed -n '/^function Invoke-BoundedProbeProcess {$/,/^}$/p' \
+    "$WINDOWS_GUEST_ENTRY"
+})"
+if grep -Fq '$process.WaitForExit()' <<<"$bounded_windows_probe"; then
+  fail "Windows payload probe retains an unbounded process wait"
+fi
 require_tokens "$WINDOWS_GUEST" "power-loss startup recovery evidence" \
   'Stop-Process -Id $crashedPid -Force' \
   '$CleanupJournalPath = Join-Path $StateDir "daemon.cleanup.json"' \

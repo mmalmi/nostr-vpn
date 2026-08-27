@@ -227,6 +227,29 @@ function Get-WireGuardProbeSuccessCount {
   ).Count
 }
 
+function Invoke-BoundedProbeProcess {
+  param(
+    [string]$FilePath,
+    [string[]]$ArgumentList,
+    [int]$TimeoutMilliseconds
+  )
+  $process = Start-Process -FilePath $FilePath `
+    -ArgumentList $ArgumentList -WindowStyle Hidden -PassThru
+  try {
+    if (!$process.WaitForExit($TimeoutMilliseconds)) {
+      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      if (!$process.WaitForExit(1000)) {
+        throw "timed-out payload probe could not be terminated"
+      }
+      return $false
+    }
+    return $process.ExitCode -eq 0
+  }
+  finally {
+    $process.Dispose()
+  }
+}
+
 function Get-FirstTimestampedReceipt {
   param(
     [string]$LogName,
@@ -859,19 +882,18 @@ switch ($Action) {
     if ([string]::IsNullOrWhiteSpace($PeerTunnelIp)) {
       throw "Probe requires PeerTunnelIp"
     }
-    $payload = [Text.Encoding]::ASCII.GetBytes("nvpn-real-underlay-payload")
-    $ping = [Net.NetworkInformation.Ping]::new()
     $log = Join-Path $StateDir "payload.log"
     while (!(Test-Path -LiteralPath (Join-Path $StateDir "stop-probe"))) {
       try {
-        $reply = $ping.Send($PeerTunnelIp, 750, $payload)
+        $ok = Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE" `
+          @("-n", "1", "-w", "750", "-l", "32", $PeerTunnelIp) 1500
         $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        if ($reply.Status -eq [Net.NetworkInformation.IPStatus]::Success) {
+        if ($ok) {
           Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
         }
         else {
           Add-Content -LiteralPath $log `
-            -Value "FAIL $completedAt $($reply.Status)" -Encoding ASCII
+            -Value "FAIL $completedAt" -Encoding ASCII
         }
       }
       catch {
@@ -887,13 +909,21 @@ switch ($Action) {
     Write-Marker "wireguard-probe.pid" "$PID"
     $log = Join-Path $StateDir "wireguard-payload.log"
     while (!(Test-Path -LiteralPath (Join-Path $StateDir "stop-probe"))) {
-      & curl.exe -4 --ssl-revoke-best-effort --fail --silent `
-        --max-time 2 --output NUL $ProbeUrl
-      $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-      if ($LASTEXITCODE -eq 0) {
-        Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
+      try {
+        $ok = Invoke-BoundedProbeProcess "curl.exe" @(
+          "-4", "--ssl-revoke-best-effort", "--fail", "--silent",
+          "--max-time", "2", "--output", "NUL", $ProbeUrl
+        ) 2500
+        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        if ($ok) {
+          Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
+        }
+        else {
+          Add-Content -LiteralPath $log -Value "FAIL $completedAt" -Encoding ASCII
+        }
       }
-      else {
+      catch {
+        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         Add-Content -LiteralPath $log -Value "FAIL $completedAt" -Encoding ASCII
       }
       Start-Sleep -Milliseconds 100
