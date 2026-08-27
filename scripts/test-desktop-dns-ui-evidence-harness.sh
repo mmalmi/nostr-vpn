@@ -209,6 +209,8 @@ for required in (
     "if focused and not any(focused_target(node, name) for node in focused):",
     "target_window_has_focus() and sole_focused_target(name) is not None",
     "def invoke_until_visible(name: str, expected: str, attempts: int = 4)",
+    "except RuntimeError as error:",
+    "invoke(name)\n",
     'subprocess.run(["xdotool", "key", "--clearmodifiers", "Escape"]',
 ):
     if required not in driver:

@@ -293,13 +293,21 @@ def wait_named_visible(name: str, timeout: float) -> bool:
 
 
 def invoke_until_visible(name: str, expected: str, attempts: int = 4) -> None:
+    last_error: RuntimeError | None = None
     for _ in range(attempts):
-        invoke(name, stable_focus=0.5)
+        last_error = None
+        try:
+            invoke(name)
+        except RuntimeError as error:
+            last_error = error
+            continue
         if wait_named_visible(expected, 2):
             return
         if target_window_has_focus():
             subprocess.run(["xdotool", "key", "--clearmodifiers", "Escape"], check=True)
             time.sleep(0.25)
+    if last_error is not None:
+        raise RuntimeError(f"invoking {name} did not reveal {expected}") from last_error
     find_named(expected, timeout=0.1)
     raise RuntimeError(f"invoking {name} did not reveal {expected}")
 
