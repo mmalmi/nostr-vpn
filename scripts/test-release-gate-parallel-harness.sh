@@ -315,6 +315,27 @@ git -C "$receipt_repo" commit -qm candidate
 # The orchestrator owns only this high-level contract. Platform harnesses own
 # their selectors, retry timing, fixture implementation, and cache details.
 main_body="$(sed -n '/^main() {$/,$p' "$release_gate")"
+static_preflight_body="$(
+  sed -n '/^run_release_gate_static_preflight() {$/,/^}$/p' "$release_gate"
+)"
+ios_framework_build_line="$(
+  grep -nF 'NVPN_IOS_RUST_PROFILE=release ./tools/run-ios xcframework' \
+    <<<"$static_preflight_body" \
+    | cut -d: -f1 \
+    || true
+)"
+ios_policy_check_line="$(
+  grep -nF './scripts/test-ios-appstore-policy.sh' \
+    <<<"$static_preflight_body" \
+    | cut -d: -f1 \
+    || true
+)"
+[[ -n "$ios_framework_build_line" ]] \
+  || fail "clean release preflight does not build the packaged iOS XCFramework"
+[[ -n "$ios_policy_check_line" ]] \
+  || fail "clean release preflight omits the packaged iOS policy check"
+((ios_framework_build_line < ios_policy_check_line)) \
+  || fail "packaged iOS policy is checked before its release XCFramework is built"
 required_steps=(
   run_release_gate_candidate_preflight
   release_gate_enforce_complete_real_network_modes

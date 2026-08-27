@@ -385,6 +385,7 @@ run_release_gate_static_preflight() {
   if [[ "$(uname -s)" == "Darwin" ]]; then
     ./scripts/test-ios-generated-project.sh
     ./scripts/test-ios-qr-image-import-launch-environment.sh
+    NVPN_IOS_RUST_PROFILE=release ./tools/run-ios xcframework
     ./scripts/test-ios-appstore-policy.sh
   else
     echo "Skipping iOS App Store binary-policy gate on this non-Apple host."
