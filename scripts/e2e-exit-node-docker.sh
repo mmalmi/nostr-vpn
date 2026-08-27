@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GIT_COMMON_DIR="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"
@@ -111,6 +111,14 @@ on_exit() {
   cleanup
   exit "$exit_code"
 }
+on_error() {
+  local exit_code=$?
+  local line="$1"
+  local command="$2"
+  printf 'exit-node docker e2e command failed at line %s (exit %s): %s\n' \
+    "$line" "$exit_code" "$command" >&2
+}
+trap 'on_error "$LINENO" "$BASH_COMMAND"' ERR
 trap on_exit EXIT
 
 compact_json() {
@@ -1093,8 +1101,24 @@ if truthy "$PAID_EXIT_MODE"; then
       exit 1
     }
   fi
-  PAID_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn paid-exit status --json | tr -d '\r')"
-  jq -e 'any(.seller_admissions[]?; .allow_routing == true)' <<<"$PAID_STATUS" >/dev/null
+  # Automatic selection may replace its first authenticated session while it
+  # persists funding and moves the default route. Do not turn that expected,
+  # brief handoff into a silent `set -e` failure after route readiness.
+  PAID_STATUS=""
+  for _ in $(seq 1 30); do
+    PAID_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn paid-exit status --json | tr -d '\r')"
+    if jq -e 'any(.seller_admissions[]?; .allow_routing == true)' \
+      <<<"$PAID_STATUS" >/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if ! jq -e 'any(.seller_admissions[]?; .allow_routing == true)' \
+    <<<"$PAID_STATUS" >/dev/null; then
+    echo "exit-node docker e2e failed: paid admission disappeared after route readiness" >&2
+    printf '%s\n' "$PAID_STATUS" >&2
+    exit 1
+  fi
 else
   grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
   grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
@@ -1114,15 +1138,25 @@ if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
   exit 1
 fi
 
-DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route show default | head -n1 | tr -d '\r'")"
+DEFAULT_ROUTE=""
+PUBLIC_ROUTE=""
+for _ in $(seq 1 30); do
+  DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc \
+    "ip route show default | head -n1 | tr -d '\r'" 2>/dev/null || true)"
+  PUBLIC_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc \
+    "ip route get $PUBLIC_INTERNET_TARGET | tr -d '\r'" 2>/dev/null || true)"
+  if grep -q 'dev utun100' <<<"$DEFAULT_ROUTE" \
+    && grep -q 'dev utun100' <<<"$PUBLIC_ROUTE"; then
+    break
+  fi
+  sleep 1
+done
 
 if ! grep -q 'dev utun100' <<<"$DEFAULT_ROUTE"; then
   echo "exit-node docker e2e failed: default route did not switch to the tunnel" >&2
   echo "$DEFAULT_ROUTE"
   exit 1
 fi
-
-PUBLIC_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route get $PUBLIC_INTERNET_TARGET | tr -d '\r'")"
 
 if ! grep -q 'dev utun100' <<<"$PUBLIC_ROUTE"; then
   echo "exit-node docker e2e failed: public internet route did not switch to the tunnel" >&2

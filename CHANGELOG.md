@@ -39,6 +39,9 @@ automatic selection.
   a cached resolver outage when a provider connection is briefly interrupted.
 - Keep the daemon responsive while its owned Cashu wallet repairs or recovers,
   and retry funded paid routes without activating an unverified exit.
+- Allow an active paid seller's Direct-to-WireGuard upstream transition to
+  finish before the configuration deadline, avoiding a false rollback while
+  the replacement tunnel is being proven.
 - Grant StartOS packages virtual networking access for `/dev/net/tun` and
   `CAP_NET_ADMIN`, validate the permission in signed release artifacts, and
   restore StartOS/Umbrel image builds after vendoring `cashu-service`.

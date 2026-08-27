@@ -516,7 +516,7 @@ fn daemon_control_wait_timeouts_allow_longer_mac_recovery_windows() {
         if cfg!(target_os = "windows") {
             Duration::from_secs(45)
         } else {
-            Duration::from_secs(15)
+            Duration::from_secs(30)
         }
     );
     assert_eq!(

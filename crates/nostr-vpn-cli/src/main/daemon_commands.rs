@@ -390,6 +390,15 @@ pub(crate) fn daemon_control_result_timeout(request: DaemonControlRequest) -> Du
         return Duration::from_secs(45);
     }
 
+    if matches!(request, DaemonControlRequest::Reload) {
+        // Reload completion includes tunnel, route, DNS, and paid-exit
+        // upstream transitions. A live Direct-to-WireGuard seller handoff can
+        // legitimately take more than 15s while the old path is removed and
+        // the replacement handshake is proven. Keep the deadline bounded,
+        // but do not roll a successfully applying configuration back early.
+        return Duration::from_secs(30);
+    }
+
     if matches!(
         request,
         DaemonControlRequest::Pause | DaemonControlRequest::Resume
