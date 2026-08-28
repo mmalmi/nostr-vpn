@@ -55,6 +55,7 @@ pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) 
     }
 
     let output = ProcessCommand::new("ps")
+        .arg("-ww")
         .arg("-p")
         .arg(pid.to_string())
         .arg("-o")
@@ -125,6 +126,7 @@ pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
 pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
     let output = ProcessCommand::new("ps")
         .arg("ax")
+        .arg("-ww")
         .arg("-o")
         .arg("pid=,stat=,command=")
         .output();

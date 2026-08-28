@@ -241,6 +241,10 @@ grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon idle CPU check does not exercise an active mesh fixture"
 grep -Fq 'ps -ww -p "$daemon_pid"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check may truncate the launchd command"
+macos_process_scan="$ROOT_DIR/crates/nostr-vpn-cli/src/daemon_runtime/process_scan.rs"
+if [[ "$(grep -Fc '.arg("-ww")' "$macos_process_scan")" -lt 2 ]]; then
+  fail "macOS daemon discovery may truncate launchd commands before the config path"
+fi
 grep -Fq 'os.path.realpath(sys.argv[1])' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check does not account for launchd path canonicalization"
 grep -Fq 'NVPN_MACOS_SWIFT_COMPILATION_MODE:-singlefile' "$ROOT_DIR/scripts/macos-build" \
