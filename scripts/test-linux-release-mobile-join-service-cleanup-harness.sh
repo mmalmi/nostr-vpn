@@ -17,7 +17,7 @@ service_binary=/usr/local/bin/nvpn
 service_unit=/etc/systemd/system/nvpn.service
 config=/root/.local/share/nostr-vpn/config.toml
 cashu_dir=/root/.local/share/nostr-vpn/cashu
-daemon_log=/root/.local/state/nvpn/daemon.log
+daemon_log=/root/.local/share/nostr-vpn/daemon.log
 mkdir -p "$artifact_root" "$(dirname "$config")" /usr/local/test-bin
 printf '#!/usr/bin/env bash\nexit 0\n' >/usr/bin/nostr-vpn
 printf '#!/usr/bin/env bash\nif [[ "$*" == *"service uninstall"* ]]; then\n  if [[ -e /tmp/nvpn-uninstall-fail-once ]]; then rm -f /tmp/nvpn-uninstall-fail-once; exit 1; fi\n  rm -f /etc/systemd/system/nvpn.service\nfi\n' >/usr/bin/nvpn

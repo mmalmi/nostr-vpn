@@ -289,7 +289,7 @@ case "$MODE" in
     ;;
   ReadDaemonLog)
     [[ $# == 0 ]] || usage
-    log="$HOME/.local/state/nvpn/daemon.log"
+    log="$PROFILE_ROOT/daemon.log"
     [[ -f "$log" && ! -L "$log" ]] || exit 1
     cat "$log"
     ;;
