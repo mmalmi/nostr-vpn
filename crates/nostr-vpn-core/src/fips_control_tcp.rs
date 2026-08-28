@@ -153,6 +153,7 @@ pub async fn send_join_roster_with_receipt(
         };
         match transport_sent {
             Some(Ok(_)) => {}
+            Some(Err(error)) if sender.command_tx.is_closed() => return Err(error),
             Some(Err(error)) => last_transport_error = Some(error.to_string()),
             None => {
                 last_transport_error.get_or_insert_with(|| {
