@@ -69,8 +69,9 @@ with tempfile.TemporaryDirectory() as temporary:
             root / f"mobile-android-exit-dns-state-{index}.json",
             json.dumps(payload),
         )
-        write_direct_pair(root, "before-connect", 1000 + index)
-        write_direct_pair(root, "after-disconnect", 1000 + index)
+
+    write_direct_pair(root, "before-connect", 1000)
+    write_direct_pair(root, "after-disconnect", 1000)
 
     for index, label in enumerate(
         (
@@ -94,7 +95,7 @@ with tempfile.TemporaryDirectory() as temporary:
     )
     if summary.get("directBeforeConnectedAfter") is not True:
         raise SystemExit("complete per-case Direct receipts were not accepted")
-    expected_path_count = len(cases) * 5 + 8
+    expected_path_count = len(cases) + 12
     if len(paths) != expected_path_count:
         raise SystemExit(f"unexpected concrete evidence count: {len(paths)}")
 
