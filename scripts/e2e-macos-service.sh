@@ -66,6 +66,7 @@ esac
 # to.nostrvpn.nvpn.<suffix> and we don't touch a real user's service.
 SUFFIX="e2e-$(date +%s)-$$"
 TEST_DIR="$(mktemp -d /tmp/nvpn-svc-e2e.XXXXXX)"
+install -d -m 700 "$TEST_DIR/cashu"
 TEST_CONFIG="$TEST_DIR/$SUFFIX.toml"
 TEST_CONFIG_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TEST_CONFIG")"
 PEER_CONFIG="$TEST_DIR/$SUFFIX-peer.toml"

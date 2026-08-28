@@ -239,6 +239,8 @@ grep -Fq 'sudo -n "$NVPN_BIN" service disable --config "$DEFAULT_CONFIG"' "$ROOT
   || fail "macOS service E2E does not quiesce an existing default service before taking the global daemon lock"
 grep -Fq 'sudo -n "$NVPN_BIN" service enable --config "$DEFAULT_CONFIG"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS service E2E does not restore the default service after its isolated check"
+grep -Fq 'install -d -m 700 "$TEST_DIR/cashu"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "macOS service E2E cannot clean the private wallet files created by its root daemon"
 grep -Fq 'ios_smoke_command+=(--device "$ios_device")' "$RELEASE_GATE" \
   || fail "release gate does not allow the physical iOS idle gate to auto-select a device"
 grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
