@@ -70,7 +70,7 @@
     }
 
     #[test]
-    fn config_reload_preserves_recent_peer_admission_budget() {
+    fn config_reload_does_not_restart_for_recent_peer_admission_budget_drift() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let ambient_keys = Keys::generate();
@@ -133,7 +133,7 @@
             "dropping authenticated recent peers changes the admission budget"
         );
         assert!(
-            fips_tunnel_requires_endpoint_restart(&current, &dropped_cache),
-            "a reload path that drops recent-peer state would flap the endpoint"
+            !fips_tunnel_requires_endpoint_restart(&current, &dropped_cache),
+            "transient recent-peer budget drift must not flap the endpoint"
         );
     }

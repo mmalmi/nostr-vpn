@@ -344,6 +344,7 @@ impl FipsPrivateTunnelConfig {
         } else {
             0
         };
+        let open_discovery_restart_max_pending = open_discovery_max_pending;
         // With discovery disabled, configured static endpoints are the whole path;
         // stamped recent/live hints can redirect a deterministic direct setup.
         let stamped_endpoint_hints_enabled = app.fips_nostr_discovery_enabled;
@@ -552,6 +553,7 @@ impl FipsPrivateTunnelConfig {
             advertise_on_nostr: !local_identity_confirmation_pending,
             webrtc_enabled: app.fips_webrtc_enabled,
             nostr_discovery_policy,
+            open_discovery_restart_max_pending,
             open_discovery_max_pending,
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),
             #[cfg(target_os = "linux")]
@@ -783,7 +785,13 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.webrtc_enabled != next.webrtc_enabled
         || current.share_local_candidates != next.share_local_candidates
         || current.nostr_discovery_policy != next.nostr_discovery_policy
-        || current.open_discovery_max_pending != next.open_discovery_max_pending
+        // Authenticated recent transit peers are a live cache, not a transport
+        // setting. Their bounded deduction changes `open_discovery_max_pending`
+        // during ordinary reloads; restarting here would discard the carrier
+        // that delivered a join approval. Durable capacity or static-seed
+        // changes still differ in `open_discovery_restart_max_pending`.
+        || current.open_discovery_restart_max_pending
+            != next.open_discovery_restart_max_pending
         || current.mesh_mtu.underlay_udp != next.mesh_mtu.underlay_udp
         || fips_host_config_changed(current, next)
 }

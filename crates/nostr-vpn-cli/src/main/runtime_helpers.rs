@@ -701,11 +701,10 @@ async fn sync_fips_private_runtime(
         underlay_interface: context.underlay_interface,
         underlay_interface_mtu: context.underlay_interface_mtu,
         own_pubkey: context.own_pubkey,
-        // Keep the endpoint admission budget identical to startup and link
-        // refreshes. Dropping authenticated non-roster seeds here changes
-        // open_discovery_max_pending, which forces an endpoint restart on
-        // every ordinary config reload; the resulting utun route event then
-        // changes it back and restarts the endpoint again.
+        // Preserve authenticated non-roster hints across config and link
+        // refreshes. The bounded live admission deduction is intentionally
+        // restart-neutral, but these hints still carry the working transit
+        // path and should not disappear during an ordinary reload.
         recent_peers: context.recent_peers,
         live_peer_endpoints: &live_peer_endpoints,
         ethernet_underlay,

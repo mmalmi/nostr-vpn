@@ -130,6 +130,63 @@
     }
 
     #[test]
+    fn approving_a_roster_peer_updates_the_existing_endpoint_in_place() {
+        if std::env::var("NVPN_FIPS_NOSTR_DISCOVERY_POLICY").is_ok() {
+            return;
+        }
+
+        let mut app = AppConfig::generated_without_networks();
+        let network_id = app.add_owned_network("Approval test");
+        app.set_network_enabled(&network_id, true)
+            .expect("enable approval network");
+        app.connect_to_non_roster_fips_peers = true;
+        let own_pubkey = app.own_nostr_pubkey_hex().expect("own public key");
+        let current = FipsPrivateTunnelConfig::from_app(
+            &app,
+            &network_id,
+            "utun100",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("pre-approval tunnel config");
+
+        let participant = Keys::generate().public_key().to_hex();
+        let ambient_peer = Keys::generate().public_key().to_hex();
+        let local_keys = Keys::parse(&app.nostr.secret_key).expect("local keys");
+        let mut recent = recent_peer_cache(&local_keys, &network_id);
+        assert!(recent.note_success(&ambient_peer, "198.51.100.20:51820", 1));
+        app.active_network_mut().devices.push(participant);
+        let approved = FipsPrivateTunnelConfig::from_app(
+            &app,
+            &network_id,
+            "utun100",
+            Some(&own_pubkey),
+            Some(&recent),
+            &[],
+        )
+        .expect("approved tunnel config");
+
+        assert_ne!(
+            current.open_discovery_max_pending,
+            approved.open_discovery_max_pending,
+            "authenticated ambient transit changes only the live admission budget"
+        );
+        assert!(
+            !fips_tunnel_requires_endpoint_restart(&current, &approved),
+            "roster approval must preserve the authenticated join carrier"
+        );
+
+        let mut durable_capacity_change = approved.clone();
+        durable_capacity_change.open_discovery_restart_max_pending += 1;
+        durable_capacity_change.open_discovery_max_pending += 1;
+        assert!(
+            fips_tunnel_requires_endpoint_restart(&approved, &durable_capacity_change),
+            "a durable admission-capacity change must still replace the endpoint"
+        );
+    }
+
+    #[test]
     fn linux_cap_eff_parsing_detects_net_admin() {
         assert_eq!(
             linux_cap_eff_has_net_admin("CapEff:\t0000000000000000\n"),

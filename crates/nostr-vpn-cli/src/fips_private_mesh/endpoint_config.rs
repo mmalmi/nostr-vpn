@@ -784,6 +784,10 @@ pub(crate) struct FipsPrivateTunnelConfig {
     advertise_on_nostr: bool,
     webrtc_enabled: bool,
     nostr_discovery_policy: NostrDiscoveryPolicy,
+    /// Admission budget derived from durable settings and static transit
+    /// seeds, before authenticated recent-peer cache entries are deducted.
+    /// Only this stable value participates in endpoint restart decisions.
+    open_discovery_restart_max_pending: usize,
     open_discovery_max_pending: usize,
     mesh_mtu: MeshMtu,
     #[cfg(target_os = "linux")]
