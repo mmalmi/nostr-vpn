@@ -640,6 +640,8 @@ macro_rules! handle_daemon_state_tick {
                 } else {
                     Vec::new()
                 };
+                let pre_sync_join_roster_delivery_attempted =
+                    !pre_sync_join_roster_deliveries.is_empty();
                 // The current runtime learned the pending joiner's live route
                 // from its authenticated request. Finish the receipt-backed
                 // approval on that route before peer-set sync can replace the
@@ -714,6 +716,7 @@ macro_rules! handle_daemon_state_tick {
                         &mut pending_fips_roster_recipients,
                         fips_sync_succeeded,
                         fips_runtime_replaced,
+                        pre_sync_join_roster_delivery_attempted,
                     )
                     .await;
                 }

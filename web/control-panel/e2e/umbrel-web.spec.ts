@@ -454,6 +454,7 @@ test('manual join admin and joiner actions persist through the shipped web UI', 
   await adminForm.getByLabel('Device ID').fill(peerNpub!);
   await adminForm.getByLabel('Name').fill('Manual web joiner');
   await adminForm.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(adminForm).toBeHidden({ timeout: 20_000 });
 
   await expect
     .poll(async () => {
@@ -480,6 +481,7 @@ test('manual join admin and joiner actions persist through the shipped web UI', 
   await joinerForm.getByLabel('Admin Device ID').fill(peerNpub!);
   await joinerForm.getByLabel('Network ID').fill('a1b2-c3d4-e5f6-0708');
   await joinerForm.getByRole('button', { name: 'Add manually' }).click();
+  await expect(joinerForm).toBeHidden({ timeout: 20_000 });
 
   let manualNetwork: NetworkView | undefined;
   await expect

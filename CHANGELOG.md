@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.9 - 2026-08-28
+## 4.1.9 - 2026-08-29
 
 ### Release notes
 
@@ -56,6 +56,9 @@ automatic selection.
 - Deliver the signed roster when an admin accepts an inbound device request,
   including across a desktop mesh reload, so the joining device completes
   instead of remaining at the approval prompt.
+- Keep manual device additions responsive when the recipient is offline by
+  avoiding a duplicate blocking delivery wait while preserving background
+  retries from the durable approval outbox.
 - Print join-request reachability once, keep the approval wait quiet through
   transient connectivity changes without polling the daemon, and stop creating
   a replacement request immediately after approval.

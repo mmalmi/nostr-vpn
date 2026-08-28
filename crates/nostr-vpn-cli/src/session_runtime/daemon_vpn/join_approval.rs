@@ -47,13 +47,14 @@ pub(super) async fn publish_fips_control_updates(
     pending_roster_recipients: &mut HashSet<String>,
     fips_sync_succeeded: bool,
     fips_runtime_replaced: bool,
+    pre_sync_join_roster_delivery_attempted: bool,
 ) {
-    if fips_sync_succeeded {
-        let delivery_tasks = if fips_runtime_replaced {
-            start_queued_join_roster_deliveries(runtime, config_path)
-        } else {
-            Vec::new()
-        };
+    if should_wait_for_post_sync_join_roster_delivery(
+        fips_sync_succeeded,
+        fips_runtime_replaced,
+        pre_sync_join_roster_delivery_attempted,
+    ) {
+        let delivery_tasks = start_queued_join_roster_deliveries(runtime, config_path);
         wait_for_join_roster_delivery_tasks(
             delivery_tasks,
             crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT
@@ -69,6 +70,14 @@ pub(super) async fn publish_fips_control_updates(
     if let Err(error) = broadcast_local_fips_capabilities(runtime, app).await {
         eprintln!("fips: capabilities broadcast failed after control request: {error}");
     }
+}
+
+fn should_wait_for_post_sync_join_roster_delivery(
+    fips_sync_succeeded: bool,
+    fips_runtime_replaced: bool,
+    pre_sync_join_roster_delivery_attempted: bool,
+) -> bool {
+    fips_sync_succeeded && fips_runtime_replaced && !pre_sync_join_roster_delivery_attempted
 }
 
 pub(super) async fn finish_join_roster_deliveries_before_runtime_sync(
@@ -232,6 +241,16 @@ mod tests {
 
         assert!(existing_route_delivery_budget <= PUBLIC_UI_COMPLETION_DEADLINE_SECS);
         assert!(crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT >= Duration::from_secs(10));
+    }
+
+    #[test]
+    fn pre_sync_delivery_attempt_prevents_a_second_blocking_wait() {
+        assert!(!should_wait_for_post_sync_join_roster_delivery(
+            true, true, true
+        ));
+        assert!(should_wait_for_post_sync_join_roster_delivery(
+            true, true, false
+        ));
     }
 
     #[test]
