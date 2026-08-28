@@ -34,6 +34,10 @@ FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-0.2}"
 PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
 NETWORK_CHANGE_RECOVERY_DEADLINE_SECS="${NVPN_E2E_NETWORK_CHANGE_RECOVERY_SECS:-30}"
+# The consecutive-failure budget below was calibrated with one probe attempt
+# per second. Keep it independent from the faster sustained stream used to
+# promote fallback paths, because a failed ping itself waits up to one second.
+NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
 NETWORK_CHANGE_MAX_CONSECUTIVE_PAYLOAD_FAILURES="${NVPN_E2E_NETWORK_CHANGE_MAX_CONSECUTIVE_PAYLOAD_FAILURES:-4}"
 LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX="${NVPN_E2E_LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX:-2}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
@@ -335,8 +339,9 @@ start_payload_probe() {
   local node="$1"
   local target_ip="$2"
   local output="$3"
+  local interval="${4:-$PAYLOAD_PROBE_INTERVAL_SECS}"
   "${COMPOSE[@]}" exec -T "$node" sh -s -- \
-    "$target_ip" "$PING_PAYLOAD_SIZE" "$PAYLOAD_PROBE_INTERVAL_SECS" "$output" <<'SH'
+    "$target_ip" "$PING_PAYLOAD_SIZE" "$interval" "$output" <<'SH'
 set -eu
 target_ip="$1"
 payload_size="$2"
@@ -799,8 +804,8 @@ run_underlay_network_change() {
   alice_pid_before="$(daemon_process_id node-a)"
   bob_pid_before="$(daemon_process_id node-b)"
   mark_daemon_log node-a "$roam_marker"
-  start_payload_probe node-a "$BOB_TUNNEL_IP" "$alice_probe"
-  start_payload_probe node-b "$ALICE_TUNNEL_IP" "$bob_probe"
+  start_payload_probe node-a "$BOB_TUNNEL_IP" "$alice_probe" "$NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS"
+  start_payload_probe node-b "$ALICE_TUNNEL_IP" "$bob_probe" "$NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS"
 
   echo "--- underlay-network-change: change Alice's source address while Bob remains stationary ---"
   change_started="$(date +%s)"

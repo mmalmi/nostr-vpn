@@ -1207,6 +1207,29 @@ for invalid in (
 PY
 }
 
+test_roaming_network_change_probe_keeps_failure_budget_calibrated() {
+  python3 - "$ROOT_DIR/scripts/e2e-fips-roaming-docker.sh" <<'PY'
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+if 'NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS:-1}"' not in source:
+    raise SystemExit("network-change probe interval is not independently calibrated")
+
+section = source[
+    source.index("run_underlay_network_change() {"):
+    source.index("\ncleanup\n", source.index("run_underlay_network_change() {"))
+]
+calls = re.findall(r"start_payload_probe\s+node-[ab][^\n]+", section)
+if len(calls) != 2:
+    raise SystemExit(f"expected two network-change payload probes, found {calls}")
+for call in calls:
+    if not call.endswith('"$NETWORK_CHANGE_PAYLOAD_PROBE_INTERVAL_SECS"'):
+        raise SystemExit(f"network-change payload probe uses the flap cadence: {call}")
+PY
+}
+
 test_dockerfile_supports_local_base_images() {
   local dockerfile="$ROOT_DIR/Dockerfile.e2e"
   local paid_exit_dockerfile="$ROOT_DIR/Dockerfile.paid-exit-e2e"
@@ -1574,6 +1597,7 @@ test_phase_argument_selection
 test_phase_summary_pipeline_columns
 test_start_compose_services_supports_skip_build
 test_roaming_network_change_rebind_log_contract
+test_roaming_network_change_probe_keeps_failure_budget_calibrated
 test_dockerfile_supports_local_base_images
 test_perf_harness_supports_cpu_stress
 test_perf_metadata_maps_e2e_env
