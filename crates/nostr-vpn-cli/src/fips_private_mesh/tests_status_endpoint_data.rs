@@ -26,6 +26,38 @@
     }
 
     #[tokio::test]
+    async fn join_roster_receipt_marks_the_new_participant_online() {
+        let local_keys = Keys::generate();
+        let peer_keys = Keys::generate();
+        let peer_pubkey = peer_keys.public_key().to_hex();
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &peer_pubkey,
+            vec!["10.44.22.44/32".to_string()],
+        )
+        .expect("peer config");
+        let runtime = bind_endpoint_data_test_runtime(
+            local_keys.secret_key().to_bech32().expect("local nsec"),
+            "join-receipt-test",
+            vec![peer],
+        )
+        .await;
+
+        runtime
+            .note_join_roster_receipt(&peer_pubkey)
+            .expect("record receipt liveness");
+
+        let status = runtime
+            .peer_statuses()
+            .into_iter()
+            .find(|status| status.pubkey == peer_pubkey)
+            .expect("new participant status");
+        assert!(status.connected, "the authenticated receipt is live control traffic");
+        assert_eq!(status.last_seen_at, status.last_control_seen_at);
+        assert_eq!(status.rx_bytes, 0, "receipt byte accounting happens in FIPS-TCP");
+        runtime.endpoint().shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
     async fn endpoint_data_runtime_sends_and_receives_raw_packet_batch() {
         let keys = Keys::generate();
         let nsec = keys.secret_key().to_bech32().expect("nsec");

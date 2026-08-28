@@ -81,8 +81,16 @@ impl FipsPrivateMeshRuntime {
             .with_context(|| {
                 format!("failed to deliver and apply FIPS-TCP join roster to {participant}")
             })?;
+            runtime.note_join_roster_receipt(&participant)?;
             runtime.note_tx(Some(&participant), participant_key.as_ref(), sent_len)
         }))
+    }
+
+    /// A matching application receipt is authenticated inbound control
+    /// traffic from the newly rostered participant. Surface that proven
+    /// liveness immediately instead of waiting for the next periodic ping.
+    pub(crate) fn note_join_roster_receipt(&self, participant: &str) -> Result<()> {
+        self.note_control_rx(participant, 0, unix_timestamp())
     }
 
     pub(crate) async fn send_join_roster_ack(
