@@ -525,13 +525,17 @@ for contract in \
   "getByPlaceholder('Paste a join request to continue').fill(request)" \
   'requester was not added to the scanner roster' \
   'requester did not activate the scanned network' \
+  'desktop_manual_join_e2e_fixture' \
+  '--admin-endpoint "$SCANNER_IP:25111"' \
+  '--joiner-endpoint "$REQUESTER_IP:25110"' \
+  "throw new Error('unjoined Umbrel fixture unexpectedly has a network')" \
   'A joined device deliberately retains a reusable request link' \
   "getByRole('dialog', { name: 'Add Network' }).waitFor({ state: 'hidden', timeout: 15_000 })" \
   '/dev/net/tun:/dev/net/tun' \
   'PROXY_PORT: $PROXY_PORT' \
   '127.0.0.1:$PROXY_PORT:$PROXY_PORT' \
   'UMBREL_PROXY_TOKEN'; do
-  grep -Fq "$contract" "$umbrel_gate" \
+  grep -Fq -- "$contract" "$umbrel_gate" \
     || fail "authenticated Umbrel gate omits contract: $contract"
 done
 grep -Fq "NVPN_RELEASE_GATE_REQUIRE_COMPLETE: '1'" "$local_release" \

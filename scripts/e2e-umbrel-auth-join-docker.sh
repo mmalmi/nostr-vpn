@@ -11,11 +11,16 @@ PROXY_PORT="${NVPN_UMBREL_AUTH_JOIN_PROXY_PORT:-38380}"
 AUTH_PORT="${NVPN_UMBREL_AUTH_JOIN_AUTH_PORT:-38300}"
 RPC_PORT="${NVPN_UMBREL_AUTH_JOIN_RPC_PORT:-38301}"
 SCANNER_PORT="${NVPN_UMBREL_AUTH_JOIN_SCANNER_PORT:-38382}"
+NETWORK_OCTET="${NVPN_UMBREL_AUTH_JOIN_NETWORK_OCTET:-$((100 + ($$ % 100)))}"
+SUBNET="${NVPN_UMBREL_AUTH_JOIN_SUBNET:-10.253.${NETWORK_OCTET}.0/24}"
+REQUESTER_IP="${NVPN_UMBREL_AUTH_JOIN_REQUESTER_IP:-10.253.${NETWORK_OCTET}.10}"
+SCANNER_IP="${NVPN_UMBREL_AUTH_JOIN_SCANNER_IP:-10.253.${NETWORK_OCTET}.11}"
 JWT_SECRET=nvpn-umbrel-auth-join-e2e-jwt-secret
 AUTH_SECRET=nvpn-umbrel-auth-join-e2e-hmac-secret
 PASSWORD=nvpn-umbrel-auth-join-e2e-password
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-umbrel-auth-join-e2e.XXXXXX")"
 COMPOSE="$TMP/compose.yml"
+FIXTURE_RESULT="$TMP/fixture-result.json"
 STUB_PID=''
 
 cleanup() {
@@ -54,6 +59,22 @@ case "${NVPN_UMBREL_AUTH_JOIN_SKIP_BUILD:-0}" in
 esac
 
 mkdir -p "$TMP/app-data/nostr-vpn" "$TMP/data" "$TMP/nvpn-data" "$TMP/scanner-data"
+CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" \
+  cargo build --quiet --manifest-path "$ROOT_DIR/Cargo.toml" \
+    -p nostr-vpn-core --example desktop_manual_join_e2e_fixture
+TARGET_DIR="$(
+  CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/target}" \
+    cargo metadata --manifest-path "$ROOT_DIR/Cargo.toml" --no-deps --format-version 1 \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])'
+)"
+FIXTURE="$TARGET_DIR/debug/examples/desktop_manual_join_e2e_fixture"
+"$FIXTURE" prepare \
+  --admin-data-dir "$TMP/scanner-data/config/nvpn" \
+  --joiner-data-dir "$TMP/nvpn-data/config/nvpn" \
+  --result "$FIXTURE_RESULT" \
+  --admin-endpoint "$SCANNER_IP:25111" \
+  --joiner-endpoint "$REQUESTER_IP:25110" \
+  --direction umbrel-auth-requester
 python3 - "$ROOT_DIR/umbrel/umbrel-app.yml" "$TMP/umbrel-app.yml" "$PROXY_PORT" <<'PY'
 import re
 import sys
@@ -143,6 +164,9 @@ services:
       HOME: /data/home
       XDG_CONFIG_HOME: /data/config
     volumes: [$TMP/nvpn-data:/data]
+    networks:
+      default:
+        ipv4_address: $REQUESTER_IP
   web:
     image: $IMAGE
     depends_on: [daemon]
@@ -164,6 +188,9 @@ services:
       HOME: /scanner/home
       XDG_CONFIG_HOME: /scanner/config
     volumes: [$TMP/scanner-data:/scanner]
+    networks:
+      default:
+        ipv4_address: $SCANNER_IP
   scanner_web:
     image: $IMAGE
     depends_on: [scanner_daemon]
@@ -210,6 +237,12 @@ services:
       JWT_SECRET: $JWT_SECRET
     ports: [127.0.0.1:$PROXY_PORT:$PROXY_PORT]
     volumes: [$TMP/umbrel-app.yml:/extra/umbrel-app.yml:ro]
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: $SUBNET
 YAML
 
 docker compose -p "$PROJECT" -f "$COMPOSE" up -d
@@ -242,7 +275,6 @@ const scanner = process.env.SCANNER_BASE
 const authPort = process.env.AUTH_PORT
 const browser = await chromium.launch({ headless: true })
 let context
-let originalNetworkId = ''
 try {
   context = await browser.newContext()
   const page = await context.newPage()
@@ -273,13 +305,9 @@ try {
     return response.json()
   }
   let state = await tick()
-  const original = state.networks.find((network) => network.enabled)
-  if (!original) throw new Error('Umbrel fixture lacks an active network')
-  originalNetworkId = original.id
-  const disabled = await context.request.post(`${proxy}/api/set_network_enabled`, {
-    data: { networkId: originalNetworkId, enabled: false },
-  })
-  if (!disabled.ok()) throw new Error(`network disable returned ${disabled.status()}`)
+  if (state.networks.length !== 0) {
+    throw new Error('unjoined Umbrel fixture unexpectedly has a network')
+  }
 
   const deadline = Date.now() + 15_000
   do {
@@ -356,12 +384,6 @@ try {
   await page.getByRole('dialog', { name: 'Add Network' }).waitFor({ state: 'hidden', timeout: 15_000 })
   await page.getByRole('button', { name: 'Add Network' }).waitFor({ state: 'visible' })
 
-  const restored = await context.request.post(`${proxy}/api/set_network_enabled`, {
-    data: { networkId: originalNetworkId, enabled: true },
-  })
-  if (!restored.ok()) throw new Error(`network restore returned ${restored.status()}`)
-  originalNetworkId = ''
-
   const unauthenticated = await browser.newContext()
   try {
     const response = await unauthenticated.request.get(`${proxy}/api/health`, { maxRedirects: 0 })
@@ -372,11 +394,6 @@ try {
     await unauthenticated.close()
   }
 } finally {
-  if (context && originalNetworkId) {
-    await context.request.post(`${proxy}/api/set_network_enabled`, {
-      data: { networkId: originalNetworkId, enabled: true },
-    }).catch(() => {})
-  }
   if (context) await context.close()
   await browser.close()
 }
