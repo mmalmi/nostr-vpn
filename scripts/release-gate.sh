@@ -2052,6 +2052,14 @@ build_release_gate_web_image() {
   fi
 }
 
+build_release_gate_docker_images() {
+  # These builds share BuildKit's Cargo registry cache. Keep them in one lane
+  # so the wider release gate stays parallel without corrupting that cache.
+  build_release_gate_docker_node_image
+  build_release_gate_paid_exit_image
+  build_release_gate_web_image
+}
+
 run_docker_signal_gates() {
   if ! docker_release_gates_enabled; then
     echo "Skipping Docker e2e because NVPN_RELEASE_GATE_DOCKER_E2E=${NVPN_RELEASE_GATE_DOCKER_E2E}"
@@ -2410,11 +2418,9 @@ main() {
   if docker_release_gates_enabled; then
     export NVPN_E2E_NODE_IMAGE="${NVPN_RELEASE_GATE_E2E_NODE_IMAGE:-${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}}"
     export NVPN_EXIT_NODE_E2E_IMAGE="$NVPN_E2E_NODE_IMAGE"
-    release_gate_parallel_start "Docker node image build" build_release_gate_docker_node_image
-    concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
-    release_gate_parallel_start "Docker paid-exit image build" build_release_gate_paid_exit_image
-    concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
-    release_gate_parallel_start "Docker web image build" build_release_gate_web_image
+    release_gate_parallel_start \
+      "Docker reusable image builds" \
+      build_release_gate_docker_images
     concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
     docker_build_requested=1
   fi

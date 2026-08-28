@@ -369,9 +369,7 @@ required_steps=(
   run_macos_platform_lane
   run_linux_platform_lane
   run_android_static_validation_lane
-  build_release_gate_docker_node_image
-  build_release_gate_paid_exit_image
-  build_release_gate_web_image
+  build_release_gate_docker_images
   run_host_validation_lane
   run_desktop_app_launch_smokes
   run_linux_exclusive_desktop_gates
@@ -396,6 +394,31 @@ required_steps=(
 for step in "${required_steps[@]}"; do
   grep -Fq "$step" <<<"$main_body" \
     || fail "release gate omits required step: $step"
+done
+
+docker_image_build_body="$(
+  sed -n '/^build_release_gate_docker_images() {$/,/^}$/p' "$release_gate"
+)"
+previous_build_line=0
+for image_build in \
+  build_release_gate_docker_node_image \
+  build_release_gate_paid_exit_image \
+  build_release_gate_web_image
+do
+  [[ "$(grep -Fc "$image_build" <<<"$docker_image_build_body")" == "1" ]] \
+    || fail "reusable Docker image lane must run $image_build exactly once"
+  build_line="$(grep -nF "$image_build" <<<"$docker_image_build_body" | cut -d: -f1)"
+  ((build_line > previous_build_line)) \
+    || fail "reusable Docker image builds are not serialized in the required order"
+  previous_build_line="$build_line"
+done
+for old_parallel_build in \
+  'Docker node image build' \
+  'Docker paid-exit image build' \
+  'Docker web image build'
+do
+  ! grep -Fq "$old_parallel_build" <<<"$main_body" \
+    || fail "release gate still starts an unsafe parallel image build: $old_parallel_build"
 done
 
 required_contracts=(
