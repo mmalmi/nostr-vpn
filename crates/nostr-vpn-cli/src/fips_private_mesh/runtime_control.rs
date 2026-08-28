@@ -1,6 +1,7 @@
-// A failed carrier must release the durable outbox claim quickly enough for
-// several fresh-route attempts inside the 15-second public-UI join deadline.
-pub(crate) const JOIN_ROSTER_DELIVERY_TIMEOUT: Duration = Duration::from_secs(4);
+// After a roster reload replaces the runtime, give the fresh authenticated
+// carrier enough time to finish instead of repeatedly aborting and restarting
+// its connection inside the 15-second public-UI join deadline.
+pub(crate) const JOIN_ROSTER_DELIVERY_TIMEOUT: Duration = Duration::from_secs(12);
 
 impl FipsPrivateMeshRuntime {
     pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {

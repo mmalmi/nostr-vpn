@@ -16,6 +16,7 @@ use crate::{broadcast_local_fips_capabilities, publish_fips_active_network_roste
 static IN_FLIGHT_JOIN_ROSTERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 const JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT: Duration = Duration::from_secs(1);
+const JOIN_ROSTER_DELIVERY_WAIT_GRACE: Duration = Duration::from_secs(1);
 
 fn in_flight_join_rosters() -> &'static Mutex<HashSet<PathBuf>> {
     IN_FLIGHT_JOIN_ROSTERS.get_or_init(|| Mutex::new(HashSet::new()))
@@ -62,7 +63,8 @@ pub(super) async fn publish_fips_control_updates(
         };
         wait_for_join_roster_delivery_tasks(
             delivery_tasks,
-            crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT + Duration::from_secs(1),
+            crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT
+                + JOIN_ROSTER_DELIVERY_WAIT_GRACE,
         )
         .await;
     }
@@ -219,12 +221,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn join_delivery_attempts_fit_the_public_ui_completion_deadline() {
+    fn fresh_join_carrier_fits_the_public_ui_completion_deadline() {
         const PUBLIC_UI_COMPLETION_DEADLINE_SECS: u64 = 15;
-        let three_attempts_with_reload_handoff = JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT.as_secs()
-            + 3 * crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT.as_secs();
+        let replacement_delivery_budget = JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT.as_secs()
+            + crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT.as_secs()
+            + JOIN_ROSTER_DELIVERY_WAIT_GRACE.as_secs();
 
-        assert!(three_attempts_with_reload_handoff <= PUBLIC_UI_COMPLETION_DEADLINE_SECS);
+        assert!(replacement_delivery_budget <= PUBLIC_UI_COMPLETION_DEADLINE_SECS);
+        assert!(crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT >= Duration::from_secs(10));
     }
 
     #[test]
