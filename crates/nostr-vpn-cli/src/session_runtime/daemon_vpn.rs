@@ -662,6 +662,14 @@ macro_rules! handle_daemon_state_tick {
                 } else {
                     Vec::new()
                 };
+                // The current runtime learned the pending joiner's live route
+                // from its authenticated request. Finish the receipt-backed
+                // approval on that route before peer-set sync can replace the
+                // runtime and discard the only address knowledge we have.
+                finish_join_roster_deliveries_before_runtime_sync(
+                    pre_sync_join_roster_deliveries,
+                )
+                .await;
                 let (fips_sync_succeeded, fips_runtime_replaced) =
                     match sync_fips_private_runtime(
                     &mut fips_tunnel_runtime,
@@ -700,7 +708,6 @@ macro_rules! handle_daemon_state_tick {
                         &app,
                         &config_path,
                         &mut pending_fips_roster_recipients,
-                        pre_sync_join_roster_deliveries,
                         fips_sync_succeeded,
                         fips_runtime_replaced,
                     )
