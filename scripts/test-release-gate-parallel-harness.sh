@@ -447,6 +447,20 @@ for contract in \
   grep -Fq "$contract" <<<"$docker_functional_body" \
     || fail "isolated Docker gates omit paid-exit contract: $contract"
 done
+exit_node_e2e="$ROOT_DIR/scripts/e2e-exit-node-docker.sh"
+for contract in \
+  'HOST_LOG_DIR="$(mktemp -d ' \
+  'PUBLIC_PING_LOG="$HOST_LOG_DIR/public-ping.log"' \
+  'REALIZED_IP_LOG="$HOST_LOG_DIR/realized-ip.log"' \
+  'SECURE_DNS_LOG="$HOST_LOG_DIR/secure-dns.log"' \
+  'rm -rf "$HOST_LOG_DIR"'; do
+  grep -Fq "$contract" "$exit_node_e2e" \
+    || fail "parallel paid-exit lanes do not isolate host logs: $contract"
+done
+if grep -Eq '/tmp/nvpn-exit-node-(public-ping|realized-ip|secure-dns)\.log' \
+  "$exit_node_e2e"; then
+  fail "parallel paid-exit lanes still share fixed host log paths"
+fi
 seller_ui_body="$(sed -n '/^verify_paid_exit_seller_ui_gates() {$/,/^}$/p' "$release_gate")"
 for platform in linux macos; do
   grep -Fq "\"$platform=" <<<"$seller_ui_body" \

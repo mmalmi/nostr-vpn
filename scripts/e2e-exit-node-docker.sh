@@ -73,6 +73,9 @@ cleanup() {
       sleep 1
     done
   done
+  if [[ -n "${HOST_LOG_DIR:-}" ]]; then
+    rm -rf "$HOST_LOG_DIR"
+  fi
 }
 
 dump_debug() {
@@ -600,9 +603,9 @@ assert_secure_exit_dns() {
     exit 1
   fi
 
-  printf '%s\n' "$dns_result" >/tmp/nvpn-exit-node-secure-dns.log
-  printf 'HTTPS status: %s\n' "$https_status" >>/tmp/nvpn-exit-node-secure-dns.log
-  printf '%s\n' "$doh_packets" >>/tmp/nvpn-exit-node-secure-dns.log
+  printf '%s\n' "$dns_result" >"$SECURE_DNS_LOG"
+  printf 'HTTPS status: %s\n' "$https_status" >>"$SECURE_DNS_LOG"
+  printf '%s\n' "$doh_packets" >>"$SECURE_DNS_LOG"
 }
 
 truthy() {
@@ -720,6 +723,10 @@ if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]] && !
 fi
 
 cleanup
+HOST_LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-exit-node.XXXXXX")"
+PUBLIC_PING_LOG="$HOST_LOG_DIR/public-ping.log"
+REALIZED_IP_LOG="$HOST_LOG_DIR/realized-ip.log"
+SECURE_DNS_LOG="$HOST_LOG_DIR/secure-dns.log"
 
 if truthy "$PAID_EXIT_MODE"; then
   export NVPN_EXIT_NODE_E2E_DOCKERFILE="${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.paid-exit-e2e}"
@@ -1164,17 +1171,16 @@ if ! grep -q 'dev utun100' <<<"$PUBLIC_ROUTE"; then
   exit 1
 fi
 
-REALIZED_IP_LOG="/tmp/nvpn-exit-node-realized-ip.log"
 "${COMPOSE[@]}" exec -T internet-target sh -lc \
   "timeout 12 tcpdump -ni any -c 1 'icmp and src host $NODE_A_PUBLIC_IP and dst host $PUBLIC_INTERNET_TARGET'" \
   >"$REALIZED_IP_LOG" 2>&1 &
 TCPDUMP_PID=$!
 sleep 1
 
-if ! ping_until_success node-b "$PUBLIC_INTERNET_TARGET" /tmp/nvpn-exit-node-public-ping.log; then
+if ! ping_until_success node-b "$PUBLIC_INTERNET_TARGET" "$PUBLIC_PING_LOG"; then
   echo "exit-node docker e2e failed: unable to reach public internet target '$PUBLIC_INTERNET_TARGET' through exit node" >&2
-  if [[ -f /tmp/nvpn-exit-node-public-ping.log ]]; then
-    cat /tmp/nvpn-exit-node-public-ping.log
+  if [[ -f "$PUBLIC_PING_LOG" ]]; then
+    cat "$PUBLIC_PING_LOG"
   fi
   exit 1
 fi
@@ -1344,10 +1350,10 @@ echo "$DEFAULT_ROUTE"
 echo "--- Public internet route ---"
 echo "$PUBLIC_ROUTE"
 echo "--- Public internet ping ---"
-cat /tmp/nvpn-exit-node-public-ping.log
+cat "$PUBLIC_PING_LOG"
 if ! truthy "$PAID_EXIT_MODE"; then
   echo "--- Secure DNS through exit ---"
-  cat /tmp/nvpn-exit-node-secure-dns.log
+  cat "$SECURE_DNS_LOG"
 fi
 echo "--- Realized exit IP capture ---"
 cat "$REALIZED_IP_LOG"
