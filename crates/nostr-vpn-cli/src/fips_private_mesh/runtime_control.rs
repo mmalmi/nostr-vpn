@@ -1,4 +1,4 @@
-const JOIN_ROSTER_DELIVERY_TIMEOUT: Duration = Duration::from_secs(8);
+pub(crate) const JOIN_ROSTER_DELIVERY_TIMEOUT: Duration = Duration::from_secs(8);
 
 impl FipsPrivateMeshRuntime {
     pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {

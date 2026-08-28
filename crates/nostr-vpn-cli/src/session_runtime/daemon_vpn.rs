@@ -236,6 +236,12 @@ macro_rules! handle_daemon_state_tick {
                             {
                                 vpn_status =
                                     format!("Roster applied, but FIPS reload failed ({error})");
+                            } else if let Err(error) =
+                                broadcast_local_fips_capabilities(runtime, &app).await
+                            {
+                                eprintln!(
+                                    "fips: capabilities broadcast failed after roster apply: {error}"
+                                );
                             }
                             refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
                         }

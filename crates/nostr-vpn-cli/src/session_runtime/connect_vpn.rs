@@ -126,6 +126,12 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                                 .await
                                 {
                                     eprintln!("connect: roster applied, but FIPS reload failed: {error}");
+                                } else if let Err(error) =
+                                    broadcast_local_fips_capabilities(runtime, &app).await
+                                {
+                                    eprintln!(
+                                        "fips: capabilities broadcast failed after roster apply: {error}"
+                                    );
                                 }
                                 refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
                             }

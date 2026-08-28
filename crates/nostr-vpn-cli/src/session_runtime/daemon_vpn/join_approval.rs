@@ -45,19 +45,26 @@ pub(super) async fn publish_fips_control_updates(
     app: &AppConfig,
     config_path: &Path,
     pending_roster_recipients: &mut HashSet<String>,
-    pre_sync_join_roster_deliveries: Vec<tokio::task::JoinHandle<()>>,
+    pre_sync_join_roster_deliveries: Vec<tokio::task::JoinHandle<bool>>,
     fips_sync_succeeded: bool,
     fips_runtime_replaced: bool,
 ) {
     if fips_sync_succeeded {
-        if fips_runtime_replaced {
+        let delivery_tasks = if fips_runtime_replaced {
             wait_for_join_roster_delivery_tasks(
                 pre_sync_join_roster_deliveries,
                 JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT,
             )
             .await;
-        }
-        drop(start_queued_join_roster_deliveries(runtime, config_path));
+            start_queued_join_roster_deliveries(runtime, config_path)
+        } else {
+            pre_sync_join_roster_deliveries
+        };
+        wait_for_join_roster_delivery_tasks(
+            delivery_tasks,
+            crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT + Duration::from_secs(1),
+        )
+        .await;
     }
     if let Err(error) =
         publish_fips_active_network_roster(runtime, app, config_path, pending_roster_recipients)
@@ -82,15 +89,22 @@ fn release_join_roster_delivery(path: &Path) {
 }
 
 async fn wait_for_join_roster_delivery_tasks(
-    tasks: Vec<tokio::task::JoinHandle<()>>,
+    tasks: Vec<tokio::task::JoinHandle<bool>>,
     timeout: Duration,
-) {
-    let _ = tokio::time::timeout(timeout, async {
-        for task in tasks {
-            let _ = task.await;
+) -> usize {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut delivered = 0;
+    for mut task in tasks {
+        match tokio::time::timeout_at(deadline, &mut task).await {
+            Ok(Ok(true)) => delivered += 1,
+            Ok(Ok(false) | Err(_)) => {}
+            Err(_) => {
+                task.abort();
+                let _ = task.await;
+            }
         }
-    })
-    .await;
+    }
+    delivered
 }
 
 struct JoinRosterDeliveryClaim(PathBuf);
@@ -105,18 +119,18 @@ fn track_join_roster_delivery(
     path: PathBuf,
     participant: String,
     delivery: crate::fips_private_mesh::FipsJoinRosterDelivery,
-) -> tokio::task::JoinHandle<()> {
+) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
         let _claim = JoinRosterDeliveryClaim(path.clone());
         let result = delivery.await;
-        finish_join_roster_delivery(&path, &participant, result);
+        finish_join_roster_delivery(&path, &participant, result)
     })
 }
 
 pub(super) fn start_queued_join_roster_deliveries(
     runtime: &FipsPrivateTunnelRuntime,
     config_path: &Path,
-) -> Vec<tokio::task::JoinHandle<()>> {
+) -> Vec<tokio::task::JoinHandle<bool>> {
     // The outbox is committed before the UI asks the daemon to reload. Read
     // the authoritative persisted roster here so a heartbeat holding the old
     // in-memory snapshot cannot reject or claim the new approval first.
@@ -175,7 +189,7 @@ pub(super) fn start_queued_join_roster_deliveries(
     deliveries
 }
 
-fn finish_join_roster_delivery(path: &Path, recipient: &str, delivery: anyhow::Result<()>) {
+fn finish_join_roster_delivery(path: &Path, recipient: &str, delivery: anyhow::Result<()>) -> bool {
     match delivery {
         Ok(()) => {
             consume_join_roster(path);
@@ -183,10 +197,14 @@ fn finish_join_roster_delivery(path: &Path, recipient: &str, delivery: anyhow::R
                 "delivered and applied one signed join roster over FIPS-TCP to {}",
                 recipient
             );
+            true
         }
-        Err(error) => eprintln!(
-            "join roster was not durably applied over FIPS-TCP ({error:#}); retaining it for retry"
-        ),
+        Err(error) => {
+            eprintln!(
+                "join roster was not durably applied over FIPS-TCP ({error:#}); retaining it for retry"
+            );
+            false
+        }
     }
 }
 
@@ -280,5 +298,68 @@ mod tests {
         assert!(!path.exists(), "background delivery did not finish");
         assert!(claim_join_roster_delivery(&path));
         release_join_roster_delivery(&path);
+    }
+
+    #[tokio::test]
+    async fn post_sync_join_delivery_waits_for_durable_receipt_before_convergence() {
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-join-roster-convergence-{}-{}",
+            std::process::id(),
+            crate::unix_timestamp()
+        ));
+        fs::write(&path, b"queued").expect("write queued roster");
+        assert!(claim_join_roster_delivery(&path));
+
+        let (complete_tx, complete_rx) = tokio::sync::oneshot::channel();
+        let delivery_task = track_join_roster_delivery(
+            path.clone(),
+            "recipient".to_string(),
+            Box::pin(async move {
+                complete_rx.await.expect("release delivery");
+                Ok(())
+            }),
+        );
+        let waiter = tokio::spawn(wait_for_join_roster_delivery_tasks(
+            vec![delivery_task],
+            Duration::from_secs(1),
+        ));
+
+        tokio::task::yield_now().await;
+        assert!(
+            !waiter.is_finished(),
+            "post-reload convergence must wait for the durable receipt"
+        );
+        complete_tx.send(()).expect("complete delivery");
+        assert_eq!(waiter.await.expect("delivery waiter"), 1);
+        assert!(!path.exists(), "durable receipt did not consume outbox");
+    }
+
+    #[tokio::test]
+    async fn timed_out_reload_handoff_releases_delivery_for_current_runtime() {
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-join-roster-handoff-timeout-{}-{}",
+            std::process::id(),
+            crate::unix_timestamp()
+        ));
+        fs::write(&path, b"queued").expect("write queued roster");
+        assert!(claim_join_roster_delivery(&path));
+
+        let delivery_task = track_join_roster_delivery(
+            path.clone(),
+            "recipient".to_string(),
+            Box::pin(std::future::pending()),
+        );
+        assert_eq!(
+            wait_for_join_roster_delivery_tasks(vec![delivery_task], Duration::from_millis(10))
+                .await,
+            0
+        );
+
+        assert!(
+            claim_join_roster_delivery(&path),
+            "timed-out old runtime retained the outbox claim"
+        );
+        release_join_roster_delivery(&path);
+        fs::remove_file(path).expect("remove queued roster");
     }
 }
