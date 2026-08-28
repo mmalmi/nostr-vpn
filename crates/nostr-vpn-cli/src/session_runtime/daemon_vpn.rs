@@ -627,6 +627,31 @@ macro_rules! handle_daemon_state_tick {
                         }
                     }
                 };
+                // The approval outbox and authoritative roster are durable before
+                // Reload reaches the daemon. Start the receipt-backed delivery on
+                // the existing FIPS runtime now: the recipient's npub is enough to
+                // route it, and waiting for the full peer-set sync consumed most of
+                // the mobile coordination deadline on Windows. The post-sync call
+                // below remains as an idempotent retry for runtimes created by sync.
+                let pre_sync_join_roster_deliveries = if publish_fips_roster_after_control {
+                    fips_tunnel_runtime.as_ref().map_or_else(Vec::new, |runtime| {
+                        start_queued_join_roster_deliveries(runtime, &config_path)
+                    })
+                } else {
+                    Vec::new()
+                };
+                // The current runtime learned the pending joiner's live route
+                // from its authenticated request. Finish the receipt-backed
+                // approval on that route before peer-set sync can replace the
+                // runtime and discard the only address knowledge we have.
+                finish_join_roster_deliveries_before_runtime_sync(
+                    pre_sync_join_roster_deliveries,
+                )
+                .await;
+                // A generic roster frame also makes the joining device refresh its
+                // runtime. Send it only after the receipt-backed approval has used
+                // the authenticated join-request carrier; otherwise that refresh
+                // can stop the carrier before the approval receipt is returned.
                 let pre_sync_fips_roster_recipients = if publish_fips_roster_after_control {
                     fips_tunnel_runtime
                         .as_ref()
@@ -649,27 +674,6 @@ macro_rules! handle_daemon_state_tick {
                         "fips: roster publish failed before peer-set refresh: {error}"
                     );
                 }
-                // The approval outbox and authoritative roster are durable before
-                // Reload reaches the daemon. Start the receipt-backed delivery on
-                // the existing FIPS runtime now: the recipient's npub is enough to
-                // route it, and waiting for the full peer-set sync consumed most of
-                // the mobile coordination deadline on Windows. The post-sync call
-                // below remains as an idempotent retry for runtimes created by sync.
-                let pre_sync_join_roster_deliveries = if publish_fips_roster_after_control {
-                    fips_tunnel_runtime.as_ref().map_or_else(Vec::new, |runtime| {
-                        start_queued_join_roster_deliveries(runtime, &config_path)
-                    })
-                } else {
-                    Vec::new()
-                };
-                // The current runtime learned the pending joiner's live route
-                // from its authenticated request. Finish the receipt-backed
-                // approval on that route before peer-set sync can replace the
-                // runtime and discard the only address knowledge we have.
-                finish_join_roster_deliveries_before_runtime_sync(
-                    pre_sync_join_roster_deliveries,
-                )
-                .await;
                 let (fips_sync_succeeded, fips_runtime_replaced) =
                     match sync_fips_private_runtime(
                     &mut fips_tunnel_runtime,

@@ -235,6 +235,22 @@ mod tests {
     }
 
     #[test]
+    fn receipt_backed_join_delivery_precedes_generic_roster_publish() {
+        let daemon_vpn = include_str!("../daemon_vpn.rs");
+        let delivery = daemon_vpn
+            .find("finish_join_roster_deliveries_before_runtime_sync(")
+            .expect("pre-sync receipt-backed join delivery");
+        let generic_publish = daemon_vpn
+            .find("let pre_sync_fips_roster_recipients =")
+            .expect("pre-sync generic roster publish");
+
+        assert!(
+            delivery < generic_publish,
+            "generic roster publication must not refresh the joiner's runtime before its durable approval receipt"
+        );
+    }
+
+    #[test]
     fn approved_device_ipc_does_not_create_another_join_request() {
         let mut app = AppConfig::generated_without_networks();
         let network_id = app.add_owned_network("Approved network");
