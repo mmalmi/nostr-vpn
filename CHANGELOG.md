@@ -49,7 +49,7 @@ automatic selection.
   WSS as a fallback on UDP-blocked networks, and migrate prior WSS-only native
   defaults without making the WebSocket transport dial independently. Resolve
   UDP hostnames before selecting a family-specific local socket.
-- Update to FIPS 0.4.67, which re-arms authenticated direct-path handshakes
+- Update to FIPS 0.4.68, which re-arms authenticated direct-path handshakes
   after repeated network outages and preserves the staged direct-payload
   validation across in-flight fallback traffic, avoiding recovery stalls when
   an original or changed source address returns under load.

@@ -219,6 +219,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn join_delivery_attempts_fit_the_public_ui_completion_deadline() {
+        const PUBLIC_UI_COMPLETION_DEADLINE_SECS: u64 = 15;
+        let three_attempts_with_reload_handoff = JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT.as_secs()
+            + 3 * crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT.as_secs();
+
+        assert!(three_attempts_with_reload_handoff <= PUBLIC_UI_COMPLETION_DEADLINE_SECS);
+    }
+
+    #[test]
     fn approved_device_ipc_does_not_create_another_join_request() {
         let mut app = AppConfig::generated_without_networks();
         let network_id = app.add_owned_network("Approved network");

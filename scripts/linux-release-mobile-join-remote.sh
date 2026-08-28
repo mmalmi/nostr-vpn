@@ -44,6 +44,7 @@ DRIVER="$ROOT/scripts/desktop-mobile-manual-join-atspi.py"
 SERVICE_BINARY=/usr/local/bin/nvpn
 SERVICE_UNIT=/etc/systemd/system/nvpn.service
 CONFIG="${XDG_DATA_HOME:-$HOME/.local/share}/nostr-vpn/config.toml"
+PROFILE_ROOT="${CONFIG%/config.toml}"
 
 assert_imported_artifacts() {
   local app_hash cli_hash
@@ -161,6 +162,22 @@ cleanup_candidate_service() {
     echo "Linux desktop/mobile join service cleanup did not complete" >&2
     return 1
   fi
+}
+
+cleanup_release_test_profile() {
+  local expected="$HOME/.local/share/nostr-vpn"
+  [[ "$PROFILE_ROOT" == "$expected" ]] || {
+    echo "Refusing to remove a profile outside the dedicated release-test path" >&2
+    return 1
+  }
+  if sudo -n test -e "$PROFILE_ROOT" || sudo -n test -L "$PROFILE_ROOT"; then
+    if ! sudo -n test -d "$PROFILE_ROOT" || sudo -n test -L "$PROFILE_ROOT"; then
+      echo "Refusing to remove a non-directory or symlinked release-test profile" >&2
+      return 1
+    fi
+    sudo -n find "$PROFILE_ROOT" -xdev -depth -delete
+  fi
+  sudo -n test ! -e "$PROFILE_ROOT"
 }
 
 install_candidate_service() {
@@ -285,6 +302,9 @@ PY
     (( $# <= 1 )) || usage
     pkill -u "$(id -u)" -x nostr-vpn >/dev/null 2>&1 || true
     rm -f "$STOP_PATH"
-    [[ "${1:-0}" == 0 ]] || cleanup_candidate_service
+    if [[ "${1:-0}" != 0 ]]; then
+      cleanup_candidate_service
+      cleanup_release_test_profile
+    fi
     ;;
 esac
