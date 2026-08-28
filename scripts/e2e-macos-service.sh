@@ -117,6 +117,14 @@ if [ "$DETECTED_RUNNING" != "true" ]; then
   echo "      nvpn service install. The launchd daemon should be visible."
   echo "Service status:"
   "$NVPN_BIN" service status --config "$TEST_CONFIG" || true
+  service_pid="$("$NVPN_BIN" service status --json --skip-binary-version \
+    --config "$TEST_CONFIG" 2>/dev/null \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pid") or "")' \
+    || true)"
+  if [[ -n "$service_pid" ]]; then
+    echo "Service process:"
+    ps -ww -p "$service_pid" -o pid=,stat=,command= || true
+  fi
   exit 1
 fi
 printf '%s' "$runtime_json" | python3 -c '
