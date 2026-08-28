@@ -229,26 +229,20 @@ function Get-WireGuardProbeSuccessCount {
   ).Count
 }
 
-function Invoke-BoundedProbeProcess {
+function Invoke-BoundedIcmpProbe {
   param(
-    [string]$FilePath,
-    [string[]]$ArgumentList,
+    [string]$Target,
     [int]$TimeoutMilliseconds
   )
-  $process = Start-Process -FilePath $FilePath `
-    -ArgumentList $ArgumentList -WindowStyle Hidden -PassThru
+  $ping = [System.Net.NetworkInformation.Ping]::new()
+  [byte[]]$buffer = [byte[]]::new(32)
+  $options = [System.Net.NetworkInformation.PingOptions]::new(64, $false)
   try {
-    if (!$process.WaitForExit($TimeoutMilliseconds)) {
-      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-      if (!$process.WaitForExit(1000)) {
-        throw "timed-out payload probe could not be terminated"
-      }
-      return $false
-    }
-    return $process.ExitCode -eq 0
+    $reply = $ping.Send($Target, $TimeoutMilliseconds, $buffer, $options)
+    return $reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success
   }
   finally {
-    $process.Dispose()
+    $ping.Dispose()
   }
 }
 
@@ -887,8 +881,7 @@ switch ($Action) {
     $log = Join-Path $StateDir "payload.log"
     while (!(Test-Path -LiteralPath (Join-Path $StateDir "stop-probe"))) {
       try {
-        $ok = Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE" `
-          @("-n", "1", "-w", "750", "-l", "32", $PeerTunnelIp) 1500
+        $ok = Invoke-BoundedIcmpProbe $PeerTunnelIp 750
         $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         if ($ok) {
           Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
@@ -919,8 +912,7 @@ switch ($Action) {
         # stable-state audit below still requires public DNS and verified
         # HTTPS, while this local responder avoids spending most of the
         # four-second handoff budget inside one unrelated Internet request.
-        $ok = Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE" `
-          @("-n", "1", "-w", "750", "-l", "32", $WireGuardServerIp) 1500
+        $ok = Invoke-BoundedIcmpProbe $WireGuardServerIp 750
         $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         if ($ok) {
           Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII

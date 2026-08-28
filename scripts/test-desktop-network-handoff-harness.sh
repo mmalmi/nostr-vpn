@@ -326,7 +326,7 @@ grep -Fq '$(rebind_count) == rebind_before + 1' "$LINUX_GUEST" \
 
 require_tokens "$WINDOWS_GUEST" "PID-bound continuous payload" \
   'Get-DaemonPid' \
-  'Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE"'
+  'Invoke-BoundedIcmpProbe $PeerTunnelIp 750'
 require_tokens "$LINUX_GUEST" "PID-bound continuous payload" \
   'daemon_pid()' 'ping -D -n -i 0.1'
 require_tokens "$LINUX_GUEST" "production SIGKILL/startup-repair evidence" \
@@ -455,17 +455,19 @@ require_tokens "$WINDOWS_GUEST" "independent cleanup evidence" \
   'Test-WireGuardHandshake' \
   'Assert-WireGuardEndpointRoute'
 require_tokens "$WINDOWS_GUEST" "bounded real payload probes" \
-  'function Invoke-BoundedProbeProcess {' \
-  '$process.WaitForExit($TimeoutMilliseconds)' \
-  'Stop-Process -Id $process.Id -Force' \
-  'Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE"' \
-  '@("-n", "1", "-w", "750", "-l", "32", $WireGuardServerIp)'
+  'function Invoke-BoundedIcmpProbe {' \
+  '[System.Net.NetworkInformation.Ping]::new()' \
+  '$ping.Send($Target, $TimeoutMilliseconds, $buffer, $options)' \
+  '$reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success' \
+  'Invoke-BoundedIcmpProbe $PeerTunnelIp 750' \
+  'Invoke-BoundedIcmpProbe $WireGuardServerIp 750'
 bounded_windows_probe="$({
-  sed -n '/^function Invoke-BoundedProbeProcess {$/,/^}$/p' \
+  sed -n '/^function Invoke-BoundedIcmpProbe {$/,/^}$/p' \
     "$WINDOWS_GUEST_ENTRY"
 })"
-if grep -Fq '$process.WaitForExit()' <<<"$bounded_windows_probe"; then
-  fail "Windows payload probe retains an unbounded process wait"
+if grep -Fq 'Start-Process' <<<"$bounded_windows_probe" \
+  || grep -Fq 'PING.EXE' "$WINDOWS_GUEST_ENTRY"; then
+  fail "Windows payload probe still spawns an external ping process"
 fi
 require_tokens "$WINDOWS_GUEST" "power-loss startup recovery evidence" \
   'Stop-Process -Id $crashedPid -Force' \
