@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANUAL_JOIN_DRIVER="$ROOT/scripts/desktop-manual-join-ax.swift"
+SERVICE_TOGGLE_DRIVER="$ROOT/scripts/macos-service-toggle-ax.swift"
 
 files=(
   "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh"
@@ -47,7 +48,7 @@ EOF
 unset -f ps
 
 python3 - "${files[@]}" "$ROOT/scripts/macos_release_join_artifact.py" \
-  "$ROOT/scripts/macos-build" "$MANUAL_JOIN_DRIVER" <<'PY'
+  "$ROOT/scripts/macos-build" "$MANUAL_JOIN_DRIVER" "$SERVICE_TOGGLE_DRIVER" <<'PY'
 import pathlib
 import sys
 
@@ -347,6 +348,17 @@ for required in (
         raise SystemExit(f"service-toggle gate lacks short owned runtime cleanup: {required}")
 if 'DATA_ROOT="$ARTIFACT_DIR/app-data"' in service_toggle:
     raise SystemExit("service-toggle gate still puts Unix sockets under artifacts")
+
+service_toggle_driver = texts["macos-service-toggle-ax.swift"]
+for required in (
+    "NSRunningApplication(processIdentifier: pid)?.activate(",
+    "options: [.activateAllWindows]",
+    'findVisibleIdentifier(application, "main-AppWindow-1", timeout: 60)',
+):
+    if required not in service_toggle_driver:
+        raise SystemExit(
+            f"service-toggle AX driver does not reactivate and await the app window: {required}"
+        )
 
 service_toggle_launch = service_toggle.split("launch_app() {", 1)[1].split(
     "\n}\n\nif ! launch_app", 1

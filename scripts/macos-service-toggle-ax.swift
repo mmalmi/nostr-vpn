@@ -69,7 +69,36 @@ func findIdentifier(
         }
         Thread.sleep(forTimeInterval: 0.1)
     } while Date() < deadline
+    let controls = descendants(application).compactMap { element -> String? in
+        let identifier = stringAttribute(element, kAXIdentifierAttribute)
+        guard !identifier.isEmpty,
+              boolAttribute(element, kAXHiddenAttribute) != true else {
+            return nil
+        }
+        let role = stringAttribute(element, kAXRoleAttribute)
+        let enabled = boolAttribute(element, kAXEnabledAttribute)
+        return "\(role):\(identifier):enabled=\(enabled.map { String($0) } ?? "unset")"
+    }
+    fputs("Visible AX identifiers: \(controls.joined(separator: ", "))\n", stderr)
     throw DriverError.missing("visible control did not appear: \(identifier)")
+}
+
+func findVisibleIdentifier(
+    _ application: AXUIElement,
+    _ identifier: String,
+    timeout: TimeInterval = 15
+) throws -> AXUIElement {
+    let deadline = Date().addingTimeInterval(timeout)
+    repeat {
+        if let element = descendants(application).first(where: {
+            stringAttribute($0, kAXIdentifierAttribute) == identifier
+                && boolAttribute($0, kAXHiddenAttribute) != true
+        }) {
+            return element
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    } while Date() < deadline
+    throw DriverError.missing("visible element did not appear: \(identifier)")
 }
 
 func press(_ element: AXUIElement, description: String) throws {
@@ -201,6 +230,10 @@ func run() throws {
             "AX PID \(pid) belongs to \(processName), expected \(args[2])"
         )
     }
+    NSRunningApplication(processIdentifier: pid)?.activate(
+        options: [.activateAllWindows]
+    )
+    _ = try findVisibleIdentifier(application, "main-AppWindow-1", timeout: 60)
     let toggle = try findIdentifier(application, "vpn-service-toggle")
     try press(toggle, description: "VPN service toggle")
     try cancelAuthorizationPrompt(appApplication: application)
