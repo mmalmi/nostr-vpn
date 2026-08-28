@@ -131,6 +131,18 @@ positions = [
 ]
 if positions != sorted(positions):
     raise SystemExit("Release reconnect cleanup is not armed through stable quiescence")
+for receipt in (
+    'expected_pid="$(android_app_pid)"',
+    '[[ "$(android_app_pid)" == "$expected_pid" ]]',
+    "printf 'semantic\\t%s\\t%s\\n'",
+    '>>"$start_stop_ledger"',
+):
+    if rapid_gate.count(receipt) != 1:
+        raise SystemExit(
+            f"Release semantic start/stop gate must emit one exact receipt: {receipt!r}"
+        )
+if rapid_gate.index('>>"$start_stop_ledger"') < rapid_gate.index(disarm):
+    raise SystemExit("Release start/stop receipt is emitted before stable cleanup")
 
 emergency = function_body(
     release_gate,

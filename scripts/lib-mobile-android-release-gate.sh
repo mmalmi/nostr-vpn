@@ -995,9 +995,16 @@ run_android_release_active_vpn_lifecycle_gate() {
 run_android_release_rapid_start_stop_gate() {
   truthy "$ANDROID_RAPID_START_STOP_GATE" || return 0
   local start_stop_ledger="$RUNTIME_STATE_RESULT_DIR/mobile-android-release-start-stop-$$.tsv"
+  local expected_pid
   : >"$start_stop_ledger"
   # The enclosing black-box cycle already proves the initial start, exit,
   # stop, and stable direct path. This gate only needs to prove a reconnect.
+  expected_pid="$(android_app_pid)"
+  [[ "$expected_pid" =~ ^[1-9][0-9]*$ ]] \
+    && assert_single_android_app_process || {
+      echo "Android Release reconnect gate has no single canonical app process" >&2
+      return 1
+    }
   android_release_capture_native_tunnel_start_baseline || return 1
   vpn_cleanup_armed=1
   android_release_connect_ui || return 1
@@ -1010,7 +1017,14 @@ run_android_release_rapid_start_stop_gate() {
   vpn_cleanup_armed=0
   run_android_release_direct_network_probe start-stop-reconnect-cleanup 0 || return 1
   android_release_assert_native_tunnel_unchanged start-stop-final || return 1
-  assert_single_android_app_process || return 1
+  [[ "$(android_app_pid)" == "$expected_pid" ]] \
+    && assert_single_android_app_process || {
+      echo "Android Release reconnect gate changed the canonical app process" >&2
+      return 1
+    }
+  printf 'semantic\t%s\t%s\n' \
+    "$expected_pid" "$ANDROID_RELEASE_NATIVE_TUNNEL_START_COUNT" \
+    >>"$start_stop_ledger"
   echo "Android Release semantic start/stop/reconnect gate passed"
 }
 
