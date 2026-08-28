@@ -663,10 +663,21 @@ pub(super) fn macos_ifconfig_has_ipv4(output: &str, needle: Ipv4Addr) -> bool {
     })
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn macos_ifconfig_error_is_absent(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("does not exist")
+        || lower.contains("no such interface")
+        || lower.contains("bad interface name")
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn macos_iface_has_ipv4_address(iface: &str, needle: Ipv4Addr) -> Result<bool> {
-    let output = command_stdout_checked(ProcessCommand::new("ifconfig").arg(iface))?;
-    Ok(macos_ifconfig_has_ipv4(&output, needle))
+    match command_stdout_checked(ProcessCommand::new("ifconfig").arg(iface)) {
+        Ok(output) => Ok(macos_ifconfig_has_ipv4(&output, needle)),
+        Err(error) if macos_ifconfig_error_is_absent(&error.to_string()) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(target_os = "macos")]

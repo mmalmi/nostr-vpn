@@ -163,6 +163,18 @@ fn macos_ifconfig_has_ipv4_matches_exact_interface_address() {
 }
 
 #[test]
+fn macos_ifconfig_missing_interface_is_an_absent_interface() {
+    let error = "command failed: \"ifconfig\" \"utun0\"\n\
+stdout: \n\
+stderr: ifconfig: interface utun0 does not exist";
+
+    assert!(macos_ifconfig_error_is_absent(error));
+    assert!(!macos_ifconfig_error_is_absent(
+        "ifconfig: permission denied"
+    ));
+}
+
+#[test]
 fn split_default_cleanup_only_claims_the_route_owner() {
     let routes = "\
 Routing tables\n\

@@ -80,15 +80,47 @@ if [ -z "$UNDERLAY_IP" ]; then
   echo "FAIL: could not resolve the macOS runner's default underlay IPv4 address" >&2
   exit 1
 fi
-SERVICE_LABEL="to.nostrvpn.nvpn.$(printf '%s' "$TEST_DIR/$SUFFIX" \
-  | sed -e 's:/:_:g' -e 's:^_*::' -e 's:^Users_:u_:' )"
+DEFAULT_CONFIG="${NVPN_MACOS_E2E_DEFAULT_CONFIG:-$HOME/Library/Application Support/nvpn/config.toml}"
+RESTORE_DEFAULT_SERVICE=0
+
+restore_default_service() {
+  local attempt restore_log="$TEST_DIR/default-service-restore.log"
+  for attempt in 1 2 3 4 5; do
+    if sudo -n "$NVPN_BIN" service enable --config "$DEFAULT_CONFIG" \
+      >"$restore_log" 2>&1
+    then
+      return 0
+    fi
+    sleep 1
+  done
+  cat "$restore_log" >&2 || true
+  return 1
+}
 
 cleanup() {
-  echo "Cleaning up test service ($SERVICE_LABEL)..."
+  echo "Cleaning up test service ($TEST_CONFIG)..."
   sudo -n "$NVPN_BIN" service uninstall --config "$TEST_CONFIG" 2>/dev/null || true
+  if [[ "$RESTORE_DEFAULT_SERVICE" == "1" ]]; then
+    echo "Restoring the pre-existing default service..."
+    restore_default_service \
+      || echo "FAIL: could not restore the default macOS service" >&2
+  fi
   rm -rf "$TEST_DIR"
 }
 trap cleanup EXIT
+
+default_service_json="$("$NVPN_BIN" service status --json --skip-binary-version \
+  --config "$DEFAULT_CONFIG")"
+default_service_active="$(printf '%s' "$default_service_json" | python3 -c '
+import json, sys
+s = json.load(sys.stdin)
+print("true" if s.get("installed") and not s.get("disabled") and (s.get("loaded") or s.get("running")) else "false")
+')"
+if [[ "$default_service_active" == "true" ]]; then
+  echo "Temporarily disabling the pre-existing default service..."
+  sudo -n "$NVPN_BIN" service disable --config "$DEFAULT_CONFIG" >/dev/null
+  RESTORE_DEFAULT_SERVICE=1
+fi
 
 "$NVPN_BIN" init --config "$TEST_CONFIG" --force >/dev/null
 "$NVPN_BIN" init --config "$PEER_CONFIG" --force >/dev/null
@@ -117,13 +149,25 @@ if [ "$DETECTED_RUNNING" != "true" ]; then
   echo "      nvpn service install. The launchd daemon should be visible."
   echo "Service status:"
   "$NVPN_BIN" service status --config "$TEST_CONFIG" || true
-  service_pid="$("$NVPN_BIN" service status --json --skip-binary-version \
-    --config "$TEST_CONFIG" 2>/dev/null \
+  service_json="$("$NVPN_BIN" service status --json --skip-binary-version \
+    --config "$TEST_CONFIG" 2>/dev/null || true)"
+  service_pid="$(printf '%s' "$service_json" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("pid") or "")' \
-    || true)"
+    2>/dev/null || true)"
+  service_label="$(printf '%s' "$service_json" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("label") or "")' \
+    2>/dev/null || true)"
+  if [[ -n "$service_label" ]]; then
+    echo "launchctl service details:"
+    launchctl print "system/$service_label" || true
+  fi
   if [[ -n "$service_pid" ]]; then
     echo "Service process:"
     ps -ww -p "$service_pid" -o pid=,stat=,command= || true
+  fi
+  if [[ -f "$TEST_DIR/daemon.log" ]]; then
+    echo "Daemon log:"
+    tail -n 100 "$TEST_DIR/daemon.log" || true
   fi
   exit 1
 fi
