@@ -114,7 +114,7 @@ DETECTED_RUNNING="$(printf '%s' "$runtime_json" \
 
 if [ "$DETECTED_RUNNING" != "true" ]; then
   echo "FAIL: nvpn status reports daemon.running=$DETECTED_RUNNING after"
-  echo "      `nvpn service install`. The launchd daemon should be visible."
+  echo "      nvpn service install. The launchd daemon should be visible."
   echo "Service status:"
   "$NVPN_BIN" service status --config "$TEST_CONFIG" || true
   exit 1

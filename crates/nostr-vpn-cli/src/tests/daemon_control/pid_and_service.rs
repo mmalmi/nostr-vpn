@@ -117,6 +117,38 @@ fn daemon_pid_scan_matches_macos_service_helper_with_config_suffix() {
     assert_eq!(pids, vec![3001]);
 }
 
+#[cfg(unix)]
+#[test]
+fn daemon_command_matches_canonicalized_config_path() {
+    use std::os::unix::fs::symlink;
+
+    let unique = format!(
+        "nvpn-daemon-scan-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos()
+    );
+    let root = std::env::temp_dir().join(unique);
+    let real_dir = root.join("real");
+    let linked_dir = root.join("linked");
+    fs::create_dir_all(&real_dir).expect("create real config directory");
+    symlink(&real_dir, &linked_dir).expect("create config directory symlink");
+    let real_config = real_dir.join("config.toml");
+    let linked_config = linked_dir.join("config.toml");
+    fs::write(&real_config, "").expect("create config");
+    let canonical_config = fs::canonicalize(&real_config).expect("canonicalize real config");
+
+    let command = format!(
+        "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn.test daemon --service --config {}",
+        canonical_config.display()
+    );
+    assert!(daemon_command_matches_config(&command, &linked_config));
+
+    fs::remove_dir_all(&root).expect("remove config fixture");
+}
+
 #[test]
 fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
     let config_path = Path::new("/root/.config/nvpn/config.toml");

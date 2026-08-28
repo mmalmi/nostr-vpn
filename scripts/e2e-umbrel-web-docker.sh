@@ -69,7 +69,10 @@ read_temp_peer_npub() {
 }
 
 "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-"${COMPOSE[@]}" up --build -d web
+case "${NVPN_UMBREL_WEB_E2E_SKIP_BUILD:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On) "${COMPOSE[@]}" up -d web ;;
+  *) "${COMPOSE[@]}" up --build -d web ;;
+esac
 wait_for_http "http://127.0.0.1:$PORT/api/health"
 
 PEER_NPUB="$(read_temp_peer_npub)"

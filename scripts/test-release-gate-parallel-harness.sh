@@ -370,6 +370,8 @@ required_steps=(
   run_linux_platform_lane
   run_android_static_validation_lane
   build_release_gate_docker_node_image
+  build_release_gate_paid_exit_image
+  build_release_gate_web_image
   run_host_validation_lane
   run_desktop_app_launch_smokes
   run_linux_exclusive_desktop_gates
@@ -407,6 +409,9 @@ required_contracts=(
   'NVPN_RELEASE_JOIN_ANDROID_INSTALL_RECEIPT='
   'NVPN_RELEASE_JOIN_ANDROID_FIPS_METADATA_RECEIPT='
   'NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=1'
+  'export NVPN_EXIT_NODE_E2E_SKIP_BUILD=1'
+  'export NVPN_WEB_STARTOS_JOIN_IMAGE_READY=1'
+  'export NVPN_UMBREL_WEB_E2E_SKIP_BUILD=1'
   'NVPN_HOST_LINUX_VM_BUILDER_MODE=remote-native'
   'NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST="${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST:-$NVPN_UBUNTU_SSH_HOST}"'
   'NVPN_HOST_LINUX_VM_NATIVE_BUILDER_PROXY_COMMAND="${NVPN_HOST_LINUX_VM_NATIVE_BUILDER_PROXY_COMMAND:-${NVPN_UBUNTU_SSH_PROXY_COMMAND:-}}"'
@@ -447,6 +452,12 @@ for contract in \
   grep -Fq "$contract" <<<"$docker_functional_body" \
     || fail "isolated Docker gates omit paid-exit contract: $contract"
 done
+grep -Fq 'NVPN_RELEASE_GATE_PAID_EXIT_AUTO_IMAGE:-${NVPN_RELEASE_GATE_PAID_EXIT_IMAGE' \
+  <<<"$docker_functional_body" \
+  || fail "manual and automatic paid-exit lanes do not reuse one exact image"
+umbrel_web_e2e="$ROOT_DIR/scripts/e2e-umbrel-web-docker.sh"
+grep -Fq 'NVPN_UMBREL_WEB_E2E_SKIP_BUILD' "$umbrel_web_e2e" \
+  || fail "Umbrel web e2e cannot reuse the release gate's exact prebuilt image"
 exit_node_e2e="$ROOT_DIR/scripts/e2e-exit-node-docker.sh"
 for contract in \
   'HOST_LOG_DIR="$(mktemp -d ' \

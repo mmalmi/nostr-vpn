@@ -2015,6 +2015,43 @@ build_release_gate_docker_node_image() {
     build node-a
 }
 
+build_release_gate_paid_exit_image() {
+  local git_common_dir primary_checkout_parent image auto_image
+  git_common_dir="$(git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)"
+  primary_checkout_parent="$(dirname "$(dirname "$git_common_dir")")"
+  image="${NVPN_RELEASE_GATE_PAID_EXIT_IMAGE:-nostr-vpn-release-gate-paid-exit-node}"
+  auto_image="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_IMAGE:-$image}"
+
+  env \
+    COMPOSE_PROFILES=paid-exit \
+    NVPN_EXIT_NODE_E2E_DOCKERFILE=Dockerfile.paid-exit-e2e \
+    NVPN_EXIT_NODE_E2E_IMAGE="$image" \
+    NVPN_CASHU_SERVICE_REPO_PATH="${NVPN_CASHU_SERVICE_REPO_PATH:-$primary_checkout_parent/cashu-service}" \
+    NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH="${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-$primary_checkout_parent/cashu_spilman_channels}" \
+    docker compose \
+      -p nostr-vpn-release-gate-paid-exit-image \
+      -f "$ROOT_DIR/docker-compose.exit-node-e2e.yml" \
+      build node-a
+  if [[ "$auto_image" != "$image" ]]; then
+    docker image tag "$image" "$auto_image"
+  fi
+}
+
+build_release_gate_web_image() {
+  local image startos_image umbrel_image
+  image="${NVPN_RELEASE_GATE_WEB_IMAGE:-nostr-vpn-release-gate-web}"
+  startos_image="${NVPN_RELEASE_GATE_WEB_STARTOS_IMAGE:-$image}"
+  umbrel_image="${NVPN_RELEASE_GATE_UMBREL_IMAGE:-$image}"
+
+  docker build -f "$ROOT_DIR/umbrel/Dockerfile" -t "$image" "$ROOT_DIR"
+  if [[ "$startos_image" != "$image" ]]; then
+    docker image tag "$image" "$startos_image"
+  fi
+  if [[ "$umbrel_image" != "$image" && "$umbrel_image" != "$startos_image" ]]; then
+    docker image tag "$image" "$umbrel_image"
+  fi
+}
+
 run_docker_signal_gates() {
   if ! docker_release_gates_enabled; then
     echo "Skipping Docker e2e because NVPN_RELEASE_GATE_DOCKER_E2E=${NVPN_RELEASE_GATE_DOCKER_E2E}"
@@ -2073,14 +2110,17 @@ run_userspace_wireguard_exit_docker_gate() {
 }
 
 run_web_startos_manual_join_docker_gate() {
-  ./scripts/e2e-web-startos-manual-join-docker.sh
+  env \
+    NVPN_WEB_STARTOS_JOIN_IMAGE="${NVPN_RELEASE_GATE_WEB_STARTOS_IMAGE:-${NVPN_RELEASE_GATE_WEB_IMAGE:-nostr-vpn-release-gate-web}}" \
+    ./scripts/e2e-web-startos-manual-join-docker.sh
 }
 
 run_umbrel_release_gate() {
-  local image="${NVPN_RELEASE_GATE_UMBREL_IMAGE:-nostr-vpn-release-gate-umbrel}"
+  local image="${NVPN_RELEASE_GATE_UMBREL_IMAGE:-${NVPN_RELEASE_GATE_WEB_IMAGE:-nostr-vpn-release-gate-web}}"
   pnpm --dir "$ROOT_DIR/web/control-panel" install --frozen-lockfile
   env \
     NOSTR_VPN_IMAGE="$image" \
+    NVPN_UMBREL_WEB_E2E_SKIP_BUILD="${NVPN_UMBREL_WEB_E2E_SKIP_BUILD:-1}" \
     NVPN_UMBREL_WEB_E2E_PROJECT="${NVPN_RELEASE_GATE_UMBREL_WEB_PROJECT:-nostr-vpn-release-gate-umbrel-web}" \
     NVPN_UMBREL_WEB_PORT="${NVPN_RELEASE_GATE_UMBREL_WEB_PORT:-38180}" \
     ./scripts/e2e-umbrel-web-docker.sh
@@ -2140,7 +2180,7 @@ run_docker_isolated_functional_gates() {
 
   release_gate_parallel_start "Docker automatic Spilman paid exit" \
     env \
-    NVPN_EXIT_NODE_E2E_IMAGE="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_IMAGE:-nostr-vpn-release-gate-paid-exit-auto-node}" \
+    NVPN_EXIT_NODE_E2E_IMAGE="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_IMAGE:-${NVPN_RELEASE_GATE_PAID_EXIT_IMAGE:-nostr-vpn-release-gate-paid-exit-node}}" \
     NVPN_EXIT_NODE_E2E_PROJECT_NAME="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PROJECT_NAME:-nostr-vpn-release-gate-paid-exit-auto}" \
     NVPN_E2E_INTERNET_SUBNET="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_PUBLIC_SUBNET:-198.19.246.0/24}" \
     NVPN_E2E_INTERNET_TARGET_IP="${NVPN_RELEASE_GATE_PAID_EXIT_AUTO_TARGET_IP:-198.19.246.100}" \
@@ -2372,6 +2412,10 @@ main() {
     export NVPN_EXIT_NODE_E2E_IMAGE="$NVPN_E2E_NODE_IMAGE"
     release_gate_parallel_start "Docker node image build" build_release_gate_docker_node_image
     concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+    release_gate_parallel_start "Docker paid-exit image build" build_release_gate_paid_exit_image
+    concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+    release_gate_parallel_start "Docker web image build" build_release_gate_web_image
+    concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
     docker_build_requested=1
   fi
 
@@ -2388,6 +2432,9 @@ main() {
   if ((docker_build_requested)); then
     export NVPN_E2E_SKIP_NODE_BUILD=1
     export NVPN_PERF_SKIP_BUILD=1
+    export NVPN_EXIT_NODE_E2E_SKIP_BUILD=1
+    export NVPN_WEB_STARTOS_JOIN_IMAGE_READY=1
+    export NVPN_UMBREL_WEB_E2E_SKIP_BUILD=1
   fi
 
   # The real desktop network proofs own their target VM and hypervisor

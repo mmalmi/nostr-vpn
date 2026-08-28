@@ -369,7 +369,6 @@ pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Res
 }
 
 pub(crate) fn daemon_command_matches_config(command: &str, config_path: &Path) -> bool {
-    let config_text = config_path.display().to_string();
     let Some((prefix, _)) = command.split_once(" daemon ") else {
         return false;
     };
@@ -378,7 +377,19 @@ pub(crate) fn daemon_command_matches_config(command: &str, config_path: &Path) -
         && !daemon_command_prefix_looks_like_shell_wrapper(prefix)
         && command.contains(" daemon ")
         && command.contains("--config")
-        && command.contains(config_text.as_str())
+        && daemon_command_mentions_config(command, config_path)
+}
+
+fn daemon_command_mentions_config(command: &str, config_path: &Path) -> bool {
+    let config_text = config_path.display().to_string();
+    if command.contains(config_text.as_str()) {
+        return true;
+    }
+
+    fs::canonicalize(config_path).ok().is_some_and(|canonical| {
+        let canonical_text = canonical.display().to_string();
+        command.contains(canonical_text.as_str())
+    })
 }
 
 fn daemon_command_has_nvpn_executable_prefix(prefix: &str) -> bool {
