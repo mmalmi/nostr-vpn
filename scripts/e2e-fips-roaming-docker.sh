@@ -17,9 +17,11 @@ export NVPN_E2E_NODE_A_UNDERLAY_IP="${NVPN_E2E_NODE_A_UNDERLAY_IP:-$UNDERLAY_PRE
 export NVPN_E2E_NODE_B_UNDERLAY_IP="${NVPN_E2E_NODE_B_UNDERLAY_IP:-$UNDERLAY_PREFIX.11}"
 export NVPN_E2E_NODE_C_UNDERLAY_IP="${NVPN_E2E_NODE_C_UNDERLAY_IP:-$UNDERLAY_PREFIX.12}"
 MIGRATED_NODE_A_IP="${NVPN_E2E_MIGRATED_NODE_A_IP:-$UNDERLAY_PREFIX.20}"
-# Normal link-dead detection is 30s. Leave enough room for Docker scheduling,
-# status polling, and route-cache handoff before declaring fallback broken.
-FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
+# A target-signed fallback response should move the established payload owner
+# before normal 30s link-dead detection. Leave enough room for Docker
+# scheduling and status polling without allowing link-dead to hide a stalled
+# authenticated handoff.
+FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-20}"
 # Consecutive flaps can meet a draining rekey and several bounded direct-probe
 # retries. Active-path retries are paced at 2-4s, and repeated production-image
 # runs restore bidirectional direct payload in 5-13s. Fail at 20s instead of

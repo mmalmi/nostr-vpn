@@ -30,10 +30,10 @@ cashu = { version = "=0.17.3", default-features = false }
 cdk-spilman = "=0.17.6"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.67" }
-fips-core = { package = "nvpn-fips-core", version = "=0.4.67", features = ["webrtc-transport"] }
+fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.68" }
+fips-core = { package = "nvpn-fips-core", version = "=0.4.68", features = ["webrtc-transport"] }
 fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.1" }
-fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.3" }
+fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.4" }
 futures = "0.3"
 hashtree-updater = "0.2.80"
 hex = "0.4"
@@ -57,7 +57,7 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
 nostr-pubsub = "0.1.13"
-nostr-pubsub-fips = "=0.4.10"
+nostr-pubsub-fips = "=0.4.11"
 nostr-pubsub-relay = "0.1.11"
 nostr-pubsub-social-graph = "0.2.2"
 nostr-social-graph = "0.1.4"
