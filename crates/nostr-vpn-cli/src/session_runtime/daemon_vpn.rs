@@ -434,7 +434,7 @@ macro_rules! handle_daemon_state_tick {
                     )
                     .await
                         {
-                            Ok(()) => {
+                            Ok(_) => {
                                 // The FIPS reconciliation owns secure exit DNS teardown.
                                 // Start split MagicDNS only after that port has been released.
                                 if paid_exit_route_changed {
@@ -649,12 +649,15 @@ macro_rules! handle_daemon_state_tick {
                 // route it, and waiting for the full peer-set sync consumed most of
                 // the mobile coordination deadline on Windows. The post-sync call
                 // below remains as an idempotent retry for runtimes created by sync.
-                if publish_fips_roster_after_control
-                    && let Some(runtime) = fips_tunnel_runtime.as_ref()
-                {
-                    start_queued_join_roster_deliveries(runtime, &config_path);
-                }
-                let fips_sync_succeeded = match sync_fips_private_runtime(
+                let pre_sync_join_roster_deliveries = if publish_fips_roster_after_control {
+                    fips_tunnel_runtime.as_ref().map_or_else(Vec::new, |runtime| {
+                        start_queued_join_roster_deliveries(runtime, &config_path)
+                    })
+                } else {
+                    Vec::new()
+                };
+                let (fips_sync_succeeded, fips_runtime_replaced) =
+                    match sync_fips_private_runtime(
                     &mut fips_tunnel_runtime,
                     SyncFipsPrivateRuntimeContext {
                         app: &app,
@@ -672,14 +675,14 @@ macro_rules! handle_daemon_state_tick {
                 )
                 .await
                 {
-                    Ok(()) => true,
+                    Ok(runtime_replaced) => (true, runtime_replaced),
                     Err(error) => {
                         vpn_status = format!("FIPS private mesh update failed ({error})");
                         if control_result.is_ok() {
                             control_result =
                                 Err(error.context("apply FIPS tunnel, routes, and DNS"));
                         }
-                        false
+                        (false, false)
                     }
                 };
                 refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
@@ -691,7 +694,9 @@ macro_rules! handle_daemon_state_tick {
                         &app,
                         &config_path,
                         &mut pending_fips_roster_recipients,
+                        pre_sync_join_roster_deliveries,
                         fips_sync_succeeded,
+                        fips_runtime_replaced,
                     )
                     .await;
                 }

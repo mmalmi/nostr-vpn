@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::join_delivery::{
@@ -13,6 +14,8 @@ use crate::fips_private_mesh::FipsPrivateTunnelRuntime;
 use crate::{broadcast_local_fips_capabilities, publish_fips_active_network_roster};
 
 static IN_FLIGHT_JOIN_ROSTERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+const JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT: Duration = Duration::from_secs(1);
 
 fn in_flight_join_rosters() -> &'static Mutex<HashSet<PathBuf>> {
     IN_FLIGHT_JOIN_ROSTERS.get_or_init(|| Mutex::new(HashSet::new()))
@@ -42,8 +45,20 @@ pub(super) async fn publish_fips_control_updates(
     app: &AppConfig,
     config_path: &Path,
     pending_roster_recipients: &mut HashSet<String>,
+    pre_sync_join_roster_deliveries: Vec<tokio::task::JoinHandle<()>>,
     fips_sync_succeeded: bool,
+    fips_runtime_replaced: bool,
 ) {
+    if fips_sync_succeeded {
+        if fips_runtime_replaced {
+            wait_for_join_roster_delivery_tasks(
+                pre_sync_join_roster_deliveries,
+                JOIN_ROSTER_RELOAD_HANDOFF_TIMEOUT,
+            )
+            .await;
+        }
+        drop(start_queued_join_roster_deliveries(runtime, config_path));
+    }
     if let Err(error) =
         publish_fips_active_network_roster(runtime, app, config_path, pending_roster_recipients)
     {
@@ -51,9 +66,6 @@ pub(super) async fn publish_fips_control_updates(
     }
     if let Err(error) = broadcast_local_fips_capabilities(runtime, app).await {
         eprintln!("fips: capabilities broadcast failed after control request: {error}");
-    }
-    if fips_sync_succeeded {
-        start_queued_join_roster_deliveries(runtime, config_path);
     }
 }
 
@@ -69,6 +81,18 @@ fn release_join_roster_delivery(path: &Path) {
     }
 }
 
+async fn wait_for_join_roster_delivery_tasks(
+    tasks: Vec<tokio::task::JoinHandle<()>>,
+    timeout: Duration,
+) {
+    let _ = tokio::time::timeout(timeout, async {
+        for task in tasks {
+            let _ = task.await;
+        }
+    })
+    .await;
+}
+
 struct JoinRosterDeliveryClaim(PathBuf);
 
 impl Drop for JoinRosterDeliveryClaim {
@@ -81,18 +105,18 @@ fn track_join_roster_delivery(
     path: PathBuf,
     participant: String,
     delivery: crate::fips_private_mesh::FipsJoinRosterDelivery,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let _claim = JoinRosterDeliveryClaim(path.clone());
         let result = delivery.await;
         finish_join_roster_delivery(&path, &participant, result);
-    });
+    })
 }
 
 pub(super) fn start_queued_join_roster_deliveries(
     runtime: &FipsPrivateTunnelRuntime,
     config_path: &Path,
-) {
+) -> Vec<tokio::task::JoinHandle<()>> {
     // The outbox is committed before the UI asks the daemon to reload. Read
     // the authoritative persisted roster here so a heartbeat holding the old
     // in-memory snapshot cannot reject or claim the new approval first.
@@ -100,9 +124,10 @@ pub(super) fn start_queued_join_roster_deliveries(
         Ok(app) => app.participant_pubkeys_hex(),
         Err(error) => {
             eprintln!("join roster delivery is waiting for readable config: {error:#}");
-            return;
+            return Vec::new();
         }
     };
+    let mut deliveries = Vec::new();
     for (path, mut queued) in load_join_rosters(config_path) {
         if !claim_join_roster_delivery(&path) {
             continue;
@@ -145,8 +170,9 @@ pub(super) fn start_queued_join_roster_deliveries(
             continue;
         }
 
-        track_join_roster_delivery(path, participant, delivery);
+        deliveries.push(track_join_roster_delivery(path, participant, delivery));
     }
+    deliveries
 }
 
 fn finish_join_roster_delivery(path: &Path, recipient: &str, delivery: anyhow::Result<()>) {
@@ -173,7 +199,6 @@ fn consume_join_roster(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn approved_device_ipc_does_not_create_another_join_request() {
@@ -236,7 +261,7 @@ mod tests {
         assert!(claim_join_roster_delivery(&path));
 
         let (complete_tx, complete_rx) = tokio::sync::oneshot::channel();
-        track_join_roster_delivery(
+        let delivery_task = track_join_roster_delivery(
             path.clone(),
             "recipient".to_string(),
             Box::pin(async move {
@@ -251,13 +276,8 @@ mod tests {
             "the post-sync retry must not duplicate the pre-sync delivery"
         );
         complete_tx.send(()).expect("complete delivery");
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while path.exists() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("background delivery did not finish");
+        wait_for_join_roster_delivery_tasks(vec![delivery_task], Duration::from_secs(1)).await;
+        assert!(!path.exists(), "background delivery did not finish");
         assert!(claim_join_roster_delivery(&path));
         release_join_roster_delivery(&path);
     }

@@ -663,13 +663,14 @@ struct SyncFipsPrivateRuntimeContext<'a> {
 async fn sync_fips_private_runtime(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: SyncFipsPrivateRuntimeContext<'_>,
-) -> Result<()> {
+) -> Result<bool> {
     if !fips_private_runtime_active_for_config(
         context.app,
         context.config_path,
         context.vpn_enabled,
         context.expected_peers,
     )? {
+        let runtime_replaced = runtime.is_some();
         if let Some(runtime) = runtime.take() {
             stop_fips_private_tunnel_runtime(context.config_path, runtime).await?;
         }
@@ -677,7 +678,7 @@ async fn sync_fips_private_runtime(
         if !context.app.fips_host_tunnel_enabled {
             crate::fips_host_tunnel::FipsHostTunnelRuntime::cleanup_disabled_artifacts();
         }
-        return Ok(());
+        return Ok(runtime_replaced);
     }
 
     let config_iface = runtime
@@ -724,14 +725,16 @@ async fn sync_fips_private_runtime(
         let started = start_fips_private_tunnel_runtime(context.config_path, config).await?;
         eprintln!("daemon: restarted FIPS private mesh on {}", started.iface());
         *runtime = Some(started);
+        Ok(true)
     } else if let Some(existing) = runtime.as_mut() {
         apply_fips_private_tunnel_runtime_config(context.config_path, existing, config).await?;
+        Ok(false)
     } else {
         let started = start_fips_private_tunnel_runtime(context.config_path, config).await?;
         eprintln!("daemon: FIPS private mesh on {}", started.iface());
         *runtime = Some(started);
+        Ok(true)
     }
-    Ok(())
 }
 async fn send_pending_fips_join_requests(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,

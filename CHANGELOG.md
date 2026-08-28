@@ -54,7 +54,8 @@ automatic selection.
   validation across in-flight fallback traffic, avoiding recovery stalls when
   an original or changed source address returns under load.
 - Deliver the signed roster when an admin accepts an inbound device request,
-  so the joining device completes instead of remaining at the approval prompt.
+  including across a desktop mesh reload, so the joining device completes
+  instead of remaining at the approval prompt.
 - Print join-request reachability once, keep the approval wait quiet through
   transient connectivity changes without polling the daemon, and stop creating
   a replacement request immediately after approval.
