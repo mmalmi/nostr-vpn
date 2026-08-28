@@ -30,7 +30,7 @@
         filter_static_tunnel_endpoints_with_policy_and_route_check,
         fips_endpoint_config_with_open_discovery_limit, fips_endpoint_peers_from_mesh,
         fips_exit_route_ready_for_connected, fips_lan_discovery_scope, fips_peer_address_from_hint,
-        fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
+        fips_ping_participants, fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
         linux_private_ipv4_route_subnets_from_ip_route,
         linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
         macos_endpoint_bypass_underlay_refresh_required,
@@ -65,7 +65,7 @@
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{
         AppConfig, ExitDnsResolverConfig, InternetSource, PendingOutboundJoinRequest,
-        derive_mesh_tunnel_ip,
+        derive_mesh_tunnel_ip, normalize_nostr_pubkey,
     };
     use nostr_vpn_core::fips_control::{
         FipsControlFrame, JoinRosterControl, NetworkRoster, PeerEndpointHint, SignedRoster,

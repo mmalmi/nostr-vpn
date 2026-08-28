@@ -131,7 +131,10 @@ impl MobileTunnel {
             initial_peers.clone(),
             local_routes,
         ));
-        let peer_identities = Arc::new(RwLock::new(mobile_peer_identity_map(&initial_peers)));
+        let peer_identities = Arc::new(RwLock::new(mobile_peer_identity_map(
+            &initial_peers,
+            &config.bootstrap_peers,
+        )));
         let mesh_peers = Arc::new(RwLock::new(initial_peers));
         let peer_hints = Arc::new(RwLock::new(config.peer_hints.clone()));
         let presence = Arc::new(RwLock::new(HashMap::new()));
@@ -448,9 +451,11 @@ impl MobileTunnel {
             let ping_config = Arc::clone(&config_state);
             tasks.push(tokio::spawn(async move {
                 loop {
-                    let network_id = ping_config
+                    let (network_id, bootstrap_peers) = ping_config
                         .read()
-                        .map(|config| config.network_id.clone())
+                        .map(|config| {
+                            (config.network_id.clone(), config.bootstrap_peers.clone())
+                        })
                         .unwrap_or_default();
                     if network_id.trim().is_empty() {
                         tokio::time::sleep(Duration::from_secs(MOBILE_RUNTIME_STATE_REFRESH_SECS))
@@ -463,6 +468,7 @@ impl MobileTunnel {
                         &peer_identities,
                         &presence,
                         &network_id,
+                        &bootstrap_peers,
                     )
                     .await
                     {

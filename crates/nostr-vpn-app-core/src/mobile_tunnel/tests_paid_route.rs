@@ -268,7 +268,10 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
     ));
     let buyer_mesh_peers = Arc::new(RwLock::new(buyer_mobile.peers.clone()));
     let buyer_peer_identities =
-        Arc::new(RwLock::new(mobile_peer_identity_map(&buyer_mobile.peers)));
+        Arc::new(RwLock::new(mobile_peer_identity_map(
+            &buyer_mobile.peers,
+            &buyer_mobile.bootstrap_peers,
+        )));
     let buyer_peer_hints = Arc::new(RwLock::new(buyer_mobile.peer_hints.clone()));
     let buyer_presence = Arc::new(RwLock::new(HashMap::new()));
     let buyer_config_state = Arc::new(RwLock::new(buyer_mobile));

@@ -11,6 +11,21 @@ fn endpoint_path_refresh_due(
         && fips_peer_presence_stale(last_path_data_seen_at, now)
 }
 
+fn fips_ping_participants(
+    mut participants: Vec<String>,
+    other_link_status: &HashMap<String, FipsEndpointPeer>,
+) -> Vec<String> {
+    participants.extend(
+        other_link_status
+            .iter()
+            .filter(|(_, peer)| peer.direct_probe_auto_reconnect)
+            .map(|(participant, _)| participant.clone()),
+    );
+    participants.sort();
+    participants.dedup();
+    participants
+}
+
 impl FipsPrivateMeshRuntime {
     pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
         let now = unix_timestamp();
@@ -225,6 +240,11 @@ impl FipsPrivateMeshRuntime {
             .link_status
             .read()
             .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?;
+        let other_link_status = self
+            .other_link_status
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))?;
+        let participants = fips_ping_participants(participants, &other_link_status);
         let mut due = participants
             .into_iter()
             .filter_map(|participant| {
@@ -232,6 +252,7 @@ impl FipsPrivateMeshRuntime {
                 let peer_presence = presence.get(&participant);
                 let link_connected = link_status
                     .get(&participant)
+                    .or_else(|| other_link_status.get(&participant))
                     .is_some_and(|peer| peer.connected);
                 let last_seen_at = participant_key
                     .as_ref()

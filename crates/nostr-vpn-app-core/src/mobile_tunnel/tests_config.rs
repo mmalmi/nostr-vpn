@@ -154,16 +154,43 @@
 
     #[test]
     fn mobile_peer_ping_due_recovers_from_future_timestamps() {
-        assert!(!mobile_peer_ping_due(Some(122), Some(115), 120));
-        assert!(!mobile_peer_ping_due(Some(180), Some(1), 120));
-        assert!(!mobile_peer_ping_due(None, Some(122), 120));
-        assert!(mobile_peer_ping_due(None, Some(180), 120));
+        assert!(!mobile_peer_ping_due(Some(122), Some(115), false, 120));
+        assert!(!mobile_peer_ping_due(Some(180), Some(1), false, 120));
+        assert!(!mobile_peer_ping_due(None, Some(122), false, 120));
+        assert!(mobile_peer_ping_due(None, Some(180), false, 120));
     }
 
     #[test]
     fn offline_peer_probe_uses_battery_safe_fallback_interval() {
-        assert!(!mobile_peer_ping_due(None, Some(0), 299));
-        assert!(mobile_peer_ping_due(None, Some(0), 300));
+        assert!(!mobile_peer_ping_due(None, Some(0), false, 299));
+        assert!(mobile_peer_ping_due(None, Some(0), false, 300));
+    }
+
+    #[test]
+    fn configured_transit_is_pinged_before_the_fips_link_can_expire() {
+        assert!(!mobile_peer_ping_due(None, Some(0), true, 9));
+        assert!(mobile_peer_ping_due(None, Some(0), true, 10));
+    }
+
+    #[test]
+    fn ping_participants_include_only_roster_and_configured_transit_peers() {
+        let roster = Keys::generate().public_key().to_hex();
+        let transit = Keys::generate().public_key().to_hex();
+        let hint = FipsPeerAddressHint {
+            priority: 0,
+            addr: "udp://127.0.0.1:1".to_string(),
+            seen_at_ms: None,
+        };
+        let bootstrap_peers = HashMap::from([
+            (transit.clone(), vec![hint.clone()]),
+            ("invalid ambient peer".to_string(), vec![hint]),
+        ]);
+
+        let participants = mobile_ping_participants(vec![roster.clone()], &bootstrap_peers);
+        let mut expected = vec![(roster, false), (transit, true)];
+        expected.sort();
+
+        assert_eq!(participants, expected);
     }
 
     #[test]

@@ -342,7 +342,8 @@ async fn apply_mobile_roster_runtime_update(
     };
     let local_routes = vec![updated.local_address.clone()];
     let updated_peers = updated.peers.clone();
-    let updated_peer_identities = mobile_peer_identity_map(&updated_peers);
+    let updated_peer_identities =
+        mobile_peer_identity_map(&updated_peers, &updated.bootstrap_peers);
     let updated_hints = updated.peer_hints.clone();
     replace_mobile_mesh(
         control.mesh,
@@ -531,9 +532,18 @@ impl MobilePeerIdentityMap {
     }
 }
 
-fn mobile_peer_identity_map(peers: &[FipsMeshPeerConfig]) -> MobilePeerIdentityMap {
+fn mobile_peer_identity_map(
+    peers: &[FipsMeshPeerConfig],
+    bootstrap_peers: &HashMap<String, Vec<FipsPeerAddressHint>>,
+) -> MobilePeerIdentityMap {
     let mut identities = MobilePeerIdentityMap::default();
-    for peer in peers {
+    let bootstrap_peers = bootstrap_peers
+        .iter()
+        .filter(|(_, hints)| !hints.is_empty())
+        .filter_map(|(participant, _)| {
+            FipsMeshPeerConfig::from_participant_pubkey(participant, Vec::new()).ok()
+        });
+    for peer in peers.iter().cloned().chain(bootstrap_peers) {
         let endpoint_npub = normalize_mobile_endpoint_npub(&peer.endpoint_npub);
         let Ok(identity) = PeerIdentity::from_npub(&endpoint_npub) else {
             continue;
