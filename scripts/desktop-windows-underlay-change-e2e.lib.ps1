@@ -265,12 +265,17 @@ function Assert-NativeNetworkRestoredBeforeRepair {
   $statePath = Join-Path $StateDir "adapter-state.json"
   $state = Get-Content -Raw -LiteralPath $statePath -ErrorAction Stop |
     ConvertFrom-Json
+  $allowedPhysicalIndices = @(
+    [int]$state.primary_interface_index,
+    [int]$state.secondary_interface_index
+  )
+  $selectedPhysicalIndex = Get-SelectedPhysicalDefaultInterfaceIndex
   $route = Get-BestRoute "1.1.1.1"
   if (
-    [int]$route.InterfaceIndex -ne
-      [int]$state.primary_interface_index
+    $allowedPhysicalIndices -notcontains $selectedPhysicalIndex -or
+    [int]$route.InterfaceIndex -ne $selectedPhysicalIndex
   ) {
-    throw "native primary route was not restored before repair"
+    throw "native selected physical route was not restored before repair"
   }
   if (!(Test-PublicDns)) {
     throw "native DNS was not restored before repair"

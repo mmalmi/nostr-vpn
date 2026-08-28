@@ -909,13 +909,18 @@ switch ($Action) {
 
   "WireGuardProbe" {
     Write-Marker "wireguard-probe.pid" "$PID"
+    if ([string]::IsNullOrWhiteSpace($WireGuardServerIp)) {
+      throw "WireGuardProbe requires WireGuardServerIp"
+    }
     $log = Join-Path $StateDir "wireguard-payload.log"
     while (!(Test-Path -LiteralPath (Join-Path $StateDir "stop-probe"))) {
       try {
-        $ok = Invoke-BoundedProbeProcess "curl.exe" @(
-          "-4", "--ssl-revoke-best-effort", "--fail", "--silent",
-          "--max-time", "2", "--output", "NUL", $ProbeUrl
-        ) 2500
+        # Measure the owned WireGuard data path itself at a high cadence. The
+        # stable-state audit below still requires public DNS and verified
+        # HTTPS, while this local responder avoids spending most of the
+        # four-second handoff budget inside one unrelated Internet request.
+        $ok = Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE" `
+          @("-n", "1", "-w", "750", "-l", "32", $WireGuardServerIp) 1500
         $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         if ($ok) {
           Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
@@ -1054,7 +1059,7 @@ switch ($Action) {
         "-Binary", $Binary,
         "-Config", $Config,
         "-StateDir", $StateDir,
-        "-ProbeUrl", $ProbeUrl
+        "-WireGuardServerIp", $WireGuardServerIp
       )
       $wireGuardProbe = Start-Process -FilePath "powershell.exe" `
         -ArgumentList $wireGuardProbeArgs -WindowStyle Hidden -PassThru

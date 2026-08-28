@@ -459,7 +459,7 @@ require_tokens "$WINDOWS_GUEST" "bounded real payload probes" \
   '$process.WaitForExit($TimeoutMilliseconds)' \
   'Stop-Process -Id $process.Id -Force' \
   'Invoke-BoundedProbeProcess "$env:SystemRoot\System32\PING.EXE"' \
-  'Invoke-BoundedProbeProcess "curl.exe"'
+  '@("-n", "1", "-w", "750", "-l", "32", $WireGuardServerIp)'
 bounded_windows_probe="$({
   sed -n '/^function Invoke-BoundedProbeProcess {$/,/^}$/p' \
     "$WINDOWS_GUEST_ENTRY"
@@ -718,13 +718,15 @@ require_tokens "$WINDOWS_GUEST" "selected physical-route readiness" \
   'function Get-SelectedPhysicalDefaultInterfaceIndex {' \
   '$selectedPhysicalIndex = Get-SelectedPhysicalDefaultInterfaceIndex' \
   '$selectedPhysicalIndex -eq $InterfaceIndex'
-python3 - "$WINDOWS_GUEST" "$WINDOWS_HOST_ENTRY" "$WINDOWS_HOST_LIB" <<'PY'
+python3 - "$WINDOWS_GUEST" "$WINDOWS_HOST_ENTRY" "$WINDOWS_HOST_LIB" \
+  "$WINDOWS_GUEST_LIB" <<'PY'
 import pathlib
 import sys
 
 text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 host = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 host_lib = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+guest_lib = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
 observe = text[text.index("function Observe-Recovery {"):text.index("function Run-DnsSettingCase {")]
 evidence = observe.index("$evidence = Wait-ForRecoveryEvidence")
 audit = observe.index("Assert-ActiveExit")
@@ -824,6 +826,23 @@ for proof in (
 ):
     if proof not in management:
         raise SystemExit(f"Windows cleanup management lost tri-state proof: {proof}")
+native_restore = guest_lib[
+    guest_lib.index("function Assert-NativeNetworkRestoredBeforeRepair {"):
+    guest_lib.index("\nfunction Test-WireGuardHandshake {")
+]
+for proof in (
+    "$state.primary_interface_index",
+    "$state.secondary_interface_index",
+    "Get-SelectedPhysicalDefaultInterfaceIndex",
+    "$allowedPhysicalIndices -notcontains $selectedPhysicalIndex",
+    "[int]$route.InterfaceIndex -ne $selectedPhysicalIndex",
+):
+    if proof not in native_restore:
+        raise SystemExit(
+            f"Windows cleanup does not accept the selected physical underlay: {proof}"
+        )
+if "primary route was not restored" in native_restore:
+    raise SystemExit("Windows cleanup still requires the original cut underlay")
 if 'run_ps_cleanup_management \\\n' not in cleanup or " 180 " not in cleanup:
     raise SystemExit("Windows claimed cleanup lacks a bounded management channel")
 quarantine = cleanup.index("QUARANTINE_GUEST_NETWORK=1", ownership)
