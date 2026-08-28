@@ -17,6 +17,7 @@ service_binary=/usr/local/bin/nvpn
 service_unit=/etc/systemd/system/nvpn.service
 config=/root/.local/share/nostr-vpn/config.toml
 cashu_dir=/root/.local/share/nostr-vpn/cashu
+daemon_log=/root/.local/state/nvpn/daemon.log
 mkdir -p "$artifact_root" "$(dirname "$config")" /usr/local/test-bin
 printf '#!/usr/bin/env bash\nexit 0\n' >/usr/bin/nostr-vpn
 printf '#!/usr/bin/env bash\nif [[ "$*" == *"service uninstall"* ]]; then\n  if [[ -e /tmp/nvpn-uninstall-fail-once ]]; then rm -f /tmp/nvpn-uninstall-fail-once; exit 1; fi\n  rm -f /etc/systemd/system/nvpn.service\nfi\n' >/usr/bin/nvpn
@@ -41,6 +42,12 @@ run_cleanup() {
     "$artifact_root" /usr/bin/nostr-vpn /usr/bin/nvpn \
     "$receipt" "$package_receipt" 1
 }
+
+mkdir -p "$(dirname "$daemon_log")"
+printf 'preserved diagnostic\n' >"$daemon_log"
+[[ "$(/workspace/scripts/linux-release-mobile-join-remote.sh ReadDaemonLog \
+  "$artifact_root" /usr/bin/nostr-vpn /usr/bin/nvpn \
+  "$receipt" "$package_receipt")" == "preserved diagnostic" ]]
 
 # A unit written before the binary copy completed is still exactly attributable
 # to this already-armed candidate attempt and must be removable.

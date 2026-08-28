@@ -137,6 +137,7 @@ cleanup() {
     wait "$remote_pid" >/dev/null 2>&1 || true
   fi
   if [[ "$import_ready" -eq 1 ]]; then
+    remote ReadDaemonLog >"$RESULT_DIR/daemon.log" 2>/dev/null || true
     remote Cleanup "$service_cleanup_armed" >/dev/null 2>&1 || status=1
   fi
   if [[ "${RELEASE_JOIN_DEVICE_MUTATED:-0}" -eq 1 ]]; then

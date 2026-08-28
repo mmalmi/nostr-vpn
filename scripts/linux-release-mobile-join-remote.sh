@@ -12,12 +12,12 @@ PACKAGE_RECEIPT="${6:-}"
 shift $(( $# >= 6 ? 6 : $# ))
 
 usage() {
-  echo "usage: $0 <Reset|Bootstrap|InstallService|CreateAdmin|AdminAdd|ManualJoin|Verify|ReadMarker|ReadReceipt|Stop|NowMs|Cleanup> <artifact-root> <app> <cli> <receipt> <package-receipt> [arguments]" >&2
+  echo "usage: $0 <Reset|Bootstrap|InstallService|CreateAdmin|AdminAdd|ManualJoin|Verify|ReadMarker|ReadReceipt|ReadDaemonLog|Stop|NowMs|Cleanup> <artifact-root> <app> <cli> <receipt> <package-receipt> [arguments]" >&2
   exit 2
 }
 
 case "$MODE" in
-  Reset|Bootstrap|InstallService|CreateAdmin|AdminAdd|ManualJoin|Verify|ReadMarker|ReadReceipt|Stop|NowMs|Cleanup) ;;
+  Reset|Bootstrap|InstallService|CreateAdmin|AdminAdd|ManualJoin|Verify|ReadMarker|ReadReceipt|ReadDaemonLog|Stop|NowMs|Cleanup) ;;
   *) usage ;;
 esac
 [[ "$ARTIFACT_ROOT" == /tmp/nvpn-linux-vm-release.*/* ]] || {
@@ -286,6 +286,12 @@ case "$MODE" in
     [[ $# == 0 ]] || usage
     assert_imported_artifacts
     cat "$RECEIPT"
+    ;;
+  ReadDaemonLog)
+    [[ $# == 0 ]] || usage
+    log="$HOME/.local/state/nvpn/daemon.log"
+    [[ -f "$log" && ! -L "$log" ]] || exit 1
+    cat "$log"
     ;;
   Stop)
     [[ $# == 0 ]] || usage
