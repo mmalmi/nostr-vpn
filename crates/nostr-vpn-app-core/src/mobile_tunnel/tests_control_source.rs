@@ -1,5 +1,5 @@
     #[test]
-    fn mobile_control_source_accepts_unknown_sender_for_first_contact_records() {
+    fn mobile_control_source_accepts_unknown_sender_for_liveness_and_first_contact_records() {
         let roster_peer =
             "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc".to_string();
         let peer = FipsMeshPeerConfig::from_participant_pubkey(&roster_peer, Vec::new())
@@ -49,7 +49,7 @@
         );
         assert_eq!(
             control_frame_source_pubkey(&mesh, unknown_identity, &ping),
-            None
+            Some(unknown_hex.clone())
         );
         assert_eq!(
             control_frame_source_pubkey(&mesh, unknown_identity, &join_request),

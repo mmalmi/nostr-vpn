@@ -555,7 +555,7 @@
     }
 
     #[test]
-    fn control_frames_from_unknown_endpoints_are_limited_to_first_contact_records() {
+    fn control_frames_from_unknown_endpoints_allow_liveness_and_first_contact_records() {
         let keys = Keys::generate();
         let unknown_pubkey = keys.public_key().to_hex();
         let unknown_npub = keys.public_key().to_bech32().expect("npub");
@@ -604,7 +604,10 @@
             ),
         };
 
-        assert!(control_frame_source_pubkey(&mesh, unknown_peer, &ping).is_none());
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, unknown_peer, &ping),
+            Some(unknown_pubkey.clone())
+        );
         assert!(control_frame_source_pubkey(&mesh, unknown_peer, &roster).is_none());
         assert_eq!(
             control_frame_source_pubkey(&mesh, unknown_peer, &join_request),

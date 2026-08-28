@@ -481,9 +481,13 @@ fn control_frame_source_pubkey(
 ) -> Option<String> {
     mesh.participant_for_endpoint_node_addr(source_peer.node_addr().as_bytes())
         .or_else(|| {
+            // Configured transit is intentionally outside the private roster,
+            // but its authenticated link still needs Ping/Pong liveness.
             let allow_unknown = matches!(
                 frame,
-                FipsControlFrame::JoinRequest { .. }
+                FipsControlFrame::Ping { .. }
+                    | FipsControlFrame::Pong { .. }
+                    | FipsControlFrame::JoinRequest { .. }
                     | FipsControlFrame::JoinRoster { .. }
                     | FipsControlFrame::JoinRosterAck { .. }
             );

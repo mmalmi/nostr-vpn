@@ -601,6 +601,130 @@
             .expect("shutdown carol");
     }
 
+    #[tokio::test]
+    async fn configured_non_roster_transit_ping_roundtrip() {
+        let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let bob_nsec = bob_keys.secret_key().to_bech32().expect("bob nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let alice_port = available_udp_port();
+        let bob_port = available_udp_port();
+        let alice_config =
+            direct_udp_endpoint_config_many(alice_port, &[(&bob_npub, bob_port, true)]);
+        let bob_config =
+            direct_udp_endpoint_config_many(bob_port, &[(&alice_npub, alice_port, true)]);
+
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            alice_nsec,
+            None,
+            Vec::new(),
+            alice_config,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("alice endpoint should bind");
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            bob_nsec,
+            None,
+            Vec::new(),
+            bob_config,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("bob endpoint should bind");
+
+        wait_for_fips_peer(&alice_runtime, &bob_npub).await;
+        wait_for_fips_peer(&bob_runtime, &alice_npub).await;
+        let frame = FipsControlFrame::Ping {
+            network_id: "network".to_string(),
+            sent_at: unix_timestamp(),
+        };
+        let (mut bob_messages, mut bob_events) = (Vec::with_capacity(1), Vec::with_capacity(1));
+        let (mut alice_messages, mut alice_events) = (Vec::with_capacity(1), Vec::with_capacity(1));
+        let mut alice_saw_bob = false;
+        for _ in 0..40 {
+            alice_runtime
+                .send_probe_frame(&bob_pubkey, &frame)
+                .await
+                .expect("configured transit ping should send");
+            let _ = tokio::time::timeout(
+                Duration::from_millis(50),
+                recv_mesh_event_batch_into(
+                    &bob_runtime,
+                    &mut bob_messages,
+                    &mut bob_events,
+                    1,
+                ),
+            )
+            .await;
+            let alice_event = tokio::time::timeout(
+                Duration::from_millis(50),
+                recv_mesh_event_batch_into(
+                    &alice_runtime,
+                    &mut alice_messages,
+                    &mut alice_events,
+                    1,
+                ),
+            )
+            .await;
+            if let Ok(Ok(Some(_))) = alice_event
+                && alice_events.drain(..).any(|event| {
+                    matches!(
+                        event,
+                        FipsPrivateMeshEvent::Presence {
+                            participant_pubkey,
+                            ..
+                        } if participant_pubkey == bob_pubkey
+                    )
+                })
+            {
+                alice_saw_bob = true;
+                break;
+            }
+        }
+
+        assert!(alice_saw_bob, "configured non-roster transit did not answer Ping");
+        assert!(
+            alice_runtime.mesh.load().peer_pubkeys().is_empty()
+                && bob_runtime.mesh.load().peer_pubkeys().is_empty(),
+            "transit keepalive must not require roster membership"
+        );
+        assert!(
+            alice_runtime
+                .presence
+                .read()
+                .expect("alice presence")
+                .contains_key(&bob_pubkey)
+        );
+        assert!(
+            bob_runtime
+                .presence
+                .read()
+                .expect("bob presence")
+                .contains_key(&alice_pubkey)
+        );
+
+        alice_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown alice");
+        bob_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown bob");
+    }
+
     #[test]
     fn endpoint_config_respects_requested_nostr_policy() {
         let keys = Keys::generate();
