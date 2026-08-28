@@ -10,7 +10,6 @@ import pyatspi
 
 target_pid = 0
 target_window = 0
-component_refind_attempts = 4
 
 
 def walk(node):
@@ -69,74 +68,94 @@ def find_named(name, timeout=15):
     raise RuntimeError(f"visible AT-SPI control did not appear: {name}")
 
 
-def focus_named_with_keyboard(name, max_tabs=80):
+def has_action(node):
+    try:
+        return node.queryAction().nActions > 0
+    except Exception:
+        return False
+
+
+def focused_actionable_nodes():
+    focused = []
+    for node in walk(pyatspi.Registry.getDesktop(0)):
+        try:
+            if (
+                node.get_process_id() == target_pid
+                and visible(node)
+                and has_action(node)
+                and node.getState().contains(pyatspi.STATE_FOCUSED)
+            ):
+                focused.append(node)
+        except Exception:
+            continue
+    return focused
+
+
+def node_is_named(node, name):
+    try:
+        return node.name == name
+    except Exception:
+        return False
+
+
+def sole_focused_target(name):
+    focused = focused_actionable_nodes()
+    if len(focused) != 1:
+        return None
+    return focused[0] if node_is_named(focused[0], name) else None
+
+
+def accessible_description(node):
+    try:
+        return f"{node.getRoleName()}:{node.name}"
+    except Exception:
+        return "stale"
+
+
+def target_window_has_focus():
+    focused = subprocess.run(
+        ["xdotool", "getwindowfocus"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return focused.returncode == 0 and focused.stdout.strip() == str(target_window)
+
+
+def focus_named_with_keyboard(name, max_tabs=100):
     subprocess.run(
         ["xdotool", "windowfocus", "--sync", str(target_window)],
         check=True,
     )
     focused_names = []
+    saw_non_target_focus = False
     for _ in range(max_tabs):
-        node = find_named(name, timeout=1)
-        try:
-            if node.getState().contains(pyatspi.STATE_FOCUSED):
-                return node
-        except Exception:
-            pass
+        if not target_window_has_focus():
+            subprocess.run(
+                ["xdotool", "windowfocus", "--sync", str(target_window)],
+                check=True,
+            )
+            time.sleep(0.1)
         subprocess.run(
             ["xdotool", "key", "--clearmodifiers", "Tab"],
             check=True,
         )
         time.sleep(0.05)
-        for candidate in walk(pyatspi.Registry.getDesktop(0)):
-            try:
-                if (
-                    candidate.get_process_id() == target_pid
-                    and candidate.getState().contains(pyatspi.STATE_FOCUSED)
-                ):
-                    focused_names.append(
-                        f"{candidate.getRoleName()}:{candidate.name}"
-                    )
-                    break
-            except Exception:
-                continue
+        pyatspi.Registry.pumpQueuedEvents()
+        focused = focused_actionable_nodes()
+        target = sole_focused_target(name)
+        if target is not None and saw_non_target_focus:
+            return target
+        if focused and not any(node_is_named(node, name) for node in focused):
+            saw_non_target_focus = True
+        focused_names.append(
+            ",".join(accessible_description(node) for node in focused)
+            or "none"
+        )
     raise RuntimeError(
         f"keyboard focus did not reach {name}; focused sequence: "
         + ", ".join(focused_names)
     )
-
-
-def try_component_focus(name):
-    last_error = None
-    for attempt in range(component_refind_attempts):
-        node = find_named(name, timeout=15 if attempt == 0 else 2)
-        try:
-            component = node.queryComponent()
-            if component is None:
-                raise RuntimeError("AT-SPI returned no Component object")
-            return bool(component.grabFocus())
-        except Exception as error:
-            last_error = error
-            if attempt + 1 == component_refind_attempts:
-                break
-            print(
-                f"retry AT-SPI Component for {name}: "
-                f"attempt={attempt + 1} error={error}",
-                file=sys.stderr,
-            )
-            pyatspi.Registry.pumpQueuedEvents()
-            time.sleep(0.1)
-    raise RuntimeError(
-        f"AT-SPI Component remained unavailable for {name} after "
-        f"{component_refind_attempts} fresh lookups: {last_error}"
-    )
-
-
-def try_accessible_action(name):
-    node = find_named(name)
-    action = node.queryAction()
-    if action is None or action.nActions < 1:
-        return False
-    return bool(action.doAction(0))
 
 
 def invoke(name):
@@ -151,47 +170,53 @@ def invoke(name):
         ["xdotool", "windowfocus", "--sync", str(target_window)],
         check=True,
     )
-    try:
-        if try_component_focus(name):
-            subprocess.run(
-                ["xdotool", "key", "--clearmodifiers", "space"],
-                check=True,
-            )
-            time.sleep(0.25)
+    find_named(name)
+    focus_named_with_keyboard(name)
+    subprocess.run(
+        ["xdotool", "key", "--clearmodifiers", "space"],
+        check=True,
+    )
+    time.sleep(0.25)
+
+
+def wait_named_visible(name, expected, timeout=2):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        is_visible = False
+        for node in walk(pyatspi.Registry.getDesktop(0)):
+            try:
+                if (
+                    node.get_process_id() == target_pid
+                    and node.name == name
+                    and visible(node)
+                ):
+                    is_visible = True
+                    break
+            except Exception:
+                continue
+        if is_visible == expected:
+            return True
+        pyatspi.Registry.pumpQueuedEvents()
+        time.sleep(0.1)
+    return False
+
+
+def invoke_until_visible(name, expected, attempts=4):
+    for _ in range(attempts):
+        if wait_named_visible(expected, True, timeout=0.1):
             return
-    except Exception as component_error:
-        # GTK4's X11 AT-SPI bridge can expose a named control while its
-        # Component object is stale or while rejecting Component.grabFocus.
-        # Traverse the verified accessibility focus chain after bounded fresh
-        # Component lookups instead of clicking unverified screen coordinates.
-        print(
-            f"AT-SPI Component focus unavailable for {name}: "
-            f"{component_error}",
-            file=sys.stderr,
-        )
-    try:
-        focus_named_with_keyboard(name)
-        subprocess.run(
-            ["xdotool", "key", "--clearmodifiers", "space"],
-            check=True,
-        )
-        time.sleep(0.25)
-        return
-    except Exception as keyboard_error:
-        print(
-            f"AT-SPI keyboard activation unavailable for {name}: "
-            f"{keyboard_error}",
-            file=sys.stderr,
-        )
-    try:
-        if try_accessible_action(name):
-            time.sleep(0.25)
+        invoke(name)
+        if wait_named_visible(expected, True):
             return
-    except Exception as action_error:
-        raise RuntimeError(
-            f"AT-SPI activation failed for {name}: {action_error}"
-        ) from action_error
-    raise RuntimeError(f"AT-SPI exposed no activation path for {name}")
+    raise RuntimeError(f"invoking {name} did not reveal {expected}")
+
+
+def invoke_until_hidden(name, attempts=4):
+    for _ in range(attempts):
+        invoke(name)
+        if wait_named_visible(name, False):
+            return
+    raise RuntimeError(f"invoking {name} did not leave its current page")
 
 
 def set_text(name, value):
@@ -229,18 +254,24 @@ def set_text(name, value):
 
 
 def run_joiner(args):
-    invoke("nvpn-manual-join-choose-join")
-    invoke("nvpn-manual-join-expander")
+    invoke_until_visible(
+        "nvpn-manual-join-choose-join", "nvpn-manual-join-expander"
+    )
+    invoke_until_visible(
+        "nvpn-manual-join-expander", "nvpn-manual-join-admin-id"
+    )
     set_text("nvpn-manual-join-admin-id", args.admin_npub)
     set_text("nvpn-manual-join-network-id", args.mesh_network_id)
-    invoke("nvpn-manual-join-submit")
+    invoke_until_hidden("nvpn-manual-join-submit")
 
 
 def run_admin(args):
-    invoke("nvpn-manual-join-admin-open")
+    invoke_until_visible(
+        "nvpn-manual-join-admin-open", "nvpn-manual-join-admin-device-id"
+    )
     set_text("nvpn-manual-join-admin-device-id", args.joiner_npub)
     set_text("nvpn-manual-join-admin-device-name", args.joiner_alias)
-    invoke("nvpn-manual-join-admin-submit")
+    invoke_until_hidden("nvpn-manual-join-admin-submit")
 
 
 def main():
