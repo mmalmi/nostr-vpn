@@ -330,6 +330,36 @@ release_join_android_accept_join_transport_permissions() {
     }
 }
 
+release_join_android_accept_admin_transport_permissions() {
+  release_join_android_wait_through_system_prompts \
+    description "Open manual device approval" 10 || {
+      echo "Android admin transport permission did not complete" >&2
+      return 1
+    }
+}
+
+release_join_android_os_vpn_connected() {
+  local package="${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}"
+  "${ADB[@]}" shell dumpsys connectivity 2>/dev/null \
+    | tr -d '\r' \
+    | grep -F "ni{VPN CONNECTED extra: VPN:$package}" >/dev/null
+}
+
+release_join_android_wait_vpn_connected() {
+  local deadline=$((SECONDS + RELEASE_JOIN_UI_WAIT_SECS))
+  while ((SECONDS < deadline)); do
+    if release_join_android_query description "Turn VPN off" center \
+        >/dev/null 2>&1 \
+      && release_join_android_os_vpn_connected
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Android admin network did not start its production VPN" >&2
+  return 1
+}
+
 release_join_android_public_value() {
   local prefix="$1" description
   description="$(
@@ -371,6 +401,8 @@ release_join_android_create_admin() {
   release_join_android_tap resource network-setup-create
   release_join_android_wait_query resource network-create-submit
   release_join_android_tap resource network-create-submit
+  release_join_android_accept_admin_transport_permissions
+  release_join_android_wait_vpn_connected
   release_join_android_open_link_device
   RELEASE_JOIN_ANDROID_ADMIN_ID="$(
     release_join_android_public_value "Admin Device ID value"

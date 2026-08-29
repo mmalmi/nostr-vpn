@@ -543,9 +543,17 @@ PY
   set -u
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  calls="$(mktemp "${TMPDIR:-/tmp}/nvpn-android-create-admin.XXXXXX")"
+  trap 'rm -f "$calls"' EXIT
   release_join_android_launch() { :; }
   release_join_android_wait_query() { :; }
   release_join_android_tap() { :; }
+  release_join_android_accept_admin_transport_permissions() {
+    echo transport-permissions >>"$calls"
+  }
+  release_join_android_wait_vpn_connected() {
+    echo vpn-connected >>"$calls"
+  }
   release_join_android_open_link_device() { :; }
   release_join_valid_npub() { :; }
   release_join_android_public_value() {
@@ -559,6 +567,8 @@ PY
   [[ "$RELEASE_JOIN_ANDROID_ADMIN_ID" == npub1admin ]]
   [[ "$RELEASE_JOIN_ANDROID_NETWORK_ID" == network-1 ]]
   ((${#RELEASE_JOIN_ANDROID_NETWORK_IDS[@]} == 1))
+  grep -Fxq transport-permissions "$calls"
+  grep -Fxq vpn-connected "$calls"
 ) || {
   echo "Android first network creation failed under Bash nounset" >&2
   exit 1
