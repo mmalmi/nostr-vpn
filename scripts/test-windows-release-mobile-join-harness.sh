@@ -173,6 +173,7 @@ done
 
 for evidence in \
   release_join_android_wait_accepted_participant \
+  release_join_android_wait_vpn_connected \
   verify_desktop_relaunch \
   verify_pixel_relaunch \
   desktop_mobile_manual_join_receipt.py \

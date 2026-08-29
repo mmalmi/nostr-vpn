@@ -437,6 +437,7 @@ service_cleanup_armed=1
 remote InstallService >"$RESULT_DIR/desktop-admin-service.log"
 release_join_android_manual_submit "$DESKTOP_ADMIN_NPUB" "$DESKTOP_NETWORK_ID" \
   >"$RESULT_DIR/pixel-manual-submit.log" 2>&1
+release_join_android_wait_vpn_connected
 
 desktop_add_log="$RESULT_DIR/desktop-admin-add-pixel.log"
 remote AdminAdd "$RELEASE_JOIN_ANDROID_JOINER_ID" "Release Pixel" \

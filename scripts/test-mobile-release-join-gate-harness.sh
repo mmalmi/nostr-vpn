@@ -152,6 +152,36 @@ EOF
 )
 python3 -B "$ROOT/scripts/macos_release_join_artifact.py" --help >/dev/null
 
+python3 - \
+  "$ROOT/scripts/mobile-release-join-e2e.sh" \
+  "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh" \
+  "$ROOT/scripts/ubuntu-vm-release-mobile-join-e2e.sh" \
+  "$ROOT/scripts/windows-vm-release-mobile-join-e2e.sh" <<'PY'
+import pathlib
+import sys
+
+for name in sys.argv[1:]:
+    source = pathlib.Path(name).read_text(encoding="utf-8")
+    parts = source.split("release_join_android_manual_submit")
+    if len(parts) != 2:
+        raise SystemExit(f"{pathlib.Path(name).name} must have one Android manual-join phase")
+    following = parts[1]
+    wait = following.find("release_join_android_wait_vpn_connected")
+    if wait < 0:
+        raise SystemExit(
+            f"{pathlib.Path(name).name} approves before the Android join carrier is ready"
+        )
+    approval_markers = [
+        following.find(token)
+        for token in ("release_join_ios_start_test", "remote admin-add", "remote AdminAdd")
+        if following.find(token) >= 0
+    ]
+    if not approval_markers or wait > min(approval_markers):
+        raise SystemExit(
+            f"{pathlib.Path(name).name} starts approval before the Android join carrier is ready"
+        )
+PY
+
 (
   set -u
   # shellcheck disable=SC1091
@@ -678,6 +708,9 @@ PY
     [[ "$1" == npub1iosadmin && "$2" == ios-network ]]
     RELEASE_JOIN_ANDROID_JOINER_ID=npub1androidjoiner
     trace android-manual-joiner
+  }
+  release_join_android_wait_vpn_connected() {
+    trace android-vpn-connected
   }
   release_join_android_wait_join_complete() { trace "android-manual-accepted:$1"; }
   release_join_android_manual_admin_prepare() { trace "android-admin-prepared:$1"; }

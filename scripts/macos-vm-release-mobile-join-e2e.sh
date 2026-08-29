@@ -806,6 +806,7 @@ release_join_valid_npub "$DESKTOP_ADMIN_ID"
 [[ -n "$DESKTOP_NETWORK_ID" ]]
 release_join_android_manual_submit "$DESKTOP_ADMIN_ID" "$DESKTOP_NETWORK_ID" \
   >"$RESULT_DIR/macos/android-manual-submit.log" 2>&1
+release_join_android_wait_vpn_connected
 desktop_add_log="$RESULT_DIR/macos/desktop-add-android.log"
 desktop_android_log_offset="$(remote daemon-log-offset)"
 remote admin-add "$RELEASE_JOIN_ANDROID_JOINER_ID" ReleaseGatePhone \

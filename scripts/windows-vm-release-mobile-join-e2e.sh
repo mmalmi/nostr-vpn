@@ -377,6 +377,7 @@ remote InstallService >"$PLATFORM_RESULT/desktop-admin-service.log" 2>&1
 
 release_join_android_manual_submit "$WINDOWS_ADMIN_ID" "$WINDOWS_NETWORK_ID" \
   >"$PLATFORM_RESULT/pixel-manual-submit.log" 2>&1
+release_join_android_wait_vpn_connected
 REMOTE_PARTICIPANT_NPUB="$RELEASE_JOIN_ANDROID_JOINER_ID"
 REMOTE_PARTICIPANT_ALIAS="Release Pixel"
 desktop_admin_log="$PLATFORM_RESULT/desktop-admin-add.log"

@@ -335,6 +335,7 @@ phase_ios_admin_android_manual() {
   ios_create_admin "Release manual iPhone admin"
   release_join_android_manual_submit \
     "$RELEASE_JOIN_IOS_ADMIN_ID" "$RELEASE_JOIN_IOS_NETWORK_ID"
+  release_join_android_wait_vpn_connected
   admin_log="$(ios_log ios-admin-android-manual)"
   release_join_ios_start_test \
     testManualAdminAddRequiresRosterProgress \
