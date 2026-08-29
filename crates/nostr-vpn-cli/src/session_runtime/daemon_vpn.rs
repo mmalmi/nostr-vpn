@@ -633,6 +633,20 @@ macro_rules! handle_daemon_state_tick {
                 // route it, and waiting for the full peer-set sync consumed most of
                 // the mobile coordination deadline on Windows. The post-sync call
                 // below remains as an idempotent retry for runtimes created by sync.
+                if publish_fips_roster_after_control
+                    && let Some(runtime) = fips_tunnel_runtime.as_ref()
+                    && let Err(error) = refresh_queued_join_roster_delivery_paths(
+                        runtime,
+                        &app,
+                        &config_path,
+                        &network_id,
+                        own_pubkey.as_deref(),
+                        &recent_peers,
+                    )
+                    .await
+                {
+                    eprintln!("join roster return-path refresh failed: {error:#}");
+                }
                 let pre_sync_join_roster_deliveries = if publish_fips_roster_after_control {
                     fips_tunnel_runtime.as_ref().map_or_else(Vec::new, |runtime| {
                         start_queued_join_roster_deliveries(runtime, &config_path)

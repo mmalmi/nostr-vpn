@@ -10,7 +10,7 @@ use nostr_vpn_core::join_delivery::{
     join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
 };
 
-use crate::fips_private_mesh::FipsPrivateTunnelRuntime;
+use crate::fips_private_mesh::{FipsPrivateTunnelConfig, FipsPrivateTunnelRuntime};
 use crate::{broadcast_local_fips_capabilities, publish_fips_active_network_roster};
 
 static IN_FLIGHT_JOIN_ROSTERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
@@ -88,6 +88,41 @@ pub(super) async fn finish_join_roster_deliveries_before_runtime_sync(
         crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT + JOIN_ROSTER_DELIVERY_WAIT_GRACE,
     )
     .await;
+}
+
+pub(super) async fn refresh_queued_join_roster_delivery_paths(
+    runtime: &FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    config_path: &Path,
+    network_id: &str,
+    own_pubkey: Option<&str>,
+    recent_peers: &nostr_vpn_core::recent_peers::RecentPeerEndpoints,
+) -> anyhow::Result<bool> {
+    let queued = load_join_rosters(config_path);
+    if queued.is_empty() {
+        return Ok(false);
+    }
+    let recipients = queued
+        .iter()
+        .map(|(_, roster)| roster.recipient_npub.as_str())
+        .collect::<Vec<_>>();
+    // A mobile join request can arrive over routed public transit while its
+    // authenticated capabilities carry the direct return address. Stamp those
+    // live hints onto the existing endpoint before starting the bounded roster
+    // delivery; the later full config sync must not be the first time the
+    // return path becomes usable.
+    let live_peer_endpoints = runtime.peer_endpoint_hints();
+    let config = FipsPrivateTunnelConfig::from_app_with_control_recipients(
+        app,
+        network_id,
+        runtime.iface(),
+        own_pubkey,
+        Some(recent_peers),
+        &live_peer_endpoints,
+        &recipients,
+    )?;
+    runtime.update_peers(&config.endpoint_peers).await?;
+    Ok(true)
 }
 
 fn claim_join_roster_delivery(path: &Path) -> bool {
@@ -256,6 +291,9 @@ mod tests {
     #[test]
     fn receipt_backed_join_delivery_precedes_generic_roster_publish() {
         let daemon_vpn = include_str!("../daemon_vpn.rs");
+        let path_refresh = daemon_vpn
+            .find("refresh_queued_join_roster_delivery_paths(")
+            .expect("queued join recipient endpoint refresh");
         let delivery = daemon_vpn
             .find("finish_join_roster_deliveries_before_runtime_sync(")
             .expect("pre-sync receipt-backed join delivery");
@@ -263,6 +301,10 @@ mod tests {
             .find("let pre_sync_fips_roster_recipients =")
             .expect("pre-sync generic roster publish");
 
+        assert!(
+            path_refresh < delivery,
+            "authenticated joiner endpoint hints must reach the live endpoint before receipt-backed delivery"
+        );
         assert!(
             delivery < generic_publish,
             "generic roster publication must not refresh the joiner's runtime before its durable approval receipt"
