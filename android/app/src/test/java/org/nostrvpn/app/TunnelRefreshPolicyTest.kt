@@ -46,6 +46,14 @@ class TunnelRefreshPolicyTest {
     }
 
     @Test
+    fun creatingOrImportingANetworkStartsTheTunnelOnlyWhenItIsOff() {
+        assertTrue(TunnelRefreshPolicy.shouldStartTunnelAfterAction("add_network", false))
+        assertTrue(TunnelRefreshPolicy.shouldStartTunnelAfterAction("import_join_request", false))
+        assertFalse(TunnelRefreshPolicy.shouldStartTunnelAfterAction("add_network", true))
+        assertFalse(TunnelRefreshPolicy.shouldStartTunnelAfterAction("tick", false))
+    }
+
+    @Test
     fun rosterAndTunnelSettingsRestartButUiOnlyActionsDoNot() {
         assertTrue(TunnelRefreshPolicy.requiresTunnelRefresh("set_participant_alias"))
         assertTrue(

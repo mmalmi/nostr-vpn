@@ -18,6 +18,11 @@ internal object AndroidRefreshPolicy {
 }
 
 internal object TunnelRefreshPolicy {
+    private val tunnelStartingActions = setOf(
+        "add_network",
+        "import_join_request",
+    )
+
     private val networkActions = setOf(
         "import_join_request",
         "manual_add_network",
@@ -70,6 +75,9 @@ internal object TunnelRefreshPolicy {
     fun requiresTunnelRefresh(type: String, updateSettingKeys: Set<String> = emptySet()): Boolean =
         type in networkActions ||
             (type == "update_settings" && updateSettingKeys.any(tunnelSettingKeys::contains))
+
+    fun shouldStartTunnelAfterAction(type: String, vpnEnabled: Boolean): Boolean =
+        !vpnEnabled && type in tunnelStartingActions
 }
 
 internal object TunnelConfigRefreshPolicy {

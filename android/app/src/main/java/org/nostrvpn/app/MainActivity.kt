@@ -285,8 +285,10 @@ class MainActivity : ComponentActivity() {
                 val succeeded = dispatchNow(action)
                 if (
                     succeeded &&
-                    action.optString("type") == "import_join_request" &&
-                    !state.vpnEnabled
+                    TunnelRefreshPolicy.shouldStartTunnelAfterAction(
+                        action.optString("type"),
+                        state.vpnEnabled,
+                    )
                 ) {
                     dispatch(NativeActions.connectVpn())
                 }
