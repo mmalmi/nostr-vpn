@@ -627,7 +627,7 @@ PY
   if ! bool_is_true "$reuse_build"; then
     ios_release_network_xcode_command
     local -a build_command=("${IOS_RELEASE_NETWORK_XCODE_COMMAND[@]}")
-    build_command+=(build-for-testing)
+    build_command+=(clean build-for-testing)
     if ! "${build_command[@]}" >"$build_log" 2>&1; then
       tail -n 160 "$build_log" >&2
       rm -f "$build_log" || true

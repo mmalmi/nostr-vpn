@@ -69,6 +69,7 @@ required_ios_fragments = (
     'IOS_RELEASE_NETWORK_CASE_XCTESTRUN="$IOS_RELEASE_NETWORK_CASE_XCTESTRUN_DIR/NostrVpnIos-$label.xctestrun"',
     'rmdir "$IOS_RELEASE_NETWORK_CASE_XCTESTRUN_DIR"',
     'ios_release_network_require_retained_exact_runner || return 1',
+    'build_command+=(clean build-for-testing)',
 )
 for fragment in required_ios_fragments:
     if fragment not in ios_source:
