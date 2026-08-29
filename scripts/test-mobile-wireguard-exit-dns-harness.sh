@@ -567,6 +567,19 @@ assert all(item["includeUnderlay"] is False for item in evidence)
 PY
 assert_fixture_cleaned "$RUN_DIR"
 
+run_gate focused-rapid-retry android automatic-profile 0 "" "" 0 1 0 0
+python3 - "$RUN_DIR" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+android = json.loads((root / "android-cases.jsonl").read_text())
+assert android["NVPN_ANDROID_RAPID_START_STOP_GATE"] == "1"
+assert android["NVPN_ANDROID_SWITCH_TO_DIRECT_WHILE_CONNECTED"] == "0"
+PY
+assert_fixture_cleaned "$RUN_DIR"
+
 run_gate android-failure android automatic-profile,cloudflare-doh 0 cloudflare-doh "" 0 1 0 1
 assert_fixture_cleaned "$RUN_DIR"
 retained_ledger="$(

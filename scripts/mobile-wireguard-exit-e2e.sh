@@ -520,9 +520,10 @@ run_android_case() {
   fi
   rapid_start_stop_gate="$(rapid_start_stop_for_case "$first")"
   switch_direct="$final"
-  if bool_is_true "$underlay_gate"; then
-    # The active lifecycle runs after this transition in the Android driver.
-    # Native restoration is still proved after disconnect, while the ordinary
+  if bool_is_true "$underlay_gate" || bool_is_true "$rapid_start_stop_gate"; then
+    # The active lifecycle and rapid reconnect checks need to retain the
+    # configured WireGuard exit through their own transitions. Native
+    # restoration is still proved after disconnect, while the ordinary
     # all-DNS run separately covers connected WireGuard -> Direct.
     switch_direct=0
   fi
