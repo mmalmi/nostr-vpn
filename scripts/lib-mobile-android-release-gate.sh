@@ -1013,6 +1013,7 @@ run_android_release_rapid_start_stop_gate() {
       echo "Android Release reconnect gate has no single canonical app process" >&2
       return 1
     }
+  run_android_release_direct_network_probe start-stop-stable-direct 0 || return 1
   android_release_capture_native_tunnel_start_baseline || return 1
   vpn_cleanup_armed=1
   android_release_connect_ui || return 1

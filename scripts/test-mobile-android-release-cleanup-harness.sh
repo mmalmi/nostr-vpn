@@ -119,6 +119,7 @@ for receipt, expected in (
     (arm, 1),
     ("android_release_connect_ui", 1),
     ("run_android_release_exit_network_probe", 1),
+    ("run_android_release_direct_network_probe start-stop-stable-direct 0", 1),
     ("android_release_disconnect_ui", 1),
     (stable, 1),
     (disarm, 1),
@@ -133,6 +134,7 @@ for receipt, expected in (
 positions = [
     rapid_gate.index(receipt)
     for receipt in (
+        "run_android_release_direct_network_probe start-stop-stable-direct 0",
         arm, "android_release_connect_ui", "run_android_release_exit_network_probe",
         "android_release_disconnect_ui", stable, disarm,
     )
