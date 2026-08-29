@@ -12,6 +12,80 @@ fn mobile_join_roster_destination(
         .map(Some)
 }
 
+fn queued_mobile_join_roster_destination(queued: &QueuedJoinRoster) -> Result<PeerIdentity> {
+    let recipient = normalize_nostr_pubkey(&queued.recipient_npub)?;
+    queued.join_roster.signed_roster.verify()?;
+    let roster = queued.join_roster.signed_roster.roster()?;
+    if !roster
+        .devices
+        .iter()
+        .chain(roster.admins.iter())
+        .any(|participant| participant == &recipient)
+    {
+        return Err(anyhow!(
+            "queued join-roster recipient is not in the signed roster"
+        ));
+    }
+    let peer = FipsMeshPeerConfig::from_participant_pubkey(&recipient, Vec::new())?;
+    PeerIdentity::from_npub(&peer.endpoint_npub)
+        .with_context(|| format!("invalid FIPS endpoint identity {}", peer.endpoint_npub))
+}
+
+async fn watch_mobile_queued_join_rosters(
+    state_control: FipsControlTcpSender,
+    config_path: Option<PathBuf>,
+    initial: Vec<QueuedJoinRoster>,
+) {
+    const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+    let mut started = HashSet::new();
+    let mut discovered = initial;
+    loop {
+        if let Some(config_path) = config_path.as_deref() {
+            discovered.extend(
+                load_join_rosters(config_path)
+                    .into_iter()
+                    .map(|(_, queued)| queued),
+            );
+        }
+        for queued in discovered.drain(..) {
+            let delivery_key = (
+                queued.recipient_npub.clone(),
+                queued.join_roster.signed_roster.artifact_hash(),
+            );
+            if !started.insert(delivery_key) {
+                continue;
+            }
+            let destination = match queued_mobile_join_roster_destination(&queued) {
+                Ok(destination) => destination,
+                Err(error) => {
+                    tracing::warn!(
+                        ?error,
+                        recipient = %queued.recipient_npub,
+                        "mobile: ignoring invalid queued join approval"
+                    );
+                    continue;
+                }
+            };
+            let state_control = state_control.clone();
+            let config_path = config_path.clone();
+            tokio::spawn(async move {
+                deliver_mobile_queued_join_roster(
+                    &state_control,
+                    destination,
+                    config_path.as_deref(),
+                    queued,
+                )
+                .await;
+            });
+        }
+        if config_path.is_none() {
+            return;
+        }
+        tokio::time::sleep(OUTBOX_POLL_INTERVAL).await;
+    }
+}
+
 async fn deliver_mobile_queued_join_roster(
     state_control: &FipsControlTcpSender,
     destination: PeerIdentity,

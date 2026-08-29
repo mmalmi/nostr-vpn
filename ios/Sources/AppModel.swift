@@ -534,7 +534,17 @@ final class AppModel: ObservableObject {
         guard packetTunnelStartAllowed(reason: reason) else {
             return
         }
-        let tunnelConfigJson = core.mobileTunnelConfigJson()
+        var tunnelConfigJson = core.mobileTunnelConfigJson()
+        let queuedApprovalClock = ContinuousClock()
+        let queuedApprovalDeadline = queuedApprovalClock.now.advanced(by: .seconds(12))
+        while Self.tunnelConfigHasQueuedJoinRosters(tunnelConfigJson),
+              queuedApprovalClock.now < queuedApprovalDeadline
+        {
+            debugLog("PacketTunnel config sync waiting for queued join approval delivery")
+            try await Task.sleep(nanoseconds: 250_000_000)
+            try requirePacketTunnelTransition(generation)
+            tunnelConfigJson = core.mobileTunnelConfigJson()
+        }
         let providerOptionsConfigJson = core.mobileTunnelProviderOptionsConfigJson()
         debugLog(
             "PacketTunnel config sync begin reason=\(reason) configLen=\(tunnelConfigJson.count) network=\(activeNetwork?.id ?? "nil")"
@@ -553,6 +563,17 @@ final class AppModel: ObservableObject {
         debugLog("PacketTunnel config sync start returned")
         refresh()
         statusMessage = state.error
+    }
+
+    static func tunnelConfigHasQueuedJoinRosters(_ configJson: String) -> Bool {
+        guard let data = configJson.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let config = object as? [String: Any],
+              let queued = config["queuedJoinRosters"] as? [Any]
+        else {
+            return false
+        }
+        return !queued.isEmpty
     }
 
     private func actionRequiresPacketTunnelConfigSync(

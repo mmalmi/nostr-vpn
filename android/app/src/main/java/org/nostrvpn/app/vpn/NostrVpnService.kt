@@ -21,11 +21,13 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
 import org.nostrvpn.app.AndroidLegacyPackageMigration
 import org.nostrvpn.app.MainActivity
 import org.nostrvpn.app.R
+import org.nostrvpn.app.TunnelConfigRefreshPolicy
 import org.nostrvpn.app.appCoreDataDir
 import org.nostrvpn.app.core.NativeCore
 import org.nostrvpn.app.seedMobileConfig
@@ -47,12 +49,18 @@ class NostrVpnService : VpnService() {
     private var retryUnderlyingNetworkFingerprint: String? = null
     private var underlyingNetworkRetryCount = 0
     private var pendingUnderlyingNetworkRefreshDelayMillis: Long? = null
+    private var queuedApprovalRestartPending = false
+    private var queuedApprovalRestartDeadlineMillis = 0L
+    private var queuedApprovalRestartForegroundStarted = false
     private val refreshUnderlyingNetworksRunnable = Runnable {
         pendingUnderlyingNetworkRefreshDelayMillis = null
         refreshUnderlyingNetworks(resetRetryBudget = true)
     }
     private val refreshNativeNetworkPathsRunnable = Runnable {
         refreshUnderlyingNetworks(resetRetryBudget = false)
+    }
+    private val drainQueuedApprovalBeforeRestartRunnable = Runnable {
+        continueTunnelRestartAfterQueuedApprovalDrain()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -162,7 +170,11 @@ class NostrVpnService : VpnService() {
         super.onRevoke()
     }
 
-    private fun startTunnelAsync(configJson: String, foregroundStarted: Boolean): Boolean {
+    private fun startTunnelAsync(
+        configJson: String,
+        foregroundStarted: Boolean,
+        allowQueuedApprovalDeferral: Boolean = true,
+    ): Boolean {
         tunnelOwnedInProcess.set(true)
         if (configJson.isBlank()) {
             return failStart(foregroundStarted, "VPN config is empty")
@@ -187,7 +199,18 @@ class NostrVpnService : VpnService() {
             )
         }
         val tunnelConfigJson = config.toString()
+        if (
+            allowQueuedApprovalDeferral &&
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = running.get(),
+                configJson = tunnelConfigJson,
+            )
+        ) {
+            deferTunnelRestartUntilQueuedApprovalDrains(foregroundStarted)
+            return true
+        }
 
+        cancelQueuedApprovalRestart()
         stopTunnel()
         val generation = tunnelStartGeneration.incrementAndGet()
         return runCatching {
@@ -219,6 +242,57 @@ class NostrVpnService : VpnService() {
         }.onFailure { error ->
             failStart(foregroundStarted, "Android VPN startup worker failed", error)
         }.isSuccess
+    }
+
+    private fun deferTunnelRestartUntilQueuedApprovalDrains(foregroundStarted: Boolean) {
+        if (!queuedApprovalRestartPending) {
+            queuedApprovalRestartDeadlineMillis =
+                SystemClock.elapsedRealtime() + QUEUED_APPROVAL_RESTART_MAX_DELAY_MILLIS
+        }
+        queuedApprovalRestartPending = true
+        queuedApprovalRestartForegroundStarted =
+            queuedApprovalRestartForegroundStarted || foregroundStarted
+        underlyingNetworkHandler.removeCallbacks(drainQueuedApprovalBeforeRestartRunnable)
+        underlyingNetworkHandler.postDelayed(
+            drainQueuedApprovalBeforeRestartRunnable,
+            QUEUED_APPROVAL_RESTART_POLL_MILLIS,
+        )
+    }
+
+    private fun continueTunnelRestartAfterQueuedApprovalDrain() {
+        if (!queuedApprovalRestartPending) {
+            return
+        }
+        val latestConfigJson = persistedTunnelConfigJson()
+        val deadlineReached =
+            SystemClock.elapsedRealtime() >= queuedApprovalRestartDeadlineMillis
+        if (
+            !deadlineReached &&
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = running.get(),
+                configJson = latestConfigJson,
+            )
+        ) {
+            underlyingNetworkHandler.postDelayed(
+                drainQueuedApprovalBeforeRestartRunnable,
+                QUEUED_APPROVAL_RESTART_POLL_MILLIS,
+            )
+            return
+        }
+        val foregroundStarted = queuedApprovalRestartForegroundStarted
+        cancelQueuedApprovalRestart()
+        startTunnelAsync(
+            latestConfigJson,
+            foregroundStarted,
+            allowQueuedApprovalDeferral = !deadlineReached,
+        )
+    }
+
+    private fun cancelQueuedApprovalRestart() {
+        underlyingNetworkHandler.removeCallbacks(drainQueuedApprovalBeforeRestartRunnable)
+        queuedApprovalRestartPending = false
+        queuedApprovalRestartDeadlineMillis = 0L
+        queuedApprovalRestartForegroundStarted = false
     }
 
     private fun finishTunnelStart(
@@ -799,6 +873,7 @@ class NostrVpnService : VpnService() {
     }
 
     private fun stopTunnel() {
+        cancelQueuedApprovalRestart()
         unregisterUnderlyingNetworkUpdates()
         running.set(false)
         releaseMulticastLock()
@@ -961,6 +1036,8 @@ class NostrVpnService : VpnService() {
         private const val UNDERLAY_NETWORK_CHANGE_DEBOUNCE_MILLIS = 250L
         private const val UNDERLAY_NETWORK_RETRY_MILLIS = 250L
         private const val UNDERLAY_NETWORK_MAX_RETRIES = 2
+        private const val QUEUED_APPROVAL_RESTART_POLL_MILLIS = 250L
+        private const val QUEUED_APPROVAL_RESTART_MAX_DELAY_MILLIS = 12_000L
         private val tunnelOwnedInProcess = AtomicBoolean(false)
 
         internal fun isTunnelOwnedInProcess(): Boolean = tunnelOwnedInProcess.get()

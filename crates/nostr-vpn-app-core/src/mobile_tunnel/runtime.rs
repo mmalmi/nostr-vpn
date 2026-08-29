@@ -351,31 +351,12 @@ impl MobileTunnel {
             }));
         }
 
-        for queued in queued_join_rosters {
-            let destination = {
-                let app = app_config
-                    .read()
-                    .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
-                mobile_join_roster_destination(&app, &queued.recipient_npub)?
-            };
-            let Some(destination) = destination else {
-                tracing::warn!(
-                    recipient = %queued.recipient_npub,
-                    "mobile: queued join-roster recipient is not in the active roster"
-                );
-                continue;
-            };
-            let state_control = state_control_sender.clone();
-            let private_state_config_path = private_state_config_path.clone();
-            tasks.push(tokio::spawn(async move {
-                deliver_mobile_queued_join_roster(
-                    &state_control,
-                    destination,
-                    private_state_config_path.as_deref(),
-                    queued,
-                )
-                .await;
-            }));
+        if !queued_join_rosters.is_empty() || private_state_config_path.is_some() {
+            tasks.push(tokio::spawn(watch_mobile_queued_join_rosters(
+                state_control_sender.clone(),
+                private_state_config_path.clone(),
+                queued_join_rosters,
+            )));
         }
 
         if !config.network_id.trim().is_empty() && !local_capability_hints.is_empty() {

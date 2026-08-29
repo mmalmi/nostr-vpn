@@ -191,6 +191,7 @@
         admin_app.fips_webrtc_enabled = false;
         admin_app.fips_bootstrap_enabled = false;
         admin_app.fips_bootstrap_peers.clear();
+        let preapproval_admin_app = admin_app.clone();
         let preapproval_admin_mobile =
             MobileTunnelConfig::from_app(&admin_app).expect("pre-approval admin config");
         let network_entry_id = admin_app.networks[0].id.clone();
@@ -234,12 +235,6 @@
         admin_app
             .save(&admin_config_path)
             .expect("persist approved admin config");
-        nostr_vpn_core::join_delivery::queue_join_roster(
-            &admin_config_path,
-            &bootstrap.device_app_key_npub,
-            &prepared.join_roster,
-        )
-        .expect("queue approval through the production outbox");
 
         let mut guest_mobile =
             MobileTunnelConfig::from_app_with_config_path(&guest_app, &guest_config_path)
@@ -248,12 +243,6 @@
         guest_mobile.listen_port = available_udp_port();
         let guest_listen_port = guest_mobile.listen_port;
         let mut admin_mobile = preapproval_admin_mobile;
-        let queued_join_rosters = nostr_vpn_core::join_delivery::load_join_rosters(
-            &admin_config_path,
-        )
-        .into_iter()
-        .map(|(_, queued)| queued)
-        .collect();
         // Match iOS provider options: the packet extension receives a complete
         // launch snapshot but cannot read the containing app's config path.
         admin_mobile.detach_from_persisted_config_path();
@@ -286,8 +275,8 @@
         .await;
         let admin = Box::pin(MobileTunnel::start_async_with_launch_state(
             admin_mobile,
-            admin_app,
-            queued_join_rosters,
+            preapproval_admin_app,
+            Vec::new(),
             None,
             Some(admin_config_path.clone()),
         ))
@@ -335,6 +324,13 @@
         .await
         .expect("admin, WSS seed, router, and physical guest should authenticate");
         let authenticated_at = Instant::now();
+        let outbox_path = nostr_vpn_core::join_delivery::queue_join_roster(
+            &admin_config_path,
+            &bootstrap.device_app_key_npub,
+            &prepared.join_roster,
+        )
+        .expect("queue approval after the mobile runtime authenticated its return carrier");
+        assert!(outbox_path.exists(), "approval must enter the durable outbox");
 
         let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
             .expect("guest endpoint identity");

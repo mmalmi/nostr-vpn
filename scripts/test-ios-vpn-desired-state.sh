@@ -110,6 +110,12 @@ if not record < request.index("guard !enabled || core != nil") < request.index(
     raise SystemExit("explicit VPN intent is not durable before fallible asynchronous work")
 if "recordRequest(" in sync or "recordRequest(" in start_transition:
     raise SystemExit("VPN intent is duplicated after asynchronous work starts")
+if "tunnelConfigHasQueuedJoinRosters" not in sync:
+    raise SystemExit("PacketTunnel config sync can drop a queued join approval carrier")
+if not sync.index("tunnelConfigHasQueuedJoinRosters") < sync.index("vpnController.start("):
+    raise SystemExit("PacketTunnel restarts before queued join approvals are drained")
+if "queuedApprovalDeadline" not in sync or "Task.sleep" not in sync:
+    raise SystemExit("queued join approval drain is not bounded and asynchronous")
 stop = lifecycle.split("private func performVpnStop(", 1)[1].split(
     "private func packetTunnelTransitionIsCurrent", 1
 )[0]

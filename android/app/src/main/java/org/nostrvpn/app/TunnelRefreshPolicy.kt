@@ -120,6 +120,15 @@ internal object TunnelConfigRefreshPolicy {
             currentConfigJson.isNotBlank() &&
             stableFingerprint(currentConfigJson) != stableFingerprint(observedConfigJson)
 
+    fun shouldDeferRestartForQueuedApproval(
+        tunnelRunning: Boolean,
+        configJson: String,
+    ): Boolean =
+        tunnelRunning &&
+            runCatching {
+                JSONObject(configJson).optJSONArray("queuedJoinRosters")?.length() ?: 0
+            }.getOrDefault(0) > 0
+
     internal fun stableFingerprint(configJson: String): String =
         runCatching {
             val config = JSONObject(configJson)

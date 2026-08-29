@@ -203,4 +203,36 @@ class TunnelRefreshPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun runningTunnelDrainsQueuedJoinApprovalsBeforeRestart() {
+        val queuedApproval = """
+            {"queuedJoinRosters":[{"recipientNpub":"npub1joiner"}]}
+        """.trimIndent()
+
+        assertTrue(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = true,
+                configJson = queuedApproval,
+            ),
+        )
+        assertFalse(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = false,
+                configJson = queuedApproval,
+            ),
+        )
+        assertFalse(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = true,
+                configJson = """{"queuedJoinRosters":[]}""",
+            ),
+        )
+        assertFalse(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = true,
+                configJson = "not-json",
+            ),
+        )
+    }
 }
