@@ -275,7 +275,7 @@
     }
 
     #[test]
-    fn mobile_fips_config_uses_discovery_without_advert_for_pending_join_request() {
+    fn mobile_fips_config_advertises_pending_join_request_return_path() {
         let admin = Keys::generate().public_key().to_hex();
         let mobile = MobileTunnelConfig {
             pending_join_request_recipient: admin,
@@ -286,8 +286,8 @@
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(
-            !config.node.discovery.nostr.advertise,
-            "a known approval npub routes through discovery transit without a public advert"
+            config.node.discovery.nostr.advertise,
+            "the admin must be able to discover the pending joiner's encrypted return path"
         );
         assert_eq!(config.node.discovery.nostr.policy, NostrDiscoveryPolicy::Open);
         assert!(config.peers.is_empty());

@@ -311,6 +311,7 @@ fn empty_config() -> MobileTunnelConfig {
         wireguard_exit: None,
         join_requests_enabled: false,
         device_approval_pending: false,
+        local_identity_confirmation_pending: false,
         pending_join_request_recipient: String::new(),
         pending_join_secret: String::new(),
         pending_join_requested_at: 0,

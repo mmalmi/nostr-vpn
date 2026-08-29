@@ -7,9 +7,14 @@
             .expect("configure manual join");
 
         let config = MobileTunnelConfig::from_app(&app).expect("manual bootstrap config");
+        let endpoint = fips_endpoint_config("nostr-vpn:pending-manual-join", &config);
 
         assert!(config.network_id.is_empty());
         assert!(config.peers.is_empty());
+        assert!(
+            endpoint.node.discovery.nostr.advertise,
+            "a manual joiner must publish an encrypted return path for its approval"
+        );
         assert!(config.route_targets.is_empty());
         assert!(
             config.dns_servers.is_empty(),
@@ -86,10 +91,7 @@
         assert!(mobile.join_requests_enabled);
         assert!(mobile.peers.is_empty());
         assert!(config.node.discovery.nostr.enabled);
-        assert!(
-            !config.node.discovery.nostr.advertise,
-            "a known approval npub routes through discovery transit without a public advert"
-        );
+        assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
             NostrDiscoveryPolicy::Open
