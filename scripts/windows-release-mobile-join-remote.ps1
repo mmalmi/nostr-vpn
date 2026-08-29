@@ -11,6 +11,7 @@ param(
     "Verify",
     "ReadMarker",
     "ReadReceipt",
+    "ReadDaemonLog",
     "Stop",
     "NowMs",
     "Cleanup"
@@ -301,6 +302,13 @@ switch ($Mode) {
   "ReadReceipt" {
     Assert-PreparedReceipt
     Get-Content -Raw -LiteralPath $ReceiptPath
+  }
+  "ReadDaemonLog" {
+    $Config = Resolve-CanonicalConfig
+    $Log = Join-Path (Split-Path -Parent $Config) "daemon.log"
+    if (Test-Path -LiteralPath $Log -PathType Leaf) {
+      Get-Content -LiteralPath $Log -Tail 300
+    }
   }
   "ReadMarker" {
     if (!(Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {

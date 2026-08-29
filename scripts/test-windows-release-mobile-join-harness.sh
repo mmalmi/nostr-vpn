@@ -67,6 +67,8 @@ for mode in Reset Bootstrap CreateAdmin AdminAdd ManualJoin Verify; do
   grep -Fq "\"$mode\"" "$DRIVER" \
     || fail "Windows UI driver lacks $mode"
 done
+grep -Fq '"ReadDaemonLog"' "$REMOTE" \
+  || fail "Windows remote wrapper cannot preserve daemon failure evidence"
 for bootstrap_contract in \
   'Read-PublicText "ManualJoinJoinerDeviceIdValue"' \
   '$Evidence.joinerNpub = $Joiner'
@@ -141,6 +143,13 @@ then
 fi
 grep -Fq 'windows-cleanup.log' "$HOST" \
   || fail "Windows cleanup evidence is discarded"
+grep -Fq 'remote ReadDaemonLog >"$PLATFORM_RESULT/windows-daemon-failure.log"' "$HOST" \
+  || fail "Windows failure cleanup discards the daemon delivery log"
+daemon_capture_line="$(grep -n 'remote ReadDaemonLog >' "$HOST" | head -n 1 | cut -d: -f1)"
+remote_cleanup_line="$(grep -n 'remote Cleanup >' "$HOST" | head -n 1 | cut -d: -f1)"
+[[ -n "$daemon_capture_line" && -n "$remote_cleanup_line" \
+  && "$daemon_capture_line" -lt "$remote_cleanup_line" ]] \
+  || fail "Windows daemon evidence is captured after destructive cleanup"
 if grep -Fq 'remote Cleanup >/dev/null 2>&1 || true' "$HOST"; then
   fail "Windows cleanup failure is still ignored"
 fi

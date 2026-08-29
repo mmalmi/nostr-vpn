@@ -207,6 +207,10 @@ cleanup() {
     remote Stop >/dev/null 2>&1 || true
     wait "$REMOTE_ACTION_PID" >/dev/null 2>&1 || true
   fi
+  if [[ "$status" -ne 0 ]]; then
+    remote ReadDaemonLog >"$PLATFORM_RESULT/windows-daemon-failure.log" \
+      2>&1 || true
+  fi
   remote Cleanup >"$PLATFORM_RESULT/windows-cleanup.log" 2>&1 \
     || cleanup_status=$?
   if [[ "$status" -ne 0 && -s "$PRIVATE_DIR/android-ui.xml" ]]; then
