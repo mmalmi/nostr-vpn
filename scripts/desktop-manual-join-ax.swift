@@ -117,16 +117,26 @@ func requireSuccessfulCompletion(
     _ visibleIdentifier: String,
     timeout: TimeInterval = 15
 ) throws {
+    // SwiftUI can retain a dismissed sheet in the AX tree with AXHidden=false.
+    // The result row is the durable product state, so require it to remain
+    // visible after settling instead of treating that stale sheet node as a
+    // failed action.
+    _ = dismissedIdentifier
     let deadline = Date().addingTimeInterval(timeout)
     repeat {
         let visible = visibleElements(application)
         if let failure = visibleActionFailure(visible) {
             throw DriverError.failedAction(failure)
         }
-        if !containsVisible(visible, identifier: dismissedIdentifier),
-           containsVisible(visible, identifier: visibleIdentifier) {
+        if containsVisible(visible, identifier: visibleIdentifier) {
             Thread.sleep(forTimeInterval: 0.25)
-            return
+            let settled = visibleElements(application)
+            if let failure = visibleActionFailure(settled) {
+                throw DriverError.failedAction(failure)
+            }
+            if containsVisible(settled, identifier: visibleIdentifier) {
+                return
+            }
         }
         Thread.sleep(forTimeInterval: 0.1)
     } while Date() < deadline
@@ -134,7 +144,7 @@ func requireSuccessfulCompletion(
         throw DriverError.failedAction(failure)
     }
     throw DriverError.missing(
-        "successful completion: dismissed \(dismissedIdentifier), visible \(visibleIdentifier)"
+        "successful completion: visible \(visibleIdentifier)"
     )
 }
 
