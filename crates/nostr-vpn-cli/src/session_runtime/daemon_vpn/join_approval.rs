@@ -316,13 +316,10 @@ mod tests {
             "authenticated joiner endpoint hints must reach the live endpoint before receipt-backed delivery"
         );
         let queued_refresh = join_approval
-            .splitn(
-                2,
-                "pub(super) async fn refresh_queued_join_roster_delivery_paths",
-            )
-            .nth(1)
+            .split_once("pub(super) async fn refresh_queued_join_roster_delivery_paths")
+            .map(|(_, body)| body)
             .expect("queued join return-path refresh body")
-            .splitn(2, "fn claim_join_roster_delivery")
+            .split("fn claim_join_roster_delivery")
             .next()
             .expect("queued join return-path refresh boundary");
         assert!(
