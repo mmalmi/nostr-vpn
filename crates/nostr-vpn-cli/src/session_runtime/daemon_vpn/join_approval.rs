@@ -104,8 +104,9 @@ pub(super) async fn refresh_queued_join_roster_delivery_paths(
     }
     let recipients = queued
         .iter()
-        .map(|(_, roster)| roster.recipient_npub.as_str())
+        .map(|(_, roster)| roster.recipient_npub.clone())
         .collect::<Vec<_>>();
+    let recipient_refs = recipients.iter().map(String::as_str).collect::<Vec<_>>();
     // A mobile join request can arrive over routed public transit while its
     // authenticated capabilities carry the direct return address. Stamp those
     // live hints onto the existing endpoint before starting the bounded roster
@@ -119,9 +120,17 @@ pub(super) async fn refresh_queued_join_roster_delivery_paths(
         own_pubkey,
         Some(recent_peers),
         &live_peer_endpoints,
-        &recipients,
+        &recipient_refs,
     )?;
     runtime.update_peers(&config.endpoint_peers).await?;
+    let recipient_endpoint_peers =
+        super::endpoint_peers_for_participant_refresh(&config.endpoint_peers, &recipients);
+    if recipient_endpoint_peers.is_empty() {
+        return Ok(false);
+    }
+    runtime
+        .refresh_peer_paths(&recipient_endpoint_peers)
+        .await?;
     Ok(true)
 }
 
@@ -291,6 +300,7 @@ mod tests {
     #[test]
     fn receipt_backed_join_delivery_precedes_generic_roster_publish() {
         let daemon_vpn = include_str!("../daemon_vpn.rs");
+        let join_approval = include_str!("join_approval.rs");
         let path_refresh = daemon_vpn
             .find("refresh_queued_join_roster_delivery_paths(")
             .expect("queued join recipient endpoint refresh");
@@ -304,6 +314,20 @@ mod tests {
         assert!(
             path_refresh < delivery,
             "authenticated joiner endpoint hints must reach the live endpoint before receipt-backed delivery"
+        );
+        let queued_refresh = join_approval
+            .splitn(
+                2,
+                "pub(super) async fn refresh_queued_join_roster_delivery_paths",
+            )
+            .nth(1)
+            .expect("queued join return-path refresh body")
+            .splitn(2, "fn claim_join_roster_delivery")
+            .next()
+            .expect("queued join return-path refresh boundary");
+        assert!(
+            queued_refresh.contains("refresh_peer_paths"),
+            "updating a known joiner address must actively reprobe its path before delivery"
         );
         assert!(
             delivery < generic_publish,
