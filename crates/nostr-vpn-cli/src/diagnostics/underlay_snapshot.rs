@@ -262,15 +262,28 @@ fn usable_ipv6(interface: &netdev::Interface) -> Option<Ipv6Addr> {
     })
 }
 
-#[cfg(target_os = "linux")]
-fn linux_interface_usable(interface: &netdev::Interface, require_ipv6: bool) -> bool {
-    interface.is_oper_up()
-        && linux_interface_carrier_up(&interface.name)
+#[cfg(any(target_os = "linux", test))]
+fn linux_interface_state_usable(
+    interface: &netdev::Interface,
+    carrier_up: bool,
+    require_ipv6: bool,
+) -> bool {
+    interface.is_up()
+        && carrier_up
         && if require_ipv6 {
             usable_ipv6(interface).is_some()
         } else {
             usable_ipv4(interface).is_some()
         }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_interface_usable(interface: &netdev::Interface, require_ipv6: bool) -> bool {
+    linux_interface_state_usable(
+        interface,
+        linux_interface_carrier_up(&interface.name),
+        require_ipv6,
+    )
 }
 
 #[cfg(target_os = "linux")]

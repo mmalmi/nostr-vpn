@@ -65,6 +65,18 @@ fn linux_underlay_selection_ignores_admin_up_route_after_carrier_loss() {
 }
 
 #[test]
+fn linux_returning_link_accepts_route_before_operstate_settles() {
+    let mut interface = netdev::Interface::dummy();
+    interface.name = "enp1s0".to_string();
+    interface.flags = netdev::interface::flags::IFF_UP as u32;
+    interface.oper_state = netdev::interface::state::OperState::Dormant;
+    interface.ipv4 = vec!["192.168.122.103/24".parse().expect("current address")];
+
+    assert!(linux_interface_state_usable(&interface, true, false));
+    assert!(!linux_interface_state_usable(&interface, false, false));
+}
+
+#[test]
 fn linux_underlay_selection_uses_cached_defaults_when_exit_owns_main_default() {
     let live_routes = vec![
         LinuxIpv4DefaultRoute {
