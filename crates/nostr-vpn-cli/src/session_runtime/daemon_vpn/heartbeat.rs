@@ -44,9 +44,17 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
     let client_dataplane_enabled = runtime
         .as_ref()
         .is_some_and(crate::fips_private_mesh::FipsPrivateTunnelRuntime::client_dataplane_enabled);
+    let pending_manual_join = app
+        .active_network_opt()
+        .is_some_and(|network| network.local_identity_confirmation_pending);
 
     if let Some(current) = runtime.as_ref() {
-        if let Err(error) = current.ping_peers(network_id, now).await {
+        let ping_result = if pending_manual_join {
+            current.ping_pending_join_peers(network_id, now).await
+        } else {
+            current.ping_peers(network_id, now).await
+        };
+        if let Err(error) = ping_result {
             eprintln!("fips: peer ping failed: {error}");
         }
         if let Err(error) = current.refresh_link_statuses().await {

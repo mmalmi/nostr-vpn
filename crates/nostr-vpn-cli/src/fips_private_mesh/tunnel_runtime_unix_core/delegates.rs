@@ -66,6 +66,7 @@ impl FipsPrivateTunnelRuntime {
     );
     mesh_delegate!(async fn rebind_network_transports(bind_interface: Option<String>) -> Result<usize>);
     mesh_delegate!(async fn ping_peers(network_id: &str, now: u64) -> Result<usize>);
+    mesh_delegate!(async fn ping_pending_join_peers(network_id: &str, now: u64) -> Result<usize>);
     mesh_delegate!(async fn refresh_link_statuses() -> Result<()>);
     mesh_delegate!(fn peer_advertised_routes(participant: &str) -> Vec<String>);
     pub(crate) async fn send_join_request(

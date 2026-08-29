@@ -80,7 +80,15 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             _ = tunnel_heartbeat_interval.tick() => {
                 if let Some(runtime) = fips_tunnel_runtime.as_mut() {
                     let now = unix_timestamp();
-                    if let Err(error) = runtime.ping_peers(&network_id, now).await {
+                    let pending_manual_join = app
+                        .active_network_opt()
+                        .is_some_and(|network| network.local_identity_confirmation_pending);
+                    let ping_result = if pending_manual_join {
+                        runtime.ping_pending_join_peers(&network_id, now).await
+                    } else {
+                        runtime.ping_peers(&network_id, now).await
+                    };
+                    if let Err(error) = ping_result {
                         eprintln!("fips: peer ping failed: {error}");
                     }
                     if let Err(error) = runtime.refresh_link_statuses().await {

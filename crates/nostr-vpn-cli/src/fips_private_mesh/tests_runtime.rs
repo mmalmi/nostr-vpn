@@ -401,6 +401,102 @@
     }
 
     #[test]
+    fn pending_join_ping_retries_after_the_peer_becomes_reachable() {
+        std::thread::Builder::new()
+            .name("fips-late-peer-ping".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("late-peer ping runtime")
+                    .block_on(pending_join_ping_retries_after_peer_reachable_run());
+            })
+            .expect("spawn late-peer ping test")
+            .join()
+            .expect("late-peer ping test thread");
+    }
+
+    async fn pending_join_ping_retries_after_peer_reachable_run() {
+        let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let bob_nsec = bob_keys.secret_key().to_bech32().expect("bob nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let alice_port = available_udp_port();
+        let bob_port = available_udp_port();
+        let alice_ip = Ipv4Addr::new(10, 44, 20, 1);
+        let bob_ip = Ipv4Addr::new(10, 44, 20, 2);
+        let scope = "nostr-vpn:late-peer-ping";
+
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            alice_nsec,
+            Some(scope.to_string()),
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: bob_pubkey.clone(),
+                endpoint_npub: bob_npub.clone(),
+                allowed_ips: vec![format!("{bob_ip}/32")],
+            }],
+            direct_udp_endpoint_config_many(alice_port, &[(&bob_npub, bob_port, true)]),
+            vec![format!("{alice_ip}/32")],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("bind sender before recipient");
+
+        assert_eq!(
+            alice_runtime
+                .ping_peers("late-peer-network", 100)
+                .await
+                .expect("queued startup ping is nonfatal"),
+            1,
+            "the endpoint accepts the startup probe before the peer is reachable"
+        );
+
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            bob_nsec,
+            Some(scope.to_string()),
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: alice_pubkey,
+                endpoint_npub: alice_npub.clone(),
+                allowed_ips: vec![format!("{alice_ip}/32")],
+            }],
+            direct_udp_endpoint_config_many(bob_port, &[(&alice_npub, alice_port, true)]),
+            vec![format!("{bob_ip}/32")],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("bind late recipient");
+        wait_for_fips_peer(&alice_runtime, &bob_npub).await;
+
+        assert_eq!(
+            alice_runtime
+                .ping_pending_join_peers("late-peer-network", 102)
+                .await
+                .expect("pending join retry after transport appears"),
+            1,
+            "a queued startup probe must not suppress the pending join heartbeat"
+        );
+
+        alice_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown alice");
+        bob_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown bob");
+    }
+
+    #[test]
     fn relayed_control_ping_marks_peer_present_without_direct_link() {
         std::thread::Builder::new()
             .name("relayed-control-presence".to_string())

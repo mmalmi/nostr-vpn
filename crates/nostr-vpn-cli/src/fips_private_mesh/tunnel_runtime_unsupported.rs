@@ -120,6 +120,14 @@ impl FipsPrivateTunnelRuntime {
         Ok(0)
     }
 
+    pub(crate) async fn ping_pending_join_peers(
+        &self,
+        _network_id: &str,
+        _now: u64,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
     pub(crate) async fn refresh_link_statuses(&self) -> Result<()> {
         Ok(())
     }

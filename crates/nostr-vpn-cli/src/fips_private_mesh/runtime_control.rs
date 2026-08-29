@@ -5,11 +5,33 @@ pub(crate) const JOIN_ROSTER_DELIVERY_TIMEOUT: Duration = Duration::from_secs(12
 
 impl FipsPrivateMeshRuntime {
     pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {
+        let participants = self.ping_due_participants(now)?;
+        self.ping_participants(network_id, now, participants).await
+    }
+
+    /// A manual join starts before its administrator has a usable return path.
+    /// Retry every daemon heartbeat while identity confirmation is pending;
+    /// the ordinary offline-peer cadence would otherwise suppress the first
+    /// probe sent after routed discovery becomes usable.
+    pub(crate) async fn ping_pending_join_peers(
+        &self,
+        network_id: &str,
+        now: u64,
+    ) -> Result<usize> {
+        let participants = self.mesh.load().peer_pubkeys();
+        self.ping_participants(network_id, now, participants).await
+    }
+
+    async fn ping_participants(
+        &self,
+        network_id: &str,
+        now: u64,
+        participants: Vec<String>,
+    ) -> Result<usize> {
         let frame = FipsControlFrame::Ping {
             network_id: network_id.to_string(),
             sent_at: now,
         };
-        let participants = self.ping_due_participants(now)?;
         let mut sent = 0usize;
         for participant in participants {
             self.note_ping_attempt(&participant, now)?;
