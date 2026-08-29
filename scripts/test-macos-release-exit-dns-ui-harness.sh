@@ -147,6 +147,10 @@ for required in (
     "kAXFocusedAttribute",
     "postKey(to: pid, keyCode: 0, flags: .maskCommand)",
     "keyboardSetUnicodeString",
+    "let deadline = Date().addingTimeInterval(6)",
+    "let element = try find(",
+    "timeout: 1",
+    "stringAttribute(element, kAXValueAttribute) == value",
 ):
     if required not in set_text_body:
         raise SystemExit(
@@ -155,6 +159,10 @@ for required in (
 if "let directError" in set_text_body:
     raise SystemExit(
         "macOS DNS AX text entry bypasses SwiftUI bindings with a direct AX value write"
+    )
+if set_text_body.count("repeat {") < 2:
+    raise SystemExit(
+        "macOS DNS AX text entry does not retry a transient focus/type failure"
     )
 press_body = driver[
     driver.index("func press(") : driver.index("func pressSidebar(")

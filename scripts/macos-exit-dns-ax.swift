@@ -403,46 +403,42 @@ func postKey(
     }
 }
 
-func setText(
-    _ application: AXUIElement,
-    identifier: String,
-    value: String,
-    pid: pid_t
-) throws {
-    let element = try find(application, identifier: identifier)
-    let focusError = AXUIElementSetAttributeValue(
-        element,
-        kAXFocusedAttribute as CFString,
-        kCFBooleanTrue
-    )
-    guard focusError == .success else {
-        throw DriverError.value(identifier, focusError)
-    }
-    postKey(to: pid, keyCode: 0, flags: .maskCommand)
-    let utf16 = Array(value.utf16)
-    let source = CGEventSource(stateID: .hidSystemState)
-    let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
-    utf16.withUnsafeBufferPointer { buffer in
-        down?.keyboardSetUnicodeString(
-            stringLength: buffer.count,
-            unicodeString: buffer.baseAddress
-        )
-    }
-    down?.postToPid(pid)
-    CGEvent(
-        keyboardEventSource: source,
-        virtualKey: 0,
-        keyDown: false
-    )?.postToPid(pid)
-    let deadline = Date().addingTimeInterval(3)
+func setText(_ application: AXUIElement, identifier: String, value: String, pid: pid_t) throws {
+    let deadline = Date().addingTimeInterval(6)
+    var lastError = AXError.cannotComplete
     repeat {
-        if stringAttribute(element, kAXValueAttribute) == value {
-            Thread.sleep(forTimeInterval: 0.1)
-            return
+        let element = try find(application, identifier: identifier, timeout: 1)
+        let focusError = AXUIElementSetAttributeValue(
+            element, kAXFocusedAttribute as CFString, kCFBooleanTrue
+        )
+        lastError = focusError
+        if focusError == .success {
+            postKey(to: pid, keyCode: 0, flags: .maskCommand)
+            let utf16 = Array(value.utf16)
+            let source = CGEventSource(stateID: .hidSystemState)
+            let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
+            utf16.withUnsafeBufferPointer { buffer in
+                down?.keyboardSetUnicodeString(
+                    stringLength: buffer.count, unicodeString: buffer.baseAddress
+                )
+            }
+            down?.postToPid(pid)
+            CGEvent(
+                keyboardEventSource: source, virtualKey: 0, keyDown: false
+            )?.postToPid(pid)
+            let valueDeadline = min(deadline, Date().addingTimeInterval(1))
+            repeat {
+                if stringAttribute(element, kAXValueAttribute) == value {
+                    Thread.sleep(forTimeInterval: 0.1)
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.05)
+            } while Date() < valueDeadline
+            lastError = .cannotComplete
         }
-        Thread.sleep(forTimeInterval: 0.05)
+        Thread.sleep(forTimeInterval: 0.1)
     } while Date() < deadline
-    throw DriverError.value(identifier, .cannotComplete)
+    throw DriverError.value(identifier, lastError)
 }
 
 func selectPicker(
