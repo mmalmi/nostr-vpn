@@ -710,10 +710,18 @@ android_release_disconnect_ui() {
   if [[ "$checked" == "true" ]]; then
     tap_android_ui description "Turn VPN off" || return 1
   fi
-  wait_until "$VPN_STOP_WAIT_SECS" android_release_vpn_off_and_inactive || {
-    echo "Android Release VPN did not reach OS-inactive / shipped-toggle-Off state" >&2
-    return 1
-  }
+  if ! wait_until "$VPN_STOP_WAIT_SECS" android_release_vpn_off_and_inactive; then
+    start_main_activity || return 1
+    checked="$(android_release_vpn_toggle_checked)" || return 1
+    if [[ "$checked" == "true" ]]; then
+      echo "Android Release VPN-off gesture produced no UI state change; retrying once"
+      tap_android_ui description "Turn VPN off" || return 1
+    fi
+    wait_until "$VPN_STOP_WAIT_SECS" android_release_vpn_off_and_inactive || {
+      echo "Android Release VPN did not reach OS-inactive / shipped-toggle-Off state" >&2
+      return 1
+    }
+  fi
   echo "Android Release VPN disconnected through shipped UI"
 }
 

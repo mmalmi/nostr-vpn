@@ -51,11 +51,19 @@ if "if ! vpn_state_present" in disconnect:
     )
 for receipt in (
     "android_release_vpn_toggle_checked",
-    'tap_android_ui description "Turn VPN off"',
     "android_release_vpn_off_and_inactive",
+    'echo "Android Release VPN-off gesture produced no UI state change; retrying once"',
 ):
     if receipt not in disconnect:
         raise SystemExit(f"Release disconnect is missing {receipt!r}")
+if disconnect.count('tap_android_ui description "Turn VPN off"') != 2:
+    raise SystemExit("Release disconnect must allow exactly one bounded shipped-UI retap")
+if disconnect.count('wait_until "$VPN_STOP_WAIT_SECS" android_release_vpn_off_and_inactive') != 2:
+    raise SystemExit("Release disconnect must prove OS/UI shutdown after each bounded gesture")
+if disconnect.index("retrying once") > disconnect.rindex(
+    'tap_android_ui description "Turn VPN off"'
+):
+    raise SystemExit("Release disconnect retry is not announced before its second gesture")
 
 quiescence = function_body(
     release_gate,
