@@ -126,7 +126,13 @@ impl NativeAppRuntime {
             NativeAppAction::AddNetwork { name } => {
                 let network_id = self.config.add_owned_network(&name);
                 self.config.set_network_enabled(&network_id, true)?;
-                self.save_reload_and_refresh()
+                let should_start_mobile_admin =
+                    self.mobile_runtime && self.config.autoconnect && !self.vpn_enabled;
+                self.save_reload_and_refresh()?;
+                if should_start_mobile_admin && !self.vpn_enabled {
+                    self.connect_vpn()?;
+                }
+                Ok(())
             }
             NativeAppAction::RenameNetwork { network_id, name } => {
                 self.config.rename_network(&network_id, &name)?;

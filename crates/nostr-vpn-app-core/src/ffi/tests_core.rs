@@ -449,6 +449,10 @@
         assert_eq!(state.networks[0].name, "Home");
         assert!(!state.network_id.is_empty());
         assert_eq!(state.expected_peer_count, 0);
+        assert!(
+            state.vpn_enabled && state.vpn_active,
+            "a newly created mobile admin network must start listening before approval"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
