@@ -81,6 +81,49 @@ if 'roster-participant-pending-\\(args[3])' not in manual_join_phase:
     raise SystemExit("macOS manual join UI does not prove pending roster state")
 if 'roster-participant-accepted-\\(args[3])' in manual_join_phase:
     raise SystemExit("macOS manual join UI expects approval before the admin acts")
+manual_join_hold = remote.split("run_manual_join_driver_hold() {", 1)[1].split(
+    "\n}\n\nrun_driver_hold", 1
+)[0]
+for required in (
+    'run_driver_against_held_app release-manual-join "$1" "$2"',
+    'run_driver_against_held_app release-verify "$1" _',
+):
+    if required not in manual_join_hold:
+        raise SystemExit(
+            f"macOS reverse join does not observe accepted state in the held public UI: {required}"
+        )
+manual_join_command = remote.split('  manual-join)', 1)[1].split(
+    "    ;;", 1
+)[0]
+if 'run_manual_join_driver_hold "$2" "$3"' not in manual_join_command:
+    raise SystemExit("macOS reverse join stops the shipped UI before approval is visible")
+for required in (
+    'rm -f "$APPROVAL_STARTED"',
+    '[[ ! -f "$APPROVAL_STARTED"',
+    "approval-start)",
+    ': >"$APPROVAL_STARTED"',
+):
+    if required not in remote:
+        raise SystemExit(f"macOS reverse join lacks approval-window synchronization: {required}")
+if host.count("remote approval-start") != 2:
+    raise SystemExit("macOS reverse directions do not synchronize from both real phone approvals")
+if '  "${NVPN_RELEASE_JOIN_IOS_RECEIPT:?exact retained iOS receipt is required}" \\\n' in host:
+    raise SystemExit("macOS Pixel-only join coverage is still coupled to an iOS receipt")
+for required in (
+    'if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then\n  : "${NVPN_RELEASE_JOIN_IOS_RECEIPT:',
+    'ios_artifact = None if selected == "pixel" else json.loads(',
+    'if ios_artifact is not None:',
+):
+    if required not in host:
+        raise SystemExit(f"macOS join summary lacks optional iOS receipt handling: {required}")
+if "diagnostics)" not in remote or "capture_diagnostics" not in remote:
+    raise SystemExit("macOS join remote cannot preserve failure diagnostics before cleanup")
+if 'remote diagnostics >"$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-daemon-diagnostic.log"' not in host:
+    raise SystemExit("macOS join gate does not preserve daemon diagnostics on direction failure")
+if "NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=" not in host:
+    raise SystemExit("macOS reverse acceptance still relies on pre-approval submission state")
+if "NVPN_RELEASE_JOIN_MANUAL_COMPLETE=$RELEASE_JOIN_ANDROID_ADMIN_ID" in host:
+    raise SystemExit("macOS reverse acceptance treats pending manual submission as approval")
 longest_short_socket = (
     "/private/tmp/nvpn-rj-4294967295/"
     ".nvpn-runtime/join-0123456789abcdef.sock"

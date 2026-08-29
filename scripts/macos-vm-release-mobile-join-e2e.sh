@@ -285,7 +285,7 @@ marker_value() {
 
 macos_reverse_desktop_visible() {
   grep -Fq \
-    "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_MANUAL_COMPLETE=$RELEASE_JOIN_ANDROID_ADMIN_ID" \
+    "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=$RELEASE_JOIN_ANDROID_ADMIN_ID" \
     "$1" 2>/dev/null \
     && release_join_now_ms
 }
@@ -304,6 +304,10 @@ macos_reverse_pixel_visible() {
 macos_mobile_direction_cleanup() {
   local status=$? observer_pid
   trap - EXIT
+  if [[ "$status" -ne 0 ]]; then
+    remote diagnostics >"$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-daemon-diagnostic.log" \
+      2>&1 || true
+  fi
   if [[ -n "${RELEASE_JOIN_IOS_TEST_PID:-}" ]] \
       && kill -0 "$RELEASE_JOIN_IOS_TEST_PID" 2>/dev/null
   then
@@ -884,6 +888,7 @@ wait_log_marker "$desktop_join_log" NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1 10
 android_admin_log="$RESULT_DIR/macos/android-admin-add-desktop.log"
 release_join_android_manual_admin_tap "$DESKTOP_JOINER_ID" \
   | tee "$android_admin_log"
+remote approval-start
 android_submitted_ms="$(
   sed -n 's/.*NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=//p' \
     "$android_admin_log" | tail -n 1
@@ -1041,10 +1046,10 @@ DESKTOP_IOS_JOINER_ID="$(
 )"
 release_join_valid_npub "$DESKTOP_IOS_JOINER_ID"
 wait_log_marker "$desktop_ios_join_log" NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1 10
-if grep -Fq "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_MANUAL_COMPLETE_MS=" \
+if grep -Fq "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=" \
   "$desktop_ios_join_log"
 then
-  echo "macOS joiner completed before the iPhone approval" >&2
+  echo "macOS joiner accepted a roster before the iPhone approval" >&2
   exit 1
 fi
 ios_admin_log="$(ios_log iphone-admin-macos-add)"
@@ -1065,8 +1070,10 @@ ios_admin_submitted_ms="$(
 )"
 [[ "$ios_admin_submitted_ms" =~ ^[0-9]+$ ]]
 ios_admin_observed_submitted_ms="$(release_join_now_ms)"
+remote approval-start
 wait_log_marker \
-  "$desktop_ios_join_log" NVPN_RELEASE_JOIN_MANUAL_COMPLETE_MS \
+  "$desktop_ios_join_log" \
+  "NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=$RELEASE_JOIN_IOS_ADMIN_ID" \
   "$RELEASE_JOIN_DELIVERY_WAIT_SECS"
 ios_admin_remote_completed_ms="$(release_join_now_ms)"
 release_join_ios_finish_test \
@@ -1125,11 +1132,15 @@ if ((macos_admin_android_status != 0 \
   exit 1
 fi
 
+if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then
+  : "${NVPN_RELEASE_JOIN_IOS_RECEIPT:?exact retained iOS receipt is required}"
+fi
+
 python3 - \
   "$RESULT_DIR/macos/summary.json" \
   "$RESULT_DIR/macos/delivery-times.tsv" \
   "$RESULT_DIR/macos/artifact.json" \
-  "${NVPN_RELEASE_JOIN_IOS_RECEIPT:?exact retained iOS receipt is required}" \
+  "${NVPN_RELEASE_JOIN_IOS_RECEIPT:-}" \
   "$DESKTOP_ADMIN_IPHONE_JOINER_RELAUNCH_DURABLE" \
   "$IPHONE_ADMIN_DESKTOP_JOINER_RELAUNCH_DURABLE" \
   "$APP_GIT_SHA" \
@@ -1165,8 +1176,10 @@ if set(timings) != expected_timings or any(
 artifact_path = pathlib.Path(sys.argv[3])
 artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
 component_proof = artifact.get("componentInputProof") or {}
-ios_artifact_path = pathlib.Path(sys.argv[4])
-ios_artifact = json.loads(ios_artifact_path.read_text(encoding="utf-8"))
+ios_artifact_path = None if selected == "pixel" else pathlib.Path(sys.argv[4])
+ios_artifact = None if selected == "pixel" else json.loads(
+    ios_artifact_path.read_text(encoding="utf-8")
+)
 (
     desktop_admin_iphone_joiner_relaunch,
     iphone_admin_desktop_joiner_relaunch,
@@ -1211,10 +1224,9 @@ ios_identity_keys = (
     "signerCertificateSha256",
     "installedBundleIdentifier",
 )
-if (
+if ios_artifact is not None and (
     ios_artifact.get("receiptSchema") != 2
-    or ios_artifact.get("artifactType")
-    != "iOS Ad Hoc Release join-test variant"
+    or ios_artifact.get("artifactType") != "iOS Ad Hoc Release join-test variant"
     or ios_artifact.get("companySigningVerified") is not True
     or any(not ios_artifact.get(key) for key in ios_identity_keys)
 ):
@@ -1239,45 +1251,40 @@ if (
     )
 ):
     raise SystemExit("Android join artifact/install receipt pair is not exact")
+artifact_summary = {
+    "type": "signed macOS Release app",
+    "appGitSha": artifact["appGitSha"],
+    "appGitTree": artifact["appGitTree"],
+    "harnessGitSha": app_sha,
+    "harnessGitTree": app_tree,
+    "artifactReceiptSha256": hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+    "appExecutableSha256": artifact["appExecutableSha256"],
+    "android": {
+        "artifactReceiptSha256": hashlib.sha256(
+            android_artifact_receipt.read_bytes()
+        ).hexdigest(),
+        "artifactReceiptSize": android_artifact_receipt.stat().st_size,
+        "installReceiptSha256": hashlib.sha256(
+            android_install_receipt.read_bytes()
+        ).hexdigest(),
+        "installReceiptSize": android_install_receipt.stat().st_size,
+        **{key: android_artifact[key] for key in android_identity_keys},
+    },
+}
+if ios_artifact is not None:
+    artifact_summary["ios"] = {
+        "artifactReceiptSha256": hashlib.sha256(
+            ios_artifact_path.read_bytes()
+        ).hexdigest(),
+        **{key: ios_artifact[key] for key in ios_identity_keys},
+    }
+
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(
         {
             "schema": 1,
             "platform": "macos",
-            "artifact": {
-                "type": "signed macOS Release app",
-                "appGitSha": artifact["appGitSha"],
-                "appGitTree": artifact["appGitTree"],
-                "harnessGitSha": app_sha,
-                "harnessGitTree": app_tree,
-                "artifactReceiptSha256": hashlib.sha256(
-                    artifact_path.read_bytes()
-                ).hexdigest(),
-                "appExecutableSha256": artifact["appExecutableSha256"],
-                "android": {
-                    "artifactReceiptSha256": hashlib.sha256(
-                        android_artifact_receipt.read_bytes()
-                    ).hexdigest(),
-                    "artifactReceiptSize": android_artifact_receipt.stat().st_size,
-                    "installReceiptSha256": hashlib.sha256(
-                        android_install_receipt.read_bytes()
-                    ).hexdigest(),
-                    "installReceiptSize": android_install_receipt.stat().st_size,
-                    **{
-                        key: android_artifact[key]
-                        for key in android_identity_keys
-                    },
-                },
-                "ios": {
-                    "artifactReceiptSha256": hashlib.sha256(
-                        ios_artifact_path.read_bytes()
-                    ).hexdigest(),
-                    **{
-                        key: ios_artifact[key]
-                        for key in ios_identity_keys
-                    },
-                },
-            },
+            "artifact": artifact_summary,
             "builtOnHost": True,
             "builtOnTestVm": False,
             "remoteImportVerified": True,

@@ -64,6 +64,7 @@ DAEMON_LOG="$TEST_CONFIG_DIR/daemon.log"
 TEST_PROFILE_MARKER="$PROFILE_STATE_DIR/state"
 TEST_SERVICE_OWNED="$PROFILE_STATE_DIR/service-owned"
 IMPORT_VERIFIED="$ARTIFACT_DIR/import-verified"
+APPROVAL_STARTED="$ARTIFACT_DIR/approval-started"
 
 mkdir -p "$ARTIFACT_DIR"
 
@@ -359,8 +360,31 @@ run_driver() {
   stop_app
 }
 
-run_manual_join_driver() {
-  run_driver release-manual-join "$1" "$2"
+run_driver_against_held_app() {
+  local phase="$1" value1="$2" value2="$3"
+  [[ "$APP_PID" =~ ^[0-9]+$ ]] && kill -0 "$APP_PID" >/dev/null 2>&1 || {
+    echo "macOS Release join app is not alive for $phase" >&2
+    return 1
+  }
+  "$MANUAL_JOIN_DRIVER" \
+    "$APP_PID" "$phase" "$value1" "$value2" "Nostr VPN"
+}
+
+run_manual_join_driver_hold() {
+  rm -f "$APPROVAL_STARTED"
+  launch_app
+  run_driver_against_held_app release-manual-join "$1" "$2"
+  echo "NVPN_RELEASE_JOIN_MARKER NVPN_MACOS_RELEASE_APP_HOLDING=1"
+  local deadline=$((SECONDS + 30))
+  while [[ ! -f "$APPROVAL_STARTED" && "$SECONDS" -lt "$deadline" ]]; do
+    sleep 0.1
+  done
+  [[ -f "$APPROVAL_STARTED" ]] || {
+    echo "macOS Release join did not receive the approval-start signal" >&2
+    return 1
+  }
+  run_driver_against_held_app release-verify "$1" _
+  stop_app
 }
 
 run_driver_hold() {
@@ -371,6 +395,18 @@ run_driver_hold() {
   echo "NVPN_RELEASE_JOIN_MARKER NVPN_MACOS_RELEASE_APP_HOLDING=1"
   sleep "${NVPN_MACOS_RELEASE_JOIN_HOLD_SECS:-20}"
   stop_app
+}
+
+capture_diagnostics() {
+  set +e
+  echo "NVPN_RELEASE_JOIN_DIAGNOSTIC daemon-status"
+  "$CLI" status --json --discover-secs 0 --config "$CONFIG" 2>&1
+  echo "NVPN_RELEASE_JOIN_DIAGNOSTIC queued-approvals"
+  find "$TEST_CONFIG_DIR/config.toml.join-roster-outbox" -maxdepth 1 -type f \
+    -exec basename {} \; 2>/dev/null | sort
+  echo "NVPN_RELEASE_JOIN_DIAGNOSTIC daemon-log"
+  tail -n 240 "$DAEMON_LOG" 2>/dev/null
+  return 0
 }
 
 stage() {
@@ -429,7 +465,7 @@ case "${1:-}" in
     ;;
   manual-join)
     [[ $# == 3 ]] || { echo "usage: $0 manual-join <admin-npub> <network-id>" >&2; exit 2; }
-    run_manual_join_driver "$2" "$3"
+    run_manual_join_driver_hold "$2" "$3"
     ;;
   admin-add)
     [[ $# == 3 ]] || { echo "usage: $0 admin-add <joiner-npub> <alias>" >&2; exit 2; }
@@ -451,6 +487,14 @@ case "${1:-}" in
     [[ $# == 3 ]] || { echo "usage: $0 require-delivery-log <recipient-npub> <offset>" >&2; exit 2; }
     require_delivery_log "$2" "$3"
     ;;
+  diagnostics)
+    [[ $# == 1 ]] || { echo "usage: $0 diagnostics" >&2; exit 2; }
+    capture_diagnostics
+    ;;
+  approval-start)
+    [[ $# == 1 ]] || { echo "usage: $0 approval-start" >&2; exit 2; }
+    : >"$APPROVAL_STARTED"
+    ;;
   cleanup)
     restore_test_profile
     macos_release_app_restore
@@ -461,7 +505,7 @@ case "${1:-}" in
     macos_release_app_restore
     ;;
   *)
-    echo "usage: $0 <stage|prepare|verify-import|service-preflight|daemon-log-offset|require-delivery-log|create-admin|joiner-id|manual-join|admin-add|verify|reset-profile|cleanup>" >&2
+    echo "usage: $0 <stage|prepare|verify-import|service-preflight|daemon-log-offset|require-delivery-log|diagnostics|approval-start|create-admin|joiner-id|manual-join|admin-add|verify|reset-profile|cleanup>" >&2
     exit 2
     ;;
 esac
