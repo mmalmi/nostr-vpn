@@ -43,6 +43,13 @@ for required in (
         raise SystemExit(f"macOS/mobile direction selector lacks {required}")
 if '${android_install_validation[@]+"${android_install_validation[@]}"}' not in host:
     raise SystemExit("macOS/Pixel validator is not safe with an empty optional-argument array")
+for required in (
+    'local quarantine="${TEST_CONFIG_DIR}.quarantine.',
+    'mv "$TEST_CONFIG_DIR" "$quarantine"',
+    "could not quarantine privileged macOS Release join test profile",
+):
+    if required not in remote:
+        raise SystemExit(f"privileged profile cleanup lacks recoverable quarantine: {required}")
 
 directions = (
     ("macOS admin -> physical Android joiner.", "macos-admin-pixel-joiner"),

@@ -199,7 +199,13 @@ restore_config_dir() {
   esac
   rm -f "$TEST_PROFILE_MARKER"
   if ! rm -rf "$TEST_CONFIG_DIR"; then
-    echo "quarantined privileged macOS Release join test profile: $TEST_CONFIG_DIR" >&2
+    local quarantine="${TEST_CONFIG_DIR}.quarantine.$(date -u +%Y%m%dT%H%M%SZ).$$"
+    if mv "$TEST_CONFIG_DIR" "$quarantine"; then
+      echo "quarantined privileged macOS Release join test profile: $quarantine" >&2
+    else
+      echo "could not quarantine privileged macOS Release join test profile" >&2
+      return 1
+    fi
   fi
   rmdir "$PROFILE_STATE_DIR" 2>/dev/null || true
 }
