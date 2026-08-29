@@ -10,10 +10,29 @@ release_join_android_apkanalyzer() {
     | tail -n 1
 }
 
+release_join_load_reused_android_artifact_source() {
+  local android_source extra
+  [[ -s "${NVPN_RELEASE_JOIN_ANDROID_RECEIPT:-}" ]] || {
+    echo "Strict Release join artifact reuse requires NVPN_RELEASE_JOIN_ANDROID_RECEIPT" >&2
+    return 1
+  }
+  android_source="$(
+    python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" \
+      artifact-source \
+      --receipt "$NVPN_RELEASE_JOIN_ANDROID_RECEIPT" \
+      --artifact-type "Android Release APK"
+  )" || return 1
+  IFS=$'\t' read -r \
+    RELEASE_JOIN_ANDROID_APP_SHA RELEASE_JOIN_ANDROID_APP_TREE extra \
+    <<<"$android_source"
+  [[ -z "${extra:-}" ]] || return 1
+  export RELEASE_JOIN_ANDROID_APP_SHA RELEASE_JOIN_ANDROID_APP_TREE
+}
+
 release_join_load_reused_artifact_sources() {
-  local android_source ios_source extra
+  local ios_source extra
+  release_join_load_reused_android_artifact_source || return 1
   for name in \
-    NVPN_RELEASE_JOIN_ANDROID_RECEIPT \
     NVPN_RELEASE_JOIN_IOS_RECEIPT \
     NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT
   do
@@ -22,12 +41,6 @@ release_join_load_reused_artifact_sources() {
       return 1
     }
   done
-  android_source="$(
-    python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" \
-      artifact-source \
-      --receipt "$NVPN_RELEASE_JOIN_ANDROID_RECEIPT" \
-      --artifact-type "Android Release APK"
-  )" || return 1
   ios_source="$(
     python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" \
       artifact-source \
@@ -35,14 +48,9 @@ release_join_load_reused_artifact_sources() {
       --artifact-type "iOS Ad Hoc Release join-test variant"
   )" || return 1
   IFS=$'\t' read -r \
-    RELEASE_JOIN_ANDROID_APP_SHA RELEASE_JOIN_ANDROID_APP_TREE extra \
-    <<<"$android_source"
-  [[ -z "${extra:-}" ]] || return 1
-  IFS=$'\t' read -r \
     RELEASE_JOIN_IOS_APP_SHA RELEASE_JOIN_IOS_APP_TREE extra \
     <<<"$ios_source"
   [[ -z "${extra:-}" ]] || return 1
-  export RELEASE_JOIN_ANDROID_APP_SHA RELEASE_JOIN_ANDROID_APP_TREE
   export RELEASE_JOIN_IOS_APP_SHA RELEASE_JOIN_IOS_APP_TREE
 }
 
@@ -332,7 +340,7 @@ release_join_validate_reused_artifacts() {
 
 release_join_validate_reused_android_only() {
   release_join_reuse_artifacts || return 1
-  release_join_load_reused_artifact_sources || return 1
+  release_join_load_reused_android_artifact_source || return 1
   release_join_validate_android_reuse || return 1
   release_join_assert_fips_unchanged || return 1
   release_join_assert_app_unchanged \

@@ -472,6 +472,16 @@ PY
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-artifact-reuse.sh"
   NVPN_RELEASE_JOIN_ANDROID_RECEIPT="$ANDROID_RECEIPT"
+  unset NVPN_RELEASE_JOIN_IOS_RECEIPT NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT
+  release_join_load_reused_android_artifact_source
+  [[ "$RELEASE_JOIN_ANDROID_APP_SHA" == "$ANDROID_APP_HEAD" ]]
+  [[ "$RELEASE_JOIN_ANDROID_APP_TREE" == "$ANDROID_APP_TREE" ]]
+)
+
+(
+  # shellcheck disable=SC1091
+  source "$ROOT/scripts/lib-mobile-release-artifact-reuse.sh"
+  NVPN_RELEASE_JOIN_ANDROID_RECEIPT="$ANDROID_RECEIPT"
   NVPN_RELEASE_JOIN_IOS_RECEIPT="$IOS_RECEIPT"
   NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT="$IOS_PRODUCTION_RECEIPT"
   NVPN_EXPECTED_APP_GIT_SHA="$IOS_APP_HEAD"
