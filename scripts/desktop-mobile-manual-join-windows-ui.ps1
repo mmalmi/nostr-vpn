@@ -189,30 +189,6 @@ function Test-VisibleControlName {
   return $false
 }
 
-function Wait-SinglePeerConnectedRoster {
-  param([int]$TimeoutSeconds)
-  $Deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-  while ((Get-Date) -lt $Deadline) {
-    $script:Process.Refresh()
-    if ($script:Process.HasExited) {
-      throw "Windows app exited while waiting for its connected roster"
-    }
-    if ($script:Process.MainWindowHandle -ne [IntPtr]::Zero) {
-      $Window = [System.Windows.Automation.AutomationElement]::FromHandle(
-        $script:Process.MainWindowHandle
-      )
-      if (
-        (Test-VisibleControlName $Window "1 of 1 connected") -and
-        (Test-VisibleControlName $Window "Online")
-      ) {
-        return
-      }
-    }
-    Start-Sleep -Milliseconds 100
-  }
-  throw "single-peer connected roster did not appear"
-}
-
 function Invoke-Control {
   param(
     [Parameter(Mandatory = $true)]
@@ -493,8 +469,10 @@ try {
       $Evidence.manualSubmittedMs = Now-Milliseconds
       Invoke-Control "ManualJoinSubmit"
       Write-Evidence
-      Wait-SinglePeerConnectedRoster $CoordinationTimeoutSeconds
-      $Evidence.acceptedSelector = "single-peer connected roster row"
+      $null = Find-Control `
+        "RosterParticipantAccepted-$AdminNpub" `
+        $CoordinationTimeoutSeconds
+      $Evidence.acceptedSelector = "exact accepted roster participant row"
       $Evidence.desktopAccepted = $true
       $Evidence.acceptedAtMs = Now-Milliseconds
       Save-WindowScreenshot "desktop-joiner-accepted"

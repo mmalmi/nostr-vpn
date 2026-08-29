@@ -77,16 +77,17 @@ do
     || fail "Windows Bootstrap does not preflight its joiner identity"
 done
 for roster_contract in \
-  'Wait-SinglePeerConnectedRoster' \
-  'Test-VisibleControlName $Window "1 of 1 connected"' \
-  'Test-VisibleControlName $Window "Online"' \
-  'single-peer connected roster row'
+  '"RosterParticipantAccepted-$AdminNpub"' \
+  'exact accepted roster participant row'
 do
   grep -Fq "$roster_contract" "$DRIVER" \
-    || fail "Windows driver lacks public roster status: $roster_contract"
+    || fail "Windows joiner does not prove accepted roster state: $roster_contract"
 done
-[[ "$(grep -Fc '"RosterParticipantAccepted-$ParticipantNpub"' "$DRIVER")" -eq 2 ]] \
-  || fail "Windows admin and relaunch checks do not observe the exact public roster row"
+[[ "$(grep -Fc 'RosterParticipantAccepted-' "$DRIVER")" -eq 3 ]] \
+  || fail "Windows admin, joiner, and relaunch checks do not observe exact accepted roster rows"
+if grep -Fq 'Wait-SinglePeerConnectedRoster' "$DRIVER"; then
+  fail "Windows joiner still treats mere transport connectivity as roster acceptance"
+fi
 grep -Fq '$Evidence.relaunchAccepted = $true' "$DRIVER" \
   || fail "Windows driver lacks relaunch acceptance evidence"
 grep -Fq 'publicUiOnly = $true' "$DRIVER" \
