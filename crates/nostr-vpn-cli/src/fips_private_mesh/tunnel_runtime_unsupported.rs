@@ -132,7 +132,7 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
-    pub(crate) async fn send_join_request(
+    pub(crate) fn enqueue_join_request(
         &self,
         _participant: &str,
         _requested_at: u64,

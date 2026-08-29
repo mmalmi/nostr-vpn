@@ -69,15 +69,14 @@ impl FipsPrivateTunnelRuntime {
     mesh_delegate!(async fn ping_pending_join_peers(network_id: &str, now: u64) -> Result<usize>);
     mesh_delegate!(async fn refresh_link_statuses() -> Result<()>);
     mesh_delegate!(fn peer_advertised_routes(participant: &str) -> Vec<String>);
-    pub(crate) async fn send_join_request(
+    pub(crate) fn enqueue_join_request(
         &self,
         participant: &str,
         requested_at: u64,
         request: MeshJoinRequest,
     ) -> Result<()> {
         self.mesh
-            .send_join_request(&self.state_control, participant, requested_at, request)
-            .await
+            .enqueue_join_request(&self.state_control.sender(), participant, requested_at, request)
     }
     pub(crate) fn enqueue_roster(
         &self,

@@ -735,7 +735,7 @@ async fn sync_fips_private_runtime(
         Ok(true)
     }
 }
-async fn send_pending_fips_join_requests(
+fn enqueue_pending_fips_join_requests(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     sent_cache: &mut HashMap<String, u64>,
@@ -769,9 +769,7 @@ async fn send_pending_fips_join_requests(
         {
             continue;
         }
-        runtime
-            .send_join_request(&recipient, pending.requested_at, request.clone())
-            .await?;
+        runtime.enqueue_join_request(&recipient, pending.requested_at, request.clone())?;
         sent_cache.insert(fingerprint, now);
         sent += 1;
     }

@@ -158,8 +158,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
         eprintln!("fips: roster peer sync failed: {error}");
     }
     flush_pending_fips_roster_recipients(runtime, app, config_path, pending_roster_recipients);
-    if let Err(error) = send_pending_fips_join_requests(runtime, app, join_request_sends, now).await
-    {
-        eprintln!("fips: join request send failed: {error}");
+    if let Err(error) = enqueue_pending_fips_join_requests(runtime, app, join_request_sends, now) {
+        eprintln!("fips: join request queue failed: {error}");
     }
 }

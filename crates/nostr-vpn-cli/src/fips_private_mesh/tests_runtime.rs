@@ -448,6 +448,27 @@
         )
         .await
         .expect("bind sender before recipient");
+        let alice_control = FipsControlTcpRuntime::start(Arc::clone(alice_runtime.endpoint()))
+            .await
+            .expect("start sender state control");
+
+        let queue_started = Instant::now();
+        alice_runtime
+            .enqueue_join_request(
+                &alice_control.sender(),
+                &bob_pubkey,
+                100,
+                MeshJoinRequest {
+                    network_id: "late-peer-network".to_string(),
+                    join_secret: "late-peer-secret".to_string(),
+                    requester_node_name: "Late peer".to_string(),
+                },
+            )
+            .expect("queue join request before recipient is reachable");
+        assert!(
+            queue_started.elapsed() < Duration::from_millis(100),
+            "join request admission must not block the pending-join heartbeat"
+        );
 
         assert_eq!(
             alice_runtime
@@ -473,7 +494,22 @@
         )
         .await
         .expect("bind late recipient");
+        let mut bob_control = FipsControlTcpRuntime::start(Arc::clone(bob_runtime.endpoint()))
+            .await
+            .expect("start recipient state control");
         wait_for_fips_peer(&alice_runtime, &bob_npub).await;
+
+        let queued_request = tokio::time::timeout(Duration::from_secs(5), bob_control.recv())
+            .await
+            .expect("queued join request delivery timed out")
+            .expect("receive queued join request");
+        assert!(matches!(
+            queued_request.frame,
+            FipsControlFrame::JoinRequest {
+                requested_at: 100,
+                request: MeshJoinRequest { ref network_id, .. },
+            } if network_id == "late-peer-network"
+        ));
 
         assert_eq!(
             alice_runtime
@@ -484,6 +520,8 @@
             "a queued startup probe must not suppress the pending join heartbeat"
         );
 
+        alice_control.stop().await;
+        bob_control.stop().await;
         alice_runtime
             .endpoint()
             .shutdown()

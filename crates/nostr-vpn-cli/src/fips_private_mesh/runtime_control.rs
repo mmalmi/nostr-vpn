@@ -42,14 +42,14 @@ impl FipsPrivateMeshRuntime {
         Ok(sent)
     }
 
-    pub(crate) async fn send_join_request(
+    pub(crate) fn enqueue_join_request(
         &self,
-        control: &FipsControlTcpRuntime,
+        control: &FipsControlTcpSender,
         participant: &str,
         requested_at: u64,
         request: MeshJoinRequest,
     ) -> Result<()> {
-        self.send_stateful_control_frame(
+        self.enqueue_stateful_control_frame(
             control,
             participant,
             &FipsControlFrame::JoinRequest {
@@ -57,7 +57,6 @@ impl FipsPrivateMeshRuntime {
                 request,
             },
         )
-        .await
     }
 
     pub(crate) fn enqueue_roster(

@@ -71,11 +71,13 @@
         FipsControlFrame, JoinRosterControl, NetworkRoster, PeerEndpointHint, SignedRoster,
         encode_fips_control_frame,
     };
+    use nostr_vpn_core::fips_control_tcp::FipsControlTcpRuntime;
     use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
     use nostr_vpn_core::join_requests::{MeshJoinRequest, prepare_manual_join_delivery};
     use std::collections::{HashMap, HashSet};
     use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-    use std::time::Duration;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 
