@@ -114,6 +114,8 @@ if [[ -n "${RELEASE_JOIN_ANDROID_APK_SHA:-}" \
 then
   fail "inherited Android APK hash differs from its install receipt"
 fi
+RELEASE_JOIN_ARTIFACTS_VALIDATED=1
+export RELEASE_JOIN_ARTIFACTS_VALIDATED
 
 ANDROID_REQUESTED="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 [[ -n "$ANDROID_REQUESTED" ]] \
