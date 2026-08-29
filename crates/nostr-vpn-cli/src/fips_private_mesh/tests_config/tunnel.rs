@@ -37,7 +37,10 @@
             );
             assert!(!config.secure_dns_required());
             assert!(config.magic_dns_records.is_empty());
-            assert!(!config.advertise_on_nostr);
+            assert!(
+                config.advertise_on_nostr,
+                "a pending desktop join must publish a return path for approval"
+            );
             assert!(!config.wireguard_exit.enabled);
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             {

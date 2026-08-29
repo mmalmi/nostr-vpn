@@ -550,7 +550,11 @@ impl FipsPrivateTunnelConfig {
             exit_node_leak_protection: !local_identity_confirmation_pending
                 && app.exit_node_leak_protection,
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
-            advertise_on_nostr: !local_identity_confirmation_pending,
+            // A pending manual join has no durable roster route yet. Publish
+            // the same generic identity-bound reachability advert as mobile
+            // so its configured admin can deliver the signed roster after
+            // this config replaces the pre-join runtime.
+            advertise_on_nostr: true,
             webrtc_enabled: app.fips_webrtc_enabled,
             nostr_discovery_policy,
             open_discovery_restart_max_pending,

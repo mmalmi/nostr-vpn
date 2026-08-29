@@ -36,7 +36,7 @@
         assert!(config.network_id.is_empty());
         assert!(config.route_targets.is_empty());
         assert!(config.magic_dns_records.is_empty());
-        assert!(!config.advertise_on_nostr);
+        assert!(config.advertise_on_nostr);
         assert_eq!(config.wireguard_exit, joining.wireguard_exit);
         assert!(config.secure_dns_required());
         assert_eq!(
