@@ -10,7 +10,14 @@
         let endpoint = fips_endpoint_config("nostr-vpn:pending-manual-join", &config);
 
         assert!(config.network_id.is_empty());
-        assert!(config.peers.is_empty());
+        assert_eq!(config.peers.len(), 1);
+        assert_eq!(config.peers[0].participant_pubkey, admin);
+        assert!(
+            config.peers[0].allowed_ips.is_empty(),
+            "the unconfirmed admin is control-only and must not receive a mesh route"
+        );
+        assert_eq!(config.pending_join_network_id, "manual-mesh");
+        assert_eq!(config.pending_join_request_recipient, admin);
         assert!(
             endpoint.node.discovery.nostr.advertise,
             "a manual joiner must publish an encrypted return path for its approval"
@@ -33,7 +40,7 @@
             NetworkRoster {
                 network_name: "Manual mesh".to_string(),
                 devices: Vec::new(),
-                admins: vec![admin],
+                admins: vec![admin.clone()],
                 aliases: HashMap::new(),
                 signed_at: unix_timestamp(),
             },
@@ -51,7 +58,9 @@
             still_pending.network_id.is_empty(),
             "an unrelated signed roster must not move an unaccepted manual join into the mesh"
         );
-        assert!(still_pending.peers.is_empty());
+        assert_eq!(still_pending.peers.len(), 1);
+        assert_eq!(still_pending.peers[0].participant_pubkey, admin);
+        assert!(still_pending.peers[0].allowed_ips.is_empty());
         assert!(still_pending.route_targets.is_empty());
         assert!(still_pending.dns_servers.is_empty());
         assert!(still_pending.magic_dns_server.is_empty());

@@ -189,6 +189,8 @@ pub(crate) struct MobileTunnelConfig {
     #[serde(default)]
     pub(crate) local_identity_confirmation_pending: bool,
     #[serde(default)]
+    pub(crate) pending_join_network_id: String,
+    #[serde(default)]
     pub(crate) pending_join_request_recipient: String,
     #[serde(default)]
     pub(crate) pending_join_secret: String,
@@ -385,6 +387,16 @@ impl MobileTunnelConfig {
         let manual_roster_pending = app
             .active_network_opt()
             .is_some_and(|network| network.local_identity_confirmation_pending);
+        let (manual_join_admin, pending_join_network_id) = app
+            .active_network_opt()
+            .filter(|_| manual_roster_pending)
+            .map(|network| {
+                (
+                    network.join_request_admin.clone(),
+                    network.network_id.clone(),
+                )
+            })
+            .unwrap_or_default();
         // Until the configured admin signs the roster, manual join is an
         // onboarding endpoint rather than a member of that mesh. Advertising
         // the requested mesh id/local route early can make transit learn a
@@ -401,7 +413,7 @@ impl MobileTunnelConfig {
             .collect::<HashSet<_>>();
 
         let mut signal_pubkeys = if manual_roster_pending {
-            Vec::new()
+            vec![manual_join_admin.clone()]
         } else {
             app.active_network_signal_pubkeys_hex()
         };
@@ -417,9 +429,11 @@ impl MobileTunnelConfig {
         }
         for participant in signal_pubkeys
             .into_iter()
-            .filter(|participant| participant != &own_pubkey)
+            .filter(|participant| !participant.trim().is_empty() && participant != &own_pubkey)
         {
-            let mut allowed_ips = if participant_pubkeys.contains(&participant) {
+            let mut allowed_ips = if !manual_roster_pending
+                && participant_pubkeys.contains(&participant)
+            {
                 let Some(tunnel_ip) = derive_mesh_tunnel_ip(&network_id, &participant) else {
                     continue;
                 };
@@ -527,7 +541,7 @@ impl MobileTunnelConfig {
         } else {
             Vec::new()
         };
-        let (pending_join_request_recipient, pending_join_secret, pending_join_requested_at) =
+        let (mut pending_join_request_recipient, pending_join_secret, pending_join_requested_at) =
             app.active_network_opt()
                 .and_then(|network| {
                     network.outbound_join_request.as_ref().map(|request| {
@@ -539,6 +553,9 @@ impl MobileTunnelConfig {
                     })
                 })
                 .unwrap_or_default();
+        if pending_join_request_recipient.is_empty() && manual_roster_pending {
+            pending_join_request_recipient.clone_from(&manual_join_admin);
+        }
 
         Ok(Self {
             config_path: config_path.to_string_lossy().to_string(),
@@ -575,6 +592,7 @@ impl MobileTunnelConfig {
             local_identity_confirmation_pending: app.active_network_opt().is_some_and(|network| {
                 network.local_identity_confirmation_pending
             }),
+            pending_join_network_id,
             pending_join_request_recipient,
             pending_join_secret,
             pending_join_requested_at,

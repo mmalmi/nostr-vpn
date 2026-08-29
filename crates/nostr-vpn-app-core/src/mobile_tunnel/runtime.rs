@@ -435,7 +435,12 @@ impl MobileTunnel {
                     let (network_id, bootstrap_peers) = ping_config
                         .read()
                         .map(|config| {
-                            (config.network_id.clone(), config.bootstrap_peers.clone())
+                            let network_id = if config.network_id.trim().is_empty() {
+                                config.pending_join_network_id.clone()
+                            } else {
+                                config.network_id.clone()
+                            };
+                            (network_id, config.bootstrap_peers.clone())
                         })
                         .unwrap_or_default();
                     if network_id.trim().is_empty() {
