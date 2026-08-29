@@ -693,7 +693,7 @@ if [[ "$ARTIFACT_ACTION" == "full" || "$ARTIFACT_ACTION" == "run-only" ]]; then
     --expected-android-fips-sha "$RELEASE_JOIN_FIPS_SHA" \
     --expected-android-fips-tree "$RELEASE_JOIN_FIPS_TREE" \
     --expected-android-fips-version "$RELEASE_JOIN_FIPS_VERSION" \
-    "${android_install_validation[@]}" \
+    ${android_install_validation[@]+"${android_install_validation[@]}"} \
     >/dev/null
 fi
 

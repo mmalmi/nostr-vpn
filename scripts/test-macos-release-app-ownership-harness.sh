@@ -41,6 +41,8 @@ for required in (
 ):
     if required not in host:
         raise SystemExit(f"macOS/mobile direction selector lacks {required}")
+if '${android_install_validation[@]+"${android_install_validation[@]}"}' not in host:
+    raise SystemExit("macOS/Pixel validator is not safe with an empty optional-argument array")
 
 directions = (
     ("macOS admin -> physical Android joiner.", "macos-admin-pixel-joiner"),
