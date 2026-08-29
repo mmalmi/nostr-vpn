@@ -103,6 +103,8 @@ if 's.get("vpn_status") == "Waiting for participants"' not in listener:
     raise SystemExit("macOS join listener rejects the canonical empty-roster state")
 if 's.get("vpn_status") == "Listening for join requests"' in listener:
     raise SystemExit("macOS join listener still expects an unreachable status")
+if 'join_request_qr_code_or_link' in listener:
+    raise SystemExit("macOS manual join listener still requires unrelated QR state")
 
 cleanup = remote.split("restore_test_profile() {", 1)[1].split(
     "\n}\n\nservice_preflight", 1

@@ -145,9 +145,6 @@ listener_ready = (
     and s.get("vpn_active") is False
     and s.get("vpn_status") == "Waiting for participants"
     and bool(v.get("network_id"))
-    and str(v.get("join_request_qr_code_or_link", "")).startswith(
-        "nvpn://join-request/"
-    )
 )
 assert d.get("running") is True and listener_ready
 ' "$runtime_json" 2>/dev/null
