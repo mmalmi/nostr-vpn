@@ -6,13 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import time
-import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -233,116 +230,6 @@ def run_android_package(args: argparse.Namespace) -> int:
     return finish(result, args.artifact)
 
 
-def record_ios_activity_snapshot(args: argparse.Namespace, output: Path) -> None:
-    subprocess.run(
-        [
-            args.xcrun,
-            "xctrace",
-            "record",
-            "--quiet",
-            "--template",
-            "Activity Monitor",
-            "--device",
-            args.device,
-            "--all-processes",
-            "--time-limit",
-            f"{args.snapshot_seconds:g}s",
-            "--output",
-            str(output),
-            "--no-prompt",
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        timeout=args.xctrace_timeout_seconds,
-    )
-
-
-def export_ios_activity_snapshot(args: argparse.Namespace, trace: Path, output: Path) -> None:
-    subprocess.run(
-        [
-            args.xcrun,
-            "xctrace",
-            "export",
-            "--input",
-            str(trace),
-            "--xpath",
-            '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-ledger"]',
-            "--output",
-            str(output),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        timeout=args.xctrace_timeout_seconds,
-    )
-
-
-def ios_activity_processes(path: Path, pattern: re.Pattern[str]) -> dict[int, dict]:
-    processes = {}
-    for row in ET.parse(path).getroot().iter("row"):
-        process = row.find("process")
-        duration = row.find("duration-on-core")
-        if process is None or duration is None:
-            continue
-        formatted = process.attrib.get("fmt", "")
-        name = re.sub(r"\s+\(\d+\)$", "", formatted).strip()
-        if not pattern.search(name):
-            continue
-        pid_element = process.find("pid")
-        pid = int(pid_element.text) if pid_element is not None and pid_element.text else 0
-        if pid <= 0:
-            match = re.search(r"\((\d+)\)$", formatted)
-            pid = int(match.group(1)) if match else 0
-        if pid <= 0:
-            continue
-        cpu_ns = int(float((duration.text or "0").strip()))
-        processes[pid] = {"name": name, "cpu_ns": cpu_ns}
-    return processes
-
-
-def run_ios_process(args: argparse.Namespace) -> int:
-    result = base_result(args, "ios-process")
-    result["device"] = args.device
-    result["processPattern"] = args.process_pattern
-    result["snapshotSeconds"] = args.snapshot_seconds
-    result["xctraceTimeoutSeconds"] = args.xctrace_timeout_seconds
-    try:
-        pattern = re.compile(args.process_pattern)
-        if args.settle_seconds > 0:
-            time.sleep(args.settle_seconds)
-        with tempfile.TemporaryDirectory(prefix="nvpn-ios-idle-cpu-") as temporary:
-            directory = Path(temporary)
-            start_trace = directory / "start.trace"
-            end_trace = directory / "end.trace"
-            start_xml = directory / "start.xml"
-            end_xml = directory / "end.xml"
-            record_ios_activity_snapshot(args, start_trace)
-            export_ios_activity_snapshot(args, start_trace, start_xml)
-            started = time.monotonic()
-            time.sleep(args.sample_seconds)
-            record_ios_activity_snapshot(args, end_trace)
-            elapsed = time.monotonic() - started
-            export_ios_activity_snapshot(args, end_trace, end_xml)
-            start = ios_activity_processes(start_xml, pattern)
-            end = ios_activity_processes(end_xml, pattern)
-        if not start or not end:
-            raise ProcessLookupError("matching iOS process was not present in both snapshots")
-        if start.keys() != end.keys():
-            raise ProcessLookupError("matching iOS process restarted during idle sample")
-        cpu_seconds = sum(end[pid]["cpu_ns"] - start[pid]["cpu_ns"] for pid in start) / 1e9
-        if cpu_seconds < 0:
-            raise RuntimeError("cumulative iOS CPU counter decreased")
-        cpu_percent = cpu_seconds * 100.0 / max(elapsed, 0.001)
-        result["pids"] = sorted(start)
-        result["processes"] = sorted({process["name"] for process in start.values()})
-        result["cpuSeconds"] = cpu_seconds
-        result["cpuPercent"] = cpu_percent
-        result["elapsedSeconds"] = elapsed
-        result["ok"] = cpu_percent <= args.max_percent
-    except Exception as error:  # noqa: BLE001 - this is a gate script.
-        result["error"] = str(error)
-    return finish(result, args.artifact)
-
-
 def add_common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--label", default="app", help="human-readable app/check label")
     parser.add_argument("--artifact", help="JSON result path")
@@ -391,28 +278,8 @@ def main() -> int:
     android.add_argument("--package", required=True)
     android.set_defaults(func=run_android_package)
 
-    ios = subparsers.add_parser(
-        "ios-process", help="measure an iOS process through xctrace Activity Monitor"
-    )
-    add_common(ios)
-    ios.add_argument("--xcrun", default="xcrun")
-    ios.add_argument("--device", required=True)
-    ios.add_argument("--process-pattern", required=True, help="regular expression for process name")
-    ios.add_argument("--snapshot-seconds", type=float, default=2)
-    ios.add_argument(
-        "--xctrace-timeout-seconds",
-        type=float,
-        default=float(os.environ.get("NVPN_IOS_XCTRACE_TIMEOUT_SECONDS", "20")),
-        help="hard timeout for each xctrace record/export command",
-    )
-    ios.set_defaults(func=run_ios_process)
-
     args = parser.parse_args()
     validate_common(args)
-    if getattr(args, "snapshot_seconds", 1) <= 0:
-        raise SystemExit("--snapshot-seconds must be positive")
-    if getattr(args, "xctrace_timeout_seconds", 1) <= 0:
-        raise SystemExit("--xctrace-timeout-seconds must be positive")
     if parse_bool(os.environ.get("NVPN_IDLE_CPU_GATE_DEBUG", "0")):
         print(f"idle CPU gate args: {args}", file=sys.stderr)
     return args.func(args)
