@@ -1,6 +1,11 @@
 import Foundation
 import NetworkExtension
 
+private struct PacketTunnelProcessMetrics: Decodable {
+    let pid: Int
+    let cpuSeconds: Double
+}
+
 private actor ProviderSnapshotGate {
     private var held = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
@@ -322,6 +327,17 @@ final class PacketTunnelController {
 
     func providerIsResponsive() async -> Bool {
         await providerMessage("health") == "ok"
+    }
+
+    func packetTunnelProcessMetrics() async -> (pid: Int, cpuSeconds: Double)? {
+        guard let data = await providerMessageData("processMetrics"),
+              let metrics = try? JSONDecoder().decode(PacketTunnelProcessMetrics.self, from: data),
+              metrics.pid > 0,
+              metrics.cpuSeconds >= 0
+        else {
+            return nil
+        }
+        return (metrics.pid, metrics.cpuSeconds)
     }
 
     func runtimeStateJson() async -> String? {

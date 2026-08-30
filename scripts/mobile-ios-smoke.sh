@@ -688,15 +688,89 @@ run_ios_device_idle_cpu_gate() {
       return
       ;;
   esac
+  local process result_path timeout_seconds
+  case "$process_pattern" in
+    '^Nostr VPN Tunnel$') process="packet-tunnel" ;;
+    '^Nostr VPN$') process="app" ;;
+    *)
+      echo "Unsupported iOS idle CPU process pattern: $process_pattern" >&2
+      return 2
+      ;;
+  esac
   mkdir -p "$VPN_RESULT_DIR"
-  "$ROOT/scripts/idle-cpu-gate.py" ios-process \
-    --device "$device" \
-    --process-pattern "$process_pattern" \
-    --label "$label" \
-    --artifact "$VPN_RESULT_DIR/$IOS_IDLE_CPU_RESULT_NAME" \
-    --max-percent "$IDLE_CPU_MAX_PERCENT" \
-    --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
-    --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
+  result_path="$VPN_RESULT_DIR/$IOS_IDLE_CPU_RESULT_NAME"
+  timeout_seconds="$(python3 - "$IDLE_CPU_SETTLE_SECONDS" "$IDLE_CPU_SAMPLE_SECONDS" <<'PY'
+import math
+import sys
+
+print(math.ceil(float(sys.argv[1]) + float(sys.argv[2]) + 20))
+PY
+)"
+  launch_device "$device" \
+    --nvpn-debug-idle-cpu-probe \
+    --nvpn-debug-idle-cpu-result "$IOS_IDLE_CPU_RESULT_NAME" \
+    --nvpn-debug-idle-cpu-process "$process" \
+    --nvpn-debug-idle-cpu-max-percent "$IDLE_CPU_MAX_PERCENT" \
+    --nvpn-debug-idle-cpu-sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+    --nvpn-debug-idle-cpu-settle-seconds "$IDLE_CPU_SETTLE_SECONDS" >/dev/null
+
+  local ignored
+  for ignored in $(seq 1 $((timeout_seconds * 2))); do
+    sleep 0.5
+    if ! copy_ios_disconnect_result \
+      "$device" "$IOS_IDLE_CPU_RESULT_NAME" "$result_path" 2>/dev/null
+    then
+      continue
+    fi
+    if python3 - "$result_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    result = json.load(handle)
+raise SystemExit(0 if result.get("phase") == "finished" else 1)
+PY
+    then
+      break
+    fi
+  done
+
+  python3 - \
+    "$result_path" "$process" "$label" "$IDLE_CPU_MAX_PERCENT" \
+    "$IDLE_CPU_SAMPLE_SECONDS" "$NVPN_BUILD_GIT_SHA" <<'PY'
+import json
+import math
+import sys
+
+path, process, label, maximum, sample_seconds, git_sha = sys.argv[1:]
+with open(path, encoding="utf-8") as handle:
+    result = json.load(handle)
+maximum = float(maximum)
+sample_seconds = float(sample_seconds)
+errors = []
+for key, expected in (
+    ("phase", "finished"),
+    ("process", process),
+    ("label", label),
+    ("appBuildGitSha", git_sha),
+):
+    if result.get(key) != expected:
+        errors.append(f"{key}={result.get(key)!r}, expected {expected!r}")
+cpu = result.get("cpuPercent")
+elapsed = result.get("elapsedSeconds")
+if result.get("ok") is not True:
+    errors.append(f"ok={result.get('ok')!r} error={result.get('error')!r}")
+if not isinstance(result.get("pid"), int) or result["pid"] <= 0:
+    errors.append(f"pid={result.get('pid')!r}")
+if not isinstance(cpu, (int, float)) or not math.isfinite(cpu) or cpu < 0 or cpu > maximum:
+    errors.append(f"cpuPercent={cpu!r}, maximum={maximum!r}")
+if not isinstance(elapsed, (int, float)) or elapsed < sample_seconds * 0.95:
+    errors.append(f"elapsedSeconds={elapsed!r}, sampleSeconds={sample_seconds!r}")
+if errors:
+    raise SystemExit("iOS idle CPU receipt failed: " + "; ".join(errors))
+print(f"{label} idle CPU ok: {cpu:.3f}% <= {maximum:.3f}%")
+print(f"Result: {path}")
+PY
 }
 
 run_ios_connected_direct_ui_driver() {

@@ -175,8 +175,15 @@ assert_status 1 "hung iOS xctrace process" \
     --max-percent 5
 assert_json_field "$ios_timeout_json" 'data["ok"] is False and "timed out" in data["error"]'
 
-grep -Fq 'idle-cpu-gate.py" ios-process' "$MOBILE_IOS_SMOKE" \
-  || fail "iOS physical-device smoke does not run the packet-tunnel idle CPU check"
+grep -Fq -- '--nvpn-debug-idle-cpu-process' "$MOBILE_IOS_SMOKE" \
+  || fail "iOS physical-device smoke does not use the unattended in-app CPU channel"
+if grep -Fq 'idle-cpu-gate.py" ios-process' "$MOBILE_IOS_SMOKE"; then
+  fail "iOS physical-device smoke still depends on Xcode Activity Monitor authorization"
+fi
+grep -Fq 'case "processMetrics"' "$ROOT_DIR/ios/PacketTunnel/PacketTunnelProvider.swift" \
+  || fail "iOS packet tunnel does not expose cumulative process metrics"
+grep -Fq 'packetTunnelProcessMetrics()' "$ROOT_DIR/ios/Sources/AppModelDebugAutomation.swift" \
+  || fail "iOS idle CPU probe does not sample the packet-tunnel process"
 grep -Fq 'local ios_smoke_command=(./scripts/mobile-ios-smoke.sh device)' "$RELEASE_GATE" \
   || fail "release gate does not construct the physical iOS packet-tunnel command safely"
 grep -Fq 'ios_smoke_command+=(--install --create-network --vpn-cycle)' "$RELEASE_GATE" \

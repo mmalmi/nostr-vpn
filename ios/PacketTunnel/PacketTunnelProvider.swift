@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Network
 import NetworkExtension
@@ -229,6 +230,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         case "health":
             let runtimeIsAlive = withTunnelHandle { _ in true } == true
             completionHandler?(runtimeIsAlive ? Data("ok".utf8) : nil)
+        case "processMetrics":
+            completionHandler?(processMetricsData())
         case "runtimeStateBegin":
             let data = runtimeStateData()
             appMessageSnapshotLock.lock()
@@ -299,6 +302,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             consumeCString(nostr_vpn_mobile_tunnel_runtime_state_json(handle))
         } ?? #"{"error":"mobile tunnel stopped"}"#
         return json.data(using: .utf8) ?? Data()
+    }
+
+    private func processMetricsData() -> Data? {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else {
+            return nil
+        }
+        let cpuSeconds = Double(usage.ru_utime.tv_sec)
+            + Double(usage.ru_utime.tv_usec) / 1_000_000
+            + Double(usage.ru_stime.tv_sec)
+            + Double(usage.ru_stime.tv_usec) / 1_000_000
+        return try? JSONSerialization.data(withJSONObject: [
+            "pid": Int(getpid()),
+            "cpuSeconds": cpuSeconds,
+        ])
     }
 
     private func appConfigSnapshotData() -> Data {

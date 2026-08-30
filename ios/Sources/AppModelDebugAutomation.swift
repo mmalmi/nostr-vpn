@@ -1,6 +1,11 @@
 import Darwin
 import Foundation
 
+private struct DebugProcessCpuSample {
+    let pid: Int
+    let cpuSeconds: Double
+}
+
 extension AppModel {
     func runLaunchAutomationIfRequested() -> Bool {
         #if DEBUG
@@ -160,11 +165,17 @@ extension AppModel {
             minValue: 0,
             maxValue: 100
         )
+        let process = Self.argumentValue(
+            after: "--nvpn-debug-idle-cpu-process",
+            in: arguments
+        ) ?? "app"
+        let label = process == "packet-tunnel" ? "iOS packet tunnel" : "iOS app"
         let startedAt = Date()
         var result: [String: Any] = [
             "ok": false,
             "phase": "settling",
-            "label": "iOS app",
+            "label": label,
+            "process": process,
             "maxPercent": maxPercent,
             "sampleSeconds": sampleSeconds,
             "settleSeconds": settleSeconds,
@@ -177,24 +188,58 @@ extension AppModel {
         if settleSeconds > 0 {
             try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
         }
-        let startCpu = Self.processCpuSeconds()
+        guard let start = await debugProcessCpuSample(process: process) else {
+            result["phase"] = "finished"
+            result["error"] = "idle CPU process metrics unavailable"
+            result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+            writeDebugProbeResult(result, name: resultName)
+            return
+        }
         let sampleStartedAt = Date()
         result["phase"] = "sampling"
+        result["pid"] = start.pid
         result["sampleStartedAt"] = ISO8601DateFormatter().string(from: sampleStartedAt)
         writeDebugProbeResult(result, name: resultName)
         try? await Task.sleep(nanoseconds: UInt64(sampleSeconds * 1_000_000_000))
         let elapsed = max(0.001, Date().timeIntervalSince(sampleStartedAt))
-        let endCpu = Self.processCpuSeconds()
-        let cpuPercent = max(0, endCpu - startCpu) * 100.0 / elapsed
+        guard let end = await debugProcessCpuSample(process: process) else {
+            result["phase"] = "finished"
+            result["error"] = "idle CPU process exited during sampling"
+            result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+            writeDebugProbeResult(result, name: resultName)
+            return
+        }
+        guard end.pid == start.pid, end.cpuSeconds >= start.cpuSeconds else {
+            result["phase"] = "finished"
+            result["error"] = "idle CPU process restarted during sampling"
+            result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+            writeDebugProbeResult(result, name: resultName)
+            return
+        }
+        let cpuSeconds = end.cpuSeconds - start.cpuSeconds
+        let cpuPercent = cpuSeconds * 100.0 / elapsed
         result["phase"] = "finished"
         result["ok"] = cpuPercent <= maxPercent
         result["cpuPercent"] = cpuPercent
         result["elapsedSeconds"] = elapsed
-        result["cpuSeconds"] = max(0, endCpu - startCpu)
+        result["cpuSeconds"] = cpuSeconds
         result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
         result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: startedAt)
         writeDebugProbeResult(result, name: resultName)
         #endif
+    }
+
+    private func debugProcessCpuSample(process: String) async -> DebugProcessCpuSample? {
+        if process == "packet-tunnel" {
+            guard let metrics = await vpnController.packetTunnelProcessMetrics() else {
+                return nil
+            }
+            return DebugProcessCpuSample(pid: metrics.pid, cpuSeconds: metrics.cpuSeconds)
+        }
+        guard process == "app", let cpuSeconds = Self.processCpuSeconds() else {
+            return nil
+        }
+        return DebugProcessCpuSample(pid: Int(getpid()), cpuSeconds: cpuSeconds)
     }
 
     private func runDebugDisconnect(resultName: String) async {
@@ -729,10 +774,10 @@ extension AppModel {
         max(0, Int(Date().timeIntervalSince(start) * 1000))
     }
 
-    nonisolated private static func processCpuSeconds() -> Double {
+    nonisolated private static func processCpuSeconds() -> Double? {
         var usage = rusage()
         guard getrusage(RUSAGE_SELF, &usage) == 0 else {
-            return 0
+            return nil
         }
         return Double(usage.ru_utime.tv_sec)
             + Double(usage.ru_utime.tv_usec) / 1_000_000
