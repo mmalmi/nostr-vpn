@@ -85,24 +85,6 @@ extension AppModel {
                 waitSeconds: waitSeconds
             )
         }
-        let echoResult = await echoTask.value
-        let sentPackets = echoResult.sentPackets
-        result["tunPacketProbeSentPackets"] = sentPackets
-        result["tunPacketProbeReplyPackets"] = echoResult.replyPackets
-        result["tunPacketProbeMissingReplyPackets"] = max(
-            0,
-            packetCount - echoResult.replyPackets
-        )
-        let requiredRead = Self.saturatingAdd(baselineRead, UInt64(sentPackets))
-        result["tunPacketProbeRequiredRead"] = Self.jsonCounterValue(requiredRead)
-        if !echoResult.errors.isEmpty {
-            result["tunPacketProbeReplyError"] = echoResult.errors.joined(separator: "; ")
-        }
-        guard sentPackets > 0 else {
-            result["tunPacketProbeError"] = "no UDP probe packets sent"
-            return result
-        }
-
         let deadline = probeStartedAt.addingTimeInterval(waitSeconds)
         var finalRead = baselineRead
         var finalBytesRead = baselineBytesRead
@@ -143,29 +125,26 @@ extension AppModel {
                 if currentRead > baselineRead && firstObservedAt == nil {
                     firstObservedAt = Date()
                 }
-                if currentRead >= requiredRead {
-                    Self.finishTunPacketProbeResult(
-                        &result,
-                        sentPackets: sentPackets,
-                        baselineRead: baselineRead,
-                        baselineBytesRead: baselineBytesRead,
-                        baselineWritten: baselineWritten,
-                        baselineBytesWritten: baselineBytesWritten,
-                        baselineDropped: baselineDropped,
-                        finalRead: currentRead,
-                        finalBytesRead: currentBytesRead,
-                        finalWritten: currentWritten,
-                        finalBytesWritten: currentBytesWritten,
-                        finalDropped: currentDropped,
-                        probeStartedAt: probeStartedAt,
-                        firstObservedAt: firstObservedAt,
-                        pollCount: pollCount
-                    )
-                    result["tunPacketProbeReadIncreased"] = true
-                    return result
-                }
             }
             try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
+        }
+
+        let echoResult = await echoTask.value
+        let sentPackets = echoResult.sentPackets
+        result["tunPacketProbeSentPackets"] = sentPackets
+        result["tunPacketProbeReplyPackets"] = echoResult.replyPackets
+        result["tunPacketProbeMissingReplyPackets"] = max(
+            0,
+            packetCount - echoResult.replyPackets
+        )
+        let requiredRead = Self.saturatingAdd(baselineRead, UInt64(sentPackets))
+        result["tunPacketProbeRequiredRead"] = Self.jsonCounterValue(requiredRead)
+        if !echoResult.errors.isEmpty {
+            result["tunPacketProbeReplyError"] = echoResult.errors.joined(separator: "; ")
+        }
+        guard sentPackets > 0 else {
+            result["tunPacketProbeError"] = "no UDP probe packets sent"
+            return result
         }
 
         Self.finishTunPacketProbeResult(
@@ -185,6 +164,7 @@ extension AppModel {
             firstObservedAt: firstObservedAt,
             pollCount: pollCount
         )
+        result["tunPacketProbeReadIncreased"] = finalRead >= requiredRead
         return result
     }
 
