@@ -17,10 +17,10 @@ def _normalize_sha256(value):
     return normalized
 
 
-def _content_sha256(certificate):
+def _certificate_der(certificate):
     content = certificate.get("attributes", {}).get("certificateContent", "")
     if not content:
-        return None
+        raise ValueError("App Store Connect certificate content is missing")
     try:
         decoded = base64.b64decode("".join(content.split()), validate=True)
     except (ValueError, TypeError) as error:
@@ -34,7 +34,16 @@ def _content_sha256(certificate):
             raise ValueError("App Store Connect certificate content is malformed") from error
     else:
         der = decoded
-    return hashlib.sha256(der).hexdigest()
+    return der
+
+
+def _content_sha256(certificate):
+    return hashlib.sha256(_certificate_der(certificate)).hexdigest()
+
+
+def certificate_code_sign_identity(certificate):
+    """Return the certificate's exact SHA-1 identity accepted by Xcode."""
+    return hashlib.sha1(_certificate_der(certificate)).hexdigest()
 
 
 def select_certificate_id(

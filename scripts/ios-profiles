@@ -96,7 +96,7 @@ import urllib.parse
 import urllib.request
 
 sys.path.insert(0, sys.argv[1])
-from ios_profile_certificate import select_certificate_id
+from ios_profile_certificate import certificate_code_sign_identity, select_certificate_id
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -280,9 +280,12 @@ def select_certificate():
         )
     except ValueError as error:
         fail(str(error))
+    selected_certificate = next(
+        certificate for certificate in certificates if certificate.get("id") == selected
+    )
     qualifier = "pinned" if expected_sha256 else "configured" if configured else "newest valid"
     print(f"Using {qualifier} {required_type.lower()} certificate", file=sys.stderr)
-    return selected
+    return selected, certificate_code_sign_identity(selected_certificate)
 
 
 def profile_requires_devices():
@@ -468,11 +471,11 @@ def create_profile(target, bundle_id, certificate_id, devices):
 
 
 def ensure_profiles():
-    certificate_id = select_certificate()
+    certificate_id, code_sign_identity = select_certificate()
     devices = select_devices()
     env_values = {
         "NVPN_IOS_SIGNING_STYLE": "manual",
-        "NVPN_IOS_CODE_SIGN_IDENTITY": CODE_SIGN_IDENTITY,
+        "NVPN_IOS_CODE_SIGN_IDENTITY": code_sign_identity,
     }
     installed = []
 

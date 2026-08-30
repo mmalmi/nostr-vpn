@@ -45,6 +45,7 @@ def fixture(
 
 matching_content = b"generic matching distribution certificate"
 matching_pin = hashlib.sha256(matching_content).hexdigest()
+matching_identity = hashlib.sha1(matching_content).hexdigest()
 certificates = [
     fixture("newer-wrong", b"generic newer certificate", "2028-01-01T00:00:00Z"),
     fixture("pinned-match", matching_content, "2027-01-01T00:00:00Z", pem=True),
@@ -59,6 +60,8 @@ selected = module.select_certificate_id(
 )
 if selected != "pinned-match":
     raise SystemExit("selector did not prefer the certificate content matching the pin")
+if module.certificate_code_sign_identity(certificates[1]) != matching_identity:
+    raise SystemExit("selector did not derive an unambiguous Xcode signing identity")
 
 selected = module.select_certificate_id(
     certificates,
@@ -110,3 +113,4 @@ PY
 grep -Fq '"fields[certificates]"' "$ROOT/scripts/ios-profiles"
 grep -Fq '"certificateType,expirationDate,certificateContent"' \
   "$ROOT/scripts/ios-profiles"
+grep -Fq 'certificate_code_sign_identity(selected)' "$ROOT/scripts/ios-profiles"
