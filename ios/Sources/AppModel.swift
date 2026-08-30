@@ -145,7 +145,6 @@ final class AppModel: ObservableObject {
         } else if pendingVpnTransitionEnabled == nil,
                   desiredVpnEnabled != state.vpnEnabled
         {
-            pendingVpnTransitionEnabled = desiredVpnEnabled
             state.vpnEnabled = desiredVpnEnabled
         }
         refreshTask = Task { [weak self] in

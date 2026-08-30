@@ -219,15 +219,15 @@ grep -Fq 'device process terminate' "$ROOT/scripts/mobile-ios-smoke.sh" \
 grep -Fq -- '--payload-url "nvpn://debug/automation?arguments=$encoded_arguments"' \
   "$ROOT/scripts/mobile_env.sh" \
   || fail "physical iOS automation does not use the non-terminating URL command channel"
-for xcode_driver in \
-  "$ROOT/scripts/lib-mobile-ios-lifecycle.sh" \
-  "$ROOT/scripts/mobile-ios-smoke.sh"
-do
-  grep -Fq 'resolve_physical_ios_udid' "$xcode_driver" \
-    || fail "physical Xcode driver does not resolve CoreDevice names: $xcode_driver"
-  grep -Fq -- '-collect-test-diagnostics never' "$xcode_driver" \
-    || fail "physical Xcode failure can stall on privileged diagnostics: $xcode_driver"
-done
+grep -Fq 'resolve_physical_ios_udid' "$ROOT/scripts/mobile-ios-smoke.sh" \
+  || fail "physical Xcode driver does not resolve CoreDevice names"
+grep -Fq -- '-collect-test-diagnostics never' "$ROOT/scripts/mobile-ios-smoke.sh" \
+  || fail "physical Xcode failure can stall on privileged diagnostics"
+grep -Fq 'com.apple.Preferences' "$ROOT/scripts/lib-mobile-ios-lifecycle.sh" \
+  || fail "physical lifecycle gate does not background through a real device app switch"
+if grep -Eq 'xcodebuild|XCTest' "$ROOT/scripts/lib-mobile-ios-lifecycle.sh"; then
+  fail "physical lifecycle gate still depends on fragile XCTest automation startup"
+fi
 grep -Fq 'udid = hardware.get("udid")' \
   "$ROOT/scripts/lib-mobile-ios-release-network.sh" \
   && grep -Fq 'print(udid)' "$ROOT/scripts/lib-mobile-ios-release-network.sh" \
@@ -285,8 +285,7 @@ python3 - \
   "$ROOT/ios/Sources/AppModelDebugLifecycle.swift" \
   "$ROOT/ios/Sources/NostrVpnIosApp.swift" \
   "$ROOT/scripts/lib-mobile-ios-lifecycle.sh" \
-  "$ROOT/scripts/release-gate.sh" \
-  "$ROOT/ios/UITests/NostrVpnLifecycleUITests.swift" <<'PY'
+  "$ROOT/scripts/release-gate.sh" <<'PY'
 import sys
 
 app_model = open(sys.argv[1], encoding="utf-8").read()
@@ -300,7 +299,6 @@ lifecycle_automation = open(sys.argv[8], encoding="utf-8").read()
 ios_app = open(sys.argv[9], encoding="utf-8").read()
 lifecycle_gate = open(sys.argv[10], encoding="utf-8").read()
 release_gate = open(sys.argv[11], encoding="utf-8").read()
-lifecycle_xctest = open(sys.argv[12], encoding="utf-8").read()
 if "throw PacketTunnelControllerError.disconnectTimedOut(status)" not in controller:
     raise SystemExit("disconnect timeout does not fail closed")
 start_method = controller.split("func start(", 1)[1].split("static func routeState", 1)[0]
@@ -397,18 +395,21 @@ if "core?.close()" not in app_model or "core = nil" not in app_model:
     raise SystemExit("iOS suspension path can retain the shared Cashu wallet lock")
 if "--nvpn-debug-lifecycle-result" not in lifecycle_automation:
     raise SystemExit("iOS physical build cannot report native-core lifecycle state")
-if "XCUIDevice.shared.press(.home)" not in lifecycle_xctest:
-    raise SystemExit("iOS lifecycle XCTest does not physically background the app")
-if "app.activate()" not in lifecycle_xctest:
-    raise SystemExit("iOS lifecycle XCTest does not physically foreground the app")
-if "Thread.sleep(forTimeInterval: TimeInterval(dwellSeconds))" not in lifecycle_xctest:
-    raise SystemExit("iOS lifecycle XCTest omits the suspended dwell")
-if "testPhysicalNativeCoreBackgroundForegroundLifecycle" not in lifecycle_gate:
-    raise SystemExit("physical lifecycle gate does not run its dedicated XCTest")
-if 'destination_udid="$(resolve_physical_ios_udid "$device")"' not in lifecycle_gate:
-    raise SystemExit("physical lifecycle gate does not resolve CoreDevice names for Xcode")
-if '-destination "platform=iOS,id=$destination_udid"' not in lifecycle_gate:
-    raise SystemExit("physical lifecycle gate passes a CoreDevice name as an Xcode ID")
+debug_add_network = automation.split("private func addDebugNetworkIfPresent", 1)[1].split(
+    "private func exportDebugSupportFileIfRequested", 1
+)[0]
+if "tunnelConfigSyncTask?.cancel()" not in debug_add_network:
+    raise SystemExit("debug network setup can race its own single tunnel start")
+if 'ios_lifecycle_activate "$device" "com.apple.Preferences"' not in lifecycle_gate:
+    raise SystemExit("physical lifecycle gate does not physically background the app")
+if 'ios_lifecycle_activate "$device" "$bundle_id"' not in lifecycle_gate:
+    raise SystemExit("physical lifecycle gate does not physically foreground the app")
+if 'sleep "$background_dwell"' not in lifecycle_gate:
+    raise SystemExit("physical lifecycle gate omits the suspended dwell")
+if 'ios_lifecycle_wait_for_active_tunnel_ready' not in lifecycle_gate:
+    raise SystemExit("active-tunnel lifecycle can background before its observer is ready")
+if "xcodebuild" in lifecycle_gate or "XCTest" in lifecycle_gate:
+    raise SystemExit("physical lifecycle gate still depends on UI Automation")
 if "ios_lifecycle_validate_history" not in lifecycle_gate:
     raise SystemExit("physical lifecycle gate does not validate app-side transition history")
 if '"history": lifecycleProbeHistory' not in lifecycle_automation:

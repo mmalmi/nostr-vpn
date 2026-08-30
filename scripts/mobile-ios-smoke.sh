@@ -80,8 +80,8 @@ usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--disconnect]
 simulator  Builds, clean-installs, launches, screenshots, samples idle CPU,
            and drives QR, DNS-settings, and lifecycle controls through XCTest.
 device     Launches an already installed physical test build.
-           By default, backgrounds and foregrounds it three times and proves
-           the shared native core closes and reopens on every transition,
+           By default, switches to a system app and back three times and proves
+           the shared native core closes and reopens on every real transition,
            including a ten-second suspended interval per cycle.
 --install  Builds and installs the current iphoneos test app
            before launching device mode.
@@ -133,9 +133,10 @@ without injecting them. NVPN_IOS_SWITCH_TO_DIRECT_WHILE_CONNECTED=1 runs a
 physical XCTest that taps This device in the shipped Internet-source picker,
 verifies the installed tunnel config has neither a default route nor WireGuard
 exit, and proves DNS and HTTPS while the OS VPN stays connected.
-With a VPN cycle, the lifecycle gate uses physical XCTest Home/activate events
-for three ten-second background cycles by default and requires a fresh real
-TUN/DNS/HTTPS/endpoint receipt after every foreground before continuing.
+With a VPN cycle, the lifecycle gate uses direct CoreDevice app activation for
+three ten-second background cycles by default and requires a fresh real
+TUN/DNS/HTTPS/endpoint receipt after every foreground before continuing. It
+does not depend on the device's UI Automation mode.
 EOF
 }
 

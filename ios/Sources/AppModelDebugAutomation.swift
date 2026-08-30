@@ -88,6 +88,8 @@ extension AppModel {
         }
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
         dispatch(NativeActions.addNetwork(normalized.isEmpty ? "iOS smoke" : normalized))
+        tunnelConfigSyncTask?.cancel()
+        tunnelConfigSyncTask = nil
         refresh()
         return true
         #else

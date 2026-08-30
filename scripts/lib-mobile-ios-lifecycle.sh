@@ -36,7 +36,7 @@ with open(marker_path, encoding="utf-8") as handle:
     marker_lines = [line.strip() for line in handle if line.strip()]
 
 if receipt.get("runId") != run_id:
-    raise SystemExit("lifecycle receipt run ID does not match this XCTest run")
+    raise SystemExit("lifecycle receipt run ID does not match this device run")
 history = receipt.get("history")
 if not isinstance(history, list) or not history:
     raise SystemExit("lifecycle receipt has no transition history")
@@ -94,11 +94,11 @@ if receipt.get("transition") != history[-1].get("transition"):
     raise SystemExit("final lifecycle transition does not match the retained history")
 
 required_markers = {
-    f"NVPN_XCUITEST_RUN_ID={run_id}",
+    f"NVPN_IOS_LIFECYCLE_RUN_ID={run_id}",
     f"NVPN_IOS_LIFECYCLE_RESULT_NAME={history_path.rsplit('/', 1)[-1].replace('-history', '')}",
 }
 if not required_markers.issubset(set(marker_lines)):
-    raise SystemExit("XCTest lifecycle marker receipt is stale or incomplete")
+    raise SystemExit("device lifecycle marker receipt is stale or incomplete")
 
 def marker_milliseconds(name):
     prefix = f"{name}="
@@ -110,10 +110,12 @@ def marker_milliseconds(name):
     except ValueError as error:
         raise SystemExit(f"{name} is not a timestamp") from error
 
-passed = marker_milliseconds("NVPN_IOS_LIFECYCLE_XCTEST_PASSED_MS")
+passed = marker_milliseconds("NVPN_IOS_LIFECYCLE_DRIVER_PASSED_MS")
 previous = marker_milliseconds("NVPN_IOS_LIFECYCLE_LAUNCH_FOREGROUND_MS")
 for cycle in range(1, cycles + 1):
-    home = marker_milliseconds(f"NVPN_IOS_LIFECYCLE_CYCLE_{cycle}_HOME_REQUESTED_MS")
+    background_requested = marker_milliseconds(
+        f"NVPN_IOS_LIFECYCLE_CYCLE_{cycle}_BACKGROUND_REQUESTED_MS"
+    )
     observed = marker_milliseconds(
         f"NVPN_IOS_LIFECYCLE_CYCLE_{cycle}_BACKGROUND_OBSERVED_MS"
     )
@@ -123,11 +125,11 @@ for cycle in range(1, cycles + 1):
     foreground = marker_milliseconds(
         f"NVPN_IOS_LIFECYCLE_CYCLE_{cycle}_FOREGROUND_OBSERVED_MS"
     )
-    if not previous <= home <= observed <= activate <= foreground <= passed:
-        raise SystemExit(f"XCTest cycle {cycle} timestamps are unordered")
+    if not previous <= background_requested <= observed <= activate <= foreground <= passed:
+        raise SystemExit(f"device cycle {cycle} timestamps are unordered")
     if activate - observed < dwell_milliseconds - 250:
         raise SystemExit(
-            f"XCTest cycle {cycle} dwell was {activate - observed}ms; "
+            f"device cycle {cycle} dwell was {activate - observed}ms; "
             f"expected about {dwell_milliseconds}ms"
         )
     previous = foreground
@@ -149,6 +151,158 @@ print(
 PY
 }
 
+ios_lifecycle_milliseconds() {
+  python3 - <<'PY'
+import time
+print(int(time.time() * 1_000))
+PY
+}
+
+ios_lifecycle_mark() {
+  local marker_file="$1"
+  local name="$2"
+  printf '%s=%s\n' "$name" "$(ios_lifecycle_milliseconds)" >>"$marker_file"
+}
+
+ios_lifecycle_activate() {
+  local device="$1"
+  local bundle_id="$2"
+  xcrun devicectl device process launch \
+    --device "$device" \
+    --activate \
+    --quiet \
+    "$bundle_id"
+}
+
+ios_lifecycle_launch_fresh() {
+  local device="$1"
+  local bundle_id="$2"
+  shift 2
+  xcrun devicectl device process launch \
+    --device "$device" \
+    --activate \
+    --quiet \
+    "$bundle_id" "$@"
+}
+
+ios_lifecycle_receipt_has_transition() {
+  local receipt="$1"
+  local phase="$2"
+  local transition="$3"
+  python3 - "$receipt" "$phase" "$transition" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    result = json.load(handle)
+phase = sys.argv[2]
+transition = int(sys.argv[3])
+expected_core = phase != "background"
+raise SystemExit(
+    0 if result.get("phase") == phase
+    and result.get("transition") == transition
+    and result.get("nativeCoreAvailable") is expected_core
+    else 1
+)
+PY
+}
+
+ios_lifecycle_wait_for_transition() {
+  local device="$1"
+  local bundle_id="$2"
+  local result_name="$3"
+  local destination="$4"
+  local phase="$5"
+  local transition="$6"
+  local timeout_seconds="${NVPN_IOS_LIFECYCLE_TRANSITION_TIMEOUT_SECS:-45}"
+  local deadline="$((SECONDS + timeout_seconds))"
+  while (( SECONDS < deadline )); do
+    if ios_lifecycle_copy_result \
+      "$device" "$bundle_id" "$result_name" "$destination" 2>/dev/null \
+      && ios_lifecycle_receipt_has_transition "$destination" "$phase" "$transition"
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "iOS lifecycle timed out awaiting $phase transition $transition" >&2
+  return 1
+}
+
+ios_lifecycle_wait_for_active_tunnel_cycle() {
+  local device="$1"
+  local bundle_id="$2"
+  local result_name="$3"
+  local destination="$4"
+  local cycle="$5"
+  local timeout_seconds="${NVPN_IOS_LIFECYCLE_PROBE_TIMEOUT_SECS:-60}"
+  local deadline="$((SECONDS + timeout_seconds))"
+  while (( SECONDS < deadline )); do
+    if ios_lifecycle_copy_result \
+      "$device" "$bundle_id" "$result_name" "$destination" 2>/dev/null \
+      && python3 - "$destination" "$cycle" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    result = json.load(handle)
+cycle = int(sys.argv[2])
+raise SystemExit(0 if result.get("activeTunnelLifecycleCycles", 0) >= cycle else 1)
+PY
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "iOS lifecycle timed out re-proving the active tunnel after cycle $cycle" >&2
+  return 1
+}
+
+ios_lifecycle_wait_for_active_tunnel_ready() {
+  local device="$1"
+  local bundle_id="$2"
+  local result_name="$3"
+  local destination="$4"
+  local timeout_seconds="${NVPN_IOS_LIFECYCLE_PROBE_TIMEOUT_SECS:-60}"
+  local deadline="$((SECONDS + timeout_seconds))"
+  while (( SECONDS < deadline )); do
+    if ios_lifecycle_copy_result \
+      "$device" "$bundle_id" "$result_name" "$destination" 2>/dev/null \
+      && python3 - "$destination" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    result = json.load(handle)
+raise SystemExit(
+    0 if result.get("phase") == "awaiting_active_tunnel_lifecycle_cycle_1"
+    and result.get("packetTunnelConnected") is True
+    and result.get("packetTunnelStatusRawValue") == 3
+    else 1
+)
+PY
+    then
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "iOS lifecycle timed out awaiting the initial active tunnel" >&2
+  return 1
+}
+
+ios_lifecycle_argument_value() {
+  local requested="$1"
+  shift
+  while [[ "$#" -gt 1 ]]; do
+    if [[ "$1" == "$requested" ]]; then
+      printf '%s\n' "$2"
+      return 0
+    fi
+    shift
+  done
+  return 1
+}
+
 _run_ios_app_lifecycle_gate() {
   local device="$1"
   local bundle_id="$2"
@@ -156,18 +310,16 @@ _run_ios_app_lifecycle_gate() {
   local cycles="$4"
   local mode="$5"
   shift 5
-  local result_prefix run_id_prefix test_method gate_description
+  local result_prefix run_id_prefix gate_description
   case "$mode" in
     standalone)
       result_prefix="mobile-ios-lifecycle"
       run_id_prefix="ios-lifecycle"
-      test_method="testPhysicalNativeCoreBackgroundForegroundLifecycle"
       gate_description="physical lifecycle"
       ;;
     active-tunnel)
       result_prefix="mobile-ios-active-tunnel-lifecycle"
       run_id_prefix="ios-active-tunnel-lifecycle"
-      test_method="testPhysicalActiveTunnelBackgroundForegroundLifecycle"
       gate_description="active-tunnel lifecycle"
       ;;
     *)
@@ -180,13 +332,13 @@ _run_ios_app_lifecycle_gate() {
   local stem="${result_name%.json}"
   local background_dwell="${NVPN_IOS_LIFECYCLE_BACKGROUND_DWELL_SECS:-10}"
   local run_id="$run_id_prefix-$$-$RANDOM-$(date +%s)"
-  local log="$result_dir/$stem-xcodebuild.log"
   local markers="$result_dir/$stem-markers.log"
   local history="$result_dir/$stem-history.json"
   local summary="$result_dir/$stem-summary.json"
-  local xcresult="$result_dir/$stem.xcresult"
-  local team="${NVPN_IOS_TEAM_ID:-}"
-  local destination_udid arguments_base64="" ignored
+  local probe_state="$result_dir/$stem-probe-state.json"
+  local probe_result_name=""
+  local lifecycle_timeout
+  local -a app_arguments=("$@")
 
   if ! [[ "$cycles" =~ ^[1-5]$ ]]; then
     echo "iOS $gate_description gate requires 1-5 lifecycle cycles" >&2
@@ -201,117 +353,85 @@ _run_ios_app_lifecycle_gate() {
       echo "iOS active-tunnel lifecycle requires at least 10s background dwell" >&2
       return 1
     fi
-    local lifecycle_timeout="$((background_dwell * cycles + 40 * cycles + 30))"
-    local -a app_arguments=(
-      "$@"
+    probe_result_name="$(ios_lifecycle_argument_value --nvpn-debug-result "$@")" || {
+      echo "iOS active-tunnel lifecycle requires a debug probe result name" >&2
+      return 1
+    }
+    lifecycle_timeout="$((background_dwell * cycles + 40 * cycles + 30))"
+    app_arguments+=(
       --nvpn-debug-lifecycle-result "$result_name"
       --nvpn-debug-lifecycle-run-id "$run_id"
       --nvpn-debug-await-active-tunnel-lifecycle
       --nvpn-debug-active-lifecycle-cycles "$cycles"
       --nvpn-debug-active-lifecycle-timeout-seconds "$lifecycle_timeout"
     )
-    arguments_base64="$(python3 - "${app_arguments[@]}" <<'PY'
-import base64
-import json
-import sys
-
-print(base64.b64encode(json.dumps(sys.argv[1:]).encode()).decode())
-PY
-    )"
-  fi
-
-  [[ -n "$team" ]] || {
-    echo "Set NVPN_IOS_TEAM_ID to run the physical iOS $gate_description XCTest." >&2
-    return 1
-  }
-  destination_udid="$(resolve_physical_ios_udid "$device")"
-  prepare_device_signing "$device"
-  mkdir -p "$result_dir"
-  rm -rf "$xcresult"
-  rm -f "$log" "$markers" "$history" "$summary"
-
-  local -a command=(
-    xcodebuild
-    -allowProvisioningUpdates
-    -project "$PROJECT"
-    -scheme "$SCHEME"
-    -configuration "$DEVICE_CONFIGURATION"
-    -derivedDataPath "$DEVICE_DERIVED_DATA"
-    -destination "platform=iOS,id=$destination_udid"
-    -destination-timeout 60
-    -collect-test-diagnostics never
-    -resultBundlePath "$xcresult"
-    "-only-testing:NostrVpnIosUITests/NostrVpnLifecycleUITests/$test_method"
-    DEVELOPMENT_TEAM="$team"
-  )
-  if bool_is_true "${NVPN_IOS_XCODEBUILD_QUIET:-1}"; then
-    command+=( -quiet )
-  fi
-  if [[ "$DEVICE_SIGNING_MODE" == "adhoc" ]]; then
-    command+=(
-      NVPN_IOS_CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY"
-      NVPN_IOS_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PROVISIONING_PROFILE_UUID"
-      NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID"
-    )
   else
-    command+=(CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY")
-  fi
-  if [[
-    -n "${NVPN_ASC_AUTH_KEY_PATH:-}" &&
-    -n "${NVPN_ASC_AUTH_KEY_ID:-}" &&
-    -n "${NVPN_ASC_AUTH_KEY_ISSUER_ID:-}"
-  ]]; then
-    command+=(
-      -authenticationKeyPath "$NVPN_ASC_AUTH_KEY_PATH"
-      -authenticationKeyID "$NVPN_ASC_AUTH_KEY_ID"
-      -authenticationKeyIssuerID "$NVPN_ASC_AUTH_KEY_ISSUER_ID"
+    app_arguments=(
+      --nvpn-debug-lifecycle-result "$result_name"
+      --nvpn-debug-lifecycle-run-id "$run_id"
     )
   fi
-  command+=(
-    NVPN_XCUITEST_RUN_ID="$run_id"
-    NVPN_XCUITEST_LIFECYCLE_GATE=1
-    NVPN_XCUITEST_LIFECYCLE_RESULT_NAME="$result_name"
-    NVPN_XCUITEST_LIFECYCLE_CYCLES="$cycles"
-    NVPN_XCUITEST_LIFECYCLE_BACKGROUND_DWELL_SECS="$background_dwell"
-  )
+
+  mkdir -p "$result_dir"
+  rm -f "$markers" "$history" "$summary" "$summary.error" "$probe_state"
+  printf 'NVPN_IOS_LIFECYCLE_RUN_ID=%s\n' "$run_id" >"$markers"
+  printf 'NVPN_IOS_LIFECYCLE_RESULT_NAME=%s\n' "$result_name" >>"$markers"
+
+  disconnect_ios_vpn_confirmed "$device"
+  terminate_ios_app_processes_before_install "$device"
+  ios_lifecycle_mark "$markers" NVPN_IOS_LIFECYCLE_LAUNCH_REQUESTED_MS
+  ios_lifecycle_launch_fresh "$device" "$bundle_id" "${app_arguments[@]}"
+  ios_lifecycle_wait_for_transition \
+    "$device" "$bundle_id" "$result_name" "$history" armed 1
+  ios_lifecycle_mark "$markers" NVPN_IOS_LIFECYCLE_LAUNCH_FOREGROUND_MS
   if [[ "$mode" == "active-tunnel" ]]; then
-    command+=(NVPN_XCUITEST_APP_LAUNCH_ARGS_BASE64="$arguments_base64")
-  fi
-  command+=(test)
-
-  if ! NSUnbufferedIO=YES "${command[@]}" >"$log" 2>&1; then
-    tail -n 120 "$log" >&2
-    echo "The iOS lifecycle runner failed; enter the VPN-approval passcode if shown, otherwise verify UI Automation." >&2
-    echo "iOS $gate_description XCTest failed: $xcresult" >&2
-    return 1
+    ios_lifecycle_wait_for_active_tunnel_ready \
+      "$device" "$bundle_id" "$probe_result_name" "$probe_state"
   fi
 
-  xcrun devicectl device copy from \
-    --device "$device" \
-    --domain-type appDataContainer \
-    --domain-identifier "$bundle_id.UITests.xctrunner" \
-    --source "Documents/nvpn-ui-gate-markers.log" \
-    --destination "$markers" \
-    --quiet >/dev/null
-  for ignored in $(seq 1 40); do
-    if ios_lifecycle_copy_result \
-      "$device" "$bundle_id" "$result_name" "$history" 2>/dev/null
-    then
-      if ios_lifecycle_validate_history \
-        "$history" "$markers" "$run_id" "$cycles" "$background_dwell" \
-        >"$summary" 2>"$summary.error"
-      then
-        rm -f "$summary.error"
-        printf 'iOS %s gate passed: %s cycles, %ss dwell; artifacts: %s\n' \
-          "$gate_description" "$cycles" "$background_dwell" "$result_dir"
-        return 0
-      fi
+  local cycle background_transition active_transition
+  for cycle in $(seq 1 "$cycles"); do
+    background_transition="$((cycle * 2))"
+    active_transition="$((background_transition + 1))"
+    ios_lifecycle_mark \
+      "$markers" "NVPN_IOS_LIFECYCLE_CYCLE_${cycle}_BACKGROUND_REQUESTED_MS"
+    ios_lifecycle_activate "$device" "com.apple.Preferences"
+    ios_lifecycle_wait_for_transition \
+      "$device" "$bundle_id" "$result_name" "$history" \
+      background "$background_transition"
+    ios_lifecycle_mark \
+      "$markers" "NVPN_IOS_LIFECYCLE_CYCLE_${cycle}_BACKGROUND_OBSERVED_MS"
+
+    sleep "$background_dwell"
+
+    ios_lifecycle_mark \
+      "$markers" "NVPN_IOS_LIFECYCLE_CYCLE_${cycle}_ACTIVATE_REQUESTED_MS"
+    ios_lifecycle_activate "$device" "$bundle_id"
+    ios_lifecycle_wait_for_transition \
+      "$device" "$bundle_id" "$result_name" "$history" \
+      active "$active_transition"
+    ios_lifecycle_mark \
+      "$markers" "NVPN_IOS_LIFECYCLE_CYCLE_${cycle}_FOREGROUND_OBSERVED_MS"
+    if [[ "$mode" == "active-tunnel" ]]; then
+      ios_lifecycle_wait_for_active_tunnel_cycle \
+        "$device" "$bundle_id" "$probe_result_name" "$probe_state" "$cycle"
     fi
-    sleep 0.25
   done
 
+  ios_lifecycle_mark "$markers" NVPN_IOS_LIFECYCLE_DRIVER_PASSED_MS
+  ios_lifecycle_copy_result "$device" "$bundle_id" "$result_name" "$history"
+  if ios_lifecycle_validate_history \
+    "$history" "$markers" "$run_id" "$cycles" "$background_dwell" \
+    >"$summary" 2>"$summary.error"
+  then
+    rm -f "$summary.error" "$probe_state"
+    printf 'iOS %s gate passed: %s cycles, %ss dwell; artifacts: %s\n' \
+      "$gate_description" "$cycles" "$background_dwell" "$result_dir"
+    return 0
+  fi
+
   cat "$summary.error" >&2 2>/dev/null || true
-  echo "iOS $gate_description XCTest passed but app-side lifecycle history was incomplete." >&2
+  echo "iOS $gate_description app-side lifecycle history was incomplete." >&2
   echo "iOS $gate_description artifacts: $result_dir" >&2
   return 1
 }

@@ -85,8 +85,12 @@ if ready < call:
 if "NEVPNStatusDidChange" not in source or "NEVPNStatus.connected.rawValue" not in source:
     raise SystemExit("PacketTunnel readiness does not observe an actual connected transition")
 start_model = app.split("func start()", 1)[1].split("func handleScenePhase", 1)[0]
-if "pendingVpnTransitionEnabled = desiredVpnEnabled" not in start_model:
-    raise SystemExit("restored VPN-on intent does not enter the production transition queue")
+if "state.vpnEnabled = desiredVpnEnabled" not in start_model:
+    raise SystemExit("restored VPN intent is not reflected in the reopened app state")
+if "pendingVpnTransitionEnabled = desiredVpnEnabled" in start_model:
+    raise SystemExit("foreground restoration can replace an already healthy live tunnel")
+if "reconcilePacketTunnelAtStartup()" not in start_model:
+    raise SystemExit("restored VPN intent bypasses live-tunnel route and health reconciliation")
 if "AppStorePolicy.allowsVpnStart" not in start_model:
     raise SystemExit("restored VPN-on intent bypasses App Store startup policy")
 suspend = app.split("private func suspendNativeCore()", 1)[1].split(
