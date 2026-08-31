@@ -777,6 +777,7 @@ function Invoke-OwnedNetworkCleanup {
         if ($processId -eq $PID) { continue }
         Wait-Process -Id $processId -Timeout 3 -ErrorAction SilentlyContinue
         Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+        Wait-Process -Id $processId -Timeout 5 -ErrorAction SilentlyContinue
         if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
           throw "cleanup owner could not stop recorded process $marker"
         }

@@ -453,7 +453,8 @@ require_tokens "$WINDOWS_GUEST" "independent cleanup evidence" \
   "WireGuardTunnel$" \
   '"WireGuardProbe"' \
   'Test-WireGuardHandshake' \
-  'Assert-WireGuardEndpointRoute'
+  'Assert-WireGuardEndpointRoute' \
+  'Wait-Process -Id $processId -Timeout 5 -ErrorAction SilentlyContinue'
 require_tokens "$WINDOWS_GUEST" "bounded real payload probes" \
   'function Invoke-BoundedIcmpProbe {' \
   '[System.Net.NetworkInformation.Ping]::new()' \
