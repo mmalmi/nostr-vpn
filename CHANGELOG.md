@@ -72,6 +72,8 @@ automatic selection.
 - Close a browser's physical WebSocket after its authenticated route becomes
   link-dead, allowing WebVM to reconnect instead of waiting forever on an
   orphaned carrier after approval.
+- Keep state-control delivery alive beyond the full FIPS route-recovery
+  window, so a public-transit join does not fail just as its route recovers.
 - Show the complete underlying cause chain in native app action errors instead
   of hiding useful wallet, service, and network diagnostics behind a generic
   top-level message.

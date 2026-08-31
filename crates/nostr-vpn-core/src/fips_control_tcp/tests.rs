@@ -406,6 +406,17 @@ fn restart_uses_a_fresh_tcp_sequence_seed() {
 
 #[test]
 fn route_discovery_time_does_not_consume_the_stream_delivery_window() {
+    let fips_handshake_timeout = Duration::from_secs(
+        fips_core::Config::new()
+            .node
+            .rate_limit
+            .handshake_timeout_secs,
+    );
+    assert!(
+        CONNECTION_TIMEOUT > fips_handshake_timeout,
+        "state-control must outlive FIPS route recovery"
+    );
+
     let now = Instant::now();
     let mut record = OutboundRecord {
         bytes: vec![1],

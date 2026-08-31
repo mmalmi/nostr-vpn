@@ -14,8 +14,8 @@ use nostr_vpn_core::fips_control_tcp::FipsControlTcpRuntime;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 // Match the production FIPS session-handshake retry window instead of
 // aborting before its exponential backoff can reach the later retries.
-const ROUTE_TIMEOUT: Duration = Duration::from_secs(35);
-const PUBLIC_END_TO_END_TIMEOUT: Duration = Duration::from_secs(75);
+const ROUTE_TIMEOUT: Duration = Duration::from_secs(40);
+const PUBLIC_END_TO_END_TIMEOUT: Duration = Duration::from_secs(100);
 const LOCAL_CHURN_ROUNDS: usize = 20;
 const LOCAL_BUSY_SEED_CLIENTS: usize = 24;
 
@@ -30,7 +30,7 @@ const LOCAL_BUSY_SEED_CLIENTS: usize = 24;
 async fn public_transit_routes_fips_control_by_npub_without_direct_peer_config() {
     tokio::time::timeout(PUBLIC_END_TO_END_TIMEOUT, public_transit_round())
         .await
-        .expect("public cross-seed FIPS-TCP gate exceeded 75 seconds");
+        .expect("public cross-seed FIPS-TCP gate exceeded 100 seconds");
 }
 
 async fn public_transit_round() {
