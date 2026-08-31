@@ -544,7 +544,7 @@ struct MacosRouteSpec {
     interface: String,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 struct MacosManagedRoute {
     target: String,

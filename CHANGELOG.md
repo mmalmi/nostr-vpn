@@ -37,6 +37,9 @@ automatic selection.
   after paid-exit fallback, and fail closed when safe exit DNS is unavailable.
 - Retry one transient authenticated DNS request before failing closed, avoiding
   a cached resolver outage when a provider connection is briefly interrupted.
+- Preserve the original Linux default-route priority while reconciling a
+  temporarily de-prioritized underlay, so leaving an exit restores Direct
+  internet through the correct interface.
 - Keep the daemon responsive while its owned Cashu wallet repairs or recovers,
   and retry funded paid routes without activating an unverified exit.
 - Allow an active paid seller's Direct-to-WireGuard upstream transition to

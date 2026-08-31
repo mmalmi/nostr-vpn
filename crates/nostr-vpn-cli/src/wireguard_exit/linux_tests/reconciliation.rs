@@ -105,6 +105,42 @@ fn refreshed_underlay_details_replace_only_the_same_interface() {
 }
 
 #[test]
+fn inflated_same_path_metric_does_not_poison_direct_route_cleanup() {
+    let _guard = lock_tests();
+    let mut runner = FakeRunner::existing();
+    let initial = runner.state.clone();
+    let primary = initial.main_routes[0].clone();
+    let runtime = apply_linux_wireguard_exit_upstream_with(
+        &mut runner,
+        &config(),
+        "10.44.0.0/16",
+        None,
+        Some(&primary),
+    )
+    .expect("initial strict exit");
+    let inflated =
+        "default via 192.0.2.1 dev eth0 src 192.0.2.10 metric 20010".to_string();
+    runner.state.main_routes.push(inflated.clone());
+    let mut runtime = runtime;
+    runtime.refresh_underlay_default_route(inflated.clone());
+
+    let runtime = apply_linux_wireguard_exit_upstream_with(
+        &mut runner,
+        &config(),
+        "10.44.0.0/16",
+        Some(&runtime),
+        Some(&inflated),
+    )
+    .expect("reconcile de-prioritized same-path default");
+
+    assert_eq!(runtime.previous_default_route.as_deref(), Some(primary.as_str()));
+    assert!(runtime.previous_main_default_routes.contains(&primary));
+    assert!(!runtime.previous_main_default_routes.contains(&inflated));
+    cleanup_linux_wireguard_exit_upstream_with(&mut runner, &runtime).expect("cleanup");
+    assert_eq!(runner.state, initial);
+}
+
+#[test]
 fn new_underlay_is_cached_and_switch_back_survives_reapply() {
     let _guard = lock_tests();
     let mut runner = FakeRunner::existing();

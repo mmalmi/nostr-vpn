@@ -56,8 +56,10 @@ impl LinuxWireGuardExitRuntime {
     }
 
     pub(crate) fn refresh_underlay_default_route(&mut self, route: String) {
-        upsert_runtime_underlay_route(&mut self.previous_main_default_routes, &route);
-        self.previous_default_route = Some(route);
+        self.previous_default_route = Some(upsert_runtime_underlay_route(
+            &mut self.previous_main_default_routes,
+            &route,
+        ));
     }
 
     pub(crate) fn underlay_default_route_hints(&self) -> &[String] {
@@ -454,7 +456,7 @@ fn apply_failure(error: anyhow::Error) -> LinuxWireGuardExitApplyFailure {
 
 fn build_runtime(
     applied: LinuxWireGuardExitRollbackObligation,
-    previous_default_route: Option<String>,
+    mut previous_default_route: Option<String>,
     previous_runtime: Option<&LinuxWireGuardExitRuntime>,
     endpoint_specs: &[crate::LinuxEndpointBypassRoute],
 ) -> LinuxWireGuardExitRuntime {
@@ -504,7 +506,10 @@ fn build_runtime(
         }
     }
     if let Some(route) = previous_default_route.as_ref() {
-        upsert_runtime_underlay_route(&mut previous_main_default_routes, route);
+        previous_default_route = Some(upsert_runtime_underlay_route(
+            &mut previous_main_default_routes,
+            route,
+        ));
     }
 
     LinuxWireGuardExitRuntime {
@@ -567,20 +572,34 @@ fn parse_linux_wireguard_latest_handshakes(output: &str) -> Result<bool> {
         > 0)
 }
 
-fn upsert_runtime_underlay_route(routes: &mut Vec<String>, route: &str) {
-    if routes.iter().any(|candidate| candidate == route) {
-        return;
+fn upsert_runtime_underlay_route(routes: &mut Vec<String>, route: &str) -> String {
+    if let Some(candidate) = routes.iter().find(|candidate| candidate.as_str() == route) {
+        return candidate.clone();
     }
-    let Some(interface) = crate::linux_default_route_spec_from_line(route).map(|route| route.dev)
-    else {
+    let Some(incoming) = crate::linux_default_route_spec_from_line(route) else {
         routes.push(route.to_string());
-        return;
+        return route.to_string();
     };
+    if let Some(existing) = routes
+        .iter()
+        .filter_map(|candidate| crate::linux_default_route_spec_from_line(candidate))
+        .filter(|candidate| {
+            candidate.dev == incoming.dev
+                && candidate.gateway == incoming.gateway
+                && candidate.source == incoming.source
+                && candidate.on_link == incoming.on_link
+                && candidate.metric <= incoming.metric
+        })
+        .min_by_key(|candidate| candidate.metric)
+    {
+        return existing.line;
+    }
     routes.retain(|candidate| {
         crate::linux_default_route_spec_from_line(candidate)
-            .is_none_or(|candidate| candidate.dev != interface)
+            .is_none_or(|candidate| candidate.dev != incoming.dev)
     });
     routes.push(route.to_string());
+    route.to_string()
 }
 
 fn merge_interface_restore(
