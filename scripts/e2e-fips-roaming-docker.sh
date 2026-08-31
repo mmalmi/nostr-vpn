@@ -23,8 +23,8 @@ MIGRATED_NODE_A_IP="${NVPN_E2E_MIGRATED_NODE_A_IP:-$UNDERLAY_PREFIX.20}"
 # authenticated handoff.
 FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-20}"
 # Consecutive flaps can meet a draining rekey and several bounded direct-probe
-# retries. Active-path retries are paced at 2-4s, and repeated production-image
-# runs restore bidirectional direct payload in 5-13s. Fail at 20s instead of
+# retries. Active-path retries are paced at 1-2s, and repeated production-image
+# runs restore bidirectional direct payload within 13s. Fail at 20s instead of
 # hiding a stuck recovery behind a minute-long allowance.
 DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-20}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
