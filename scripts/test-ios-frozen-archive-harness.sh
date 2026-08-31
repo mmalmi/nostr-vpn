@@ -1303,6 +1303,13 @@ full_dns = (
 )
 if release_gate.count(full_dns) < 2:
     raise SystemExit("release lanes can inherit a focused DNS subset")
+initial_mobile_network = release_gate.split(
+    "run_mobile_wireguard_exit_gates() {", 1
+)[1].split("\nverify_paid_exit_seller_ui_gates() {", 1)[0]
+if "NVPN_MOBILE_WG_EXIT_INSTALL_IOS=1" not in initial_mobile_network:
+    raise SystemExit("initial iOS network gate can skip installing its exact build")
+if 'NVPN_MOBILE_WG_EXIT_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))"' in initial_mobile_network:
+    raise SystemExit("iOS app readiness is incorrectly treated as exact artifact reuse")
 for pinned in (
     "NVPN_MOBILE_WG_EXIT_REUSE_IOS_BUILD=0",
     "NVPN_IOS_ACTIVE_TUNNEL_LIFECYCLE_CYCLES=1",

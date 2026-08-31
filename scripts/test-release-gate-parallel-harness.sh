@@ -288,6 +288,15 @@ fi
 export NVPN_LINUX_UNDERLAY_VM_NAME=linux-test
 export NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST=wireguard-fixture.test
 export NVPN_MOBILE_WG_EXIT_REMOTE_MODE=native
+unset NVPN_EXPECTED_ANDROID_SIGNER_CERT_SHA256
+if release_gate_require_complete_fixture_inputs >/dev/null 2>&1; then
+  fail "complete release gate accepted a missing Android signer pin"
+fi
+export NVPN_EXPECTED_ANDROID_SIGNER_CERT_SHA256=invalid
+if release_gate_require_complete_fixture_inputs >/dev/null 2>&1; then
+  fail "complete release gate accepted an invalid Android signer pin"
+fi
+export NVPN_EXPECTED_ANDROID_SIGNER_CERT_SHA256="$(printf 'a%.0s' {1..64})"
 release_gate_require_complete_fixture_inputs \
   || fail "complete release gate rejected remote-native WireGuard fixture inputs"
 

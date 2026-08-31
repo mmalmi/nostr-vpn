@@ -79,6 +79,16 @@ release_gate_require_complete_fixture_inputs() {
     echo "Complete release gate requires NVPN_MOBILE_WG_EXIT_HOST_IP for physical mobile network gates." >&2
     return 1
   }
+  local android_signer
+  android_signer="$(
+    printf '%s' "${NVPN_EXPECTED_ANDROID_SIGNER_CERT_SHA256:-}" \
+      | tr -d ':[:space:]' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  [[ "$android_signer" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Complete release gate requires an exact Android signer certificate SHA-256 pin." >&2
+    return 1
+  }
   [[ -n "${NVPN_MACOS_WG_FIXTURE_HOST_IP:-}" ]] || {
     echo "Complete release gate requires NVPN_MACOS_WG_FIXTURE_HOST_IP for the local macOS WireGuard exit fixture." >&2
     return 1

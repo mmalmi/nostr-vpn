@@ -1608,7 +1608,7 @@ run_mobile_wireguard_exit_gates() {
       NVPN_MOBILE_WG_EXIT_CLIENT_IP=10.99.78.2 \
       NVPN_MOBILE_WG_EXIT_THROUGH_DNS_IP=10.99.78.53 \
       NVPN_MOBILE_WG_EXIT_HTTP_PROBE_PORT="$((port_base + 1))" \
-      NVPN_MOBILE_WG_EXIT_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))" \
+      NVPN_MOBILE_WG_EXIT_INSTALL_IOS=1 \
       NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$ios_artifact_dir" \
       NVPN_MOBILE_IOS_NETWORK_EVIDENCE_OUTPUT="$evidence_dir/ios-wireguard-dns.json" \
       ./scripts/mobile-wireguard-exit-e2e.sh ios
