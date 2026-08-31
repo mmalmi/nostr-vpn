@@ -108,6 +108,12 @@ grep -Fq 'case "processMetrics"' "$ROOT_DIR/ios/PacketTunnel/PacketTunnelProvide
   || fail "iOS packet tunnel does not expose cumulative process metrics"
 grep -Fq 'packetTunnelProcessMetrics()' "$ROOT_DIR/ios/Sources/AppModelDebugAutomation.swift" \
   || fail "iOS idle CPU probe does not sample the packet-tunnel process"
+grep -Fq 'UIApplication.shared.isIdleTimerDisabled = true' "$ROOT_DIR/ios/Sources/AppModelDebugAutomation.swift" \
+  || fail "iOS idle CPU probe does not keep the foreground collector awake"
+grep -Fq 'UIApplication.shared.isIdleTimerDisabled = previousIdleTimerDisabled' "$ROOT_DIR/ios/Sources/AppModelDebugAutomation.swift" \
+  || fail "iOS idle CPU probe does not restore the device idle timer"
+grep -Fq 'IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS:-360}"' "$RELEASE_GATE" \
+  || fail "iOS physical idle CPU gate does not allow a clean build, lifecycle, and sample"
 grep -Fq 'local ios_smoke_command=(./scripts/mobile-ios-smoke.sh device)' "$RELEASE_GATE" \
   || fail "release gate does not construct the physical iOS packet-tunnel command safely"
 grep -Fq 'ios_smoke_command+=(--install --create-network --vpn-cycle)' "$RELEASE_GATE" \

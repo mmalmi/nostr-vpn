@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import UIKit
 
 private struct DebugProcessCpuSample {
     let pid: Int
@@ -144,6 +145,11 @@ extension AppModel {
 
     private func runDebugIdleCpuProbe(arguments: [String]) async {
         #if DEBUG
+        let previousIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer {
+            UIApplication.shared.isIdleTimerDisabled = previousIdleTimerDisabled
+        }
         let resultName = Self.argumentValue(after: "--nvpn-debug-idle-cpu-result", in: arguments)
             ?? "debug-idle-cpu.json"
         let sampleSeconds = Self.clampedDoubleArgument(

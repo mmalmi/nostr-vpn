@@ -473,6 +473,40 @@ PY
   rm -f "$process_json"
 }
 
+ios_packet_tunnel_process_is_stopped() {
+  local device="$1"
+  local process_json status=0
+  process_json="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-processes.XXXXXX")"
+  if ! xcrun devicectl device info processes \
+    --device "$device" \
+    --json-output "$process_json" \
+    --quiet
+  then
+    rm -f "$process_json"
+    return 1
+  fi
+  python3 - "$process_json" <<'PY' || status=$?
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+suffix = "/Nostr VPN.app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"
+processes = payload.get("result", {}).get("runningProcesses")
+if not isinstance(processes, list):
+    raise SystemExit(2)
+running = [
+    process for process in processes
+    if isinstance(process, dict)
+    and str(process.get("executable", "")).replace("%20", " ").endswith(suffix)
+]
+raise SystemExit(0 if not running else 1)
+PY
+  rm -f "$process_json" || status=1
+  return "$status"
+}
+
 terminate_ios_app_processes_before_install() {
   local device="$1"
   local process_ids process_id ignored
@@ -547,10 +581,13 @@ disconnect_ios_vpn_confirmed() {
 
 disconnect_ios_vpn_before_install() {
   local device="$1"
+  local process_only_confirmation=0
   if ! device_app_is_installed "$device"; then
     return 0
   fi
-  if ! disconnect_ios_vpn_confirmed "$device"; then
+  if ios_packet_tunnel_process_is_stopped "$device"; then
+    process_only_confirmation=1
+  elif ! disconnect_ios_vpn_confirmed "$device"; then
     echo "Refusing to replace $BUNDLE_ID while its existing packet tunnel may still be active." >&2
     echo "Disconnect it in iOS Settings or trust/launch the installed development app, then retry." >&2
     return 1
@@ -558,6 +595,13 @@ disconnect_ios_vpn_before_install() {
   if ! terminate_ios_app_processes_before_install "$device"; then
     echo "Refusing to replace $BUNDLE_ID while an old app process is still running." >&2
     return 1
+  fi
+  if [[ "$process_only_confirmation" -eq 1 ]]; then
+    if ! ios_packet_tunnel_process_is_stopped "$device"; then
+      echo "Refusing to replace $BUNDLE_ID because its packet tunnel started during cleanup." >&2
+      return 1
+    fi
+    echo "iOS VPN cleanup verified: packet tunnel process is stopped"
   fi
 }
 

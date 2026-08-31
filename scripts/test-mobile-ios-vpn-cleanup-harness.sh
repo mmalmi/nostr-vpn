@@ -214,6 +214,12 @@ fi
 grep -Fq 'terminate_ios_app_processes_before_install "$device"' \
   "$ROOT/scripts/mobile-ios-smoke.sh" \
   || fail "safe iOS replacement can leave a stale UI process running"
+grep -Fq 'ios_packet_tunnel_process_is_stopped "$device"' \
+  "$ROOT/scripts/mobile-ios-smoke.sh" \
+  || fail "safe iOS replacement cannot recover when an idle phone suspends its app"
+grep -Fq '/Nostr VPN.app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel' \
+  "$ROOT/scripts/mobile-ios-smoke.sh" \
+  || fail "safe iOS replacement does not identify the exact packet-tunnel process"
 grep -Fq 'device process terminate' "$ROOT/scripts/mobile-ios-smoke.sh" \
   || fail "safe iOS replacement does not terminate the confirmed-idle UI process"
 grep -Fq -- '--payload-url "nvpn://debug/automation?arguments=$encoded_arguments"' \
