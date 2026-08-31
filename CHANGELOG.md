@@ -52,10 +52,11 @@ automatic selection.
   WSS as a fallback on UDP-blocked networks, and migrate prior WSS-only native
   defaults without making the WebSocket transport dial independently. Resolve
   UDP hostnames before selecting a family-specific local socket.
-- Update to FIPS 0.4.68, which re-arms authenticated direct-path handshakes
+- Update to FIPS 0.4.69, which re-arms authenticated direct-path handshakes
   after repeated network outages and preserves the staged direct-payload
-  validation across in-flight fallback traffic, avoiding recovery stalls when
-  an original or changed source address returns under load.
+  validation across in-flight fallback traffic and stale receiver reports,
+  avoiding recovery stalls or immediate re-degradation when an original or
+  changed source address returns under load.
 - Deliver the signed roster when an admin accepts an inbound device request,
   including across a desktop mesh reload, so the joining device completes
   instead of remaining at the approval prompt.
