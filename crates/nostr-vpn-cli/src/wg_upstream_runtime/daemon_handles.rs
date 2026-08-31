@@ -290,22 +290,15 @@ impl DaemonWgUpstream {
         let rebind_result = if let Some(runtime) = self.runtime.as_mut() {
             let live_budget =
                 std::cmp::min(handshake_timeout / 2, Duration::from_millis(1_500));
-            match tokio::time::timeout(live_budget, async {
-                let receiver_index = runtime
-                    .rebind_interface(interface_index)
-                    .await
-                    .context("rebind live WG UDP socket")?;
-                runtime
-                    .wait_for_handshake_response(receiver_index, live_budget)
-                    .await
-                    .then_some(())
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "WG upstream did not complete the exact forced handshake on \
-                             {underlay_interface}"
-                        )
-                    })
-            })
+            match tokio::time::timeout(
+                live_budget,
+                rebind_live_macos_wg_runtime(
+                    runtime,
+                    interface_index,
+                    underlay_interface,
+                    live_budget,
+                ),
+            )
             .await
             {
                 Ok(result) => result,
@@ -426,6 +419,51 @@ impl DaemonWgUpstream {
             .as_ref()
             .map_or_else(Vec::new, FullDefaultRoute::macos_managed_routes)
     }
+}
+
+#[cfg(target_os = "macos")]
+async fn rebind_live_macos_wg_runtime(
+    runtime: &mut WgUpstreamRuntime,
+    interface_index: u32,
+    underlay_interface: &str,
+    budget: Duration,
+) -> Result<()> {
+    const ROUTE_SETTLE_RETRY: Duration = Duration::from_millis(25);
+
+    let deadline = tokio::time::Instant::now() + budget;
+    let receiver_index = loop {
+        match runtime.rebind_interface(interface_index).await {
+            Ok(receiver_index) => break receiver_index,
+            Err(error) if macos_route_is_still_settling(&error) => {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining <= ROUTE_SETTLE_RETRY {
+                    return Err(error).context("rebind live WG UDP socket after route settled");
+                }
+                tokio::time::sleep(ROUTE_SETTLE_RETRY).await;
+            }
+            Err(error) => return Err(error).context("rebind live WG UDP socket"),
+        }
+    };
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    runtime
+        .wait_for_handshake_response(receiver_index, remaining)
+        .await
+        .then_some(())
+        .ok_or_else(|| {
+            anyhow!(
+                "WG upstream did not complete the exact forced handshake on \
+                 {underlay_interface}"
+            )
+        })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_route_is_still_settling(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::NetworkUnreachable)
+    })
 }
 
 #[cfg(target_os = "macos")]
