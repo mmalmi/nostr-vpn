@@ -64,6 +64,7 @@ IDLE_CPU_GATE="${NVPN_IOS_IDLE_CPU_GATE:-${NVPN_IDLE_CPU_GATE:-1}}"
 IDLE_CPU_MAX_PERCENT="${NVPN_IOS_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-5}}"
 IDLE_CPU_SAMPLE_SECONDS="${NVPN_IOS_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-10}}"
 IDLE_CPU_SETTLE_SECONDS="${NVPN_IOS_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-3}}"
+IDLE_CPU_ISOLATE_NETWORK="${NVPN_IOS_IDLE_CPU_ISOLATE_NETWORK:-0}"
 IOS_SIM_PROCESS_NAME="${NVPN_IOS_SIM_PROCESS_NAME:-Nostr VPN}"
 IOS_SIMULATOR_UI_GATE="${NVPN_IOS_SIMULATOR_UI_GATE:-1}"
 IOS_LIFECYCLE_GATE="${NVPN_IOS_LIFECYCLE_GATE:-1}"
@@ -960,6 +961,9 @@ run_vpn_cycle() {
   fi
   if bool_is_true "$CREATE_NETWORK"; then
     args+=(--nvpn-debug-add-network "$DEBUG_NETWORK_NAME")
+    if bool_is_true "$IDLE_CPU_ISOLATE_NETWORK"; then
+      args+=(--nvpn-debug-isolate-idle-network)
+    fi
   fi
   if bool_is_true "$cleanup_after_vpn_cycle"; then
     vpn_cleanup_armed=1
@@ -983,6 +987,24 @@ run_vpn_cycle() {
   if ! validate_vpn_probe_result "$result_path"; then
     copy_ios_debug_logs "$device" || true
     return 1
+  fi
+  if bool_is_true "$IDLE_CPU_ISOLATE_NETWORK"; then
+    python3 - "$result_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    receipt = json.load(handle)
+runtime = json.loads(receipt.get("packetTunnelRuntimeStateJson", ""))
+errors = []
+if runtime.get("fipsOtherPeerCount") != 0:
+    errors.append(f"fipsOtherPeerCount={runtime.get('fipsOtherPeerCount')!r}")
+if runtime.get("relays") != []:
+    errors.append(f"relays={runtime.get('relays')!r}")
+if errors:
+    raise SystemExit("iOS idle network isolation failed: " + "; ".join(errors))
+print("iOS idle network isolation verified: no bootstrap peers or public relays")
+PY
   fi
   echo "iOS device VPN probe passed: $result_path"
   if ! bool_is_true "$VERIFY_DIRECT_RESTORATION"; then

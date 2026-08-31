@@ -89,6 +89,12 @@ extension AppModel {
         }
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
         dispatch(NativeActions.addNetwork(normalized.isEmpty ? "iOS smoke" : normalized))
+        if arguments.contains("--nvpn-debug-isolate-idle-network") {
+            dispatch(NativeActions.updateSettings([
+                "fipsBootstrapEnabled": false,
+                "fipsNostrDiscoveryEnabled": false,
+            ]))
+        }
         tunnelConfigSyncTask?.cancel()
         tunnelConfigSyncTask = nil
         refresh()
