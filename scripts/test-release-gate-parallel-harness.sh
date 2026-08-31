@@ -541,6 +541,34 @@ done
 grep -Fq "NVPN_RELEASE_GATE_REQUIRE_COMPLETE: '1'" "$local_release" \
   || fail "full release does not require complete real-network coverage"
 
+# A failed local FIPS regression must stop the sequence immediately instead
+# of being masked by a later passing filter.
+fips_regression_function="$tmp/release-gate-fips-regressions.sh"
+awk '
+  /^run_local_fips_regression_tests\(\) \{/ { capture = 1 }
+  capture {
+    print
+    opens = gsub(/\{/, "{")
+    closes = gsub(/\}/, "}")
+    depth += opens - closes
+    if (depth == 0) exit
+  }
+' "$release_gate" >"$fips_regression_function"
+# shellcheck disable=SC1090
+source "$fips_regression_function"
+release_fips_path="$tmp"
+fips_filter_calls="$tmp/fips-filter-calls"
+: >"$fips_filter_calls"
+release_gate_cargo_test_filter() {
+  printf 'call\n' >>"$fips_filter_calls"
+  [[ "$(wc -l <"$fips_filter_calls")" -ne 2 ]]
+}
+if run_local_fips_regression_tests; then
+  fail "local FIPS regression failure was masked by a later passing filter"
+fi
+[[ "$(wc -l <"$fips_filter_calls")" -eq 2 ]] \
+  || fail "local FIPS regression sequence continued after its first failure"
+
 # Focused Rust gates must fail when a stale selector runs zero tests.
 selector_function="$tmp/release-gate-test-selector.sh"
 sed -n '/^release_gate_cargo_test_filter() (/ , /^)/p' \

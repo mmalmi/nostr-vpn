@@ -315,18 +315,18 @@ run_local_fips_regression_tests() {
       fresh_control_with_unreturned_endpoint_data_keeps_direct_without_fallback_peer \
       outbound_fmp_send_does_not_refresh_direct_path_liveness
     do
-      local_test "$filter" "$filter" -- --nocapture
+      local_test "$filter" "$filter" -- --nocapture || return 1
     done
     local_test initiate_reply_learned_keeps_configured_transit_inside_fanout_budget \
       proto::lookup::tests::initiate_reply_learned_keeps_configured_transit_inside_fanout_budget \
-      -- --exact --nocapture
+      -- --exact --nocapture || return 1
     local_test forward_reply_learned_keeps_configured_transit_inside_fanout_budget \
       proto::lookup::tests::forward_reply_learned_keeps_configured_transit_inside_fanout_budget \
-      -- --exact --nocapture
+      -- --exact --nocapture || return 1
     local_test persistent_two_seed_websocket_transit_survives_client_churn \
       --test public_websocket_transit \
       persistent_two_seed_websocket_transit_survives_client_churn \
-      -- --exact --nocapture
+      -- --exact --nocapture || return 1
   )
 }
 
