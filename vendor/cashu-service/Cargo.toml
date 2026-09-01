@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "cashu-service"
-version = "0.4.7"
+version = "0.4.8"
 authors = ["Martti Malmi"]
 build = false
 autolib = false

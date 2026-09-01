@@ -342,7 +342,7 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
         verify_exact_release_source
     done
     for crate in "${TIER_2_CRATES[@]}"; do
-        cargo package --locked -p "$crate" --list >/dev/null
+        cargo package --locked -p "$crate" >/dev/null
         verify_exact_release_source
     done
     echo "[ok] crates.io credentials and exact packages are ready."

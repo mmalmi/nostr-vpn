@@ -810,9 +810,9 @@ dependencies = [
 
 [[package]]
 name = "cashu-service"
-version = "0.4.7"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c63099a5543ba0a0f1028ed2a1d9baef0386747296b1790746d7c3654003df30"
+checksum = "af2f83e659ada66e14fee39eea76c8d7c84b8d7a8499764ef6fbb7f658bf763c"
 dependencies = [
  "anyhow",
  "async-trait",

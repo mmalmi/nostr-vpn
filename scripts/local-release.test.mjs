@@ -57,6 +57,7 @@ import {
   githubReleaseRepairPlan,
   validateGithubReleaseMetadata,
 } from './github-release-publication.mjs'
+import { parseActiveHtreeIdentity } from './htree-release-publication.mjs'
 import {
   validateFrozenIosPublication,
 } from './ios-release-publication.mjs'
@@ -127,6 +128,19 @@ test('splitCsv trims and drops empties', () => {
     'android',
     'macos',
   ])
+})
+
+test('htree identity parser accepts current and legacy active identity output', () => {
+  const npub = `npub1${'q'.repeat(58)}`
+  assert.equal(
+    parseActiveHtreeIdentity(`${npub}\n\nAliases:\n${npub} (sirius)`),
+    npub,
+  )
+  assert.equal(parseActiveHtreeIdentity(`${npub} (self)`), npub)
+  assert.throws(
+    () => parseActiveHtreeIdentity(`${npub} (self)\n${npub} (self)`),
+    /exactly one valid active identity/,
+  )
 })
 
 test('release source provenance rejects dirty or mismatched tagged candidates', () => {
@@ -2360,7 +2374,7 @@ test('crates publication has no dirty bypass and replays exact source immediatel
   )
   assert.match(
     publisher,
-    /for crate in "\$\{TIER_2_CRATES\[@\]\}"; do[\s\S]*cargo package --locked -p "\$crate" --list/,
+    /for crate in "\$\{TIER_2_CRATES\[@\]\}"; do[\s\S]*cargo package --locked -p "\$crate" >\/dev\/null/,
   )
   assert.match(
     publisher,
