@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.10 - 2026-09-02
+
+### Release notes
+
+Cashu paid exits now connect, recover, and bill reliably with either manual or
+automatic selection on every supported platform. iPhone device joining now
+starts its encrypted approval carrier before exchanging a signed roster.
+
+### Fixed
+
+- Start the iOS VPN carrier when creating an admin network, matching Android
+  and allowing QR and manual approvals to reach the joining device within the
+  release deadline.
+- Prove the real iPhone and Android carriers are ready before cross-device join
+  approval, including QR flows whose VPN control has scrolled off-screen.
+- Normalize Apple signing fingerprints before comparison so equivalent
+  certificate output cannot cause a false release-gate failure.
+- Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
+  routed health checks, DNS safety, billing, recovery, and seller settings.
+
 ## 4.1.9 - 2026-08-31
 
 ### Release notes
