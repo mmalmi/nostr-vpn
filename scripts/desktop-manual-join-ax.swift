@@ -1,4 +1,5 @@
 #!/usr/bin/env swift
+import AppKit
 import ApplicationServices
 import Foundation
 
@@ -315,6 +316,10 @@ func run() throws {
             "AX PID \(pid) belongs to \(processName), expected \(args[5])"
         )
     }
+    NSRunningApplication(processIdentifier: pid)?.activate(
+        options: [.activateAllWindows]
+    )
+    _ = try find(application, identifier: "main-AppWindow-1", timeout: 60)
 
     switch args[2] {
     case "joiner":

@@ -13,6 +13,8 @@ source "$ROOT_DIR/scripts/lib-release-gate-required-modes.sh"
 source "$ROOT_DIR/scripts/lib-macos-vm-identity.sh"
 source "$ROOT_DIR/scripts/lib-ubuntu-vm-imported-release.sh"
 source "$ROOT_DIR/scripts/mobile_env.sh"
+load_release_env "$ROOT_DIR"
+load_env_file_defaults "${NVPN_ZAPSTORE_ENV_FILE:-$ROOT_DIR/.env.zapstore.local}"
 load_mobile_env "$ROOT_DIR"
 enable_deterministic_build_env "$ROOT_DIR"
 

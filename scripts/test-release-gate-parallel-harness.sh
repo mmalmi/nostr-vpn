@@ -198,6 +198,11 @@ release_gate="$ROOT_DIR/scripts/release-gate.sh"
 local_release="$ROOT_DIR/scripts/local-release.mjs"
 release_tooling_contracts="$ROOT_DIR/scripts/test-release-tooling-contracts.sh"
 
+grep -Fq 'load_release_env "$ROOT_DIR"' "$release_gate" \
+  || fail "release gate does not load its release environment"
+grep -Fq 'load_env_file_defaults "${NVPN_ZAPSTORE_ENV_FILE:-$ROOT_DIR/.env.zapstore.local}"' "$release_gate" \
+  || fail "release gate does not load its Android signing environment"
+
 # Complete mode normalizes auto-detected network lanes to the literal
 # "required" value. Every dispatcher receiving that normalized value must
 # treat it like its explicit enabled mode rather than rejecting it after the
