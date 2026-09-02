@@ -19,6 +19,9 @@ starts its encrypted approval carrier before exchanging a signed roster.
   approval, including QR flows whose VPN control has scrolled off-screen.
 - Normalize Apple signing fingerprints before comparison so equivalent
   certificate output cannot cause a false release-gate failure.
+- Keep Linux mesh startup working on minimal and NAS kernels without the
+  iptables `comment` matcher while retaining fatal handling for real firewall
+  and lock failures.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 

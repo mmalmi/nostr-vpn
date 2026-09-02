@@ -22,6 +22,10 @@ Nostr identities and signed rosters control enrollment; peers connect directly w
 
 Desktop apps target Apple Silicon macOS and x64 Linux/Windows; mobile builds target arm64, and CLI archives also cover Linux arm64. StartOS and Umbrel support x86_64/amd64 and arm64. Intel macOS is source-only.
 
+On Debian or Ubuntu, building the CLI with Cargo requires `pkg-config` and
+`libdbus-1-dev` (`sudo apt install pkg-config libdbus-1-dev`). The prebuilt CLI
+archives do not require these development packages.
+
 ## CLI Quick Start
 
 Create a network on the first device:

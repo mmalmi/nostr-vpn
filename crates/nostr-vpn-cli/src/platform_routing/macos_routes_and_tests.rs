@@ -466,4 +466,35 @@ default via 198.51.100.1 dev enp7s0 proto static src 198.51.100.10 metric 600
             ]
         );
     }
+
+    #[test]
+    fn missing_iptables_comment_match_means_tagged_rule_cannot_exist() {
+        let rule = linux_exit_node_legacy_forward_in_rule(
+            "utun100",
+            LinuxExitNodeIpFamily::V4,
+        );
+        assert!(linux_iptables_rule_check_proves_absent(
+            Some(2),
+            "iptables v1.8.3 (legacy): Couldn't load match `comment':No such file or directory",
+            &rule,
+        ));
+    }
+
+    #[test]
+    fn iptables_rule_check_keeps_unrelated_operational_errors_fatal() {
+        let rule = linux_exit_node_legacy_forward_in_rule(
+            "utun100",
+            LinuxExitNodeIpFamily::V4,
+        );
+        assert!(!linux_iptables_rule_check_proves_absent(
+            Some(4),
+            "Another app is currently holding the xtables lock",
+            &rule,
+        ));
+        assert!(!linux_iptables_rule_check_proves_absent(
+            Some(2),
+            "Couldn't load match `comment':No such file or directory",
+            &["FORWARD".to_string(), "-j".to_string(), "ACCEPT".to_string()],
+        ));
+    }
 }

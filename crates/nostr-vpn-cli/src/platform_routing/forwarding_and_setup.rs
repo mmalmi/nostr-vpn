@@ -231,6 +231,23 @@ pub(crate) fn linux_wireguard_exit_inbound_drop_rule(
     ]
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn linux_iptables_rule_check_proves_absent(
+    exit_code: Option<i32>,
+    stderr: &str,
+    rule: &[String],
+) -> bool {
+    let tagged_with_comment = rule
+        .windows(2)
+        .any(|args| args[0] == "-m" && args[1] == "comment");
+    let stderr = stderr.to_ascii_lowercase();
+    exit_code == Some(2)
+        && tagged_with_comment
+        && stderr.contains("couldn't load match")
+        && stderr.contains("comment")
+        && (stderr.contains("no such file or directory") || stderr.contains("not found"))
+}
+
 #[cfg(target_os = "linux")]
 fn linux_iptables_rule_exists(
     family: LinuxExitNodeIpFamily,
@@ -258,6 +275,9 @@ fn linux_iptables_rule_exists(
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    if linux_iptables_rule_check_proves_absent(output.status.code(), &stderr, rule) {
+        return Ok(false);
+    }
     let stdout = String::from_utf8_lossy(&output.stdout);
     Err(anyhow!(
         "command failed: {display}\nstdout: {}\nstderr: {}",
