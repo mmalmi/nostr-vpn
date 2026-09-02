@@ -134,6 +134,10 @@ test -n "$own_npub" && test -n "$peer_npub"
   --fips-peer-endpoint "$peer_npub=$UNDERLAY_IP:$((TEST_PORT + 1))" \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false >/dev/null
+# This lane measures the active FIPS daemon itself. Keep relay/TLS reconnects
+# out of the fixture; signed relay discovery is covered by the paid-exit E2Es.
+perl -0pi -e 's/^\[nostr\]\n/[nostr]\npubsub = { mode = "client" }\n/m or die "missing [nostr] table\n"' \
+  "$TEST_CONFIG"
 
 echo "Installing test service..."
 sudo -n "$NVPN_BIN" service install --force --config "$TEST_CONFIG" >/dev/null

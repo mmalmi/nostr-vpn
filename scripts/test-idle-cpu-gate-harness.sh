@@ -192,6 +192,8 @@ grep -Fq 'ios_smoke_command+=(--device "$ios_device")' "$RELEASE_GATE" \
   || fail "release gate does not allow the physical iOS idle gate to auto-select a device"
 grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon idle CPU check does not exercise an active mesh fixture"
+grep -Fq 'pubsub = { mode = "client" }' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "macOS daemon idle CPU fixture is not isolated from public relay churn"
 grep -Fq 'ps -ww -p "$daemon_pid"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check may truncate the launchd command"
 macos_process_scan="$ROOT_DIR/crates/nostr-vpn-cli/src/daemon_runtime/process_scan.rs"
