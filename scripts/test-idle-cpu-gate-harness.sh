@@ -177,6 +177,14 @@ grep -Fq 'run_macos_daemon_idle_cpu_gate' "$RELEASE_GATE" \
   || fail "release gate does not run the macOS daemon idle CPU check"
 grep -Fq 'NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU:-auto' "$RELEASE_GATE" \
   || fail "macOS daemon gate cannot distinguish root-capable CI from developer hosts"
+grep -Fq 'NVPN_MACOS_DAEMON_IDLE_CPU_SAMPLE_SECONDS:-30' "$RELEASE_GATE" \
+  || fail "macOS daemon gate does not retain a meaningful steady-state CPU sample"
+grep -Fq 'NVPN_MACOS_DAEMON_IDLE_CPU_SETTLE_SECONDS:-45' "$RELEASE_GATE" \
+  || fail "macOS daemon gate samples before launchd and route setup have settled"
+grep -Fq 'NVPN_MACOS_DAEMON_IDLE_CPU_SAMPLE_SECONDS:-30' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "standalone macOS service E2E disagrees with the release CPU sample"
+grep -Fq 'NVPN_MACOS_DAEMON_IDLE_CPU_SETTLE_SECONDS:-45' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "standalone macOS service E2E disagrees with the release CPU settle period"
 if grep -Fq 'nvpn-install-test-daemon --help' "$RELEASE_GATE"; then
   fail "macOS daemon gate uses an invalid helper argument as a sudo probe"
 fi
