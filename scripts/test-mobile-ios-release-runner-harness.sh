@@ -70,6 +70,8 @@ required_ios_fragments = (
     'rmdir "$IOS_RELEASE_NETWORK_CASE_XCTESTRUN_DIR"',
     'ios_release_network_require_retained_exact_runner || return 1',
     'build_command+=(clean build-for-testing)',
+    'match.group(2).lower(): match.group(1).lower()',
+    'identity = identity.lower()',
 )
 for fragment in required_ios_fragments:
     if fragment not in ios_source:

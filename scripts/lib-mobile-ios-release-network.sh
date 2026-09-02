@@ -86,7 +86,7 @@ certificate_inventory = subprocess.check_output(
     text=True,
 )
 sha256_by_sha1 = {
-    match.group(2).upper(): match.group(1).lower()
+    match.group(2).lower(): match.group(1).lower()
     for match in re.finditer(
         r"SHA-256 hash: ([0-9A-Fa-f]{64})\nSHA-1 hash: ([0-9A-Fa-f]{40})",
         certificate_inventory,
@@ -106,7 +106,7 @@ for line in sys.stdin:
         or label.startswith("iPhone Distribution:")
     ):
         continue
-    identity = identity.upper()
+    identity = identity.lower()
     if sha256_by_sha1.get(identity) != expected_sha256:
         continue
     matches.add((identity, team_match.group(1)))

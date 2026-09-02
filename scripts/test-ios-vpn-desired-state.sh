@@ -68,7 +68,8 @@ python3 - \
   "$ROOT/ios/Sources/AppModel.swift" \
   "$ROOT/ios/Sources/AppModelTunnelLifecycle.swift" \
   "$ROOT/ios/Sources/AppModelDebugAutomation.swift" \
-  "$ROOT/ios/PacketTunnel/PacketTunnelProvider.swift" <<'PY'
+  "$ROOT/ios/PacketTunnel/PacketTunnelProvider.swift" \
+  "$ROOT/ios/UITests/NostrVpnReleaseJoinUITests.swift" <<'PY'
 import pathlib
 import sys
 
@@ -77,6 +78,7 @@ app = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 lifecycle = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
 debug = pathlib.Path(sys.argv[4]).read_text(encoding="utf-8")
 provider = pathlib.Path(sys.argv[5]).read_text(encoding="utf-8")
+join_tests = pathlib.Path(sys.argv[6]).read_text(encoding="utf-8")
 start = source.split("func start(", 1)[1].split("static func routeState", 1)[0]
 call = start.index("startVPNTunnel(options: options)")
 ready = start.index("try await waitForConnected(manager)")
@@ -147,6 +149,17 @@ adoption = app.split("func adoptAppStoreCompatibleState(", 1)[1].split(
 )[0]
 if "nativeStateBeforeAction = core.state()" not in dispatch:
     raise SystemExit("native VPN start preservation does not verify an OFF-to-ON transition")
+if "shouldStartPacketTunnelAfterAction" not in dispatch:
+    raise SystemExit("iOS does not start its admin carrier after creating a network")
+start_policy = app.split("static func shouldStartPacketTunnelAfterAction", 1)[1].split(
+    "private func actionRequiresPacketTunnelConfigSync", 1
+)[0]
+if not all(token in start_policy for token in ('"add_network"', '"import_join_request"')):
+    raise SystemExit("iOS automatic tunnel-start policy differs from Android")
+if not dispatch.index("actionInFlight = false") < dispatch.index(
+    "shouldStartPacketTunnelAfterAction"
+) < dispatch.index("schedulePacketTunnelConfigSync"):
+    raise SystemExit("iOS starts an admin carrier before completing its native action")
 if "actionRequiresPacketTunnelConfigSync(" not in dispatch:
     raise SystemExit("native VPN start preservation is not limited to transport/config actions")
 if "nativeStateBeforeAction.error" in dispatch:
@@ -160,6 +173,8 @@ if "successfulTransportStart:" not in dispatch or not all(
     )
 ):
     raise SystemExit("failed transport actions can overwrite explicit VPN-off intent")
+if "NVPN_RELEASE_JOIN_ADMIN_CARRIER_READY=1" not in join_tests:
+    raise SystemExit("physical iOS join setup does not prove the admin carrier is ready")
 if "adoptNativeState(" not in adoption:
     raise SystemExit("native VPN start intent is still masked during state adoption")
 authorization = app.split("func packetTunnelStartAllowed(", 1)[1].split(

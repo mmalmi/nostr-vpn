@@ -25,6 +25,14 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
 
     func testCreateAdminNetworkAndReportPublicValues() throws {
         try createNetwork(named: required("NVPN_RELEASE_JOIN_NETWORK_NAME"))
+        let vpnToggle = element("vpn-toggle")
+        XCTAssertTrue(
+            waitUntil(timeout: setupTimeout) {
+                vpnToggle.exists && vpnToggle.isEnabled && vpnToggle.label == "Turn VPN off"
+            },
+            "New iPhone admin network did not start its production VPN carrier"
+        )
+        emit("NVPN_RELEASE_JOIN_ADMIN_CARRIER_READY=1")
         openLinkDevice()
         let admin = try publicValue("admin-device-id-value", kind: .npub)
         let network = try publicValue("admin-network-id-value", kind: .network)

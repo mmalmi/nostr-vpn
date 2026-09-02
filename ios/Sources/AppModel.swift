@@ -294,6 +294,11 @@ final class AppModel: ObservableObject {
         debugLog(
             "dispatch action=\(actionType) error=\(!state.error.isEmpty) vpn=\(state.vpnEnabled)/\(state.vpnActive) network=\(activeNetwork?.id ?? "nil")"
         )
+        if state.error.isEmpty,
+           Self.shouldStartPacketTunnelAfterAction(actionType, vpnEnabled: state.vpnEnabled)
+        {
+            setVpnEnabled(true)
+        }
         if state.error.isEmpty && requiresPacketTunnelConfigSync {
             let force = actionType == "remove_network"
                 && activeNetwork == nil
@@ -573,6 +578,13 @@ final class AppModel: ObservableObject {
             return false
         }
         return !queued.isEmpty
+    }
+
+    static func shouldStartPacketTunnelAfterAction(
+        _ type: String,
+        vpnEnabled: Bool
+    ) -> Bool {
+        !vpnEnabled && (type == "add_network" || type == "import_join_request")
     }
 
     private func actionRequiresPacketTunnelConfigSync(
