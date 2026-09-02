@@ -108,6 +108,8 @@ impl FipsPrivateTunnelRuntime {
             endpoint_bypass_underlay: None,
             #[cfg(target_os = "macos")]
             macos_underlay_refresh_pending: true,
+            #[cfg(target_os = "macos")]
+            macos_endpoint_bypass_verified_at: None,
             #[cfg(target_os = "linux")]
             original_default_route: None,
             #[cfg(target_os = "linux")]
@@ -580,13 +582,18 @@ impl FipsPrivateTunnelRuntime {
         let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts);
         let force_underlay_refresh = self.macos_underlay_refresh_pending
             || self.config.underlay_interface != config.underlay_interface;
-        // Peer events are frequent and normally leave both bypasses and the
-        // physical underlay unchanged. Only a real link/config transition
-        // invalidates the populated ownership cache.
-        let current_routes_present = self
-            .endpoint_bypass_underlay
-            .as_ref()
-            .is_some_and(|underlay| {
+        // Peer heartbeats are frequent and normally leave both bypasses and
+        // the physical underlay unchanged. Link/config transitions still
+        // verify immediately; the bounded safety poll repairs external route
+        // removal without spawning `netstat` for every heartbeat.
+        let now = Instant::now();
+        let verify_current_routes = force_underlay_refresh
+            || macos_endpoint_bypass_verification_due(
+                self.macos_endpoint_bypass_verified_at,
+                now,
+            );
+        let current_routes_present = if verify_current_routes {
+            let present = self.endpoint_bypass_underlay.as_ref().is_some_and(|underlay| {
                 crate::macos_network::macos_managed_routes_present_in_system(
                     &self.endpoint_bypass_routes,
                     underlay,
@@ -596,6 +603,11 @@ impl FipsPrivateTunnelRuntime {
                     false
                 })
             });
+            self.macos_endpoint_bypass_verified_at = Some(now);
+            present
+        } else {
+            true
+        };
         if !macos_endpoint_bypass_underlay_refresh_required(
             &self.endpoint_bypass_routes,
             self.endpoint_bypass_underlay.as_ref(),

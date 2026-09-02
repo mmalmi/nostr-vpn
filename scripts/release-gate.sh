@@ -23,11 +23,6 @@ export NVPN_IDLE_CPU_MAX_PERCENT="${NVPN_RELEASE_GATE_IDLE_CPU_MAX_PERCENT:-${NV
 export NVPN_LINUX_DAEMON_IDLE_CPU_MAX_PERCENT="${NVPN_LINUX_DAEMON_IDLE_CPU_MAX_PERCENT:-3}"
 export NVPN_IDLE_CPU_SAMPLE_SECONDS="${NVPN_RELEASE_GATE_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-60}}"
 export NVPN_IDLE_CPU_SETTLE_SECONDS="${NVPN_RELEASE_GATE_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-15}}"
-# launchd starts the isolated daemon immediately after installing it. Keep the
-# same 75-second macOS observation budget, but measure after its retry and
-# route-setup tail instead of counting startup work as steady-state idle CPU.
-export NVPN_MACOS_DAEMON_IDLE_CPU_SAMPLE_SECONDS="${NVPN_MACOS_DAEMON_IDLE_CPU_SAMPLE_SECONDS:-30}"
-export NVPN_MACOS_DAEMON_IDLE_CPU_SETTLE_SECONDS="${NVPN_MACOS_DAEMON_IDLE_CPU_SETTLE_SECONDS:-45}"
 # The Android VPN fixture maintains the two production bootstrap adjacencies,
 # unlike the foreground/UI idle gates. Keep a separate bound for that active
 # encrypted overlay while retaining the packet/TUN correctness probe below.

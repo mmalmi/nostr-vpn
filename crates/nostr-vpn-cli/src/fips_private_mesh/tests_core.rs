@@ -34,6 +34,7 @@
         linux_private_ipv4_route_subnets_from_ip_route,
         linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
         macos_endpoint_bypass_underlay_refresh_required,
+        macos_endpoint_bypass_verification_due,
         macos_private_ipv4_route_subnets_from_netstat,
         macos_route_get_has_direct_private_endpoint_route, mesh_status_from_endpoint_peer,
         other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
@@ -80,6 +81,20 @@
     use std::time::{Duration, Instant};
 
     const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
+
+    #[test]
+    fn macos_endpoint_bypass_route_verification_is_bounded() {
+        let now = Instant::now();
+        assert!(macos_endpoint_bypass_verification_due(None, now));
+        assert!(!macos_endpoint_bypass_verification_due(
+            Some(now),
+            now + Duration::from_secs(4),
+        ));
+        assert!(macos_endpoint_bypass_verification_due(
+            Some(now),
+            now + Duration::from_secs(5),
+        ));
+    }
 
     fn recent_peer_cache(local_keys: &Keys, network_id: &str) -> nostr_vpn_core::recent_peers::RecentPeerEndpoints {
         let local_npub = local_keys.public_key().to_bech32().expect("local npub");

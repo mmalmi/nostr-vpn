@@ -863,6 +863,8 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     endpoint_bypass_underlay: Option<crate::MacosRouteSpec>,
     #[cfg(target_os = "macos")]
     macos_underlay_refresh_pending: bool,
+    #[cfg(target_os = "macos")]
+    macos_endpoint_bypass_verified_at: Option<Instant>,
     #[cfg(target_os = "linux")]
     original_default_route: Option<String>,
     #[cfg(target_os = "linux")]

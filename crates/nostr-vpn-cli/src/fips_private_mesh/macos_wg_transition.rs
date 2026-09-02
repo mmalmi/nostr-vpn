@@ -8,6 +8,17 @@ fn macos_endpoint_bypass_underlay_refresh_required(
     current_underlay.is_none() || current_routes != desired_routes || !current_routes_present
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_endpoint_bypass_verification_due(
+    last_verified_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    last_verified_at.is_none_or(|last_verified_at| {
+        now.saturating_duration_since(last_verified_at)
+            >= MACOS_ENDPOINT_BYPASS_VERIFY_INTERVAL
+    })
+}
+
 #[cfg(target_os = "macos")]
 fn macos_direct_underlay_restore_needed(
     previous_exit_requested: bool,
