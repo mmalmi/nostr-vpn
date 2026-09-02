@@ -723,6 +723,10 @@ PY
   phase_ios_admin_android_qr
   grep -Fxq ios-admin "$trace_file"
   grep -Fxq android-background-foreground "$trace_file"
+  qr_carrier_line="$(grep -n -m1 '^android-vpn-connected$' "$trace_file" | cut -d: -f1)"
+  qr_approval_line="$(grep -n -m1 '^ios-test:' "$trace_file" | cut -d: -f1)"
+  [[ -n "$qr_carrier_line" && -n "$qr_approval_line" ]]
+  ((qr_carrier_line < qr_approval_line))
   grep -Fxq stage-ios-qr "$trace_file"
   grep -Fxq 'android-qr-accepted:npub1iosadmin' "$trace_file"
   grep -Fxq 'android-relaunch-accepted:npub1iosadmin' "$trace_file"

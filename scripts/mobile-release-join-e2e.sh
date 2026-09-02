@@ -235,6 +235,7 @@ phase_ios_admin_android_qr() {
   ios_create_admin "Release QR iPhone admin"
   release_join_android_show_qr
   release_join_android_background_foreground_pending_qr
+  release_join_android_wait_vpn_connected
   release_join_capture_android_qr "$ANDROID_QR_CAPTURE"
   scan_log="$(ios_log ios-admin-android-qr)"
   release_join_ios_start_test \
