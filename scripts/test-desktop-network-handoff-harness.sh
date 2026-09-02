@@ -111,6 +111,9 @@ require_tokens "$WINDOWS_GUEST_CRASH_LIB" "granular Direct startup-recovery evid
 require_tokens "$WINDOWS_HOST_ENTRY" "native WireGuard ownership regression harness" \
   'test-desktop-windows-wireguard-ownership.ps1' \
   'windows-wireguard-ownership-harness.log'
+require_tokens "$WINDOWS_HOST_ENTRY" "bounded post-recovery stability audit" \
+  'wait_for_guest_marker secondary.receipt.json 45' \
+  'wait_for_guest_marker primary.receipt.json 45'
 require_tokens "$WINDOWS_OWNERSHIP_HARNESS" "fail-closed owner-token fixtures" \
   'current owner-token layout' \
   'legacy flat config path' \

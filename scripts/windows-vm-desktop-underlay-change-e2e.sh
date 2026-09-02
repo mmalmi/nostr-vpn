@@ -552,7 +552,7 @@ run_underlay_switches() {
   wait_for_guest_marker armed-secondary 30
   cut="$(set_primary_link down | tr -d '\r')"
   printf '%s\n' "$cut" >"$ARTIFACT_DIR/secondary-link-cut-unix-seconds.txt"
-  wait_for_guest_marker secondary.receipt.json 15
+  wait_for_guest_marker secondary.receipt.json 45
   receipt="$(guest_receipt secondary.receipt.json)"
   receipt="$(jq --argjson link_changed "$cut" \
     '. + {host_link_change_unix_seconds: $link_changed}' <<<"$receipt")"
@@ -567,7 +567,7 @@ run_underlay_switches() {
   wait_for_guest_marker armed-primary 30
   cut="$(set_primary_link up | tr -d '\r')"
   printf '%s\n' "$cut" >"$ARTIFACT_DIR/primary-link-cut-unix-seconds.txt"
-  wait_for_guest_marker primary.receipt.json 15
+  wait_for_guest_marker primary.receipt.json 45
   receipt="$(guest_receipt primary.receipt.json)"
   receipt="$(jq --argjson link_changed "$cut" \
     '. + {host_link_change_unix_seconds: $link_changed}' <<<"$receipt")"
