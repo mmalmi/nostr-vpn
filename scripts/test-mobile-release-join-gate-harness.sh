@@ -152,6 +152,19 @@ EOF
 )
 python3 -B "$ROOT/scripts/macos_release_join_artifact.py" --help >/dev/null
 
+(
+  set -u
+  # shellcheck disable=SC1091
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  RELEASE_JOIN_UI_WAIT_SECS=1
+  release_join_android_query() { return 1; }
+  release_join_android_os_vpn_connected() { return 0; }
+  release_join_android_wait_vpn_connected
+) || {
+  echo "Android carrier readiness incorrectly depends on an on-screen toggle" >&2
+  exit 1
+}
+
 python3 - \
   "$ROOT/scripts/mobile-release-join-e2e.sh" \
   "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh" \

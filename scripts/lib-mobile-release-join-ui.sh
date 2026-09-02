@@ -348,15 +348,12 @@ release_join_android_os_vpn_connected() {
 release_join_android_wait_vpn_connected() {
   local deadline=$((SECONDS + RELEASE_JOIN_UI_WAIT_SECS))
   while ((SECONDS < deadline)); do
-    if release_join_android_query description "Turn VPN off" center \
-        >/dev/null 2>&1 \
-      && release_join_android_os_vpn_connected
-    then
+    if release_join_android_os_vpn_connected; then
       return 0
     fi
     sleep 0.25
   done
-  echo "Android admin network did not start its production VPN" >&2
+  echo "Android network did not start its production VPN" >&2
   return 1
 }
 
