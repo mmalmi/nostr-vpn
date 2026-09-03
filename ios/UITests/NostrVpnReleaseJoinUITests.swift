@@ -25,7 +25,9 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
 
     func testCreateAdminNetworkAndReportPublicValues() throws {
         try createNetwork(named: required("NVPN_RELEASE_JOIN_NETWORK_NAME"))
-        let vpnToggle = element("vpn-toggle")
+        let vpnToggle = app.buttons
+            .matching(identifier: "vpn-toggle")
+            .firstMatch
         XCTAssertTrue(
             waitUntil(timeout: setupTimeout) {
                 vpnToggle.exists && vpnToggle.isEnabled && vpnToggle.label == "Turn VPN off"
