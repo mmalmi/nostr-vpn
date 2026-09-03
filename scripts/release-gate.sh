@@ -2098,11 +2098,11 @@ run_mobile_qr_join_latency_gate() {
     websocket_seed_router_delivers_durable_join_receipt_after_tunnel_restart
 }
 
-run_public_fips_transit_gate() {
+run_local_fips_transit_gate() {
   release_cargo test "${release_cargo_lock_args[@]}" \
     -p nostr-vpn-core \
     --test fips_public_transit \
-    public_transit_routes_fips_control_by_npub_without_direct_peer_config \
+    local_two_seed_fips_tcp_transit_survives_client_churn \
     -- \
     --ignored \
     --test-threads=1
@@ -2458,7 +2458,7 @@ main() {
   run_macos_exclusive_desktop_gates
 
   run_mobile_qr_join_latency_gate
-  run_public_fips_transit_gate
+  run_local_fips_transit_gate
 
   # Routed idle CPU and roaming remain serial. The remaining functional Docker
   # projects have isolated names/subnets and no timing assertions, so overlap

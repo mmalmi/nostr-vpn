@@ -390,7 +390,7 @@ required_steps=(
   run_windows_exclusive_desktop_gates
   run_macos_exclusive_desktop_gates
   run_mobile_qr_join_latency_gate
-  run_public_fips_transit_gate
+  run_local_fips_transit_gate
   run_docker_signal_gates
   run_docker_isolated_functional_gates
   run_docker_perf_gate
