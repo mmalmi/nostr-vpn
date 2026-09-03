@@ -76,6 +76,7 @@ impl FipsPrivateMeshRuntime {
                 status.rekey_in_progress = peer_link.rekey_in_progress;
                 status.rekey_draining = peer_link.rekey_draining;
                 status.current_k_bit = peer_link.current_k_bit;
+                status.last_outbound_route = peer_link.last_outbound_route.clone();
                 status.direct_probe_pending = peer_link.direct_probe_pending;
                 status.direct_probe_after_ms = peer_link.direct_probe_after_ms;
                 status.direct_probe_retry_count = peer_link.direct_probe_retry_count;
