@@ -303,6 +303,7 @@ impl FipsPrivateTunnelConfig {
             &local_private_subnets,
             true,
         );
+        let mut bootstrap_transit_npubs = HashSet::new();
         // Built-in public bootstrap nodes as fallback transit. They share the
         // same `discovery_fallback_transit` path as operator-configured static
         // peers, so they ferry frames when direct traversal fails but never
@@ -312,6 +313,11 @@ impl FipsPrivateTunnelConfig {
                 app.fips_bootstrap_peer_endpoints(),
                 &tunnel_endpoint_hosts,
                 &local_private_subnets,
+            );
+            bootstrap_transit_npubs.extend(
+                bootstrap_transit
+                    .iter()
+                    .map(|(npub, _)| normalize_fips_endpoint_npub(npub)),
             );
             operator_static.extend(cap_static_non_roster_transit_endpoints(
                 bootstrap_transit,
@@ -409,6 +415,7 @@ impl FipsPrivateTunnelConfig {
             &mut endpoint_peers,
             own_pubkey.unwrap_or_default(),
             public_websocket_listener,
+            &bootstrap_transit_npubs,
         );
         let websocket_seed_urls = websocket_seed_urls_after_peer_dial_ownership(
             &app.fips_websocket_seed_urls,

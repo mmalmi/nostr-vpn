@@ -563,6 +563,7 @@ pub(crate) fn apply_canonical_websocket_dial_direction(
     peers: &mut [FipsEndpointPeerTransportConfig],
     local_npub: &str,
     public_websocket_listener: bool,
+    bootstrap_peer_npubs: &HashSet<String>,
 ) {
     if !public_websocket_listener {
         return;
@@ -591,7 +592,10 @@ pub(crate) fn apply_canonical_websocket_dial_direction(
                 has_other_configured_transport = true;
             }
         }
-        if !has_configured_websocket || has_other_configured_transport {
+        let configured_bootstrap_peer = bootstrap_peer_npubs.contains(&peer_npub);
+        if !has_configured_websocket
+            || (has_other_configured_transport && !configured_bootstrap_peer)
+        {
             continue;
         }
 

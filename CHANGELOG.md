@@ -24,6 +24,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
   and lock failures.
 - Keep public bootstrap admission available as the connected client population
   grows, while reserving capacity for configured peers and handshakes.
+- Keep the public bootstrap pair connected by assigning one canonical dialer
+  across both UDP and WebSocket, avoiding cross-connection replacement races.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 

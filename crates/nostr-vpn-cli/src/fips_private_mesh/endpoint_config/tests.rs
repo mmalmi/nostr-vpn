@@ -455,7 +455,12 @@ mod endpoint_config_tests {
         let [lower_npub, higher_npub] = npubs;
 
         let mut lower_seed_peers = vec![websocket_peer(higher_npub.clone())];
-        apply_canonical_websocket_dial_direction(&mut lower_seed_peers, &lower_npub, true);
+        apply_canonical_websocket_dial_direction(
+            &mut lower_seed_peers,
+            &lower_npub,
+            true,
+            &HashSet::new(),
+        );
         assert!(
             !lower_seed_peers[0].connect_on_start,
             "the lower canonical npub keeps the peer configured but does not dial"
@@ -464,7 +469,12 @@ mod endpoint_config_tests {
         assert!(lower_seed_peers[0].discovery_fallback_transit);
 
         let mut higher_seed_peers = vec![websocket_peer(lower_npub.clone())];
-        apply_canonical_websocket_dial_direction(&mut higher_seed_peers, &higher_npub, true);
+        apply_canonical_websocket_dial_direction(
+            &mut higher_seed_peers,
+            &higher_npub,
+            true,
+            &HashSet::new(),
+        );
         assert!(
             higher_seed_peers[0].connect_on_start,
             "the higher canonical npub owns the one physical dial"
@@ -491,10 +501,37 @@ mod endpoint_config_tests {
             std::slice::from_mut(&mut peer),
             &lower_npub,
             true,
+            &HashSet::new(),
         );
         assert!(
             !peer.connect_on_start,
             "only canonical identities decide which seed dials"
+        );
+    }
+
+    #[test]
+    fn canonical_seed_dial_rule_covers_udp_websocket_bootstrap_peer() {
+        let mut npubs = [
+            Keys::generate().public_key().to_bech32().expect("npub"),
+            Keys::generate().public_key().to_bech32().expect("npub"),
+        ];
+        npubs.sort();
+        let [lower_npub, higher_npub] = npubs;
+        let mut mixed_transport_peer = websocket_peer(higher_npub.clone());
+        mixed_transport_peer.addresses.push(FipsPeerAddressHint {
+            addr: "udp:203.0.113.10:51820".to_string(),
+            seen_at_ms: None,
+            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+        });
+        apply_canonical_websocket_dial_direction(
+            std::slice::from_mut(&mut mixed_transport_peer),
+            &lower_npub,
+            true,
+            &HashSet::from([higher_npub]),
+        );
+        assert!(
+            !mixed_transport_peer.connect_on_start,
+            "the canonical listener remains passive for a bootstrap seed with UDP and WSS"
         );
     }
 
@@ -512,6 +549,7 @@ mod endpoint_config_tests {
             std::slice::from_mut(&mut mixed_transport_peer),
             &local_npub,
             true,
+            &HashSet::new(),
         );
         assert!(mixed_transport_peer.connect_on_start);
 
@@ -520,6 +558,7 @@ mod endpoint_config_tests {
             std::slice::from_mut(&mut ordinary_client_peer),
             &local_npub,
             false,
+            &HashSet::new(),
         );
         assert!(ordinary_client_peer.connect_on_start);
     }
