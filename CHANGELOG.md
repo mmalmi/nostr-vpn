@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.10 - 2026-09-03
+## 4.1.10 - 2026-09-04
 
 ### Release notes
 
@@ -12,6 +12,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
 
 ### Fixed
 
+- Disable iOS FIPS settings while the previous VPN state is being restored so
+  taps cannot appear to succeed before their configuration can be saved.
 - Start the iOS VPN carrier when creating an admin network, matching Android
   and allowing QR and manual approvals to reach the joining device within the
   release deadline.
