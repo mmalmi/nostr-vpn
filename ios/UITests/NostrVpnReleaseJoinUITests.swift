@@ -375,6 +375,10 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
 
     private func setSwitchOn(_ identifier: String) {
         let control = scrollTo(identifier)
+        XCTAssertTrue(
+            waitUntil(timeout: setupTimeout) { control.exists && control.isEnabled },
+            "\(identifier) stayed unavailable while restoring VPN state"
+        )
         if (control.value as? String) != "On" {
             control.tap()
         }

@@ -857,7 +857,6 @@ release_join_ios_test_command() {
     --output "$case_xctestrun"
     --products-root "$RELEASE_JOIN_IOS_DERIVED_DATA/Build/Products"
     --target-app "$RELEASE_JOIN_IOS_APP_PATH"
-    --use-destination-artifacts
     --environment-stdin0
   )
   runner_environment=(

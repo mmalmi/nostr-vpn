@@ -38,6 +38,29 @@ do
   grep -Fq "\"$setting\"," "$ROOT/ios/Sources/AppModel.swift"
 done
 join_ui="$ROOT/scripts/lib-mobile-release-join-ui.sh"
+if grep -Fq -- '--use-destination-artifacts' "$join_ui"; then
+  echo "iOS Release join runner still relies on flaky destination artifacts" >&2
+  exit 1
+fi
+
+python3 - \
+  "$ROOT/ios/Sources/SettingsViews.swift" \
+  "$ROOT/ios/UITests/NostrVpnReleaseJoinUITests.swift" <<'PY'
+import pathlib
+import sys
+
+settings, tests = [pathlib.Path(path).read_text(encoding="utf-8") for path in sys.argv[1:]]
+fips = settings.split("struct FipsSettingsCard: View", 1)[1].split(
+    "struct PubsubSettingsCard: View", 1
+)[0]
+if fips.count(".disabled(model.actionInFlight)") != 4:
+    raise SystemExit("FIPS controls do not all reject taps during VPN reconciliation")
+setter = tests.split("private func setSwitchOn", 1)[1].split(
+    "private func nonNegativeIntegerValue", 1
+)[0]
+if "control.exists && control.isEnabled" not in setter:
+    raise SystemExit("physical iOS join test taps FIPS controls before reconciliation finishes")
+PY
 
 (
   # Launch and in-test setup each receive their own bounded allowance.

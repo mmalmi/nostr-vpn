@@ -280,8 +280,8 @@ disabled = reuse.split(
 )[1].split(';;', 1)[0]
 if "device install app" in disabled or "device uninstall app" in disabled:
     raise SystemExit("disabled iOS install mode changes the installation")
-if "--use-destination-artifacts" not in source:
-    raise SystemExit("retained iOS reuse lost destination-artifact XCTest")
+if "--use-destination-artifacts" in source:
+    raise SystemExit("iOS Release runner still relies on flaky destination artifacts")
 PY
 
 NVPN_MOBILE_WG_EXIT_INSTALL_IOS=0
