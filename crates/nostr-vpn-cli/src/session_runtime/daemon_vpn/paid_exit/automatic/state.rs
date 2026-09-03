@@ -95,6 +95,14 @@ impl PaidExitAutomaticCandidate {
                 })
     }
 
+    pub(super) fn ready_to_probe(&self, seller_admitted: bool, now_unix: u64) -> bool {
+        seller_admitted
+            && self.probe_started_at.is_none()
+            && self.last_authenticated_at.is_some_and(|observed| {
+                now_unix.saturating_sub(observed) <= PAID_EXIT_AUTO_HEALTH_TTL_SECS
+            })
+    }
+
     pub(super) fn should_failover(&self, now_unix: u64) -> bool {
         if self.failed {
             return true;

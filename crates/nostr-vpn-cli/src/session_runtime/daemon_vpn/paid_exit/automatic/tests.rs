@@ -169,6 +169,20 @@ fn automatic_buyer_requires_probe_authenticated_seller_and_both_counter_directio
 }
 
 #[test]
+fn automatic_probe_waits_for_authenticated_seller_admission() {
+    let seller = Keys::generate();
+    let seller_pubkey = seller.public_key().to_hex();
+    let mut candidate = test_candidate(&seller_pubkey);
+    candidate.probe_started_at = None;
+    let now = 100;
+
+    candidate.observe_presence(&[test_peer_status(&seller_pubkey, now)], now);
+
+    assert!(!candidate.ready_to_probe(false, now));
+    assert!(candidate.ready_to_probe(true, now));
+}
+
+#[test]
 fn automatic_cancellation_never_overwrites_another_internet_mode() {
     let seller = Keys::generate();
     let seller_npub = seller.public_key().to_bech32().expect("seller npub");

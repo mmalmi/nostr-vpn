@@ -149,6 +149,17 @@ nostr_pubkey_from_config() {
   " | tr -d '\r\"'
 }
 
+use_fips_only_control_pubsub() {
+  local node="$1"
+  "${COMPOSE[@]}" exec -T "$node" sh -lc "
+    cat >> '$CONFIG_PATH' <<'EOF'
+
+[nostr.pubsub]
+mode = \"client\"
+EOF
+  "
+}
+
 wait_for_service() {
   local service="$1"
   local container_id=""
@@ -772,6 +783,7 @@ block_docker_nat_shortcuts
 
 for node in node-a node-b; do
   "${COMPOSE[@]}" exec -T "$node" nvpn init --force >/dev/null
+  use_fips_only_control_pubsub "$node"
 done
 
 ALICE_NPUB="$(nostr_pubkey_from_config node-a)"

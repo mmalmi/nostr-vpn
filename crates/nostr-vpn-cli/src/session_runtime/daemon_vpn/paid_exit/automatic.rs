@@ -18,10 +18,10 @@ pub(crate) use runtime::update_automatic_paid_exit;
 pub(crate) use runtime::{paid_exit_route_probe_measurement, record_paid_exit_probe};
 pub(crate) use selection::reconcile_automatic_paid_exit_selection;
 #[cfg(test)]
-use state::PAID_EXIT_AUTO_RETRY_COOLDOWN_SECS;
-#[cfg(test)]
 use state::PaidExitAutomaticCandidate;
-use state::{PAID_EXIT_AUTO_HEALTH_TTL_SECS, PaidExitAutomaticProbe};
+use state::PaidExitAutomaticProbe;
+#[cfg(test)]
+use state::{PAID_EXIT_AUTO_HEALTH_TTL_SECS, PAID_EXIT_AUTO_RETRY_COOLDOWN_SECS};
 pub(crate) use state::{PaidExitAutomaticBuyer, PaidExitUsageFlush};
 
 #[cfg(test)]

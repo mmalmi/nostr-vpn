@@ -67,13 +67,20 @@ pub(crate) async fn update_automatic_paid_exit(
         candidate.observe_usage(buyer_delta, now_unix);
     }
 
-    if automatic.probe.is_none()
-        && automatic.candidate.as_ref().is_some_and(|candidate| {
-            candidate.probe_started_at.is_none()
-                && candidate.last_authenticated_at.is_some_and(|observed| {
-                    now_unix.saturating_sub(observed) <= PAID_EXIT_AUTO_HEALTH_TTL_SECS
-                })
+    let seller_admitted = automatic
+        .candidate
+        .as_ref()
+        .map(|candidate| {
+            load_paid_route_store(&paid_route_store_file_path(config_path))?
+                .buyer_session_is_seller_admitted(&candidate.session_id)
         })
+        .transpose()?
+        .unwrap_or(false);
+    if automatic.probe.is_none()
+        && automatic
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.ready_to_probe(seller_admitted, now_unix))
     {
         let probe_app = app.clone();
         let dns_health = runtime.paid_exit_dns_health_probe();
