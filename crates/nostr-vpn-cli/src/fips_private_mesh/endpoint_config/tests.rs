@@ -112,7 +112,7 @@ mod endpoint_config_tests {
         );
         assert_eq!(
             config.node.discovery.nostr.open_discovery_max_pending,
-            256,
+            384,
         );
         assert!(
             config.node.discovery.nostr.open_discovery_max_pending

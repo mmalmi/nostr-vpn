@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.10 - 2026-09-02
+## 4.1.10 - 2026-09-03
 
 ### Release notes
 
@@ -22,6 +22,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
 - Keep Linux mesh startup working on minimal and NAS kernels without the
   iptables `comment` matcher while retaining fatal handling for real firewall
   and lock failures.
+- Keep public bootstrap admission available as the connected client population
+  grows, while reserving capacity for configured peers and handshakes.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 
