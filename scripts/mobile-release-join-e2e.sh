@@ -435,6 +435,11 @@ release_join_prepare_android_release
 release_join_prepare_ios_release
 rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
 
+carrier_preflight_log="$(ios_log ios-carrier-preflight)"
+release_join_ios_run_test \
+  testNormalizeRetainedJoinCarrierSettings "$carrier_preflight_log" \
+  || fail "iPhone join carrier preflight did not restore and authenticate public bootstrap"
+
 case "$RELEASE_JOIN_PHASE_SELECTION" in
   full)
     phase_ios_admin_android_qr

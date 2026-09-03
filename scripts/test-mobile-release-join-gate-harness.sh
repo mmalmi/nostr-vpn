@@ -25,6 +25,18 @@ grep -Fq 'NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS:-90' \
   "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh"
 grep -Fq 'RELEASE_JOIN_IOS_SETUP_WAIT_SECS <= 90' \
   "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh"
+grep -Fq 'testNormalizeRetainedJoinCarrierSettings' \
+  "$ROOT/scripts/mobile-release-join-e2e.sh"
+grep -Fq 'NVPN_RELEASE_JOIN_BOOTSTRAP_CONNECTED=' \
+  "$ROOT/ios/UITests/NostrVpnReleaseJoinUITests.swift"
+for setting in \
+  connectToNonRosterFipsPeers \
+  fipsNostrDiscoveryEnabled \
+  fipsWebrtcEnabled \
+  fipsBootstrapEnabled
+do
+  grep -Fq "\"$setting\"," "$ROOT/ios/Sources/AppModel.swift"
+done
 join_ui="$ROOT/scripts/lib-mobile-release-join-ui.sh"
 
 (

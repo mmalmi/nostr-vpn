@@ -17,6 +17,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
   release deadline.
 - Prove the real iPhone and Android carriers are ready before cross-device join
   approval, including QR flows whose VPN control has scrolled off-screen.
+- Apply iOS FIPS bootstrap and discovery setting changes to the running packet
+  tunnel, and require an authenticated bootstrap peer before join approval.
 - Normalize Apple signing fingerprints before comparison so equivalent
   certificate output cannot cause a false release-gate failure.
 - Keep Linux mesh startup working on minimal and NAS kernels without the

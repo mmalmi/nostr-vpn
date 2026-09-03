@@ -25,6 +25,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
 
     func testCreateAdminNetworkAndReportPublicValues() throws {
         try createNetwork(named: required("NVPN_RELEASE_JOIN_NETWORK_NAME"))
+        try normalizeAndRequireJoinCarrier()
         let vpnToggle = app.buttons
             .matching(identifier: "vpn-toggle")
             .firstMatch
@@ -41,6 +42,17 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         emit("NVPN_RELEASE_JOIN_ADMIN_ID=\(admin)")
         emit("NVPN_RELEASE_JOIN_NETWORK_ID=\(network)")
         emit("NVPN_RELEASE_JOIN_ADMIN_READY=1")
+    }
+
+    func testNormalizeRetainedJoinCarrierSettings() throws {
+        let settings = app.tabBars.buttons["Settings"]
+        guard settings.waitForExistence(timeout: 3) else {
+            // A fresh container has generated defaults and no tunnel to probe.
+            emit("NVPN_RELEASE_JOIN_CARRIER_DEFAULTS_FRESH=1")
+            return
+        }
+        try normalizeAndRequireJoinCarrier()
+        emit("NVPN_RELEASE_JOIN_CARRIER_PREFLIGHT_READY=1")
     }
 
     func testShowPhysicalJoinQrAndRequireRosterCompletion() throws {
@@ -326,6 +338,55 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         replaceText(element("network-create-name"), with: name)
         scrollTo("network-create-submit").tap()
         XCTAssertTrue(app.tabBars.buttons["Devices"].waitForExistence(timeout: 10))
+    }
+
+    private func normalizeAndRequireJoinCarrier() throws {
+        let settings = app.tabBars.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings tab was unavailable")
+        settings.tap()
+
+        setSwitchOn("fips-connect-non-roster")
+        setSwitchOn("fips-nostr-discovery")
+        setSwitchOn("fips-bootstrap")
+
+        let vpnToggle = app.buttons.matching(identifier: "vpn-toggle").firstMatch
+        XCTAssertTrue(vpnToggle.waitForExistence(timeout: 5), "VPN control was unavailable")
+        if vpnToggle.label == "Turn VPN on" {
+            vpnToggle.tap()
+            try dismissSystemPromptsIfPresent()
+        }
+        XCTAssertTrue(
+            waitUntil(timeout: setupTimeout) {
+                vpnToggle.exists && vpnToggle.isEnabled && vpnToggle.label == "Turn VPN off"
+            },
+            "Join carrier did not start after restoring its public settings"
+        )
+
+        let carrier = scrollTo("diagnostics-other-fips")
+        XCTAssertTrue(
+            waitUntil(timeout: setupTimeout) {
+                self.nonNegativeIntegerValue(carrier) > 0
+            },
+            "Join carrier never authenticated a public bootstrap peer"
+        )
+        emit("NVPN_RELEASE_JOIN_BOOTSTRAP_CONNECTED=\(nonNegativeIntegerValue(carrier))")
+        app.tabBars.buttons["Devices"].tap()
+    }
+
+    private func setSwitchOn(_ identifier: String) {
+        let control = scrollTo(identifier)
+        if (control.value as? String) != "On" {
+            control.tap()
+        }
+        XCTAssertTrue(
+            waitUntil(timeout: 5) { (control.value as? String) == "On" },
+            "\(identifier) did not retain its enabled state"
+        )
+    }
+
+    private func nonNegativeIntegerValue(_ element: XCUIElement) -> Int {
+        let raw = (element.value as? String) ?? element.label
+        return Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -1
     }
 
     private func openJoinNetwork() {

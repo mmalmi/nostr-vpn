@@ -432,24 +432,32 @@ struct FipsSettingsCard: View {
                     model.dispatch(NativeActions.updateSettings(["connectToNonRosterFipsPeers": value]), status: "Saving")
                 }
             ))
+            .accessibilityIdentifier("fips-connect-non-roster")
+            .accessibilityValue(model.state.connectToNonRosterFipsPeers ? "On" : "Off")
             Toggle("Find peers over Nostr relays", isOn: Binding(
                 get: { model.state.fipsNostrDiscoveryEnabled },
                 set: { value in
                     model.dispatch(NativeActions.updateSettings(["fipsNostrDiscoveryEnabled": value]), status: "Saving")
                 }
             ))
+            .accessibilityIdentifier("fips-nostr-discovery")
+            .accessibilityValue(model.state.fipsNostrDiscoveryEnabled ? "On" : "Off")
             Toggle("Enable WebRTC transport", isOn: Binding(
                 get: { model.state.fipsWebrtcEnabled },
                 set: { value in
                     model.dispatch(NativeActions.updateSettings(["fipsWebrtcEnabled": value]), status: "Saving")
                 }
             ))
+            .accessibilityIdentifier("fips-webrtc")
+            .accessibilityValue(model.state.fipsWebrtcEnabled ? "On" : "Off")
             Toggle("Use bootstrap servers", isOn: Binding(
                 get: { model.state.fipsBootstrapEnabled },
                 set: { value in
                     model.dispatch(NativeActions.updateSettings(["fipsBootstrapEnabled": value]), status: "Saving")
                 }
             ))
+            .accessibilityIdentifier("fips-bootstrap")
+            .accessibilityValue(model.state.fipsBootstrapEnabled ? "On" : "Off")
         }
     }
 }

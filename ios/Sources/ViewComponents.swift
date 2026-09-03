@@ -331,6 +331,7 @@ struct Metric: View {
                 .truncationMode(.middle)
         }
         .font(.footnote)
+        .accessibilityElement(children: .combine)
     }
 }
 

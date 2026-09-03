@@ -644,6 +644,10 @@ final class AppModel: ObservableObject {
         "wireguardExitMtu",
         "wireguardExitPersistentKeepaliveSecs",
         "wireguardExitConfig",
+        "connectToNonRosterFipsPeers",
+        "fipsNostrDiscoveryEnabled",
+        "fipsWebrtcEnabled",
+        "fipsBootstrapEnabled",
     ]
 
     func handle(url: URL) {
