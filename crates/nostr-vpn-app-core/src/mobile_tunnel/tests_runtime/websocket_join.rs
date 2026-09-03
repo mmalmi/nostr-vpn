@@ -15,11 +15,35 @@
                     .expect("WSS join test runtime")
                     .block_on(websocket_seed_router_join_roster_roundtrip(
                         JoinReceiptFailure::None,
+                        SeedTopology::Single,
                     ));
             })
             .expect("spawn WSS join test")
             .join()
             .expect("WSS join test thread");
+    }
+
+    #[test]
+    fn two_websocket_seed_routers_route_new_recipient_without_preconverged_roster_peer() {
+        let _latency_guard = WEBSOCKET_JOIN_LATENCY_GATE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::thread::Builder::new()
+            .name("mobile-two-wss-seed-join-roster".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("two-seed WSS join test runtime")
+                    .block_on(websocket_seed_router_join_roster_roundtrip(
+                        JoinReceiptFailure::None,
+                        SeedTopology::Two,
+                    ));
+            })
+            .expect("spawn two-seed WSS join test")
+            .join()
+            .expect("two-seed WSS join test thread");
     }
 
     #[test]
@@ -37,6 +61,7 @@
                     .expect("WSS join receipt retry runtime")
                     .block_on(websocket_seed_router_join_roster_roundtrip(
                         JoinReceiptFailure::WithoutRestart,
+                        SeedTopology::Single,
                     ));
             })
             .expect("spawn WSS join receipt retry test")
@@ -59,6 +84,7 @@
                     .expect("WSS join receipt restart runtime")
                     .block_on(websocket_seed_router_join_roster_roundtrip(
                         JoinReceiptFailure::AcrossRestart,
+                        SeedTopology::Single,
                     ));
             })
             .expect("spawn WSS join receipt restart test")
@@ -71,6 +97,12 @@
         None,
         WithoutRestart,
         AcrossRestart,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum SeedTopology {
+        Single,
+        Two,
     }
 
     async fn bind_wss_physical_router(
@@ -116,35 +148,103 @@
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn websocket_seed_router_join_roster_roundtrip(receipt_failure: JoinReceiptFailure) {
+    async fn websocket_seed_router_join_roster_roundtrip(
+        receipt_failure: JoinReceiptFailure,
+        seed_topology: SeedTopology,
+    ) {
         let test_started_at = Instant::now();
         let requested_at = unix_timestamp().saturating_sub(1);
         let approved_at = unix_timestamp();
 
-        let seed_keys = Keys::generate();
-        let seed_nsec = seed_keys.secret_key().to_bech32().expect("seed nsec");
-        let seed_port = available_tcp_port();
-        let seed_url = format!("ws://127.0.0.1:{seed_port}/fips");
-        let mut seed_config = FipsConfig::new();
-        seed_config.node.routing.mode = fips_endpoint::RoutingMode::ReplyLearned;
-        seed_config.node.discovery.nostr.enabled = false;
-        seed_config.node.discovery.nostr.advertise = false;
-        seed_config.node.discovery.lan.enabled = false;
-        seed_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
-            bind_addr: Some(format!("127.0.0.1:{seed_port}")),
+        let seed_one_keys = Keys::generate();
+        let seed_one_nsec = seed_one_keys
+            .secret_key()
+            .to_bech32()
+            .expect("first seed nsec");
+        let seed_one_npub = seed_one_keys
+            .public_key()
+            .to_bech32()
+            .expect("first seed npub");
+        let seed_one_port = available_tcp_port();
+        let seed_one_url = format!("ws://127.0.0.1:{seed_one_port}/fips");
+        let seed_two_identity = (seed_topology == SeedTopology::Two).then(|| {
+            let keys = Keys::generate();
+            let nsec = keys
+                .secret_key()
+                .to_bech32()
+                .expect("second seed nsec");
+            let npub = keys
+                .public_key()
+                .to_bech32()
+                .expect("second seed npub");
+            let port = available_tcp_port();
+            let url = format!("ws://127.0.0.1:{port}/fips");
+            (nsec, npub, port, url)
+        });
+        let mut seed_one_config = FipsConfig::new();
+        seed_one_config.node.routing.mode = fips_endpoint::RoutingMode::ReplyLearned;
+        seed_one_config.node.discovery.nostr.enabled = false;
+        seed_one_config.node.discovery.nostr.advertise = false;
+        seed_one_config.node.discovery.lan.enabled = false;
+        seed_one_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            bind_addr: Some(format!("127.0.0.1:{seed_one_port}")),
             ..WebSocketConfig::default()
         });
-        let seed = Arc::new(
+        if let Some((_, seed_two_npub, _, seed_two_url)) = &seed_two_identity {
+            let mut seed_two_peer =
+                FipsPeerConfig::new(seed_two_npub.clone(), "websocket", seed_two_url.clone());
+            seed_two_peer.connect_policy = ConnectPolicy::Manual;
+            seed_one_config.peers.push(seed_two_peer);
+        }
+        let seed_one = Arc::new(
             Box::pin(
                 FipsEndpoint::builder()
-                    .config(seed_config)
-                    .identity_nsec(seed_nsec)
+                    .config(seed_one_config)
+                    .identity_nsec(seed_one_nsec)
                     .without_system_tun()
                     .bind(),
             )
                 .await
-                .expect("bind WebSocket seed"),
+                .expect("bind first WebSocket seed"),
         );
+        let seed_two = if let Some((seed_two_nsec, _, seed_two_port, _)) = &seed_two_identity {
+            let mut seed_two_config = FipsConfig::new();
+            seed_two_config.node.routing.mode = fips_endpoint::RoutingMode::ReplyLearned;
+            seed_two_config.node.discovery.nostr.enabled = false;
+            seed_two_config.node.discovery.nostr.advertise = false;
+            seed_two_config.node.discovery.lan.enabled = false;
+            seed_two_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+                bind_addr: Some(format!("127.0.0.1:{seed_two_port}")),
+                seed_urls: vec![seed_one_url.clone()],
+                ..WebSocketConfig::default()
+            });
+            seed_two_config.peers.push(FipsPeerConfig::new(
+                seed_one_npub.clone(),
+                "websocket",
+                seed_one_url.clone(),
+            ));
+            Some(Arc::new(
+                Box::pin(
+                    FipsEndpoint::builder()
+                        .config(seed_two_config)
+                        .identity_nsec(seed_two_nsec.clone())
+                        .without_system_tun()
+                        .bind(),
+                )
+                .await
+                .expect("bind second WebSocket seed"),
+            ))
+        } else {
+            None
+        };
+        let physical_seed_url = seed_two_identity
+            .as_ref()
+            .map_or(&seed_one_url, |(_, _, _, seed_two_url)| seed_two_url);
+        let physical_seed_npub = seed_two_identity
+            .as_ref()
+            .map_or(seed_one_npub.as_str(), |(_, seed_two_npub, _, _)| {
+                seed_two_npub.as_str()
+            });
 
         let mut guest_app = AppConfig::generated_without_networks();
         guest_app.node_name = "Joining device".to_string();
@@ -186,7 +286,7 @@
             );
         }
         admin_app.ensure_defaults();
-        admin_app.fips_websocket_seed_urls = vec![seed_url.clone()];
+        admin_app.fips_websocket_seed_urls = vec![seed_one_url.clone()];
         admin_app.fips_nostr_discovery_enabled = false;
         admin_app.fips_webrtc_enabled = false;
         admin_app.fips_bootstrap_enabled = false;
@@ -266,7 +366,7 @@
             .expect("router nsec");
         let router_port = available_udp_port();
         let router = bind_wss_physical_router(
-            &seed_url,
+            physical_seed_url,
             guest.endpoint.npub(),
             &guest_udp_addr,
             &router_nsec,
@@ -283,7 +383,7 @@
             .await
             .expect("start admin through WebSocket seed");
 
-        let seed_npub = seed.npub().to_string();
+        let seed_npub = seed_one.npub().to_string();
         let router_npub = router.npub().to_string();
         let guest_npub = guest.endpoint.npub().to_string();
         tokio::time::timeout(Duration::from_secs(10), async {
@@ -307,15 +407,23 @@
                             .any(|peer| peer.npub == seed_npub && peer.connected)
                     });
                 let router_ready = router.peers().await.is_ok_and(|peers| {
-                    peers.iter().any(|peer| peer.npub == seed_npub && peer.connected)
+                    peers
+                        .iter()
+                        .any(|peer| peer.npub == physical_seed_npub && peer.connected)
                         && peers
                             .iter()
                             .any(|peer| peer.npub == guest_npub && peer.connected)
                 });
-                let seed_ready = seed.peers().await.is_ok_and(|peers| {
+                let seed_one_ready = seed_one.peers().await.is_ok_and(|peers| {
                     peers.iter().filter(|peer| peer.connected).count() == 2
                 });
-                if guest_ready && admin_ready && router_ready && seed_ready {
+                let seed_two_ready = match &seed_two {
+                    Some(seed) => seed.peers().await.is_ok_and(|peers| {
+                        peers.iter().filter(|peer| peer.connected).count() == 2
+                    }),
+                    None => true,
+                };
+                if guest_ready && admin_ready && router_ready && seed_one_ready && seed_two_ready {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -355,11 +463,15 @@
         .await;
         assert!(
             queued_delivery.is_ok(),
-                "production queued approval was not delivered through WSS seed and physical router; admin={:?}; guest={:?}; router={:?}; seed={:?}",
+                "production queued approval was not delivered through WSS seeds and physical router; admin={:?}; guest={:?}; router={:?}; seed_one={:?}; seed_two={:?}",
                 admin.endpoint.peers().await,
                 guest.endpoint.peers().await,
                 router.peers().await,
-                seed.peers().await,
+                seed_one.peers().await,
+                match &seed_two {
+                    Some(seed) => seed.peers().await,
+                    None => Ok(Vec::new()),
+                },
         );
         let roster_applied_at = Instant::now();
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -672,6 +784,12 @@
         shutdown_started_mobile_tunnel(admin).await;
         shutdown_started_mobile_tunnel(guest).await;
         router.shutdown().await.expect("shutdown router");
-        seed.shutdown().await.expect("shutdown WebSocket seed");
+        if let Some(seed) = seed_two {
+            seed.shutdown().await.expect("shutdown second WebSocket seed");
+        }
+        seed_one
+            .shutdown()
+            .await
+            .expect("shutdown first WebSocket seed");
         let _ = std::fs::remove_dir_all(admin_dir);
     }

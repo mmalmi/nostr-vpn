@@ -443,6 +443,7 @@ run_rust_validation_lane() {
   release_cargo test "${release_cargo_lock_args[@]}" --workspace -- \
     --test-threads=1 \
     --skip websocket_seed_router_routes_new_recipient_without_preconverged_roster_peer \
+    --skip two_websocket_seed_routers_route_new_recipient_without_preconverged_roster_peer \
     --skip websocket_seed_router_retries_durable_join_receipt_after_first_route_failure \
     --skip websocket_seed_router_delivers_durable_join_receipt_after_tunnel_restart \
     --skip desktop_mobile_manual_join_desktop_admin_to_mobile_joiner \
@@ -2084,11 +2085,13 @@ run_mobile_qr_join_latency_gate() {
     echo "Skipping mobile QR-join latency gate on this uncalibrated host."
     return 0
   fi
-  # These real public-WebSocket tests use timing ceilings and intentionally
+  # These real local-WebSocket tests use timing ceilings and intentionally
   # interrupt/restart a tunnel. Run them together only after build contention
   # has ended so their delivery and durable-retry measurements remain useful.
   release_cargo_test_filter nostr-vpn-app-core \
     websocket_seed_router_routes_new_recipient_without_preconverged_roster_peer
+  release_cargo_test_filter nostr-vpn-app-core \
+    two_websocket_seed_routers_route_new_recipient_without_preconverged_roster_peer
   release_cargo_test_filter nostr-vpn-app-core \
     websocket_seed_router_retries_durable_join_receipt_after_first_route_failure
   release_cargo_test_filter nostr-vpn-app-core \
