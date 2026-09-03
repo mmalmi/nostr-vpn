@@ -14,6 +14,7 @@ const harnessOnlyPaths = new Set([
   'scripts/android-release-foreground-idle-receipt.mjs',
   'scripts/native-lab.py',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_core.rs',
+  'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_runtime/websocket_join.rs',
   'crates/nostr-vpn-core/examples/desktop_manual_join_e2e_fixture.rs',
   'scripts/appstore-draft',
   'scripts/appstore_draft_metadata.py',

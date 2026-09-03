@@ -173,9 +173,13 @@ test('component proof retains only unchanged platform product inputs', () => {
       'crates/nostr-vpn-app-core/src/mobile_tunnel/config.rs',
       'pub const PRODUCT: bool = false;\n',
     )
-    const testOnly = commit(
+    commit(
       'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_core.rs',
       '#[test]\nfn regression() {}\n',
+    )
+    const testOnly = commit(
+      'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_runtime/websocket_join.rs',
+      '#[test]\nfn websocket_regression() {}\n',
     )
     const testOnlyArgs = {
       candidateRoot: root, platform: 'android',
