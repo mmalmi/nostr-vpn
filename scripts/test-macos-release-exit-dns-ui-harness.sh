@@ -196,10 +196,19 @@ if sidebar_calls != [
     "sidebar-devices",
     "sidebar-internet",
     "sidebar-internet",
+    "sidebar-internet",
 ]:
     raise SystemExit(
-        "macOS DNS AX sidebar retry is not limited to the four idempotent "
+        "macOS DNS AX sidebar retry is not limited to the five idempotent "
         f"navigation actions: {sidebar_calls}"
+    )
+wait_window_body = driver[
+    driver.index('if args.count == 4,') : driver.index('guard args.count == 6,')
+]
+if 'try pressSidebar(application, "sidebar-internet", pid: pid)' not in wait_window_body:
+    raise SystemExit(
+        "macOS DNS AX launch readiness does not prove an idempotent sidebar "
+        "action can complete"
     )
 for required in (
     '"publicUiOnly": true',

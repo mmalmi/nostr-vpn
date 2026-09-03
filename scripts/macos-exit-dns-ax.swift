@@ -837,6 +837,7 @@ func run() throws {
         NSRunningApplication(processIdentifier: pid)?
             .activate(options: [.activateAllWindows])
         _ = try find(application, identifier: "main-AppWindow-1")
+        try pressSidebar(application, "sidebar-internet", pid: pid)
         print("MACOS_EXIT_DNS_AX_WINDOW_READY")
         return
     }
