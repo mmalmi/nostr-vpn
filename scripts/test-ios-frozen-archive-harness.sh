@@ -1419,4 +1419,56 @@ run(["git", "-C", str(repo), "reset", "-q", "HEAD", "Cargo.lock"])
 rejects(repo, "FIPS")
 PY
 
+PYTHONPATH="$ROOT/scripts" python3 - "$TOOL" "$TMP_ROOT" <<'PY'
+import importlib.util
+import pathlib
+import sys
+from types import SimpleNamespace
+
+tool = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("ios_frozen_archive_under_test", tool)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load frozen iOS archive module")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+captured = {}
+
+module.source_revision = lambda _root: ("head", "tree")
+module.require_clean_checkout = lambda _root, _label: None
+
+
+def validate_metadata(path, checkout_path_sha, head, tree, version):
+    captured.update(
+        path=path,
+        checkout_path_sha=checkout_path_sha,
+        head=head,
+        tree=tree,
+        version=version,
+    )
+
+
+module.validate_fips_metadata = validate_metadata
+source_root = root / "source"
+fips_root = root / "fips"
+module.validate_source_and_fips(
+    SimpleNamespace(
+        rust_profile="release",
+        source_root=str(source_root),
+        fips_root=str(fips_root),
+        app_head="head",
+        app_tree="tree",
+        fips_head="head",
+        fips_tree="tree",
+        fips_metadata=str(root / "fips-linkage.json"),
+        fips_version="1.2.3",
+    )
+)
+expected = module.path_sha256(fips_root)
+if captured.get("checkout_path_sha") != expected:
+    raise SystemExit(
+        "frozen iOS provenance validator did not hash the FIPS checkout path"
+    )
+PY
+
 echo "Frozen iOS archive fail-closed harness passed"

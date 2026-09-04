@@ -586,7 +586,7 @@ def validate_source_and_fips(args: argparse.Namespace) -> None:
     require_clean_checkout(fips_root, "FIPS")
     validate_fips_metadata(
         pathlib.Path(args.fips_metadata),
-        fips_root,
+        path_sha256(fips_root),
         args.fips_head,
         args.fips_tree,
         args.fips_version,
