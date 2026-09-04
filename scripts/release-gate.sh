@@ -2056,6 +2056,39 @@ docker_release_gates_enabled() {
   ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}"
 }
 
+ensure_release_gate_docker_prerequisites() {
+  local image
+  local -a images=(
+    rust:1.93-bookworm
+    debian:bookworm-slim
+    ubuntu:24.04
+    node:24-bookworm
+    rust:1.94-bookworm
+    docker/dockerfile:1.7
+  )
+
+  command -v docker >/dev/null 2>&1 || {
+    echo "Docker is required by the release gate." >&2
+    return 1
+  }
+  docker info >/dev/null || {
+    echo "The Docker daemon is unavailable." >&2
+    return 1
+  }
+
+  # Resolve registry-dependent inputs before any VM, device, or cold Rust
+  # build. A warm release stays offline here; a cold release fails cheaply if
+  # its registry is unavailable instead of wasting the completed test lanes.
+  for image in "${images[@]}"; do
+    if docker image inspect "$image" >/dev/null 2>&1; then
+      printf 'Docker base image present: %s\n' "$image"
+      continue
+    fi
+    printf 'Pulling missing release-gate base image: %s\n' "$image"
+    docker pull "$image"
+  done
+}
+
 build_release_gate_docker_node_image() {
   docker compose \
     -p nostr-vpn-release-gate-image \
@@ -2380,6 +2413,12 @@ main() {
   release_gate_timing_run \
     "Local candidate preflight" \
     run_release_gate_candidate_preflight
+
+  if docker_release_gates_enabled; then
+    release_gate_timing_run \
+      "Docker base image preflight" \
+      ensure_release_gate_docker_prerequisites
+  fi
 
   local windows_platform_requested_for_gate=0
   if windows_platform_lane_requested; then

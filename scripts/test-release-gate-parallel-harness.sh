@@ -413,6 +413,7 @@ required_steps=(
   run_macos_platform_lane
   run_linux_platform_lane
   run_android_static_validation_lane
+  ensure_release_gate_docker_prerequisites
   build_release_gate_docker_images
   run_host_validation_lane
   run_linux_app_launch_smoke
@@ -439,6 +440,31 @@ for step in "${required_steps[@]}"; do
   grep -Fq "$step" <<<"$main_body" \
     || fail "release gate omits required step: $step"
 done
+
+docker_prerequisite_body="$(
+  sed -n '/^ensure_release_gate_docker_prerequisites() {$/,/^}$/p' "$release_gate"
+)"
+for base_image in \
+  rust:1.93-bookworm \
+  debian:bookworm-slim \
+  ubuntu:24.04 \
+  node:24-bookworm \
+  rust:1.94-bookworm \
+  docker/dockerfile:1.7
+do
+  grep -Fq "$base_image" <<<"$docker_prerequisite_body" \
+    || fail "Docker prerequisite preflight omits $base_image"
+done
+grep -Fq 'docker image inspect "$image"' <<<"$docker_prerequisite_body" \
+  || fail "Docker prerequisite preflight does not reuse present base images"
+grep -Fq 'docker pull "$image"' <<<"$docker_prerequisite_body" \
+  || fail "Docker prerequisite preflight does not pull missing base images"
+docker_preflight_line="$(grep -nF 'ensure_release_gate_docker_prerequisites' <<<"$main_body" | head -1 | cut -d: -f1)"
+platform_preparation_line="$(grep -nF 'local platform_preparation_lanes=()' <<<"$main_body" | head -1 | cut -d: -f1)"
+[[ -n "$docker_preflight_line" && -n "$platform_preparation_line" ]] \
+  || fail "Docker prerequisite preflight is missing from the release flow"
+((docker_preflight_line < platform_preparation_line)) \
+  || fail "Docker prerequisite preflight runs after expensive platform preparation"
 
 macos_platform_body="$(
   sed -n '/^run_macos_platform_lane() {$/,/^}$/p' "$release_gate"
