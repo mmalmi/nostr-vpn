@@ -682,6 +682,22 @@ complete = owned.index('Write-Marker "cleanup.complete"', native_cleanup)
 release = owned.index("$lock.Dispose()", complete)
 if not descendants < native_cleanup < complete < release:
     raise SystemExit("Windows cleanup completes before owned descendants stop")
+if "taskkill.exe /PID $processId /T /F" not in owned:
+    raise SystemExit("Windows cleanup cannot terminate a probe's native child tree")
+for identity_proof in (
+    "Get-CimInstance Win32_Process",
+    'recordedProcess.Name -notmatch \'^powershell(\\.exe)?$\'',
+    "recordedProcess.CommandLine -notmatch",
+    "recorded process identity changed before cleanup",
+):
+    if identity_proof not in owned:
+        raise SystemExit(
+            "Windows cleanup can terminate a reused PID without identity proof"
+        )
+if owned.index("taskkill.exe /PID $processId /T /F") > owned.index(
+    "Remove-Item -LiteralPath $processPath"
+):
+    raise SystemExit("Windows cleanup removes a child marker before termination")
 if "runner-cleanup." in text:
     raise SystemExit("Windows retains duplicate runner cleanup markers")
 for marker in ("probe.pid", "wireguard-probe.pid"):

@@ -779,8 +779,31 @@ function Invoke-OwnedNetworkCleanup {
         Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
         Wait-Process -Id $processId -Timeout 5 -ErrorAction SilentlyContinue
         if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
-          throw "cleanup owner could not stop recorded process $marker"
+          # A PowerShell probe can remain blocked in a native child after its
+          # parent receives Stop-Process. Kill that exact process tree before
+          # declaring cleanup unproven and quarantining the VM network.
+          $expectedAction = switch ($marker) {
+            "probe.pid" { "Probe" }
+            "wireguard-probe.pid" { "WireGuardProbe" }
+            "watchdog.pid" { "Watchdog" }
+          }
+          $recordedProcess = Get-CimInstance Win32_Process `
+            -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+          if (
+            !$recordedProcess -or
+            [string]$recordedProcess.Name -notmatch '^powershell(\.exe)?$' -or
+            [string]$recordedProcess.CommandLine -notmatch
+              ("-Action\s+" + [regex]::Escape($expectedAction))
+          ) {
+            throw "recorded process identity changed before cleanup: $marker"
+          }
+          & taskkill.exe /PID $processId /T /F 2>$null | Out-Null
+          Wait-Process -Id $processId -Timeout 15 -ErrorAction SilentlyContinue
+          if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
+            throw "cleanup owner could not stop recorded process $marker"
+          }
         }
+        Remove-Item -LiteralPath $processPath -Force -ErrorAction SilentlyContinue
       }
       Invoke-IsolatedNetworkCleanup -EmergencyRepair -DaemonPid $DaemonPid
       Write-Marker "cleanup.complete" $Owner
