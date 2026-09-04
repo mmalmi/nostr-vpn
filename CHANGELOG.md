@@ -17,6 +17,9 @@ starts its encrypted approval carrier before exchanging a signed roster.
 - Start the iOS VPN carrier when creating an admin network, matching Android
   and allowing QR and manual approvals to reach the joining device within the
   release deadline.
+- Refresh a pending phone's authenticated approval return route every three
+  seconds, avoiding ten-second blind spots that could push signed roster
+  delivery beyond the release deadline.
 - Prove the real iPhone and Android carriers are ready before cross-device join
   approval, including QR flows whose VPN control has scrolled off-screen.
 - Apply iOS FIPS bootstrap and discovery setting changes to the running packet

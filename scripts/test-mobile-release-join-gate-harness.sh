@@ -60,6 +60,19 @@ setter = tests.split("private func setSwitchOn", 1)[1].split(
 )[0]
 if "control.exists && control.isEnabled" not in setter:
     raise SystemExit("physical iOS join test taps FIPS controls before reconciliation finishes")
+if "control.coordinate(withNormalizedOffset:" not in setter:
+    raise SystemExit("physical iOS join test does not target the iOS 26 switch control")
+
+join_gate = pathlib.Path(sys.argv[2]).parents[2].joinpath(
+    "scripts/mobile-release-join-e2e.sh"
+).read_text(encoding="utf-8")
+build_only = join_gate.find("SIGNED_RELEASE_JOIN_ARTIFACTS_READY")
+if not (
+    join_gate.find("release_join_prepare_ios_release")
+    < build_only
+    < join_gate.find("carrier_preflight_log=")
+):
+    raise SystemExit("mobile join build-only exit is not between artifact preparation and UI execution")
 PY
 
 (

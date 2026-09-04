@@ -14,7 +14,10 @@ use crate::identity_bridge::{
     nostr_identity_device_approval_bootstrap,
 };
 
-pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 10;
+// A pending join request also refreshes the authenticated return route used by
+// the approving device. Keep several attempts inside the 15-second public-UI
+// delivery budget so approval timing cannot add a full ten-second blind spot.
+pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 3;
 pub const NOSTR_VPN_JOIN_REQUEST_TYPE: &str = "nostr-vpn.join-request";
 pub const NOSTR_JOIN_REQUEST_TTL_SECS: u64 = 15 * 60;
 pub const MAX_NOSTR_JOIN_ROSTER_AGE_SECS: u64 = 7 * 24 * 60 * 60;
@@ -472,6 +475,16 @@ pub fn normalize_join_request(request: MeshJoinRequest) -> Result<MeshJoinReques
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_join_request_retry_keeps_multiple_delivery_opportunities_inside_ui_budget() {
+        const RELEASE_JOIN_VISIBILITY_BUDGET_SECS: u64 = 15;
+
+        assert!(
+            RELEASE_JOIN_VISIBILITY_BUDGET_SECS / FIPS_JOIN_REQUEST_RETRY_SECS >= 4,
+            "a pending joiner needs several authenticated route refreshes inside the UI deadline"
+        );
+    }
 
     #[test]
     fn pending_join_request_rotates_at_fifteen_minute_expiry() {

@@ -380,7 +380,9 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
             "\(identifier) stayed unavailable while restoring VPN state"
         )
         if (control.value as? String) != "On" {
-            control.tap()
+            // iOS 26 can report a successful accessibility tap on the row
+            // without invoking the SwiftUI Toggle. Hit the switch itself.
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         }
         XCTAssertTrue(
             waitUntil(timeout: 5) { (control.value as? String) == "On" },

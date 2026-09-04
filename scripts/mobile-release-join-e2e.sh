@@ -433,6 +433,18 @@ RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
 export RELEASE_JOIN_DEVICE_MUTATION_ALLOWED
 release_join_prepare_android_release
 release_join_prepare_ios_release
+
+case "${NVPN_RELEASE_JOIN_BUILD_ONLY:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    release_join_reuse_artifacts \
+      && fail "build-only mode requires the artifact build path"
+    echo "SIGNED_RELEASE_JOIN_ARTIFACTS_READY"
+    exit 0
+    ;;
+  0|false|FALSE|False|no|NO|No|off|OFF|Off|"") ;;
+  *) fail "unsupported NVPN_RELEASE_JOIN_BUILD_ONLY=$NVPN_RELEASE_JOIN_BUILD_ONLY" ;;
+esac
+
 rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
 
 carrier_preflight_log="$(ios_log ios-carrier-preflight)"
