@@ -378,6 +378,11 @@ run_release_gate_candidate_preflight() {
   fi
   node scripts/sync-versions.mjs --check
   ./scripts/check-source-file-lines.sh
+  # Fail on cheap source-quality errors before any remote platform starts an
+  # expensive exact-candidate build. These use the locked release graph and
+  # are not repeated by the later full host validation lane.
+  cargo fmt --check
+  cargo clippy --locked --workspace --all-targets -- -D warnings
 }
 
 seal_release_gate_app_candidate() {
@@ -429,13 +434,11 @@ run_release_gate_static_preflight() {
   else
     echo "Skipping iOS App Store binary-policy gate on this non-Apple host."
   fi
-  cargo fmt --check
 }
 
 run_rust_validation_lane() {
   ./scripts/security-audit-rust.sh
   run_local_fips_regression_tests
-  release_cargo clippy "${release_cargo_lock_args[@]}" --workspace --all-targets -- -D warnings
   export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
   # This fixture contains a strict end-to-end latency assertion. Keep it out of
   # the workspace suite while the cold Docker image may be compiling, then run

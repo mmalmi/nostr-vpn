@@ -480,10 +480,12 @@ mod tests {
     fn pending_join_request_retry_keeps_multiple_delivery_opportunities_inside_ui_budget() {
         const RELEASE_JOIN_VISIBILITY_BUDGET_SECS: u64 = 15;
 
-        assert!(
-            RELEASE_JOIN_VISIBILITY_BUDGET_SECS / FIPS_JOIN_REQUEST_RETRY_SECS >= 4,
-            "a pending joiner needs several authenticated route refreshes inside the UI deadline"
-        );
+        const {
+            assert!(
+                RELEASE_JOIN_VISIBILITY_BUDGET_SECS / FIPS_JOIN_REQUEST_RETRY_SECS >= 4,
+                "a pending joiner needs several authenticated route refreshes inside the UI deadline"
+            );
+        }
     }
 
     #[test]

@@ -474,6 +474,29 @@ candidate_preflight_line="$(
   || fail "release gate does not seal the app candidate before preflight"
 ((seal_candidate_line < candidate_preflight_line)) \
   || fail "release gate snapshots the candidate before sealing its app revision"
+platform_preparation_line="$(
+  grep -nF 'local platform_preparation_lanes=()' <<<"$main_body" \
+    | head -n1 \
+    | cut -d: -f1 \
+    || true
+)"
+[[ -n "$platform_preparation_line" ]] \
+  || fail "release gate does not define platform preparation lanes"
+((candidate_preflight_line < platform_preparation_line)) \
+  || fail "release gate does not finish fail-fast candidate checks before platform preparation"
+candidate_preflight_body="$(
+  sed -n '/^run_release_gate_candidate_preflight() {$/,/^}$/p' "$release_gate"
+)"
+grep -Fq 'cargo clippy --locked --workspace --all-targets -- -D warnings' \
+  <<<"$candidate_preflight_body" \
+  || fail "release gate candidate preflight omits strict fail-fast Clippy"
+grep -Fq 'cargo fmt --check' <<<"$candidate_preflight_body" \
+  || fail "release gate candidate preflight omits fail-fast formatting"
+rust_validation_body="$(
+  sed -n '/^run_rust_validation_lane() {$/,/^}$/p' "$release_gate"
+)"
+! grep -Fq 'clippy' <<<"$rust_validation_body" \
+  || fail "release gate repeats Clippy after the fail-fast candidate preflight"
 docker_functional_body="$(sed -n '/^run_docker_isolated_functional_gates() {$/,/^}$/p' "$release_gate")"
 for contract in \
   './scripts/e2e-paid-exit-docker.sh' \
