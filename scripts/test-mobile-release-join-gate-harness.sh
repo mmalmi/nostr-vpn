@@ -73,6 +73,17 @@ if not (
     < join_gate.find("carrier_preflight_log=")
 ):
     raise SystemExit("mobile join build-only exit is not between artifact preparation and UI execution")
+
+release_gate = pathlib.Path(sys.argv[2]).parents[2].joinpath(
+    "scripts/release-gate.sh"
+).read_text(encoding="utf-8")
+mobile_gate = release_gate.split("run_mobile_join_e2e_gate()", 1)[1].split(
+    "run_windows_release_mobile_join_e2e_gate()", 1
+)[0]
+variant_build = mobile_gate.find("NVPN_RELEASE_JOIN_BUILD_ONLY=1")
+xctestrun_selection = mobile_gate.find("select_generated_ios_release_xctestrun")
+if variant_build < 0 or not (variant_build < xctestrun_selection):
+    raise SystemExit("release gate does not build the exact iOS join variant before reuse")
 PY
 
 (

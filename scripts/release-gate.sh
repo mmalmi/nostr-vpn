@@ -1843,7 +1843,7 @@ run_mobile_join_e2e_gate() {
   local android_result_dir android_receipt android_fips_metadata
   local ios_result_dir ios_derived_data ios_app ios_xctestrun ios_receipt
   local ios_production_receipt
-  local ios_fips_metadata release_join_result_dir
+  local ios_fips_metadata release_join_result_dir selected_android
   android_result_dir="${NVPN_ANDROID_RESULT_DIR:-$ROOT_DIR/artifacts/mobile-android}"
   android_receipt="${NVPN_MOBILE_ANDROID_RELEASE_RECEIPT:-$android_result_dir/mobile-android-release-artifact.json}"
   android_fips_metadata="${NVPN_ANDROID_FIPS_METADATA_RECEIPT:-$ROOT_DIR/artifacts/mobile-android/fips-linkage.json}"
@@ -1854,6 +1854,31 @@ run_mobile_join_e2e_gate() {
   ios_production_receipt="${NVPN_MOBILE_IOS_RELEASE_RECEIPT:-$ios_result_dir/mobile-ios-release-artifact.json}"
   ios_receipt="${NVPN_RELEASE_JOIN_IOS_VARIANT_RECEIPT:-$release_join_result_dir/ios-join-test-variant.json}"
   ios_fips_metadata="${NVPN_IOS_FIPS_METADATA_RECEIPT:-$ROOT_DIR/artifacts/mobile-ios/fips-linkage.json}"
+
+  selected_android="$(
+    select_physical_android_serial \
+      "${ADB_BIN:-adb}" \
+      "${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
+  )" || return 1
+  export NVPN_ANDROID_SERIAL="$selected_android"
+  if [[ -z "${NVPN_EXPECTED_ANDROID_DEVICE_MODEL:-}" ]]; then
+    NVPN_EXPECTED_ANDROID_DEVICE_MODEL="$(
+      "${ADB_BIN:-adb}" -s "$selected_android" shell getprop ro.product.model \
+        | tr -d '\r'
+    )"
+    export NVPN_EXPECTED_ANDROID_DEVICE_MODEL
+  fi
+
+  release_gate_run_with_timeout \
+    "Build signed Release mobile join artifacts" \
+    "$MOBILE_JOIN_E2E_TIMEOUT_SECS" \
+    env NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR=YES \
+    NVPN_RELEASE_JOIN_BUILD_ONLY=1 \
+    NVPN_RELEASE_JOIN_DESKTOP_MOBILE=0 \
+    NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=0 \
+    NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT="$ios_production_receipt" \
+    ./scripts/mobile-release-join-e2e.sh
+
   ios_xctestrun="$(
     select_generated_ios_release_xctestrun \
       "$ios_derived_data/Build/Products" \
