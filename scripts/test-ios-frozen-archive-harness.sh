@@ -1244,14 +1244,27 @@ recovery = (
 if recovery in archive:
     raise SystemExit("receiptless archive can synthesize Release provenance")
 partial_state_guard = (
-    'if [[ -e "$ARCHIVE_PATH" || -e "$FROZEN_ARCHIVE_RECEIPT" ]]'
+    'if [[ -e "$ARCHIVE_PATH" || -e "$FROZEN_DIR" ]]'
 )
 if (
     partial_state_guard not in archive
     or archive.index(partial_state_guard) > archive.index("ensure_profiles")
-    or "refusing to rebuild over it" not in archive
+    or "quarantine_stale_frozen_state" not in archive
 ):
-    raise SystemExit("receiptless archive is not rejected before rebuilding")
+    raise SystemExit("stale archive is not quarantined before rebuilding")
+quarantine = ios_build.split("quarantine_stale_frozen_state() {", 1)[1].split(
+    "\n}", 1
+)[0]
+for required in (
+    'mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-stale-state.XXXXXX"',
+    'chmod 700 "$quarantine"',
+    'mv "$ARCHIVE_PATH" "$quarantine/NostrVpnIos.xcarchive"',
+    'mv "$FROZEN_DIR" "$quarantine/frozen"',
+):
+    if required not in quarantine:
+        raise SystemExit("stale iOS archive quarantine is not recoverable and private")
+if 'rm -rf "$ARCHIVE_PATH"' in archive or 'rm -rf "$FROZEN_DIR"' in archive:
+    raise SystemExit("stale iOS archive state is destructively removed")
 if 'BUNDLE_ID" == "$NVPN_BUILTIN_IOS_BUNDLE_ID' not in ios_build:
     raise SystemExit("frozen archive permits non-production app identifiers")
 if 'NVPN_APP_VERSION_NAME" == "$source_version' not in ios_build:

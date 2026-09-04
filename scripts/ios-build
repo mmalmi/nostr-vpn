@@ -283,19 +283,33 @@ restore_generated_ios_project() {
     >"$PROJECT/project.pbxproj"
 }
 
+quarantine_stale_frozen_state() {
+  local quarantine
+  quarantine="$(
+    mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-stale-state.XXXXXX"
+  )" || return 1
+  chmod 700 "$quarantine"
+  if [[ -e "$ARCHIVE_PATH" ]]; then
+    mv "$ARCHIVE_PATH" "$quarantine/NostrVpnIos.xcarchive" || return 1
+  fi
+  if [[ -e "$FROZEN_DIR" ]]; then
+    mv "$FROZEN_DIR" "$quarantine/frozen" || return 1
+  fi
+  echo "Quarantined stale generated iOS archive state for recovery."
+}
+
 run_ios_archive() {
   local NVPN_IOS_RUST_PROFILE="release"
   export NVPN_IOS_RUST_PROFILE
   prepare_frozen_revision_args
-  if [[ -e "$ARCHIVE_PATH" || -e "$FROZEN_ARCHIVE_RECEIPT" ]]; then
+  if [[ -e "$ARCHIVE_PATH" || -e "$FROZEN_DIR" ]]; then
     if [[ -d "$ARCHIVE_PATH" && -f "$FROZEN_ARCHIVE_RECEIPT" ]] \
       && validate_frozen_archive
     then
       echo "Reusing the exact verified frozen iOS archive."
       return
     fi
-    echo "Frozen iOS archive state is incomplete or stale; refusing to rebuild over it." >&2
-    return 1
+    quarantine_stale_frozen_state
   fi
   ensure_profiles
   ensure_dir "$DIST_DIR"
