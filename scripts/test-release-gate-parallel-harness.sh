@@ -469,8 +469,8 @@ platform_preparation_line="$(grep -nF 'local platform_preparation_lanes=()' <<<"
 macos_platform_body="$(
   sed -n '/^run_macos_platform_lane() {$/,/^}$/p' "$release_gate"
 )"
-grep -Fq 'run_macos_app_launch_smoke' <<<"$macos_platform_body" \
-  || fail "macOS app launch smoke does not overlap host validation in its isolated VM lane"
+! grep -Fq 'run_macos_app_launch_smoke' <<<"$macos_platform_body" \
+  || fail "macOS idle CPU is measured while concurrent build lanes can starve its VM"
 ! grep -Fq 'run_desktop_app_launch_smokes' <<<"$main_body" \
   || fail "desktop app launch smokes still block the serial release tail"
 
@@ -481,7 +481,12 @@ validation_join="$(grep -nF 'release_gate_parallel_wait_group "${concurrent_vali
 ((linux_smoke_start < validation_join)) \
   || fail "Linux GUI smoke starts after concurrent validation has already joined"
 
+macos_idle_start="$(grep -nF '"macOS isolated app launch and idle CPU"' <<<"$main_body" | head -1 | cut -d: -f1)"
 macos_network_start="$(grep -nF '"macOS exclusive desktop network"' <<<"$main_body" | head -1 | cut -d: -f1)"
+[[ -n "$macos_idle_start" && -n "$macos_network_start" ]] \
+  || fail "isolated macOS idle CPU or network gate is missing"
+((validation_join < macos_idle_start && macos_idle_start < macos_network_start)) \
+  || fail "macOS idle CPU is not isolated between concurrent builds and network mutation"
 linux_network_start="$(grep -nF 'run_linux_exclusive_desktop_gates' <<<"$main_body" | head -1 | cut -d: -f1)"
 windows_network_start="$(grep -nF 'run_windows_exclusive_desktop_gates' <<<"$main_body" | head -1 | cut -d: -f1)"
 exclusive_network_join="$(grep -nF 'release_gate_parallel_wait_group "${exclusive_desktop_lanes[@]}"' <<<"$main_body" | head -1 | cut -d: -f1)"

@@ -1001,7 +1001,6 @@ run_macos_platform_lane() {
   if [[ "${MACOS_PLATFORM_LANE_PRE_SYNCED:-0}" != "1" ]]; then
     prepare_macos_platform_lane_sync
   fi
-  run_macos_app_launch_smoke
   run_macos_manual_join_ui_gate
   run_macos_exit_dns_ui_gate
   run_macos_service_toggle_gate
@@ -2567,6 +2566,13 @@ main() {
     export NVPN_WEB_STARTOS_JOIN_IMAGE_READY=1
     export NVPN_UMBREL_WEB_E2E_SKIP_BUILD=1
   fi
+
+  # App launch includes a strict idle-CPU measurement inside the macOS VM.
+  # Host compilation can starve the VM and inflate that measurement, so keep
+  # the unchanged product budget and sample only after every build lane joins.
+  release_gate_timing_run \
+    "macOS isolated app launch and idle CPU" \
+    run_macos_app_launch_smoke
 
   # The real desktop network proofs own their target VM and hypervisor
   # topology. Join every parallel UI/build lane before changing links, routes,
