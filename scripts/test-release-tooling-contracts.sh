@@ -39,7 +39,7 @@ start_lane "Apple and desktop contracts" run_contract_batch \
   scripts/test-{macos-vm-import-only,desktop-network-handoff,desktop-dns-ui-evidence,desktop-underlay-host-peer-import,macos-release-fips-roaming,macos-crash-ownership-diagnostics,macos-release-exit-dns-ui,ios-frozen-archive,macos-sdk-compat}-harness.sh
 foreground_status=0
 for contract in \
-  scripts/test-{release-gate-parallel,local-fips-workspace,idle-cpu-gate}-harness.sh
+  scripts/test-{release-gate-parallel,release-gate-timing,local-fips-workspace,idle-cpu-gate}-harness.sh
 do
   "$contract" || {
     contract_status="$?"

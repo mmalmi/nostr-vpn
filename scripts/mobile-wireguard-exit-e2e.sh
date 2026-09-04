@@ -44,6 +44,7 @@ IOS_CLEANUP_ARMED=0
 ADB="${ADB:-$(command -v adb || true)}"
 ANDROID_COUNTER_LEDGER="$(mktemp "${TMPDIR:-/tmp}/nvpn-android-network-counters.XXXXXX")"
 IOS_COUNTER_LEDGER="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-network-counters.XXXXXX")"
+ANDROID_ARTIFACT_DIR=""
 NETWORK_AFTER_BYTES=""
 NETWORK_AFTER_FORWARD=""
 
@@ -103,6 +104,18 @@ esac
 has_platform() {
   local requested="$1"
   [[ ",${PLATFORMS// /}," == *",$requested,"* ]]
+}
+
+prepare_android_attempt_artifact_dir() {
+  local root="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
+  mkdir -p "$root"
+  [[ -d "$root" && ! -L "$root" ]] || {
+    echo "Android network artifact root is unsafe" >&2
+    return 1
+  }
+  ANDROID_ARTIFACT_DIR="$(
+    mktemp -d "$root/mobile-wireguard-exit-attempt.XXXXXX"
+  )" || return 1
 }
 
 rapid_start_stop_for_case() {
@@ -563,10 +576,11 @@ run_android_case() {
     NVPN_ANDROID_CAPTURED_PROBE_TOKEN="$HTTP_PROBE_TOKEN" \
     NVPN_ANDROID_EXIT_SOURCE_PROBE_URL="$EXIT_SOURCE_PROBE_URL" \
     NVPN_ANDROID_EXPECTED_EXIT_SOURCE_IP="$EXPECTED_EXIT_SOURCE_IP" \
+    NVPN_ANDROID_RESULT_DIR="$ANDROID_ARTIFACT_DIR" \
     "$ROOT/scripts/mobile-android-smoke.sh" "${android_args[@]}"
   if bool_is_true "$underlay_gate"; then
     write_underlay_fresh_dns_fixture_proof \
-      Android "${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
+      Android "$ANDROID_ARTIFACT_DIR"
   fi
   assert_platform_traffic Android "$label" "$before_bytes" "$before_forward"
   after_dns_evidence="$(
@@ -742,7 +756,7 @@ write_network_evidence() {
     android)
       output="${NVPN_MOBILE_ANDROID_NETWORK_EVIDENCE_OUTPUT:-}"
       artifact_receipt="${NVPN_MOBILE_ANDROID_RELEASE_RECEIPT:-}"
-      artifact_dir="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
+      artifact_dir="$ANDROID_ARTIFACT_DIR"
       ledger="$ANDROID_COUNTER_LEDGER"
       ;;
     ios)
@@ -805,6 +819,7 @@ if [[ -n "${NVPN_MOBILE_WG_EXIT_DNS_CASES:-}" ]]; then
   done
 fi
 if has_platform android; then
+  prepare_android_attempt_artifact_dir
   assert_single_android_app
   for index in "${!DNS_CASES[@]}"; do
     final=0

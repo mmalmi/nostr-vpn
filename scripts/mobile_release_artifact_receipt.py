@@ -367,13 +367,13 @@ def build_join_summary(args: argparse.Namespace) -> None:
 
 def validate_fips_metadata(
     path: pathlib.Path,
-    checkout: pathlib.Path,
+    checkout_path_sha: str,
     head: str,
     tree: str,
     version: str,
 ) -> None:
     metadata = load_json(path)
-    require_equal(metadata, "checkoutPathSha256", path_sha256(checkout))
+    require_equal(metadata, "checkoutPathSha256", checkout_path_sha)
     require_equal(metadata, "checkoutHead", head)
     require_equal(metadata, "checkoutTree", tree)
     require_equal(metadata, "fipsCoreVersion", version)
@@ -402,7 +402,6 @@ def validate_android(args: argparse.Namespace) -> None:
         "fipsGitSha": args.fips_head,
         "fipsGitTree": args.fips_tree,
         "fipsCoreVersion": args.fips_version,
-        "fipsCheckoutPathSha256": path_sha256(fips_root),
         "fipsCargoMetadataReceiptSha256": sha256_file(metadata),
         "fipsDependenciesForcedRebuilt": True,
         "package": args.package,
@@ -413,6 +412,7 @@ def validate_android(args: argparse.Namespace) -> None:
         require_equal(receipt, name, value)
     for name in (
         "apkPathSha256",
+        "fipsCheckoutPathSha256",
         "fipsCargoMetadataReceiptPathSha256",
     ):
         require_lower_hash(receipt.get(name), name, 64)
@@ -473,7 +473,7 @@ def validate_android(args: argparse.Namespace) -> None:
         raise ValueError("application and FIPS checkouts unexpectedly coincide")
     validate_fips_metadata(
         metadata,
-        fips_root,
+        receipt["fipsCheckoutPathSha256"],
         args.fips_head,
         args.fips_tree,
         args.fips_version,
@@ -698,7 +698,6 @@ def validate_ios(args: argparse.Namespace) -> None:
         "fipsGitSha": args.fips_head,
         "fipsGitTree": args.fips_tree,
         "fipsCoreVersion": args.fips_version,
-        "fipsCheckoutPathSha256": path_sha256(fips_root),
         "fipsCargoMetadataReceiptPathSha256": path_sha256(metadata),
         "fipsCargoMetadataReceiptSha256": sha256_file(metadata),
         "fipsDependenciesForcedRebuilt": True,
@@ -746,6 +745,11 @@ def validate_ios(args: argparse.Namespace) -> None:
         raise ValueError("production iOS app exposes test fixture file sharing")
     for name, value in expected.items():
         require_equal(receipt, name, value)
+    require_lower_hash(
+        receipt.get("fipsCheckoutPathSha256"),
+        "fipsCheckoutPathSha256",
+        64,
+    )
     device = receipt.get("selectedPhysicalDevice")
     if not isinstance(device, dict):
         raise ValueError("iOS receipt has no selected physical device")
@@ -756,7 +760,7 @@ def validate_ios(args: argparse.Namespace) -> None:
         raise ValueError("iOS receipt has incomplete selected-device metadata")
     validate_fips_metadata(
         metadata,
-        fips_root,
+        receipt["fipsCheckoutPathSha256"],
         args.fips_head,
         args.fips_tree,
         args.fips_version,

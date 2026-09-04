@@ -12,6 +12,8 @@ RELEASE_GATE_PARALLEL_STARTED_AT=()
 RELEASE_GATE_PARALLEL_LAST_INDEX=""
 RELEASE_GATE_PARALLEL_LOG_DIR=""
 RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS="${RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS:-2}"
+RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES="${RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES:-80}"
+RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES="${RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES:-200}"
 
 release_gate_parallel_init() {
   RELEASE_GATE_PARALLEL_LOG_DIR="$1"
@@ -207,9 +209,30 @@ release_gate_parallel_wait() {
   fi
 
   local duration=$(( $(date +%s) - started_at ))
+  if type release_gate_timing_record >/dev/null 2>&1; then
+    release_gate_timing_record \
+      parallel "$label" "$started_at" "$((started_at + duration))" "$status" \
+      || return 1
+  fi
+  local log_lines="$RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES"
+  ((status == 0 && orphaned_group == 0)) \
+    || log_lines="$RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES"
+  [[ "$log_lines" =~ ^[1-9][0-9]*$ ]] || {
+    printf 'release gate parallel lane failed: invalid log line limit %s\n' \
+      "$log_lines" >&2
+    return 2
+  }
   printf '\n===== release-gate lane: %s (%ss) =====\n' "$label" "$duration"
   if [[ -n "$log_path" && -f "$log_path" ]]; then
-    cat "$log_path"
+    local total_lines
+    total_lines="$(wc -l <"$log_path" | tr -d '[:space:]')"
+    if [[ "$total_lines" =~ ^[0-9]+$ && "$total_lines" -gt "$log_lines" ]]; then
+      printf '[showing final %s of %s lines; complete log: %s]\n' \
+        "$log_lines" "$total_lines" "$log_path"
+      tail -n "$log_lines" "$log_path"
+    else
+      cat "$log_path"
+    fi
   fi
   printf '===== end release-gate lane: %s =====\n\n' "$label"
 

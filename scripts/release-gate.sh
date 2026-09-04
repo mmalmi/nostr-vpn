@@ -8,6 +8,7 @@ cd "$ROOT_DIR"
 
 source "$ROOT_DIR/scripts/release_common.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-timeout.sh"
+source "$ROOT_DIR/scripts/lib-release-gate-timing.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-parallel.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-required-modes.sh"
 source "$ROOT_DIR/scripts/lib-macos-vm-identity.sh"
@@ -47,7 +48,9 @@ ANDROID_LEGACY_REPLACEMENT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_ANDROID_LEGACY_REPL
 IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS:-360}"
 MOBILE_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_WG_EXIT_TIMEOUT_SECS:-3600}"
 MOBILE_JOIN_E2E_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_JOIN_E2E_TIMEOUT_SECS:-1800}"
+LINUX_ARM64_CLI_TIMEOUT_SECS="${NVPN_RELEASE_GATE_LINUX_ARM64_CLI_TIMEOUT_SECS:-2400}"
 RELEASE_GATE_TARGET_SECS="${NVPN_RELEASE_GATE_TARGET_SECS:-1800}"
+RELEASE_GATE_STARTED_AT=""
 
 release_cargo_config_args=()
 release_cargo_config_backup=""
@@ -378,11 +381,22 @@ run_release_gate_candidate_preflight() {
   fi
   node scripts/sync-versions.mjs --check
   ./scripts/check-source-file-lines.sh
+  # Release harness defects are cheap to catch and catastrophically expensive
+  # after an exact-candidate VM build or physical-device run has started.
+  ./scripts/test-release-gate-orchestration.sh
   # Fail on cheap source-quality errors before any remote platform starts an
   # expensive exact-candidate build. These use the locked release graph and
   # are not repeated by the later full host validation lane.
   cargo fmt --check
   cargo clippy --locked --workspace --all-targets -- -D warnings
+}
+
+run_linux_arm64_cli_gate() {
+  local output_dir="$RELEASE_GATE_PARALLEL_LOG_DIR/linux-arm64-cli"
+  release_gate_run_with_timeout \
+    "Linux ARM64 CLI cross-build and native smoke" \
+    "$LINUX_ARM64_CLI_TIMEOUT_SECS" \
+    "$ROOT_DIR/scripts/build-linux-arm64-cli-gate.sh" "$output_dir"
 }
 
 seal_release_gate_app_candidate() {
@@ -987,6 +1001,7 @@ run_macos_platform_lane() {
   if [[ "${MACOS_PLATFORM_LANE_PRE_SYNCED:-0}" != "1" ]]; then
     prepare_macos_platform_lane_sync
   fi
+  run_macos_app_launch_smoke
   run_macos_manual_join_ui_gate
   run_macos_exit_dns_ui_gate
   run_macos_service_toggle_gate
@@ -1350,7 +1365,7 @@ run_wireguard_exit_platform_gates() {
   fi
 }
 
-run_desktop_app_launch_smokes() {
+run_linux_app_launch_smoke() {
   local linux_gui_smoke_default=1
   case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
     0|false|FALSE|False|no|NO|No|off|OFF|Off)
@@ -1376,7 +1391,9 @@ run_desktop_app_launch_smokes() {
       fi
       ;;
   esac
+}
 
+run_macos_app_launch_smoke() {
   local macos_gui_smoke="${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE:-auto}"
   if [[ "${MACOS_PLATFORM_LANE_PRE_SYNCED:-0}" == "1" ]]; then
     export NVPN_MACOS_SKIP_GIT_SYNC=1
@@ -1408,7 +1425,6 @@ run_desktop_app_launch_smokes() {
       return 2
       ;;
   esac
-
 }
 
 run_macos_daemon_idle_cpu_gate() {
@@ -2306,14 +2322,21 @@ release_gate_cleanup() {
   if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then
     status=1
   fi
+  if [[ -n "$RELEASE_GATE_STARTED_AT" ]] \
+    && ! release_gate_timing_write_run_diagnostic \
+      "$status" "$RELEASE_GATE_STARTED_AT" "$RELEASE_GATE_TARGET_SECS"
+  then
+    echo "Release gate could not write its diagnostic run summary." >&2
+    status=1
+  fi
   exit "$status"
 }
 
 main() {
-  local started_at
-  started_at="$(date +%s)"
+  RELEASE_GATE_STARTED_AT="$(date +%s)"
   local log_dir="${NVPN_RELEASE_GATE_LOG_DIR:-$ROOT_DIR/artifacts/release-gate-logs/$(date -u +%Y%m%dT%H%M%SZ)}"
   release_gate_parallel_init "$log_dir"
+  release_gate_timing_init "$log_dir"
   HOST_LINUX_VM_BUNDLE_PATH_RECEIPT="$log_dir/host-linux-vm-bundle-path.txt"
   export HOST_LINUX_VM_BUNDLE_PATH_RECEIPT
   rm -f "$HOST_LINUX_VM_BUNDLE_PATH_RECEIPT"
@@ -2340,21 +2363,31 @@ main() {
     "$NVPN_MOBILE_IOS_RELEASE_RECEIPT"
   trap release_gate_cleanup EXIT
 
-  release_gate_enforce_complete_real_network_modes
-  release_gate_require_complete_fixture_inputs
-  seal_release_gate_app_candidate
+  release_gate_timing_run \
+    "Complete release mode preflight" \
+    release_gate_enforce_complete_real_network_modes
+  release_gate_timing_run \
+    "Complete fixture input preflight" \
+    release_gate_require_complete_fixture_inputs
+  release_gate_timing_run \
+    "Seal exact release candidate" \
+    seal_release_gate_app_candidate
 
   # Validate generated version metadata before any remote lane snapshots the
   # candidate. The remaining preflight leaves tracked source unchanged and can
   # overlap work on resource-isolated remote hosts.
-  run_release_gate_candidate_preflight
+  release_gate_timing_run \
+    "Local candidate preflight" \
+    run_release_gate_candidate_preflight
 
   local windows_platform_requested_for_gate=0
   if windows_platform_lane_requested; then
     windows_platform_requested_for_gate=1
     # Seal crates.io/FIPS provenance while the exact candidate is still clean.
     # Later release preparation deliberately realizes a temporary Cargo graph.
-    prepare_windows_source_fips_receipt
+    release_gate_timing_run \
+      "Windows source provenance preflight" \
+      prepare_windows_source_fips_receipt
   fi
 
   # These preparation lanes read or snapshot the tracked candidate. Join all
@@ -2392,6 +2425,14 @@ main() {
     platform_preparation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
   fi
 
+  # The completion step requires this exact archive and receipt. Build it
+  # beside the remote preparation lanes so a missing ARM64 CLI can never turn
+  # into a multi-hour end-of-gate surprise.
+  release_gate_parallel_start \
+    "Linux ARM64 CLI" \
+    run_linux_arm64_cli_gate
+  platform_preparation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+
   release_gate_parallel_wait_group "${platform_preparation_lanes[@]}"
   if [[ -e "$WINDOWS_PLATFORM_PREPARATION_RECEIPT" ]]; then
     platform_preparation_receipt_valid \
@@ -2421,7 +2462,9 @@ main() {
   if [[ -e "$HOST_LINUX_VM_BUNDLE_PATH_RECEIPT" ]]; then
     load_host_linux_vm_bundle_path_receipt
   fi
-  prepare_release_cargo_config
+  release_gate_timing_run \
+    "Prepare exact local FIPS Cargo graph" \
+    prepare_release_cargo_config
 
   local concurrent_validation_lanes=()
   if [[ "$windows_platform_requested_for_gate" == "1" ]]; then
@@ -2446,6 +2489,14 @@ main() {
   release_gate_parallel_start \
     "Android compile, unit tests, and lint" \
     run_android_static_validation_lane
+  concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+
+  # The Linux launch smoke owns an isolated Compose container and target
+  # volume. It used to block the serial network/device tail after every build
+  # lane had already completed, adding its full cold-build time to releases.
+  release_gate_parallel_start \
+    "Linux GUI launch smoke" \
+    run_linux_app_launch_smoke
   concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
   local docker_build_requested=0
@@ -2480,40 +2531,89 @@ main() {
   # The real desktop network proofs own their target VM and hypervisor
   # topology. Join every parallel UI/build lane before changing links, routes,
   # or entering any latency/performance/device measurement.
-  run_desktop_app_launch_smokes
-  run_linux_exclusive_desktop_gates
-  run_windows_exclusive_desktop_gates
-  run_macos_exclusive_desktop_gates
+  # Linux and Windows mutate VMs on the same hypervisor and remain serial.
+  # The macOS VM uses an isolated guest plus its own Docker fixture, so its
+  # network proof can cover the same wall-clock window safely.
+  local exclusive_desktop_lanes=()
+  release_gate_parallel_start \
+    "macOS exclusive desktop network" \
+    run_macos_exclusive_desktop_gates
+  exclusive_desktop_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+  release_gate_timing_run \
+    "Linux exclusive desktop network" \
+    run_linux_exclusive_desktop_gates
+  release_gate_timing_run \
+    "Windows exclusive desktop network" \
+    run_windows_exclusive_desktop_gates
+  release_gate_parallel_wait_group "${exclusive_desktop_lanes[@]}"
 
-  run_mobile_qr_join_latency_gate
-  run_local_fips_transit_gate
+  # Exercise the least reliable external dependency—the physical iOS XCTest
+  # runner—before spending time on the remaining local Docker/perf tail. The
+  # device lanes are still isolated and serial with every measurement below.
+  release_gate_timing_run \
+    "Physical mobile idle CPU" \
+    run_mobile_idle_cpu_gates
+  release_gate_timing_run \
+    "Physical mobile WireGuard exit and DNS" \
+    run_mobile_wireguard_exit_gates
+  release_gate_timing_run \
+    "Paid-exit seller UI receipt validation" \
+    verify_paid_exit_seller_ui_gates
+
+  release_gate_timing_run \
+    "Local mobile QR join latency" \
+    run_mobile_qr_join_latency_gate
+  release_gate_timing_run \
+    "Local FIPS public transit" \
+    run_local_fips_transit_gate
 
   # Routed idle CPU and roaming remain serial. The remaining functional Docker
   # projects have isolated names/subnets and no timing assertions, so overlap
   # them and join before throughput or any host/device measurement begins.
-  run_docker_signal_gates
-  run_docker_isolated_functional_gates
-  run_docker_perf_gate
-  ./scripts/release-gate-host-pair-latency.sh
-  ./scripts/release-gate-host-pair-loaded-latency.sh
+  release_gate_timing_run \
+    "Docker routed continuity and roaming" \
+    run_docker_signal_gates
+  release_gate_timing_run \
+    "Docker isolated functional gates" \
+    run_docker_isolated_functional_gates
+  release_gate_timing_run \
+    "Docker performance regression" \
+    run_docker_perf_gate
+  release_gate_timing_run \
+    "Host-pair latency" \
+    ./scripts/release-gate-host-pair-latency.sh
+  release_gate_timing_run \
+    "Host-pair loaded latency" \
+    ./scripts/release-gate-host-pair-loaded-latency.sh
 
-  run_macos_daemon_idle_cpu_gate
-  run_mobile_idle_cpu_gates
-  run_mobile_wireguard_exit_gates
-  verify_paid_exit_seller_ui_gates
-  run_android_legacy_replacement_gate
-  run_mobile_underlay_change_gates
+  release_gate_timing_run \
+    "macOS daemon idle CPU" \
+    run_macos_daemon_idle_cpu_gate
+  release_gate_timing_run \
+    "Android legacy package replacement" \
+    run_android_legacy_replacement_gate
+  release_gate_timing_run \
+    "Physical mobile underlay recovery" \
+    run_mobile_underlay_change_gates
 
   # One physical Pixel cannot safely serve multiple admin/joiner drivers at
   # once. Keep these exact-artifact public-UI lanes serial, while reusing the
   # already installed signed APK and host-built desktop artifacts.
-  run_mobile_join_e2e_gate
-  run_windows_release_mobile_join_e2e_gate
-  run_linux_release_mobile_join_e2e_gate
-  seal_frozen_ios_release_gate
+  release_gate_timing_run \
+    "iOS and Android bidirectional release join" \
+    run_mobile_join_e2e_gate
+  release_gate_timing_run \
+    "Windows and Android release join" \
+    run_windows_release_mobile_join_e2e_gate
+  release_gate_timing_run \
+    "Linux and Android release join" \
+    run_linux_release_mobile_join_e2e_gate
+  release_gate_timing_run \
+    "Seal frozen iOS physical gate" \
+    seal_frozen_ios_release_gate
 
   local elapsed target_status
-  elapsed="$(( $(date +%s) - started_at ))"
+  elapsed="$(( $(date +%s) - RELEASE_GATE_STARTED_AT ))"
   if (( elapsed <= RELEASE_GATE_TARGET_SECS )); then
     target_status="met"
   else

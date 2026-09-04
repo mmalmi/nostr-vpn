@@ -141,6 +141,9 @@ grep -Fq 'NVPN_ANDROID_RELEASE_DNS_ONLY_CYCLE="$((1 - first))"' \
 grep -Fq 'if ! truthy "$ANDROID_RELEASE_DNS_ONLY_CYCLE"; then' \
   "$ROOT/scripts/lib-mobile-android-release-gate.sh" \
   || fail "Android Release gate lacks its focused follow-up DNS path"
+grep -Fq 'ANDROID_UI_WAIT_SECS="${NVPN_ANDROID_UI_WAIT_SECS:-30}"' \
+  "$ROOT/scripts/mobile-android-smoke.sh" \
+  || fail "Android Release UI readiness still uses the flaky 15-second default"
 
 MOCK_ROOT="$HARNESS_ROOT/root"
 MOCK_BIN="$HARNESS_ROOT/bin"
@@ -352,6 +355,9 @@ case "$label" in
   encrypted-custom) label=custom-doh ;;
   through_exit-cloudflare) label=through-exit ;;
 esac
+mkdir -p "$NVPN_ANDROID_RESULT_DIR"
+printf '{"case":"%s"}\n' "$label" \
+  >"$NVPN_ANDROID_RESULT_DIR/mobile-android-exit-dns-state-$label.json"
 [[ "${NVPN_CONTRACT_FAIL_ANDROID_LABEL:-}" != "$label" ]]
 SH
 chmod +x "$MOCK_ROOT/scripts/mobile-android-smoke.sh"
@@ -370,16 +376,22 @@ def value(flag):
     return args[args.index(flag) + 1]
 
 artifact = pathlib.Path(value("--artifact-receipt"))
+artifact_dir = pathlib.Path(value("--artifact-dir"))
 ledger = pathlib.Path(value("--counter-ledger"))
 output = pathlib.Path(value("--output"))
 if not artifact.is_file():
     raise SystemExit("exact artifact receipt is missing")
 if not ledger.is_file() or not ledger.read_text(encoding="utf-8").strip():
     raise SystemExit("durable counter ledger is missing")
+if value("--platform") == "android" and value("--mode") == "wireguard-dns":
+    states = list(artifact_dir.glob("mobile-android-exit-dns-state-*.json"))
+    if len(states) != 5:
+        raise SystemExit(f"expected five attempt-local Android states, got {len(states)}")
 record = {
     "platform": value("--platform"),
     "mode": value("--mode"),
     "artifactReceipt": str(artifact),
+    "artifactDir": str(artifact_dir),
     "counterLedger": str(ledger),
     "output": str(output),
     "includeUnderlay": "--include-underlay-lifecycle" in args,
@@ -542,6 +554,32 @@ assert_count 1 'ios-prepare ' "$RUN_DIR/events.log"
 assert_count 2 'ios-disconnect-cleanup ' "$RUN_DIR/events.log"
 assert_count 1 'ios-private-cleanup' "$RUN_DIR/events.log"
 
+first_android_attempt="$(
+  python3 -c \
+    'import json,sys; print(next(json.loads(line)["artifactDir"] for line in open(sys.argv[1]) if json.loads(line)["platform"] == "android"))' \
+    "$RUN_DIR/evidence.jsonl"
+)"
+run_gate full android "" 0 "" "" 0 1 0 0
+second_android_attempt="$(
+  python3 -c \
+    'import json,sys; print(json.loads(open(sys.argv[1]).readline())["artifactDir"])' \
+    "$RUN_DIR/evidence.jsonl"
+)"
+python3 - "$first_android_attempt" "$second_android_attempt" \
+  "$RUN_DIR/android-artifacts" <<'PY'
+import pathlib
+import sys
+
+first, second, root = map(lambda value: pathlib.Path(value).resolve(), sys.argv[1:])
+assert first != second
+assert first.parent == root
+assert second.parent == root
+PY
+[[ "$(find "$RUN_DIR/android-artifacts" -mindepth 1 -maxdepth 1 \
+  -type d -name 'mobile-wireguard-exit-attempt.*' | wc -l | tr -d ' ')" -eq 2 ]] \
+  || fail "Android retry evidence directories were not retained per attempt"
+assert_fixture_cleaned "$RUN_DIR"
+
 run_gate underlay all automatic-profile 1 "" "" 0 1 1 0
 python3 - "$RUN_DIR" <<'PY'
 import json
@@ -557,7 +595,9 @@ assert android["NVPN_ANDROID_SWITCH_TO_DIRECT_WHILE_CONNECTED"] == "0"
 assert ios["spec"]["exerciseUnderlay"] is True
 assert ios["spec"]["exerciseLifecycle"] is True
 assert ios["spec"]["switchToDirect"] is True
-assert (root / "android-artifacts/mobile-android-underlay-fresh-dns-fixture.json").is_file()
+assert len(list((root / "android-artifacts").glob(
+    "mobile-wireguard-exit-attempt.*/mobile-android-underlay-fresh-dns-fixture.json"
+))) == 1
 assert (root / "ios-artifacts/mobile-ios-underlay-fresh-dns-fixture.json").is_file()
 evidence = [json.loads(line) for line in (root / "evidence.jsonl").read_text().splitlines()]
 assert {(item["platform"], item["mode"]) for item in evidence} == {

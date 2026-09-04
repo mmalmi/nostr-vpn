@@ -1300,10 +1300,10 @@ join_positions = [
     )
 ]
 order = [
-    "run_desktop_app_launch_smokes",
     "run_linux_exclusive_desktop_gates",
     "run_windows_exclusive_desktop_gates",
-    "run_macos_exclusive_desktop_gates",
+    "run_mobile_idle_cpu_gates",
+    "run_mobile_wireguard_exit_gates",
     "run_mobile_qr_join_latency_gate",
     "run_local_fips_transit_gate",
     "run_docker_signal_gates",
@@ -1312,8 +1312,6 @@ order = [
     "./scripts/release-gate-host-pair-latency.sh",
     "./scripts/release-gate-host-pair-loaded-latency.sh",
     "run_macos_daemon_idle_cpu_gate",
-    "run_mobile_idle_cpu_gates",
-    "run_mobile_wireguard_exit_gates",
     "run_android_legacy_replacement_gate",
     "run_mobile_underlay_change_gates",
     "run_mobile_join_e2e_gate",

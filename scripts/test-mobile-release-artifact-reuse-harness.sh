@@ -341,6 +341,7 @@ done
 
 validate_android() {
   local dir="${1:-$ANDROID_DIR}"
+  local fips_root="${2:-$FIPS_ROOT}"
   python3 "$VALIDATOR" validate-android \
     --receipt "$dir/mobile-android-release-artifact.json" \
     --apk "$dir/app-release.apk" \
@@ -348,7 +349,7 @@ validate_android() {
     --bundle-receipt "$dir/physical-gate-artifact.json" \
     --fips-metadata "$dir/fips-linkage.json" \
     --app-root "$APP_ROOT" \
-    --fips-root "$FIPS_ROOT" \
+    --fips-root "$fips_root" \
     --app-head "$ANDROID_APP_HEAD" \
     --app-tree "$ANDROID_APP_TREE" \
     --fips-head "$FIPS_HEAD" \
@@ -382,6 +383,10 @@ validate_ios() {
 
 validate_android
 validate_ios
+
+RELOCATED_FIPS_ROOT="$TMP_ROOT/relocated-fips-checkout"
+mkdir -p "$RELOCATED_FIPS_ROOT"
+validate_android "$ANDROID_DIR" "$RELOCATED_FIPS_ROOT"
 
 ANDROID_RELOCATED="$TMP_ROOT/relocated/android"
 mkdir -p "$ANDROID_RELOCATED"
@@ -534,6 +539,7 @@ reject_android_receipt_field() {
 reject_android_receipt_field installedApkSha256 "$(printf '0%.0s' {1..64})" installed-hash
 reject_android_receipt_field signerCertificateSha256 "$(printf '0%.0s' {1..64})" signer
 reject_android_receipt_field fipsGitSha "$(printf '0%.0s' {1..40})" fips
+reject_android_receipt_field fipsCheckoutPathSha256 "$(printf '0%.0s' {1..64})" fips-path
 reject_android_receipt_field bundletoolVersion 0.0.0 bundletool
 
 cp "$ANDROID_RECEIPT" "$TMP_ROOT/android-receipt.clean.json"
@@ -735,6 +741,13 @@ for required in (
 ):
     if required not in reuse:
         raise SystemExit(f"strict artifact validator is missing {required}")
+android_reuse = reuse.split("release_join_validate_android_reuse()", 1)[1].split(
+    "release_join_codesign_cdhash()", 1
+)[0]
+if "release_join_load_reused_artifact_sources" in android_reuse:
+    raise SystemExit("Android-only artifact validation still requires iOS receipts")
+if "release_join_load_reused_android_artifact_source" not in android_reuse:
+    raise SystemExit("Android-only artifact validation does not load its own source")
 reuse_identity = android_release.split(
     "android_release_require_reuse_inputs()", 1
 )[1].split("android_release_require_inputs()", 1)[0]

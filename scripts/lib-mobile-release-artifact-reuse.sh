@@ -72,7 +72,7 @@ release_join_validate_android_reuse() {
   done
   [[ -n "${RELEASE_JOIN_ANDROID_APP_SHA:-}" \
     && -n "${RELEASE_JOIN_ANDROID_APP_TREE:-}" ]] \
-    || release_join_load_reused_artifact_sources || return 1
+    || release_join_load_reused_android_artifact_source || return 1
   app_sha="$RELEASE_JOIN_ANDROID_APP_SHA"
   app_tree="$RELEASE_JOIN_ANDROID_APP_TREE"
   apksigner="$(release_join_android_apksigner)"

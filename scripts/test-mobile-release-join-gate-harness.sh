@@ -13,9 +13,24 @@ FILES=(
   "$ROOT/scripts/lib-mobile-ios-release-artifact.sh"
   "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh"
   "$ROOT/scripts/macos-release-mobile-join-remote.sh"
+  "$ROOT/scripts/ubuntu-vm-release-mobile-join-e2e.sh"
+  "$ROOT/scripts/windows-vm-release-mobile-join-e2e.sh"
 )
 for file in "${FILES[@]}"; do
   bash -n "$file"
+done
+for join_driver in \
+  mobile-release-join-e2e.sh \
+  macos-vm-release-mobile-join-e2e.sh \
+  ubuntu-vm-release-mobile-join-e2e.sh \
+  windows-vm-release-mobile-join-e2e.sh
+do
+  grep -Fq 'NVPN_RELEASE_JOIN_UI_WAIT_SECS:-30' \
+    "$ROOT/scripts/$join_driver" \
+    || { echo "$join_driver has a short public-UI readiness wait" >&2; exit 1; }
+  grep -Fq 'NVPN_RELEASE_JOIN_DELIVERY_WAIT_SECS:-15' \
+    "$ROOT/scripts/$join_driver" \
+    || { echo "$join_driver weakened the 15-second delivery deadline" >&2; exit 1; }
 done
 grep -Fq 'NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS:-90' \
   "$ROOT/scripts/mobile-release-join-e2e.sh"

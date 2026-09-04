@@ -101,6 +101,27 @@ set -e
 grep -Fq 'intentional lane failure' "$tmp/logs/failing-lane-2.log" \
   || fail "failing lane log was not preserved"
 
+verbose_lane() {
+  local line
+  for line in {1..100}; do
+    printf 'verbose lane line %s\n' "$line"
+  done
+}
+
+RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES=10
+release_gate_parallel_start "bounded output" verbose_lane
+bounded="$RELEASE_GATE_PARALLEL_LAST_INDEX"
+bounded_output="$(release_gate_parallel_wait "$bounded")"
+[[ "$bounded_output" == *"showing final 10 of 100 lines"* \
+  && "$bounded_output" == *"verbose lane line 100"* ]] \
+  || fail "successful lane output was not bounded while preserving its log"
+if grep -Fxq 'verbose lane line 1' <<<"$bounded_output"; then
+  fail "successful lane output included lines before its bounded tail"
+fi
+[[ "$(wc -l <"${RELEASE_GATE_PARALLEL_LOGS[$bounded]}" | tr -d ' ')" -eq 100 ]] \
+  || fail "bounded console output truncated the retained lane log"
+RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES=80
+
 # A failed lane must not cancel or hide an independent peer's result.
 collect_peer() {
   sleep 0.2
@@ -353,6 +374,9 @@ main_body="$(sed -n '/^main() {$/,$p' "$release_gate")"
 static_preflight_body="$(
   sed -n '/^run_release_gate_static_preflight() {$/,/^}$/p' "$release_gate"
 )"
+candidate_preflight_body="$(
+  sed -n '/^run_release_gate_candidate_preflight() {$/,/^}$/p' "$release_gate"
+)"
 ios_framework_build_line="$(
   grep -nF 'NVPN_IOS_RUST_PROFILE=release ./tools/run-ios xcframework' \
     <<<"$static_preflight_body" \
@@ -371,6 +395,9 @@ ios_policy_check_line="$(
   || fail "clean release preflight omits the packaged iOS policy check"
 ((ios_framework_build_line < ios_policy_check_line)) \
   || fail "packaged iOS policy is checked before its release XCFramework is built"
+grep -Fq './scripts/test-release-gate-orchestration.sh' \
+  <<<"$candidate_preflight_body" \
+  || fail "cheap release-orchestration contracts do not run before remote candidate builds"
 required_steps=(
   seal_release_gate_app_candidate
   run_release_gate_candidate_preflight
@@ -385,7 +412,7 @@ required_steps=(
   run_android_static_validation_lane
   build_release_gate_docker_images
   run_host_validation_lane
-  run_desktop_app_launch_smokes
+  run_linux_app_launch_smoke
   run_linux_exclusive_desktop_gates
   run_windows_exclusive_desktop_gates
   run_macos_exclusive_desktop_gates
@@ -409,6 +436,33 @@ for step in "${required_steps[@]}"; do
   grep -Fq "$step" <<<"$main_body" \
     || fail "release gate omits required step: $step"
 done
+
+macos_platform_body="$(
+  sed -n '/^run_macos_platform_lane() {$/,/^}$/p' "$release_gate"
+)"
+grep -Fq 'run_macos_app_launch_smoke' <<<"$macos_platform_body" \
+  || fail "macOS app launch smoke does not overlap host validation in its isolated VM lane"
+! grep -Fq 'run_desktop_app_launch_smokes' <<<"$main_body" \
+  || fail "desktop app launch smokes still block the serial release tail"
+
+linux_smoke_start="$(grep -nF '"Linux GUI launch smoke"' <<<"$main_body" | head -1 | cut -d: -f1)"
+validation_join="$(grep -nF 'release_gate_parallel_wait_group "${concurrent_validation_lanes[@]}"' <<<"$main_body" | head -1 | cut -d: -f1)"
+[[ -n "$linux_smoke_start" && -n "$validation_join" ]] \
+  || fail "Linux GUI smoke is missing from the concurrent validation lanes"
+((linux_smoke_start < validation_join)) \
+  || fail "Linux GUI smoke starts after concurrent validation has already joined"
+
+macos_network_start="$(grep -nF '"macOS exclusive desktop network"' <<<"$main_body" | head -1 | cut -d: -f1)"
+linux_network_start="$(grep -nF 'run_linux_exclusive_desktop_gates' <<<"$main_body" | head -1 | cut -d: -f1)"
+windows_network_start="$(grep -nF 'run_windows_exclusive_desktop_gates' <<<"$main_body" | head -1 | cut -d: -f1)"
+exclusive_network_join="$(grep -nF 'release_gate_parallel_wait_group "${exclusive_desktop_lanes[@]}"' <<<"$main_body" | head -1 | cut -d: -f1)"
+[[ -n "$macos_network_start" && -n "$linux_network_start" \
+  && -n "$windows_network_start" && -n "$exclusive_network_join" ]] \
+  || fail "exclusive desktop network lanes are incomplete"
+((macos_network_start < linux_network_start \
+  && linux_network_start < windows_network_start \
+  && windows_network_start < exclusive_network_join)) \
+  || fail "macOS network proof does not overlap the serial Linux/Windows hypervisor proofs"
 
 docker_image_build_body="$(
   sed -n '/^build_release_gate_docker_images() {$/,/^}$/p' "$release_gate"
@@ -436,6 +490,9 @@ do
 done
 
 required_contracts=(
+  'source "$ROOT_DIR/scripts/lib-release-gate-timing.sh"'
+  'release_gate_timing_init "$log_dir"'
+  'release_gate_timing_write_run_diagnostic'
   'export NVPN_EXPECTED_APP_GIT_SHA="$app_sha"'
   'export NVPN_EXPECTED_APP_GIT_TREE="$app_tree"'
   'candidate_root="$(cd "$ROOT_DIR" && pwd -P)"'
