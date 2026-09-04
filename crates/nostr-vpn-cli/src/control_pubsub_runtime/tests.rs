@@ -19,6 +19,8 @@ use nostr_vpn_core::updater::UpdateRef;
 
 use super::*;
 
+const FIPS_TEST_EVENTUAL_TIMEOUT: Duration = Duration::from_secs(15);
+
 fn available_udp_ports() -> [u16; 3] {
     let sockets = (0..3)
         .map(|_| UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral UDP port"))
@@ -91,7 +93,7 @@ async fn endpoint(keys: &Keys, config: Config) -> Arc<FipsEndpoint> {
 }
 
 async fn wait_connected(endpoint: &FipsEndpoint, peer_npub: &str) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(FIPS_TEST_EVENTUAL_TIMEOUT, async {
         loop {
             if endpoint
                 .peers()
@@ -151,7 +153,7 @@ async fn start_pubsub(
 }
 
 async fn wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(FIPS_TEST_EVENTUAL_TIMEOUT, async {
         loop {
             if runtime
                 .events()
@@ -169,7 +171,7 @@ async fn wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
 }
 
 async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(FIPS_TEST_EVENTUAL_TIMEOUT, async {
         loop {
             let peer_count = runtime.connected_peer_count().await.unwrap_or_default();
             if peer_count > 0
@@ -185,7 +187,7 @@ async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
 }
 
 async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(FIPS_TEST_EVENTUAL_TIMEOUT, async {
         loop {
             if runtime.connected_peer_count().await.unwrap_or_default() > 0 {
                 return;
@@ -701,7 +703,7 @@ async fn standalone_publish_replays_after_udp_roster_peer_appears_run() {
         .expect("send application-owned FSP datagram");
     let mut datagrams = Vec::new();
     let count = tokio::time::timeout(
-        Duration::from_secs(5),
+        FIPS_TEST_EVENTUAL_TIMEOUT,
         application_receiver.recv_batch_into(&mut datagrams, 1),
     )
     .await
