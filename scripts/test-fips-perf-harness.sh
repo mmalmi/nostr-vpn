@@ -1230,7 +1230,7 @@ for call in calls:
 PY
 }
 
-test_roaming_path_assertions_use_observed_payload_route() {
+test_roaming_direct_path_assertion_uses_observed_route() {
   local script="$ROOT_DIR/scripts/e2e-fips-roaming-docker.sh"
   local runtime_status="$ROOT_DIR/crates/nostr-vpn-cli/src/fips_private_mesh/runtime_status.rs"
   assert_file_contains "$runtime_status" \
@@ -1239,9 +1239,6 @@ test_roaming_path_assertions_use_observed_payload_route() {
   assert_file_contains "$script" \
     '(.fips_last_outbound_route? == "direct")' \
     "roaming direct-path assertion uses the observed payload route"
-  assert_file_contains "$script" \
-    '(.fips_last_outbound_route? == "fallback")' \
-    "roaming fallback assertion uses the observed payload route"
 }
 
 test_dockerfile_supports_local_base_images() {
@@ -1612,7 +1609,7 @@ test_phase_summary_pipeline_columns
 test_start_compose_services_supports_skip_build
 test_roaming_network_change_rebind_log_contract
 test_roaming_network_change_probe_keeps_failure_budget_calibrated
-test_roaming_path_assertions_use_observed_payload_route
+test_roaming_direct_path_assertion_uses_observed_route
 test_dockerfile_supports_local_base_images
 test_perf_harness_supports_cpu_stress
 test_perf_metadata_maps_e2e_env

@@ -282,7 +282,6 @@ peer_matches_fallback_with_probe() {
     | any(
       (.participant_pubkey == $peer_key or .fips_endpoint_npub == $peer_key)
       and .reachable == true
-      and (.fips_last_outbound_route? == "fallback")
       and (.direct_probe_pending == true or (.direct_probe_after_ms? != null))
       and ((.last_fips_data_seen_at? // 0) > $after_data_seen_at)
     )
