@@ -1741,7 +1741,11 @@ ios_release_network_disconnect_cleanup_inner() {
   local host_markers="$result_dir/$stem-host-markers.tsv"
   local markers="$result_dir/$stem-runner-markers.log"
   local xcresult="$result_dir/$stem.xcresult"
-  local cleanup_timeout="${NVPN_IOS_XCTEST_CLEANUP_TIMEOUT_SECS:-75}"
+  # LocalAuthentication can keep a device-side authorization operation alive
+  # for five minutes even after XCTest has reported its test failure. Give the
+  # scoped runner time to return so cleanup can verify Direct state instead of
+  # killing it while the system operation still owns the VPN preference.
+  local cleanup_timeout="${NVPN_IOS_XCTEST_CLEANUP_TIMEOUT_SECS:-330}"
   local launch_timeout="${NVPN_IOS_XCTEST_LAUNCH_TIMEOUT_SECS:-180}"
   local -a command=()
   local command_status=0 cleanup_run_id="cleanup-$$-$RANDOM"
@@ -1819,7 +1823,8 @@ ios_release_network_disconnect_cleanup() {
   local cleanup_failed=0
   ios_release_network_abort_active_run || cleanup_failed=1
   if [[ "$IOS_RELEASE_NETWORK_PREPARED" -eq 1 ]]; then
-    local timeout="${NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS:-90}"
+    local cleanup_timeout="${NVPN_IOS_XCTEST_CLEANUP_TIMEOUT_SECS:-330}"
+    local timeout="${NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS:-$((cleanup_timeout + 30))}"
     local grace="${NVPN_IOS_XCTEST_TERM_GRACE_SECS:-5}"
     local result_dir="${NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR:-$ROOT/artifacts/mobile-ios}"
     local stem="mobile-ios-release-cleanup-$$-$RANDOM"

@@ -261,7 +261,9 @@ ios_release_network_prepare() {
   printf 'ios-prepare %s\n' "$1" >>"$NVPN_CONTRACT_EVENTS"
 }
 ios_release_network_disconnect_cleanup() {
-  printf 'ios-disconnect-cleanup %s\n' "${1:-0}" >>"$NVPN_CONTRACT_EVENTS"
+  printf 'ios-disconnect-cleanup %s armed=%s\n' \
+    "${1:-0}" "$IOS_CLEANUP_ARMED" >>"$NVPN_CONTRACT_EVENTS"
+  [[ "${NVPN_CONTRACT_IOS_DISCONNECT_CLEANUP_FAIL:-0}" != 1 ]]
 }
 ios_release_network_cleanup_private_artifacts() {
   printf 'ios-private-cleanup\n' >>"$NVPN_CONTRACT_EVENTS"
@@ -427,7 +429,7 @@ run_gate() {
   local name="$1" platform="$2" selected_cases="$3" underlay="$4"
   local fail_android="$5" fail_ios="$6" cleanup_fail="$7"
   local android_receipt="$8" ios_receipt="$9" expected_status="${10}"
-  local status
+  local ios_cleanup_fail="${11:-0}" status
   RUN_DIR="$HARNESS_ROOT/$name"
   mkdir -p \
     "$RUN_DIR/state" "$RUN_DIR/android-artifacts" "$RUN_DIR/ios-artifacts"
@@ -454,6 +456,7 @@ run_gate() {
     NVPN_CONTRACT_FAIL_ANDROID_LABEL="$fail_android" \
     NVPN_CONTRACT_FAIL_IOS_LABEL="$fail_ios" \
     NVPN_CONTRACT_CLEANUP_FAIL="$cleanup_fail" \
+    NVPN_CONTRACT_IOS_DISCONNECT_CLEANUP_FAIL="$ios_cleanup_fail" \
     NVPN_MOBILE_WG_EXIT_HOST_IP=192.0.2.10 \
     NVPN_MOBILE_WG_EXIT_EXPECTED_SOURCE_IP=203.0.113.8 \
     NVPN_MOBILE_WG_EXIT_IMAGE_READY=1 \
@@ -650,6 +653,13 @@ retained_ledger="$(
 [[ -f "$retained_ledger" && "$(wc -l <"$retained_ledger")" -eq 1 ]] \
   || fail "iOS failure did not retain its one completed-case ledger"
 rm -f "$retained_ledger"
+
+run_gate ios-baseline-cleanup-failure ios automatic-profile 0 "" "" 0 0 1 1 1
+assert_fixture_cleaned "$RUN_DIR"
+assert_count 1 'ios-disconnect-cleanup ' "$RUN_DIR/events.log"
+grep -Fq 'ios-disconnect-cleanup 1 armed=0' "$RUN_DIR/events.log" \
+  || fail "explicit iOS baseline cleanup remained armed for duplicate EXIT cleanup"
+assert_count 1 'ios-private-cleanup' "$RUN_DIR/events.log"
 
 run_gate missing-artifact android automatic-profile 1 "" "" 0 0 0 1
 grep -Fq 'exact artifact receipt is missing' "$RUN_DIR/stderr.log" \

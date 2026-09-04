@@ -854,10 +854,15 @@ if has_platform ios; then
   # packet-tunnel extension alive. Disconnect it before taking the first
   # fixture snapshot; otherwise retransmitted traffic from the previous DNS
   # policy is charged to the newly selected case.
+  # The scoped cleanup already owns termination and diagnostic cleanup. Disarm
+  # the outer EXIT trap while it runs so a timeout cannot queue a second device
+  # authorization operation behind the first one.
+  IOS_CLEANUP_ARMED=0
   ios_release_network_disconnect_cleanup 1 || {
     echo "iOS WireGuard exit gate could not establish a disconnected counter baseline" >&2
     exit 1
   }
+  IOS_CLEANUP_ARMED=1
   for index in "${!DNS_CASES[@]}"; do
     final=0
     [[ "$index" -eq "$((${#DNS_CASES[@]} - 1))" ]] && final=1
@@ -866,8 +871,8 @@ if has_platform ios; then
     run_ios_case "${DNS_CASES[$index]}" "$first" "$final"
   done
   write_network_evidence ios
-  ios_release_network_disconnect_cleanup
   IOS_CLEANUP_ARMED=0
+  ios_release_network_disconnect_cleanup
 fi
 
 echo "Mobile WireGuard exit e2e passed for: $PLATFORMS"

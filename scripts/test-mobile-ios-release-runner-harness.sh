@@ -613,6 +613,10 @@ do
   grep -Fq -- "$token" "$RUNNER" \
     || fail "runner contract lacks: $token"
 done
+grep -Fq 'NVPN_IOS_XCTEST_CLEANUP_TIMEOUT_SECS:-330' "$RUNNER" \
+  || fail "disconnect cleanup does not cover Apple's five-minute authorization lifetime"
+grep -Fq 'NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS:-$((cleanup_timeout + 30))' "$RUNNER" \
+  || fail "disconnect cleanup wrapper can expire before its scoped XCTest runner"
 
 disconnect="$TEMP_ROOT/disconnect-markers.log"
 printf '%s\n' \
