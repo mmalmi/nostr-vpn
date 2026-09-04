@@ -688,13 +688,13 @@ for identity_proof in (
     "Get-CimInstance Win32_Process",
     'recordedProcess.Name -notmatch \'^powershell(\\.exe)?$\'',
     "recordedProcess.CommandLine -notmatch",
-    "recorded process identity changed before cleanup",
+    "Never terminate the unrelated replacement process",
 ):
     if identity_proof not in owned:
         raise SystemExit(
             "Windows cleanup can terminate a reused PID without identity proof"
         )
-if owned.index("taskkill.exe /PID $processId /T /F") > owned.index(
+if owned.index("taskkill.exe /PID $processId /T /F") > owned.rindex(
     "Remove-Item -LiteralPath $processPath"
 ):
     raise SystemExit("Windows cleanup removes a child marker before termination")

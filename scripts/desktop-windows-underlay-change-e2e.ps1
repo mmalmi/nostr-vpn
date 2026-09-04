@@ -788,14 +788,18 @@ function Invoke-OwnedNetworkCleanup {
             "watchdog.pid" { "Watchdog" }
           }
           $recordedProcess = Get-CimInstance Win32_Process `
-            -Filter "ProcessId = $processId" -ErrorAction SilentlyContinue
+            -Filter "ProcessId = $processId" -ErrorAction Stop
           if (
             !$recordedProcess -or
             [string]$recordedProcess.Name -notmatch '^powershell(\.exe)?$' -or
             [string]$recordedProcess.CommandLine -notmatch
               ("-Action\s+" + [regex]::Escape($expectedAction))
           ) {
-            throw "recorded process identity changed before cleanup: $marker"
+            # The owned child is already gone and Windows reused its PID.
+            # Never terminate the unrelated replacement process.
+            Remove-Item -LiteralPath $processPath `
+              -Force -ErrorAction SilentlyContinue
+            continue
           }
           & taskkill.exe /PID $processId /T /F 2>$null | Out-Null
           Wait-Process -Id $processId -Timeout 15 -ErrorAction SilentlyContinue
