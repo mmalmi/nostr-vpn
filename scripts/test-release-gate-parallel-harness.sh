@@ -309,6 +309,7 @@ export NVPN_MACOS_WG_FIXTURE_HOST_IP=192.0.2.10
 export NVPN_DESKTOP_UNDERLAY_HYPERVISOR_SSH=hypervisor.test
 unset NVPN_WINDOWS_VM_NAME
 export NVPN_WINDOWS_UNDERLAY_VM_NAME=windows-test
+unset NVPN_LINUX_UNDERLAY_VM_NAME
 unset NVPN_UBUNTU_VM_NAME
 if release_gate_require_complete_fixture_inputs >/dev/null 2>&1; then
   fail "complete release gate accepted a missing Linux underlay VM name"
