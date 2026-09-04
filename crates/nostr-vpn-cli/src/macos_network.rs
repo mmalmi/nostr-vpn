@@ -74,6 +74,14 @@ pub(crate) fn macos_selected_default_route_from_system() -> Result<Option<MacosR
     Ok(macos_selected_default_route_from_route_get(&output))
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_selected_underlay_changed(
+    route: Option<&MacosRouteSpec>,
+    expected_interface: &str,
+) -> bool {
+    route.is_some_and(|route| route.interface != expected_interface)
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn spawn_macos_route_change_monitor() -> Option<mpsc::Receiver<()>> {
     let fd = unsafe { libc::socket(libc::AF_ROUTE, libc::SOCK_RAW, libc::AF_UNSPEC) };

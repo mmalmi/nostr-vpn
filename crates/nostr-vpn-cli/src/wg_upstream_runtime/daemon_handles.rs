@@ -312,6 +312,23 @@ impl DaemonWgUpstream {
         };
 
         if let Err(rebind_error) = rebind_result {
+            // A route notification can arrive while macOS still reports the
+            // disappearing interface. If the selected default moved during
+            // the live retry, let the outer sampler retarget immediately
+            // instead of restarting the runtime on the stale interface.
+            if macos_route_is_still_settling(&rebind_error)
+                && crate::macos_network::macos_selected_default_route_from_system()
+                    .is_ok_and(|route| {
+                        crate::macos_network::macos_selected_underlay_changed(
+                            route.as_ref(),
+                            underlay_interface,
+                        )
+                    })
+            {
+                return Err(rebind_error).context(
+                    "physical underlay changed while rebinding the live WG socket",
+                );
+            }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 return Err(anyhow!(

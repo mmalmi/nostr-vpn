@@ -82,6 +82,18 @@ destination: default
 }
 
 #[test]
+fn macos_underlay_change_detects_a_different_selected_route() {
+    let current = MacosRouteSpec {
+        gateway: Some("10.168.32.48".to_string()),
+        interface: "en2".to_string(),
+    };
+
+    assert!(!macos_selected_underlay_changed(Some(&current), "en2"));
+    assert!(macos_selected_underlay_changed(Some(&current), "en0"));
+    assert!(!macos_selected_underlay_changed(None, "en0"));
+}
+
+#[test]
 fn macos_endpoint_bypass_route_args_are_global_host_routes() {
     assert_eq!(
         macos_global_gateway_route_args(
