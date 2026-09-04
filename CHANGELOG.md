@@ -33,6 +33,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
   grows, while reserving capacity for configured peers and handshakes.
 - Keep the public bootstrap pair connected by assigning one canonical dialer
   across both UDP and WebSocket, avoiding cross-connection replacement races.
+- Update the FIPS consumer chain to core and endpoint 0.4.73, TCP endpoint
+  0.2.9, and pubsub adapter 0.4.16 without changing any wire format.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 
