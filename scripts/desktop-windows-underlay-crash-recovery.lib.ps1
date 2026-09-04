@@ -10,6 +10,26 @@ $script:ActiveDirectCleanupJournalPresent = $false
 $script:ActiveDirectCleanupRouteCount = 0
 $script:CrashCleanupJournalReplaced = $false
 
+function Get-CleanupJournalSha256 {
+  $deadline = [DateTimeOffset]::UtcNow.AddSeconds(5)
+  $lastError = $null
+  do {
+    try {
+      return (Get-FileHash -Algorithm SHA256 `
+        -LiteralPath $CleanupJournalPath -ErrorAction Stop
+      ).Hash.ToLowerInvariant()
+    }
+    catch {
+      $lastError = $_
+      Start-Sleep -Milliseconds 25
+    }
+  } while ([DateTimeOffset]::UtcNow -lt $deadline)
+  throw (
+    "timed out reading the durable cleanup journal hash: " +
+    $lastError.Exception.Message
+  )
+}
+
 function Start-CandidateDaemon {
   param([string]$LogStem)
   $process = Start-Process -FilePath $Binary -ArgumentList @(
@@ -202,9 +222,7 @@ function Assert-CrashRecoveredDirectState {
       $cleanupJournal.secure_dns_interface_indexes |
         Where-Object { $null -ne $_ }
     )
-    $cleanupJournalHash = (
-      Get-FileHash -Algorithm SHA256 -LiteralPath $CleanupJournalPath
-    ).Hash.ToLowerInvariant()
+    $cleanupJournalHash = Get-CleanupJournalSha256
   }
   $publicDnsAvailable = Test-PublicDns
   $externalHttpsAvailable = Test-ExternalHttps
@@ -287,9 +305,7 @@ function Invoke-CrashRecovery {
       return $false
     }
   } 50 | Out-Null
-  $cleanupJournalHash = (
-    Get-FileHash -Algorithm SHA256 -LiteralPath $CleanupJournalPath
-  ).Hash.ToLowerInvariant()
+  $cleanupJournalHash = Get-CleanupJournalSha256
   Read-CandidateNativeWireGuardOwnership
   Assert-CandidateNativeWireGuardOwnershipPresent
 
@@ -300,9 +316,7 @@ function Invoke-CrashRecovery {
   $cleanupJournalHashAfterCrash = if (
     Test-Path -LiteralPath $CleanupJournalPath -PathType Leaf
   ) {
-    $journalHash = Get-FileHash -Algorithm SHA256 `
-      -LiteralPath $CleanupJournalPath
-    $journalHash.Hash.ToLowerInvariant()
+    Get-CleanupJournalSha256
   }
   else {
     ""
@@ -340,11 +354,9 @@ function Invoke-CrashRecovery {
   ) {
     throw "offline Direct selection unexpectedly changed the cleanup journal"
   }
-  $cleanupJournalHashAfterSelection = Get-FileHash -Algorithm SHA256 `
-    -LiteralPath $CleanupJournalPath
+  $cleanupJournalHashAfterSelection = Get-CleanupJournalSha256
   if (
-    $cleanupJournalHashAfterSelection.Hash.ToLowerInvariant() -ne
-      $cleanupJournalHash
+    $cleanupJournalHashAfterSelection -ne $cleanupJournalHash
   ) {
     throw "offline Direct selection unexpectedly changed the cleanup journal"
   }

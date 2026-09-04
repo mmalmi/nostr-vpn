@@ -706,6 +706,23 @@ for marker in ("probe.pid", "wireguard-probe.pid"):
 if run.index("throw $runError") > run.index("throw $cleanupError"):
     raise SystemExit("Windows cleanup error can mask the original run failure")
 crash = text[text.index("function Invoke-CrashRecovery {"):]
+if text.count("function Get-CleanupJournalSha256 {") != 1:
+    raise SystemExit("Windows crash gate lacks one bounded journal hash reader")
+journal_hash = text[
+    text.index("function Get-CleanupJournalSha256 {"):
+    text.index("function Start-CandidateDaemon {")
+]
+for proof in (
+    "AddSeconds(5)",
+    "Get-FileHash -Algorithm SHA256",
+    "-ErrorAction Stop",
+    "Start-Sleep -Milliseconds 25",
+    "timed out reading the durable cleanup journal hash",
+):
+    if proof not in journal_hash:
+        raise SystemExit("Windows journal hash retry lost bounded-read proof")
+if text.count("Get-FileHash -Algorithm SHA256") != 1:
+    raise SystemExit("Windows crash gate retains an unbounded journal hash read")
 ownership = crash.index("Read-CandidateNativeWireGuardOwnership")
 termination = crash.index("Stop-Process -Id $crashedPid -Force")
 if ownership >= termination:
