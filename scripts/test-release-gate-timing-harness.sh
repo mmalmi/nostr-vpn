@@ -21,19 +21,52 @@ release_gate_timing_init "$tmp/logs"
 
 release_gate_timing_run success true \
   || fail "successful phase was rejected"
-if release_gate_timing_run failure bash -c 'exit 7'; then
+if /bin/bash -c '
+  set -euo pipefail
+  source "$1"
+  release_gate_timing_init "$2"
+  trap '\''release_gate_timing_finish_active "$?"'\'' EXIT
+  release_gate_timing_run failure bash -c "exit 7"
+' _ "$ROOT_DIR/scripts/lib-release-gate-timing.sh" "$tmp/failure-logs"
+then
   fail "failed phase was masked"
 else
   status="$?"
 fi
 [[ "$status" -eq 7 ]] || fail "failed phase exit status changed"
 
+masked_failure_marker="$tmp/continued-after-failure"
+if /bin/bash -c '
+  set -euo pipefail
+  source "$1"
+  release_gate_timing_init "$2"
+  marker="$3"
+  fails_before_success() {
+    false
+    : >"$marker"
+  }
+  trap '\''release_gate_timing_finish_active "$?"'\'' EXIT
+  release_gate_timing_run fail-fast-function fails_before_success
+' _ "$ROOT_DIR/scripts/lib-release-gate-timing.sh" \
+  "$tmp/fail-fast-logs" "$masked_failure_marker"
+then
+  fail "failed command inside a timed function was masked"
+else
+  status="$?"
+fi
+[[ "$status" -ne 0 ]] || fail "timed function failure exit status changed"
+[[ ! -e "$masked_failure_marker" ]] \
+  || fail "timed function continued after its first failure"
+
 grep -Eq '^serial\tsuccess\t[0-9]+\t[0-9]+\t[0-9]+\t0$' \
   "$RELEASE_GATE_TIMING_FILE" \
   || fail "successful serial phase was not recorded"
 grep -Eq '^serial\tfailure\t[0-9]+\t[0-9]+\t[0-9]+\t7$' \
-  "$RELEASE_GATE_TIMING_FILE" \
+  "$tmp/failure-logs/release-gate-timings.tsv" \
   || fail "failed serial phase was not recorded"
+grep -Eq '^serial\tfail-fast-function\t[0-9]+\t[0-9]+\t[0-9]+\t1$' \
+  "$tmp/fail-fast-logs/release-gate-timings.tsv" \
+  || fail "fail-fast function phase was not recorded"
 
 release_gate_parallel_init "$tmp/logs"
 release_gate_parallel_start "parallel success" true

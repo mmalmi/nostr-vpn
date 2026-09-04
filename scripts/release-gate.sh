@@ -2307,6 +2307,7 @@ release_gate_cleanup_private_build_dirs() {
 release_gate_cleanup() {
   local status="$?" cleanup_failed=0
   trap - EXIT
+  release_gate_timing_finish_active "$status" || cleanup_failed=1
   release_gate_parallel_cancel_all || cleanup_failed=1
   if [[ "${LINUX_PLATFORM_LANE_PRE_SYNCED:-0}" == "1" ]] \
     && ubuntu_vm_reachable

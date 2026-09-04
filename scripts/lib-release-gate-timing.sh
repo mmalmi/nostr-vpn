@@ -2,6 +2,8 @@
 
 RELEASE_GATE_TIMING_FILE=""
 RELEASE_GATE_RUN_DIAGNOSTIC=""
+RELEASE_GATE_TIMING_ACTIVE_LABEL=""
+RELEASE_GATE_TIMING_ACTIVE_STARTED_AT=""
 
 release_gate_timing_init() {
   local log_dir="$1" temporary
@@ -36,17 +38,31 @@ release_gate_timing_record() {
 release_gate_timing_run() {
   local label="$1"
   shift
-  local started_at finished_at status=0
-  started_at="$(date +%s)"
-  if "$@"; then
-    status=0
-  else
-    status="$?"
-  fi
+  local finished_at
+  [[ -z "$RELEASE_GATE_TIMING_ACTIVE_LABEL" ]] || return 2
+  RELEASE_GATE_TIMING_ACTIVE_LABEL="$label"
+  RELEASE_GATE_TIMING_ACTIVE_STARTED_AT="$(date +%s)"
+  # Keep this as a plain command. Wrapping it in `if` or `||` disables Bash's
+  # fail-fast behavior inside shell functions and can mask an early failure.
+  "$@"
   finished_at="$(date +%s)"
   release_gate_timing_record \
-    serial "$label" "$started_at" "$finished_at" "$status" || return 1
-  return "$status"
+    serial "$label" "$RELEASE_GATE_TIMING_ACTIVE_STARTED_AT" \
+    "$finished_at" 0 || return 1
+  RELEASE_GATE_TIMING_ACTIVE_LABEL=""
+  RELEASE_GATE_TIMING_ACTIVE_STARTED_AT=""
+}
+
+release_gate_timing_finish_active() {
+  local status="$1" finished_at
+  [[ -n "$RELEASE_GATE_TIMING_ACTIVE_LABEL" ]] || return 0
+  finished_at="$(date +%s)"
+  release_gate_timing_record \
+    serial "$RELEASE_GATE_TIMING_ACTIVE_LABEL" \
+    "$RELEASE_GATE_TIMING_ACTIVE_STARTED_AT" "$finished_at" "$status" \
+    || return 1
+  RELEASE_GATE_TIMING_ACTIVE_LABEL=""
+  RELEASE_GATE_TIMING_ACTIVE_STARTED_AT=""
 }
 
 release_gate_timing_write_run_diagnostic() {
