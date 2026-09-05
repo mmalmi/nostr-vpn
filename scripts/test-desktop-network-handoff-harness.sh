@@ -955,6 +955,13 @@ require_tokens "$MACOS_WIREGUARD" "real imported macOS network gate" \
   'DNS_CASE_PROBE_HOST="measure-$PPID-$RANDOM.$transition_probe_host"' \
   'mobile_wg_fixture_assert_dns_case_evidence' \
   'mobile_wg_fixture_cleanup'
+require_tokens "$MACOS_WIREGUARD" "bounded idempotent DNS transport retry" \
+  'run_dns_case() {' \
+  'if remote_phase primary dns-case; then' \
+  '[[ "$status" -eq 255 ]] || return "$status"' \
+  'SSH transport dropped; retrying the idempotent case once'
+[[ "$(grep -Ec '^  run_dns_case$' "$MACOS_WIREGUARD")" -eq 2 ]] \
+  || fail "macOS DNS transport retry does not wrap exactly the two idempotent case calls"
 require_tokens "$MACOS_WIREGUARD" "installed macOS service isolation" \
   'remote_phase primary quiesce-installed-state' \
   'remote_phase "$lane" restore-installed-state'

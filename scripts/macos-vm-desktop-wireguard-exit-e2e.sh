@@ -180,6 +180,18 @@ remote_phase() {
   ssh "${options[@]}" "$SSH_HOST" "$remote_command"
 }
 
+run_dns_case() {
+  local status
+  if remote_phase primary dns-case; then
+    return 0
+  else
+    status="$?"
+  fi
+  [[ "$status" -eq 255 ]] || return "$status"
+  echo "macOS DNS-case SSH transport dropped; retrying the idempotent case once" >&2
+  remote_phase primary dns-case
+}
+
 poll_remote_underlay_status() {
   remote_shell secondary "
     for ignored in {1..300}; do
@@ -527,7 +539,7 @@ do
   # old resolver; counting those against the new policy produces a false leak.
   # The second identical production probe below is the measured one, and the
   # forbidden-path assertions remain strict inside that quiescent window.
-  remote_phase primary dns-case
+  run_dns_case
   transition_probe_host="$DNS_CASE_PROBE_HOST"
   wait_for_fixture_dns_quiet "$transition_probe_host" >/dev/null \
     || fail "$DNS_CASE_LABEL DNS counters did not settle after transition"
@@ -540,7 +552,7 @@ do
     mobile_wg_fixture_wg_bytes "$CONTAINER" | transfer_total
   )"
   before_forward="$(mobile_wg_fixture_forward_packets "$CONTAINER")"
-  remote_phase primary dns-case
+  run_dns_case
   after_transfer="$(
     mobile_wg_fixture_wg_bytes "$CONTAINER" | transfer_total
   )"
