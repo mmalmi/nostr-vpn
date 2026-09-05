@@ -191,6 +191,17 @@ fn port_mapping_needed(app: &AppConfig) -> bool {
     app.nat.enabled && app.fips_nostr_discovery_enabled
 }
 
+fn port_mapping_parameters(
+    app: &AppConfig,
+    vpn_active: bool,
+    listen_port: Option<u16>,
+) -> Option<(u16, u64)> {
+    if !vpn_active || !port_mapping_needed(app) {
+        return None;
+    }
+    listen_port.map(|port| (port, app.nat.discovery_timeout_secs.max(1)))
+}
+
 fn network_probe_timeout(app: &AppConfig) -> Duration {
     Duration::from_secs(app.nat.discovery_timeout_secs.max(2))
 }

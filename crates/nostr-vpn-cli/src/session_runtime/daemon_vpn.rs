@@ -459,6 +459,11 @@ macro_rules! handle_daemon_state_tick {
                 }
             }
             if let Some(request) = pending_control_request {
+                let previous_port_mapping = port_mapping_parameters(
+                    &app,
+                    daemon_vpn_active(vpn_enabled, expected_peers),
+                    tunnel_runtime.active_listen_port,
+                );
                 let publish_fips_roster_after_control =
                     matches!(request, DaemonControlRequest::Reload | DaemonControlRequest::Resume);
                 let mut control_result = match request {
@@ -472,7 +477,6 @@ macro_rules! handle_daemon_state_tick {
                                 vpn_enabled,
                             );
                         let join_requests_active = app.join_requests_enabled();
-                        port_mapping_runtime.stop().await;
                         vpn_status = daemon_vpn_idle_status(
                             vpn_enabled,
                             expected_peers,
@@ -489,19 +493,9 @@ macro_rules! handle_daemon_state_tick {
                                 &config_path,
                                 vpn_enabled,
                             );
-                        if daemon_vpn_active(vpn_enabled, expected_peers)
-                            && let Some(runtime_listen_port) = tunnel_runtime.active_listen_port
-                        {
-                            refresh_port_mapping(
-                                &app,
-                                &network_snapshot,
-                                runtime_listen_port,
-                                &mut port_mapping_runtime,
-                            )
-                            .await;
+                        if daemon_vpn_active(vpn_enabled, expected_peers) {
                             vpn_status = "VPN on".to_string();
                         } else {
-                            port_mapping_runtime.stop().await;
                             vpn_status = daemon_vpn_idle_status(
                                 vpn_enabled,
                                 expected_peers,
@@ -596,18 +590,6 @@ macro_rules! handle_daemon_state_tick {
                                         } else {
                                             "Config reloaded (paused)".to_string()
                                         };
-                                        if vpn_active
-                                            && let Some(runtime_listen_port) =
-                                                tunnel_runtime.active_listen_port
-                                        {
-                                            refresh_port_mapping(
-                                                &app,
-                                                &network_snapshot,
-                                                runtime_listen_port,
-                                                &mut port_mapping_runtime,
-                                            )
-                                            .await;
-                                        }
                                         Ok(())
                                     }
                                     Err(error) => {
@@ -733,6 +715,28 @@ macro_rules! handle_daemon_state_tick {
                         pre_sync_join_roster_delivery_attempted,
                     )
                     .await;
+                }
+                // A roster or UI-only edit does not change the NAT mapping.
+                // Preserve its lease, and deliver approvals over the existing
+                // carrier before any necessary gateway discovery can block.
+                tunnel_runtime.sync_fips_state(fips_tunnel_runtime.as_ref());
+                let current_port_mapping = port_mapping_parameters(
+                    &app,
+                    daemon_vpn_active(vpn_enabled, expected_peers),
+                    tunnel_runtime.active_listen_port,
+                );
+                if let Some((listen_port, _)) = current_port_mapping {
+                    if previous_port_mapping != current_port_mapping {
+                        refresh_port_mapping(
+                            &app,
+                            &network_snapshot,
+                            listen_port,
+                            &mut port_mapping_runtime,
+                        )
+                        .await;
+                    }
+                } else {
+                    port_mapping_runtime.stop().await;
                 }
                 let state_persisted =
                     persist_current_daemon_state(DaemonStatePersistContext {

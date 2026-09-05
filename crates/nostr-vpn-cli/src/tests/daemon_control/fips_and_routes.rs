@@ -369,3 +369,33 @@ fn macos_ipconfig_router_from_output_parses_ip_and_ip_mult_formats() {
 fn macos_tunnel_ipv4_netmask_uses_host_route() {
     assert_eq!(crate::macos_tunnel_ipv4_netmask(), "255.255.255.255");
 }
+
+#[test]
+fn port_mapping_parameters_ignore_roster_and_ui_edits() {
+    let before = AppConfig::generated();
+    let mut after = before.clone();
+    after.node_name = "renamed".to_string();
+    after.networks[0].devices.push(Keys::generate().public_key().to_hex());
+    assert_eq!(
+        port_mapping_parameters(&before, true, Some(51820)),
+        port_mapping_parameters(&after, true, Some(51820))
+    );
+}
+
+#[test]
+fn port_mapping_parameters_track_activation_port_and_policy_changes() {
+    let app = AppConfig::default();
+    let active = port_mapping_parameters(&app, true, Some(51820));
+    assert!(active.is_some());
+    assert_eq!(port_mapping_parameters(&app, false, Some(51820)), None);
+    assert_eq!(port_mapping_parameters(&app, true, None), None);
+    assert_ne!(active, port_mapping_parameters(&app, true, Some(51821)));
+    let mut changed = app.clone();
+    changed.nat.discovery_timeout_secs += 1;
+    assert_ne!(active, port_mapping_parameters(&changed, true, Some(51820)));
+    changed.nat.enabled = false;
+    assert_eq!(port_mapping_parameters(&changed, true, Some(51820)), None);
+    changed = app;
+    changed.fips_nostr_discovery_enabled = false;
+    assert_eq!(port_mapping_parameters(&changed, true, Some(51820)), None);
+}
