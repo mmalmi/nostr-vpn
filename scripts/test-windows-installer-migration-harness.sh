@@ -6,6 +6,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 python3 - "$ROOT" <<'PY'
 import pathlib
 import sys
+import hashlib
+import json
+import subprocess
+import tempfile
+import zipfile
 
 root = pathlib.Path(sys.argv[1])
 installer = (root / "scripts/windows-installer.iss").read_text(encoding="utf-8")
@@ -109,6 +114,60 @@ for value in (
 ):
     if value not in windows_smoke:
         raise SystemExit(f"Windows artifact receipt is not sealed-payload-bound: {value}")
+
+for value in (
+    "[IO.Compression.ZipArchiveMode]::Create",
+    '"$SSH_HOST:$remote_gate_posix/nvpn-$SMOKE_TAG-x86_64-pc-windows-msvc.zip"',
+):
+    if value not in windows_smoke:
+        raise SystemExit(f"Windows gate does not retain its tested CLI archive: {value}")
+
+# Run the actual host-side receipt/ZIP validator on valid and tampered exports.
+validation = windows_smoke.split('<<\'PY\'\n', 1)[1].split('\nPY\n', 1)[0]
+with tempfile.TemporaryDirectory(prefix="nvpn-windows-retention-") as temporary:
+    directory = pathlib.Path(temporary)
+    installer_path = directory / "nostr-vpn-v4.1.10-windows-x64-setup.exe"
+    installer_path.write_bytes(b"installer")
+    archive = directory / "nvpn-v4.1.10-x86_64-pc-windows-msvc.zip"
+    payloads = {
+        "app": ("NostrVpn.Windows.exe", b"app"),
+        "appCore": ("nostr_vpn_app_core.dll", b"core"),
+        "cli": ("nvpn.exe", b"cli"),
+        "wintun": (r"binaries\wintun.dll", b"wintun"),
+    }
+    receipt = {
+        "receiptSchema": 2, "platform": "windows",
+        "artifactType": "exact installed Windows Release setup",
+        "appGitSha": "a" * 40, "appGitTree": "b" * 40,
+        "fipsGitSha": "c" * 40, "fipsGitTree": "d" * 40,
+        "fipsVersion": "0.4.73", "tag": "v4.1.10",
+        "installerName": installer_path.name,
+        "installerSha256": hashlib.sha256(b"installer").hexdigest(),
+        "installerSize": 9, "installerInstalledAndLaunched": True,
+        "installedAppStayedAlive": True, "builtOnWindowsVm": True,
+        "builtOnHostMac": False, "smokeReceiptSha256": "e" * 64,
+        "payloads": {
+            name: {"file": filename, "size": len(data),
+                   "sha256": hashlib.sha256(data).hexdigest()}
+            for name, (filename, data) in payloads.items()
+        },
+    }
+    receipt_path = directory / "installer-receipt.json"
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    for case in ("valid", "tampered-cli", "missing-wintun", "extra-member"):
+        with zipfile.ZipFile(archive, "w") as output:
+            output.writestr("nvpn.exe", b"wrong" if case == "tampered-cli" else b"cli")
+            if case != "missing-wintun":
+                output.writestr("binaries/wintun.dll", b"wintun")
+            if case == "extra-member":
+                output.writestr("unexpected.exe", b"extra")
+        result = subprocess.run(
+            [sys.executable, "-", str(receipt_path), str(installer_path),
+             "a" * 40, "b" * 40, "c" * 40, "d" * 40, "0.4.73", "v4.1.10"],
+            input=validation, text=True, capture_output=True,
+        )
+        if (result.returncode == 0) != (case == "valid"):
+            raise SystemExit(f"Windows CLI export validation failed {case}: {result.stderr}")
 
 print("WINDOWS_INSTALLER_MIGRATION_SOURCE_HARNESS_OK")
 PY

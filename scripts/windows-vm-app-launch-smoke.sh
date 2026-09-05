@@ -170,6 +170,27 @@ foreach (\$entry in \$payloadFiles.GetEnumerator()) {
     size = [long]\$installed.size
   }
 }
+# Package only the payloads just matched to the installed app. Publication must
+# not rebuild the CLI or depend on the guest publish directory remaining intact.
+Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
+\$cliArchive = Join-Path '$REMOTE_GATE_DIR' 'nvpn-$SMOKE_TAG-x86_64-pc-windows-msvc.zip'
+\$zip = [IO.Compression.ZipFile]::Open(\$cliArchive, [IO.Compression.ZipArchiveMode]::Create)
+try {
+  foreach (\$name in @('cli', 'wintun')) {
+    \$payload = \$payloadFiles[\$name]
+    \$entry = \$zip.CreateEntry(\$payload.file.Replace([char]92, [char]47))
+    \$entry.LastWriteTime = [DateTimeOffset]::new(1980, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+    \$inputStream = [IO.File]::OpenRead(\$payload.path)
+    try {
+      \$outputStream = \$entry.Open()
+      try { \$inputStream.CopyTo(\$outputStream) } finally { \$outputStream.Dispose() }
+    } finally {
+      \$inputStream.Dispose()
+    }
+  }
+} finally {
+  \$zip.Dispose()
+}
 \$receipt = [ordered]@{
   receiptSchema = 2
   platform = 'windows'
@@ -203,6 +224,9 @@ remote_gate_posix="${REMOTE_GATE_DIR//\\//}"
 "${SCP_CMD[@]}" \
   "$SSH_HOST:$remote_gate_posix/installer-receipt.json" \
   "$LOCAL_GATE_DIR/installer-receipt.json"
+"${SCP_CMD[@]}" \
+  "$SSH_HOST:$remote_gate_posix/nvpn-$SMOKE_TAG-x86_64-pc-windows-msvc.zip" \
+  "$LOCAL_GATE_DIR/nvpn-$SMOKE_TAG-x86_64-pc-windows-msvc.zip"
 python3 - \
   "$LOCAL_GATE_DIR/installer-receipt.json" \
   "$LOCAL_GATE_DIR/nostr-vpn-$SMOKE_TAG-windows-x64-setup.exe" \
@@ -217,6 +241,7 @@ import json
 import pathlib
 import re
 import sys
+import zipfile
 
 receipt_path = pathlib.Path(sys.argv[1])
 installer_path = pathlib.Path(sys.argv[2])
@@ -261,6 +286,15 @@ for name, value in payloads.items():
         and value["size"] > 0
     ):
         raise SystemExit(f"Windows installer receipt has invalid {name} payload")
+archive_path = receipt_path.parent / f"nvpn-{tag}-x86_64-pc-windows-msvc.zip"
+with zipfile.ZipFile(archive_path) as archive:
+    if sorted(archive.namelist()) != ["binaries/wintun.dll", "nvpn.exe"]:
+        raise SystemExit("Windows CLI archive has the wrong payload set")
+    for name in ("cli", "wintun"):
+        payload = payloads[name]
+        data = archive.read(payload["file"].replace("\\", "/"))
+        if len(data) != payload["size"] or hashlib.sha256(data).hexdigest() != payload["sha256"]:
+            raise SystemExit(f"Windows CLI archive differs from installed {name} payload")
 PY
 
 SOURCE_FIPS_RECEIPT="$LOCAL_GATE_DIR/cratesio-source-receipt.json"
