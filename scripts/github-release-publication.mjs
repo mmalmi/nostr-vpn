@@ -75,6 +75,15 @@ function expectedAssets(stageDir, manifest) {
   })
 }
 
+export function renderGithubReleaseNotes({ notes, repository, tag, assets }) {
+  const base = `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}`
+  for (const { name } of assets) {
+    const encoded = encodeURIComponent(name)
+    notes = notes.replaceAll(`](assets/${encoded})`, `](${base}/${encoded})`)
+  }
+  return notes
+}
+
 export function validateGithubReleaseMetadata({
   release,
   tag,
@@ -236,7 +245,6 @@ function repairExactRelease({
   beforeMutation,
   tag,
   commit,
-  notesPath,
   notes,
   assets,
   release,
@@ -297,8 +305,8 @@ function repairExactRelease({
         commit,
         '--title',
         tag,
-        '--notes-file',
-        notesPath,
+        '--notes',
+        notes,
         '--draft=false',
         `--prerelease=${tag.includes('-')}`,
         `--latest=${!tag.includes('-')}`,
@@ -372,13 +380,16 @@ export function publishExactGithubRelease({
 }) {
   const assets = expectedAssets(stageDir, manifest)
   const notesPath = join(stageDir, 'notes.md')
-  const notes = readFileSync(notesPath, 'utf8')
+  const stagedNotes = readFileSync(notesPath, 'utf8')
   if (dryRun) {
     return { created: false, verified: true }
   }
   const exactRepository = exactGithubRepository({
     repoRoot,
     expected: repository,
+  })
+  const notes = renderGithubReleaseNotes({
+    notes: stagedNotes, repository: exactRepository, tag, assets,
   })
   let viewed = viewRelease({
     repoRoot,
@@ -406,8 +417,8 @@ export function publishExactGithubRelease({
       commit,
       '--title',
       tag,
-      '--notes-file',
-      notesPath,
+      '--notes',
+      notes,
       ...(tag.includes('-') ? ['--prerelease'] : ['--latest']),
       ...assets.map(({ path }) => path),
     ]
@@ -438,7 +449,6 @@ export function publishExactGithubRelease({
     beforeMutation,
     tag,
     commit,
-    notesPath,
     notes,
     assets,
     release: viewed.release,

@@ -16,6 +16,7 @@ bash -n \
 
 node --test scripts/release-gate-state.test.mjs
 node --test scripts/windows-manual-join-preparation.test.mjs
+node --test scripts/github-release-publication.test.mjs
 scripts/test-release-gate-parallel-harness.sh
 scripts/test-release-gate-timing-harness.sh
 scripts/test-mobile-release-join-gate-harness.sh
