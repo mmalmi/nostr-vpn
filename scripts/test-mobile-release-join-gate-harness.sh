@@ -53,10 +53,6 @@ do
   grep -Fq "\"$setting\"," "$ROOT/ios/Sources/AppModel.swift"
 done
 join_ui="$ROOT/scripts/lib-mobile-release-join-ui.sh"
-if grep -Fq -- '--use-destination-artifacts' "$join_ui"; then
-  echo "iOS Release join runner still relies on flaky destination artifacts" >&2
-  exit 1
-fi
 
 python3 - \
   "$ROOT/ios/Sources/SettingsViews.swift" \

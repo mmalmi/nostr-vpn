@@ -150,32 +150,69 @@ python3 "$TOOL" rewrite-xctestrun \
   --target-app "$APP" \
   --use-destination-artifacts
 
-python3 - "$DESTINATION_OUTPUT" <<'PY'
+# Exercise both release callers, not just the rewriter's optional mode. These
+# functions only prepare plans; no device, build, install, or XCTest is run.
+(
+  source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  IOS_RELEASE_NETWORK_XCTESTRUN="$SOURCE"
+  IOS_RELEASE_NETWORK_DERIVED_DATA="$TMP_ROOT/DerivedData"
+  IOS_RELEASE_NETWORK_SIGNING_DIR="$PRIVATE_DIR"
+  NVPN_MOBILE_IOS_RELEASE_APP_PATH="$APP"
+  ios_release_network_prepare_xctestrun fixture "" fixture-run
+  cp "$IOS_RELEASE_NETWORK_CASE_XCTESTRUN" "$PRIVATE_DIR/network-caller.xctestrun"
+)
+(
+  source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=1
+  RELEASE_JOIN_IOS_XCTESTRUN="$SOURCE"
+  RELEASE_JOIN_IOS_DERIVED_DATA="$TMP_ROOT/DerivedData"
+  RELEASE_JOIN_IOS_APP_PATH="$APP"
+  RELEASE_JOIN_IOS_APP_BUNDLE_ID=example.nvpn
+  RELEASE_JOIN_IOS_UDID=fixture-device
+  RELEASE_JOIN_DELIVERY_WAIT_SECS=15
+  RELEASE_JOIN_IOS_SETUP_WAIT_SECS=30
+  release_join_ios_test_command testFixture >"$PRIVATE_DIR/join-command"
+)
+
+python3 - "$DESTINATION_OUTPUT" "$PRIVATE_DIR" <<'PY'
 import pathlib
 import plistlib
 import sys
 
-payload = plistlib.load(pathlib.Path(sys.argv[1]).open("rb"))
-target = payload["TestConfigurations"][0]["TestTargets"][0]
+private = pathlib.Path(sys.argv[2])
+command = (private / "join-command").read_bytes().decode().split("\0")
+assert command[0] == "xcodebuild"
+assert "test-without-building" in command
+join_plan = pathlib.Path(command[command.index("-xctestrun") + 1])
 expected = {
     "UseDestinationArtifacts": True,
     "TestHostBundleIdentifier": "example.nvpn.UITests.xctrunner",
     "TestBundleDestinationRelativePath": "PlugIns/NostrVpnIosUITests.xctest",
     "UITargetAppBundleIdentifier": "example.nvpn",
 }
-for key, value in expected.items():
-    if target.get(key) != value:
-        raise SystemExit(f"destination-artifact plan has the wrong {key}")
-if target.get("UITargetAppCommandLineArguments") != []:
-    raise SystemExit("ordinary destination-artifact plan exposed test-only UI")
-for key in (
-    "TestBundlePath",
-    "TestHostPath",
-    "UITargetAppPath",
-    "DependentProductPaths",
+for plan in (
+    pathlib.Path(sys.argv[1]),
+    private / "network-caller.xctestrun",
+    join_plan,
 ):
-    if key in target:
-        raise SystemExit(f"destination-artifact plan retains {key}")
+    payload = plistlib.load(plan.open("rb"))
+    target = payload["TestConfigurations"][0]["TestTargets"][0]
+    for key, value in expected.items():
+        if target.get(key) != value:
+            raise SystemExit(f"{plan.name}: destination-artifact plan has the wrong {key}")
+    if target.get("UITargetAppCommandLineArguments") != []:
+        raise SystemExit("ordinary destination-artifact plan exposed test-only UI")
+    if target.get("UITargetAppEnvironmentVariables") != {}:
+        raise SystemExit("ordinary destination-artifact plan exposed test-only state")
+    for key in (
+        "TestBundlePath",
+        "TestHostPath",
+        "UITargetAppPath",
+        "DependentProductPaths",
+    ):
+        if key in target:
+            raise SystemExit(f"{plan.name}: destination-artifact plan retains {key}")
 PY
 
 python3 - \

@@ -764,6 +764,7 @@ ios_release_network_prepare_xctestrun() {
     --output "$IOS_RELEASE_NETWORK_CASE_XCTESTRUN"
     --products-root "$IOS_RELEASE_NETWORK_DERIVED_DATA/Build/Products"
     --target-app "$(ios_release_network_app_path)"
+    --use-destination-artifacts
     --environment-stdin0
   )
   runner_environment=(
