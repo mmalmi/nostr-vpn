@@ -40,7 +40,7 @@ run_ps "\$ErrorActionPreference = 'Stop'
 Set-Location '$GUEST_REPO'
 New-Item -ItemType Directory -Force -Path '$GUEST_ARTIFACT_ROOT' | Out-Null
 if ('${NVPN_FIPS_REPO_PATH:-}' -ne '') { \$env:NVPN_FIPS_REPO_PATH = '$GUEST_FIPS_REPO' }
-\$env:CARGO_TARGET_DIR = Join-Path '$GUEST_ARTIFACT_ROOT' 'windows-ui-e2e-cargo'
+\$env:CARGO_TARGET_DIR = Join-Path '$GUEST_ARTIFACT_ROOT' 'windows-smoke-cargo'
 \$app = Join-Path '$GUEST_REPO' 'windows\\NostrVpn.Windows\\bin\\Release\\net8.0-windows\\win-x64\\publish\\NostrVpn.Windows.exe'
 \$installerReceiptPath = Join-Path '$GUEST_ARTIFACT_ROOT' 'windows-installer-gate\\installer-receipt.json'
 if (
@@ -57,11 +57,14 @@ if (
 ) {
   throw 'Windows manual-join app differs from the exact installer gate payload'
 }
+# Fixture compilation belongs to preparation, not the interactive UI deadline.
+& cargo build --locked --release -p nostr-vpn-core --example desktop_manual_join_e2e_fixture
+if (\$LASTEXITCODE -ne 0) { throw 'desktop manual-join fixture build failed' }
 \$artifact = Join-Path '$GUEST_ARTIFACT_ROOT' 'windows-manual-join-ui'
 \$interactiveWrapper = Join-Path '$GUEST_ARTIFACT_ROOT' 'windows-manual-join-interactive.ps1'
 @'
 \$ErrorActionPreference = 'Stop'
-\$env:CARGO_TARGET_DIR = '$GUEST_ARTIFACT_ROOT\\windows-ui-e2e-cargo'
+\$env:CARGO_TARGET_DIR = '$GUEST_ARTIFACT_ROOT\\windows-smoke-cargo'
 & '$GUEST_REPO\\scripts\\e2e-windows-manual-join-ui.ps1' -AppExe '$GUEST_REPO\\windows\\NostrVpn.Windows\\bin\\Release\\net8.0-windows\\win-x64\\publish\\NostrVpn.Windows.exe' -ArtifactRoot '$GUEST_ARTIFACT_ROOT\\windows-manual-join-ui'
 '@ | Set-Content -Encoding utf8 \$interactiveWrapper"
 

@@ -222,12 +222,12 @@ try {
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $AdminDataDir, $JoinerDataDir
   Remove-Item -Force -ErrorAction SilentlyContinue $Result, $AppLog, "$AppLog.err"
 
-  # Reuse the release dependency graph already built for the shipped Windows
-  # app instead of compiling the entire Rust graph a second time in debug mode.
-  & cargo build -q --release -p nostr-vpn-core --example desktop_manual_join_e2e_fixture
-  if ($LASTEXITCODE -ne 0) { throw "desktop manual-join fixture build failed" }
-  $CargoTarget = (& cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).target_directory
+  $CargoTarget = (& cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json).target_directory
+  if ($LASTEXITCODE -ne 0) { throw "desktop manual-join fixture metadata failed" }
   $Fixture = Join-Path $CargoTarget "release\examples\desktop_manual_join_e2e_fixture.exe"
+  if (!(Test-Path -LiteralPath $Fixture -PathType Leaf)) {
+    throw "desktop manual-join fixture must be prepared before the UI task starts"
+  }
   & $Fixture prepare `
     --admin-data-dir $AdminDataDir `
     --joiner-data-dir $JoinerDataDir `

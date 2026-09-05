@@ -63,6 +63,11 @@ try {
     throw "interactive Windows GUI e2e failed with exit code $ExitCode"
   }
 } finally {
+  # Task Scheduler stops its launcher but can leave the nested test alive.
+  Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe'" |
+    Where-Object { $_.CommandLine -and $_.CommandLine.Contains($RunnerPath) } |
+    ForEach-Object { & taskkill.exe /PID $_.ProcessId /T /F | Out-Null }
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($CleanupConsentPrompt) {
     Get-Process consent -ErrorAction SilentlyContinue |
       Stop-Process -Force -ErrorAction SilentlyContinue

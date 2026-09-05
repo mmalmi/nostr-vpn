@@ -15,6 +15,7 @@ bash -n \
   scripts/mobile-release-join-e2e.sh
 
 node --test scripts/release-gate-state.test.mjs
+node --test scripts/windows-manual-join-preparation.test.mjs
 scripts/test-release-gate-parallel-harness.sh
 scripts/test-release-gate-timing-harness.sh
 scripts/test-mobile-release-join-gate-harness.sh

@@ -34,6 +34,8 @@ const harnessOnlyPaths = new Set([
   'scripts/e2e-macos-service-toggle.sh',
   'scripts/e2e-macos-service.sh',
   'scripts/e2e-windows-service-toggle.ps1',
+  'scripts/e2e-windows-manual-join-ui.ps1',
+  'scripts/run-windows-interactive-e2e.ps1',
   'scripts/ios_xctestrun.py',
   'scripts/ios-build',
   'scripts/ios_frozen_archive.py',
@@ -85,6 +87,7 @@ const harnessOnlyPaths = new Set([
   'scripts/windows-release-mobile-join-remote.ps1',
   'scripts/windows-vm-desktop-underlay-change-e2e.sh',
   'scripts/windows-vm-exit-dns-ui-e2e.sh',
+  'scripts/windows-vm-manual-join-e2e.sh',
   'scripts/windows-vm-release-mobile-join-e2e.sh',
   'scripts/windows-vm-service-toggle-e2e.sh',
 ])
