@@ -194,8 +194,8 @@ wireguard_endpoint_route_state_valid() {
   [[ "$expected_underlay" == "$PRIMARY_IFACE" \
     || "$expected_underlay" == "$SECONDARY_IFACE" ]] \
     || return 1
-  endpoint_iface="$(endpoint_route_interface)" || return 1
   if [[ "$ENDPOINT_FAMILY" == "ipv6" ]]; then
+    endpoint_iface="$(endpoint_route_interface)" || return 1
     [[ "$endpoint_iface" == "$expected_underlay" ]]
     return
   fi
@@ -208,8 +208,11 @@ wireguard_endpoint_route_state_valid() {
   # gateway. When the endpoint is the gateway itself, macOS represents the
   # correct direct /32 as a neighbor route instead. IP_BOUND_IF pins the
   # encrypted UDP socket to the same selected underlay in both cases.
-  [[ "$endpoint_iface" == "$expected_underlay" \
-    && "$physical_default_iface" == "$expected_underlay" \
+  # `route get` may briefly retain its pre-handoff lookup result after the
+  # authoritative table has changed. For IPv4, require the exact global /32
+  # in netstat plus live payload and handshake evidence from the caller; do
+  # not let that disposable lookup cache extend the measured recovery time.
+  [[ "$physical_default_iface" == "$expected_underlay" \
     && -n "$expected_gateway" \
     && "$expected_gateway" != link#* ]] \
     && ipv4_route_table \

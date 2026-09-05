@@ -1066,9 +1066,18 @@ endpoint_route_body="$(
   sed -n '/^wireguard_endpoint_route_state_valid() {$/,/^}$/p' \
     "$MACOS_NETWORK_GUEST"
 )"
-grep -Fq '[[ "$endpoint_iface" == "$expected_underlay"' \
+grep -Fq '[[ "$physical_default_iface" == "$expected_underlay"' \
   <<<"$endpoint_route_body" \
-  || fail "macOS network gate does not require the global endpoint bypass"
+  || fail "macOS network gate does not bind IPv4 bypass ownership to the selected default"
+grep -Fq 'routes == 1 && matching == 1' <<<"$endpoint_route_body" \
+  || fail "macOS network gate does not require one exact global endpoint bypass"
+ipv4_endpoint_route_body="$(
+  sed -n '/physical_default_iface=/,$p' <<<"$endpoint_route_body"
+)"
+if grep -Fq '"$endpoint_iface" == "$expected_underlay"' \
+  <<<"$ipv4_endpoint_route_body"; then
+  fail "macOS IPv4 recovery still depends on the stale route-get lookup cache"
+fi
 grep -Fq '[[ "$ENDPOINT_HOST" == "$expected_gateway" ]]' \
   <<<"$endpoint_route_body" \
   || fail "macOS network gate does not recognize a direct gateway endpoint route"
