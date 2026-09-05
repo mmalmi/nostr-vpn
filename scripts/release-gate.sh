@@ -1682,7 +1682,7 @@ verify_paid_exit_seller_ui_gates() {
   app_sha="$(git -C "$ROOT_DIR" rev-parse HEAD)"
   app_tree="$(git -C "$ROOT_DIR" rev-parse 'HEAD^{tree}')"
   output="$RELEASE_GATE_PARALLEL_LOG_DIR/paid-exit-seller-ui/summary.json"
-  python3 "$ROOT_DIR/scripts/verify-paid-exit-seller-ui-receipts.py" \
+  node "$ROOT_DIR/scripts/verify-paid-exit-seller-ui-receipts.mjs" \
     --app-git-sha "$app_sha" \
     --app-git-tree "$app_tree" \
     --output "$output" \

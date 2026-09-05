@@ -707,8 +707,8 @@ for platform in android windows; do
     fail "seller UI receipt gate requires unsupported platform: $platform"
   fi
 done
-grep -Fq 'EXPECTED_PLATFORMS = {"linux", "macos"}' \
-  "$ROOT_DIR/scripts/verify-paid-exit-seller-ui-receipts.py" \
+grep -Fq "EXPECTED_PLATFORMS = ['linux', 'macos']" \
+  "$ROOT_DIR/scripts/verify-paid-exit-seller-ui-receipts.mjs" \
   || fail "seller UI receipt verifier differs from the product support matrix"
 grep -Fq 'run_umbrel_release_gate' <<<"$docker_functional_body" \
   || fail "isolated Docker gates omit the authenticated Umbrel release gate"

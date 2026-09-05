@@ -35,7 +35,8 @@ function fixture() {
   delete env.NODE_TEST_CONTEXT
   const generated = spawnSync(
     process.execPath,
-    ['--test', join(process.cwd(), 'scripts/release-artifact-provenance-lib.test.mjs')],
+    ['--test', '--test-name-pattern=^release receipt collection requires exact source and strict public UI gates$',
+      join(process.cwd(), 'scripts/release-artifact-provenance-lib.test.mjs')],
     {
       encoding: 'utf8',
       env,
