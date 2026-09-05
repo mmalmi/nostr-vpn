@@ -593,6 +593,14 @@ do
     || fail "release gate still starts an unsafe parallel image build: $old_parallel_build"
 done
 
+cashu_mint_service="$(
+  sed -n '/^  cashu-mint:$/,/^  wireguard-upstream:$/p' \
+    "$ROOT_DIR/docker-compose.exit-node-e2e.yml"
+)"
+grep -Fq 'image: ${NVPN_EXIT_NODE_E2E_IMAGE:-nostr-vpn-e2e-node}' \
+  <<<"$cashu_mint_service" \
+  || fail "Cashu mint must reuse the paid node image instead of rebuilding implicitly"
+
 required_contracts=(
   'source "$ROOT_DIR/scripts/lib-release-gate-timing.sh"'
   'release_gate_timing_init "$log_dir"'

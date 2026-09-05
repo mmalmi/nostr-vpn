@@ -24,6 +24,7 @@ services:
 
   cashu-mint:
     profiles: ["paid-exit"]
+    image: ${NVPN_EXIT_NODE_E2E_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.paid-exit-e2e}

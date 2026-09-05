@@ -9,6 +9,7 @@ const sharedFiles = [
   'rust-toolchain.toml', 'scripts/sync-versions.mjs',
 ]
 const harnessOnlyPaths = new Set([
+  'docker-compose.exit-node-e2e.yml',
   'Dockerfile.mobile-wireguard-exit-e2e',
   'Dockerfile.mobile-wireguard-exit-e2e.dockerignore',
   'scripts/android-release-foreground-idle-receipt.mjs',
