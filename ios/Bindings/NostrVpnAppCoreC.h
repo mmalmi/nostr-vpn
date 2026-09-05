@@ -36,6 +36,7 @@ bool nostr_vpn_mobile_tunnel_ack_app_config_toml(
     const char *expected_toml
 );
 bool nostr_vpn_mobile_tunnel_network_changed(const NvpnMobileTunnelHandle *handle);
+bool nostr_vpn_mobile_tunnel_has_pending_join_receipts(const NvpnMobileTunnelHandle *handle);
 char *nostr_vpn_mobile_tunnel_wg_excluded_route(const NvpnMobileTunnelHandle *handle);
 void nostr_vpn_mobile_tunnel_free(NvpnMobileTunnelHandle *handle);
 bool nostr_vpn_mobile_tunnel_packet_flow_start(

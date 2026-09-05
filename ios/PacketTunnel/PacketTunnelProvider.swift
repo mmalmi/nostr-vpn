@@ -230,6 +230,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         case "health":
             let runtimeIsAlive = withTunnelHandle { _ in true } == true
             completionHandler?(runtimeIsAlive ? Data("ok".utf8) : nil)
+        case "joinReceiptsPending":
+            let pending = withTunnelHandle { handle in
+                nostr_vpn_mobile_tunnel_has_pending_join_receipts(handle)
+            }
+            completionHandler?(pending.map { Data(($0 ? "pending" : "drained").utf8) })
         case "processMetrics":
             completionHandler?(processMetricsData())
         case "runtimeStateBegin":

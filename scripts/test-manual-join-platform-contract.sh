@@ -22,6 +22,10 @@ require android/app/src/main/java/org/nostrvpn/app/AndroidDevices.kt 'Add by Dev
 require ios/Sources/NativeCoreClient.swift 'manual_add_network' 'iOS joiner action'
 require ios/Sources/DevicesViews.swift 'Admin Device ID' 'iOS joiner fields'
 require ios/Sources/SettingsViews.swift 'Add by Device ID' 'iOS admin action'
+require ios/Sources/AppModel.swift 'await vpnController.hasPendingJoinReceipts()' 'iOS receiver receipt drain before config restart'
+require ios/Sources/PacketTunnelController.swift 'providerMessage("joinReceiptsPending")' 'iOS live receipt query'
+require ios/PacketTunnel/PacketTunnelProvider.swift 'nostr_vpn_mobile_tunnel_has_pending_join_receipts(handle)' 'iOS native receipt queue query'
+require ios/Bindings/NostrVpnAppCoreC.h 'nostr_vpn_mobile_tunnel_has_pending_join_receipts' 'iOS receipt query binding'
 
 require macos/Sources/AppManagerSettings.swift '.manualAddNetwork' 'macOS joiner action'
 require macos/Sources/RootViewDevices.swift 'Admin Device ID' 'macOS joiner fields'

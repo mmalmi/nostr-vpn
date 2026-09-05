@@ -541,9 +541,12 @@ final class AppModel: ObservableObject {
         var tunnelConfigJson = core.mobileTunnelConfigJson()
         let queuedApprovalClock = ContinuousClock()
         let queuedApprovalDeadline = queuedApprovalClock.now.advanced(by: .seconds(12))
-        while Self.tunnelConfigHasQueuedJoinRosters(tunnelConfigJson),
-              queuedApprovalClock.now < queuedApprovalDeadline
-        {
+        while queuedApprovalClock.now < queuedApprovalDeadline {
+            let pendingReceipt = await vpnController.hasPendingJoinReceipts()
+            try requirePacketTunnelTransition(generation)
+            guard Self.tunnelConfigHasQueuedJoinRosters(tunnelConfigJson) || pendingReceipt else {
+                break
+            }
             debugLog("PacketTunnel config sync waiting for queued join approval delivery")
             try await Task.sleep(nanoseconds: 250_000_000)
             try requirePacketTunnelTransition(generation)

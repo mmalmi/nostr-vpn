@@ -31,6 +31,22 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_network_changed(
     }
 }
 
+/// Reports whether a roster-triggered restart must wait for a join receipt.
+///
+/// # Safety
+///
+/// `handle` must be null or a live mobile tunnel handle.
+#[cfg(target_os = "ios")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_has_pending_join_receipts(
+    handle: *const NvpnMobileTunnelHandle,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    unsafe { &*handle }.tunnel.has_pending_join_receipts()
+}
+
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNetworkChanged(

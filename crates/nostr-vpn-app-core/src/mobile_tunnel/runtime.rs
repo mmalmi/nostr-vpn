@@ -783,7 +783,7 @@ impl MobileTunnel {
         })
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn has_pending_join_receipts(&self) -> bool {
         self.pending_join_roster_receipts.has_pending_receipts()
     }

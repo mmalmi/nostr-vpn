@@ -329,6 +329,15 @@ final class PacketTunnelController {
         await providerMessage("health") == "ok"
     }
 
+    func hasPendingJoinReceipts() async -> Bool {
+        guard await statusRawValue() == NEVPNStatus.connected.rawValue else {
+            return false
+        }
+        // A missing reply is not proof of delivery. The caller keeps its
+        // existing bounded restart deadline, and explicit disconnect cancels it.
+        return await providerMessage("joinReceiptsPending") != "drained"
+    }
+
     func packetTunnelProcessMetrics() async -> (pid: Int, cpuSeconds: Double)? {
         guard let data = await providerMessageData("processMetrics"),
               let metrics = try? JSONDecoder().decode(PacketTunnelProcessMetrics.self, from: data),

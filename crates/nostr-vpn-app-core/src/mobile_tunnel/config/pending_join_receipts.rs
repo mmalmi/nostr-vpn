@@ -46,7 +46,7 @@ impl Default for PendingJoinRosterReceiptQueue {
 }
 
 impl PendingJoinRosterReceiptQueue {
-    #[cfg(any(test, target_os = "android"))]
+    #[cfg(any(test, target_os = "android", target_os = "ios"))]
     fn has_pending_receipts(&self) -> bool {
         // Config-file observers can request a restart before apply has queued
         // its receipt. Keep the live carrier through that gap and until ACK.
