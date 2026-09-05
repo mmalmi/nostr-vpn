@@ -568,6 +568,16 @@ local_fips_body="$(
   <<<"$local_fips_body" \
   || fail "strict local FIPS websocket timing still runs beside cold builds"
 
+rust_regression_body="$(sed -n '/^run_rust_regression_checks() {$/,/^}$/p' "$release_gate")"
+mobile_timing_body="$(sed -n '/^run_mobile_qr_join_latency_gate() {$/,/^}$/p' "$release_gate")"
+for role in desktop_admin mobile_admin; do
+  test_name="desktop_mobile_manual_join_${role}_via_websocket_seed"
+  grep -Fq -- "--skip $test_name" <<<"$rust_regression_body" \
+    || fail "$test_name still competes with cold builds"
+  grep -Fxq "    $test_name" <<<"$mobile_timing_body" \
+    || fail "$test_name is missing from isolated join timing"
+done
+
 docker_image_build_body="$(
   sed -n '/^build_release_gate_docker_images() {$/,/^}$/p' "$release_gate"
 )"

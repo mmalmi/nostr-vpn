@@ -491,6 +491,8 @@ run_rust_regression_checks() {
     --skip two_websocket_seed_routers_route_new_recipient_without_preconverged_roster_peer \
     --skip websocket_seed_router_retries_durable_join_receipt_after_first_route_failure \
     --skip websocket_seed_router_delivers_durable_join_receipt_after_tunnel_restart \
+    --skip desktop_mobile_manual_join_desktop_admin_via_websocket_seed \
+    --skip desktop_mobile_manual_join_mobile_admin_via_websocket_seed \
     --skip desktop_mobile_manual_join_desktop_admin_to_mobile_joiner \
     --skip desktop_mobile_manual_join_mobile_admin_to_desktop_joiner
   # Cross the desktop-daemon/mobile-tunnel boundary with each side acting as
@@ -2211,6 +2213,10 @@ run_mobile_qr_join_latency_gate() {
     websocket_seed_router_retries_durable_join_receipt_after_first_route_failure
   release_cargo_test_filter nostr-vpn-app-core \
     websocket_seed_router_delivers_durable_join_receipt_after_tunnel_restart
+  release_cargo_test_filter nostr-vpn-app-core \
+    desktop_mobile_manual_join_desktop_admin_via_websocket_seed
+  release_cargo_test_filter nostr-vpn-app-core \
+    desktop_mobile_manual_join_mobile_admin_via_websocket_seed
 }
 
 run_local_fips_transit_gate() {
