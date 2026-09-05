@@ -11,7 +11,7 @@ TARGET=aarch64-unknown-linux-musl
 ARCHIVE="$OUTPUT_DIR/nvpn-$TARGET.tar.gz"
 RECEIPT="$OUTPUT_DIR/receipt.json"
 BUILDER_IMAGE="${NVPN_LINUX_MUSL_IMAGE:-messense/rust-musl-cross:aarch64-musl}"
-SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-nostr-vpn-linux-dev:latest}"
+SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-ubuntu:24.04}"
 TEMP_DIR=""
 
 cleanup() {

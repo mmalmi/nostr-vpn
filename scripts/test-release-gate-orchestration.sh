@@ -34,7 +34,7 @@ for required in (
     "--platform linux/arm64",
     "--pull never",
     "--entrypoint sh",
-    "nostr-vpn-linux-dev:latest",
+    'SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-ubuntu:24.04}"',
     "nativeStatusSmokePassed",
     "nativeSmokeArchiveSha256",
 ):
