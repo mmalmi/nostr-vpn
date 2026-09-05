@@ -529,9 +529,9 @@ exclusive_network_join="$(grep -nF 'release_gate_parallel_wait_group "${exclusiv
   && -n "$windows_network_start" && -n "$exclusive_network_join" ]] \
   || fail "exclusive desktop network lanes are incomplete"
 ((macos_post_build_start < linux_network_start \
-  && linux_network_start < windows_network_start \
-  && windows_network_start < exclusive_network_join)) \
-  || fail "macOS network proof does not overlap the serial Linux/Windows hypervisor proofs"
+  && linux_network_start < exclusive_network_join \
+  && exclusive_network_join < windows_network_start)) \
+  || fail "macOS/Linux proofs are not fail-fast and serialized before the Windows hypervisor proof"
 
 local_fips_body="$(
   sed -n '/^run_local_fips_regression_tests() {$/,/^}$/p' "$release_gate"

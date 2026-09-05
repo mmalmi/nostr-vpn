@@ -2609,13 +2609,14 @@ main() {
     "macOS post-build UI, idle CPU, and desktop network" \
     run_macos_post_build_lane
   exclusive_desktop_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
-  release_gate_timing_run \
+  release_gate_parallel_start \
     "Linux exclusive desktop network" \
     run_linux_exclusive_desktop_gates
+  exclusive_desktop_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+  release_gate_parallel_wait_group "${exclusive_desktop_lanes[@]}"
   release_gate_timing_run \
     "Windows exclusive desktop network" \
     run_windows_exclusive_desktop_gates
-  release_gate_parallel_wait_group "${exclusive_desktop_lanes[@]}"
 
   # Exercise the least reliable external dependency—the physical iOS XCTest
   # runner—before spending time on the remaining local Docker/perf tail. The
