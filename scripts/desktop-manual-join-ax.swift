@@ -77,7 +77,8 @@ func find(
         let identifier = stringAttribute(element, kAXIdentifierAttribute)
         guard !identifier.isEmpty else { return nil }
         let role = stringAttribute(element, kAXRoleAttribute)
-        return "\(role):\(identifier)"
+        let enabled = boolAttribute(element, kAXEnabledAttribute)
+        return "\(role):\(identifier):enabled=\(enabled.map { String($0) } ?? "unset")"
     }
     fputs("Visible AX identifiers: \(controls.joined(separator: ", "))\n", stderr)
     throw DriverError.missing(identifier)
@@ -163,6 +164,7 @@ func press(
         let visible = visibleElements(application)
         let candidates = visible.filter {
             stringAttribute($0, kAXIdentifierAttribute) == identifier
+                && boolAttribute($0, kAXEnabledAttribute) != false
         }
         if candidates.isEmpty {
             lastError = .cannotComplete
@@ -170,6 +172,7 @@ func press(
             for candidate in candidates {
                 var element = candidate
                 for _ in 0..<8 {
+                    if boolAttribute(element, kAXEnabledAttribute) == false { break }
                     var actionNames: CFArray?
                     let actionError = AXUIElementCopyActionNames(element, &actionNames)
                     if actionError == .success,

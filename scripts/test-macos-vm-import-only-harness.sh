@@ -376,6 +376,8 @@ press_driver = manual_join_driver.split("func press(", 1)[1].split(
 for required in (
     "let candidates = visible.filter",
     "for candidate in candidates",
+    "boolAttribute($0, kAXEnabledAttribute) != false",
+    "if boolAttribute(element, kAXEnabledAttribute) == false { break }",
 ):
     if required not in press_driver:
         raise SystemExit(
