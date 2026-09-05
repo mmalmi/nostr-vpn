@@ -1294,7 +1294,7 @@ text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 linux_start = text.index("run_linux_exclusive_desktop_gates() {")
 windows_start = text.index("run_windows_exclusive_desktop_gates() {")
 macos_start = text.index("run_macos_exclusive_desktop_gates() {")
-serial_end = text.index("\nrelease_gate_perf_output_dir() {", macos_start)
+serial_end = text.index("\nrun_macos_post_build_lane() {", macos_start)
 linux = text[linux_start:windows_start]
 windows = text[windows_start:macos_start]
 macos = text[macos_start:serial_end]
@@ -1320,18 +1320,22 @@ main_end = text.rindex('\nmain "$@"')
 main = text[main_start:main_end]
 prep = [
     '"Windows platform"',
-    '"macOS platform UI"',
     '"Linux platform UI"',
 ]
 prep_positions = [main.index(item) for item in prep]
 host_validation = main.index('"Host static and Rust validation"')
 if any(position >= host_validation for position in prep_positions):
     raise SystemExit("an isolated desktop lane starts after host validation")
+macos_post_build = main.index(
+    '"macOS post-build UI, idle CPU, and desktop network"'
+)
 join_positions = [
     main.index(
         'release_gate_parallel_wait_group "${concurrent_validation_lanes[@]}"'
     )
 ]
+if macos_post_build <= max(join_positions):
+    raise SystemExit("macOS accessibility lane still overlaps cold build lanes")
 order = [
     "run_linux_exclusive_desktop_gates",
     "run_windows_exclusive_desktop_gates",

@@ -328,10 +328,27 @@ run_local_fips_regression_tests() {
     local_test forward_reply_learned_keeps_configured_transit_inside_fanout_budget \
       proto::lookup::tests::forward_reply_learned_keeps_configured_transit_inside_fanout_budget \
       -- --exact --nocapture || return 1
-    local_test persistent_two_seed_websocket_transit_survives_client_churn \
+  )
+}
+
+run_local_fips_websocket_timing_regression_gate() {
+  if [[ -z "$release_fips_path" ]]; then
+    return
+  fi
+
+  # This end-to-end regression has a strict transit deadline. Running it while
+  # cold Docker and host builds compete for CPU turns machine saturation into
+  # a false product failure, so preserve the deadline and measure it once the
+  # build lanes have joined.
+  (
+    cd "$release_fips_path"
+    release_gate_cargo_test_filter \
+      nvpn-fips-core \
+      persistent_two_seed_websocket_transit_survives_client_churn \
+      cargo test -p nvpn-fips-core \
       --test public_websocket_transit \
       persistent_two_seed_websocket_transit_survives_client_churn \
-      -- --exact --nocapture || return 1
+      -- --exact --nocapture
   )
 }
 
@@ -1300,6 +1317,17 @@ run_windows_exclusive_desktop_gates() {
 
 run_macos_exclusive_desktop_gates() {
   run_wireguard_exit_platform_gates
+}
+
+run_macos_post_build_lane() {
+  # Accessibility-driven UI, idle-CPU sampling, and route mutation all own the
+  # same isolated VM. Keep them serial with each other and away from cold host
+  # builds, while overlapping the independent Linux/Windows network proofs.
+  if macos_platform_lane_requested; then
+    run_macos_platform_lane
+  fi
+  run_macos_app_launch_smoke
+  run_macos_exclusive_desktop_gates
 }
 
 release_gate_perf_output_dir() {
@@ -2511,11 +2539,6 @@ main() {
     concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
   fi
 
-  if [[ "$macos_platform_requested_for_gate" == "1" ]]; then
-    release_gate_parallel_start "macOS platform UI" run_macos_platform_lane
-    concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
-  fi
-
   if [[ "$linux_platform_requested_for_gate" == "1" ]]; then
     release_gate_parallel_start "Linux platform UI" run_linux_platform_lane
     concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
@@ -2567,23 +2590,22 @@ main() {
     export NVPN_UMBREL_WEB_E2E_SKIP_BUILD=1
   fi
 
-  # App launch includes a strict idle-CPU measurement inside the macOS VM.
-  # Host compilation can starve the VM and inflate that measurement, so keep
-  # the unchanged product budget and sample only after every build lane joins.
+  # The local FIPS websocket transit fixture and its deadline are product
+  # evidence. Measure after build contention instead of relaxing the limit.
   release_gate_timing_run \
-    "macOS isolated app launch and idle CPU" \
-    run_macos_app_launch_smoke
+    "Local FIPS websocket transit timing regression" \
+    run_local_fips_websocket_timing_regression_gate
 
-  # The real desktop network proofs own their target VM and hypervisor
-  # topology. Join every parallel UI/build lane before changing links, routes,
+  # The real desktop proofs own their target VM and hypervisor topology. Join
+  # every build lane before changing links, routes, driving macOS Accessibility,
   # or entering any latency/performance/device measurement.
   # Linux and Windows mutate VMs on the same hypervisor and remain serial.
-  # The macOS VM uses an isolated guest plus its own Docker fixture, so its
-  # network proof can cover the same wall-clock window safely.
+  # The macOS VM is independent, so its UI/idle/network sequence can cover the
+  # same wall-clock window without competing with the cold build lanes.
   local exclusive_desktop_lanes=()
   release_gate_parallel_start \
-    "macOS exclusive desktop network" \
-    run_macos_exclusive_desktop_gates
+    "macOS post-build UI, idle CPU, and desktop network" \
+    run_macos_post_build_lane
   exclusive_desktop_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
   release_gate_timing_run \
     "Linux exclusive desktop network" \
