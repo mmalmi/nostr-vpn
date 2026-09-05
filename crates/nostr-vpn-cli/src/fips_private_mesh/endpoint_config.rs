@@ -166,6 +166,30 @@ fn fips_peer_addresses_from_hint(hint: &FipsPeerAddressHint) -> Vec<PeerAddress>
     }
 }
 
+fn configured_peer_endpoint_priority(npub: &str, address: &str) -> u8 {
+    let transport = split_peer_transport_addr(address).0;
+    let default_public_bootstrap = DEFAULT_FIPS_BOOTSTRAP_PEERS.iter().any(
+        |(default_npub, addresses)| {
+            *default_npub == npub
+                && addresses
+                    .iter()
+                    .any(|default_address| default_address.trim() == address.trim())
+        },
+    );
+    if default_public_bootstrap {
+        return if transport == "websocket" {
+            FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
+        } else {
+            FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY
+        };
+    }
+    if transport == "websocket" {
+        FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY
+    } else {
+        FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
+    }
+}
+
 fn retain_enabled_peer_transport_addresses(
     peers: &mut [FipsEndpointPeerTransportConfig],
     webrtc_enabled: bool,
@@ -475,7 +499,7 @@ fn fips_endpoint_peers_from_mesh(
         let peer = peers
             .entry(npub.clone())
             .or_insert_with(|| FipsEndpointPeerTransportConfig {
-                npub,
+                npub: npub.clone(),
                 addresses: Vec::new(),
                 connect_on_start: true,
                 auto_reconnect: true,
@@ -486,11 +510,7 @@ fn fips_endpoint_peers_from_mesh(
             if trimmed.is_empty() {
                 continue;
             }
-            let priority = if split_peer_transport_addr(trimmed).0 == "websocket" {
-                FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY
-            } else {
-                FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
-            };
+            let priority = configured_peer_endpoint_priority(&npub, trimmed);
             if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
                 existing.seen_at_ms = None;
                 existing.priority = existing.priority.min(priority);

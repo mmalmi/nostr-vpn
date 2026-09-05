@@ -15,6 +15,7 @@ source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
 load_release_env "$ROOT"
 load_env_file_defaults "${NVPN_ZAPSTORE_ENV_FILE:-$ROOT/.env.zapstore.local}"
 load_mobile_env "$ROOT"
+RELEASE_JOIN_ANDROID_APK="${NVPN_RELEASE_JOIN_ANDROID_APK:-${RELEASE_JOIN_ANDROID_APK:-}}"
 
 [[ "$(uname -s)" == Darwin ]] || {
   echo "Windows/Pixel Release join gate must be controlled by macOS" >&2

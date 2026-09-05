@@ -175,6 +175,34 @@ mod endpoint_config_tests {
     }
 
     #[test]
+    fn default_public_seeds_prefer_websocket_and_retain_udp_fallback() {
+        for (npub, addresses) in DEFAULT_FIPS_BOOTSTRAP_PEERS {
+            let peers = fips_endpoint_peers_from_mesh(
+                &[],
+                vec![(
+                    (*npub).to_string(),
+                    addresses.iter().map(|address| (*address).to_string()).collect(),
+                )],
+                Vec::new(),
+            );
+            let peer = peers.first().expect("default public bootstrap peer");
+            let websocket = peer
+                .addresses
+                .iter()
+                .find(|hint| split_peer_transport_addr(&hint.addr).0 == "websocket")
+                .expect("public WebSocket carrier");
+            let udp = peer
+                .addresses
+                .iter()
+                .find(|hint| split_peer_transport_addr(&hint.addr).0 == "udp")
+                .expect("public UDP fallback");
+
+            assert_eq!(websocket.priority, FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY);
+            assert_eq!(udp.priority, FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY);
+        }
+    }
+
+    #[test]
     fn udp_hostname_hints_resolve_before_family_specific_transport_selection() {
         let addresses = fips_peer_addresses_from_hint(&FipsPeerAddressHint {
             addr: "localhost:51820".to_string(),

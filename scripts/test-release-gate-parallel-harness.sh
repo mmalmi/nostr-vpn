@@ -440,6 +440,17 @@ for step in "${required_steps[@]}"; do
   grep -Fq "$step" <<<"$main_body" \
     || fail "release gate omits required step: $step"
 done
+for mobile_join_gate in \
+  run_windows_release_mobile_join_e2e_gate \
+  run_linux_release_mobile_join_e2e_gate
+do
+  mobile_join_body="$(
+    sed -n "/^${mobile_join_gate}()/,/^}/p" "$release_gate"
+  )"
+  grep -Fq 'NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR=YES' \
+    <<<"$mobile_join_body" \
+    || fail "$mobile_join_gate does not authorize its required Android reset"
+done
 
 docker_prerequisite_body="$(
   sed -n '/^ensure_release_gate_docker_prerequisites() {$/,/^}$/p' "$release_gate"

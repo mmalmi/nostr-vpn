@@ -111,6 +111,8 @@ grep -Fq 'windows-release-artifact.json' "$REMOTE" \
   || fail "Windows remote wrapper has no artifact receipt"
 grep -Fq 'NostrVpn.Windows.exe' "$HOST" \
   || fail "Windows host wrapper does not select the Release app"
+grep -Fq 'RELEASE_JOIN_ANDROID_APK="${NVPN_RELEASE_JOIN_ANDROID_APK:-${RELEASE_JOIN_ANDROID_APK:-}}"' "$HOST" \
+  || fail "Windows host wrapper does not map the public Android APK input"
 for artifact in nostr_vpn_app_core.dll nvpn.exe; do
   grep -Fq "$artifact" "$REMOTE" \
     || fail "Windows artifact receipt does not bind $artifact"

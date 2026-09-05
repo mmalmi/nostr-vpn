@@ -29,6 +29,9 @@ starts its encrypted approval carrier before exchanging a signed roster.
 - Keep Linux mesh startup working on minimal and NAS kernels without the
   iptables `comment` matcher while retaining fatal handling for real firewall
   and lock failures.
+- Prefer authenticated WebSocket for the built-in public bootstrap pair while
+  retaining UDP as a fallback, so Linux and other native clients do not depend
+  on an intermittently unavailable public UDP carrier.
 - Keep public bootstrap admission available as the connected client population
   grows, while reserving capacity for configured peers and handshakes.
 - Keep the public bootstrap pair connected by assigning one canonical dialer

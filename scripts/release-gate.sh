@@ -1992,6 +1992,7 @@ run_windows_release_mobile_join_e2e_gate() {
     "Windows/Pixel signed Release public-UI manual join e2e" \
     "$MOBILE_JOIN_E2E_TIMEOUT_SECS" \
     env \
+      NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR=YES \
       NVPN_RELEASE_JOIN_ANDROID_APK="$android_apk" \
       NVPN_RELEASE_JOIN_ANDROID_RECEIPT="$android_receipt" \
       NVPN_RELEASE_JOIN_ANDROID_FIPS_METADATA_RECEIPT="$android_fips_metadata" \
@@ -2037,6 +2038,7 @@ run_linux_release_mobile_join_e2e_gate() {
     "Linux/Pixel signed Release public-UI manual join e2e" \
     "$MOBILE_JOIN_E2E_TIMEOUT_SECS" \
     env \
+      NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR=YES \
       NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=1 \
       NVPN_RELEASE_JOIN_ANDROID_APK="$ROOT_DIR/android/app/build/outputs/apk/release/app-release.apk" \
       NVPN_RELEASE_JOIN_ANDROID_RECEIPT="$android_receipt" \
