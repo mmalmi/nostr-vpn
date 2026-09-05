@@ -1411,6 +1411,22 @@ for host_gate in "$WINDOWS_HOST_ENTRY" "$LINUX_HOST_ENTRY"; do
     fail "$(basename "$host_gate") still compiles its peer on Vader"
   fi
 done
+for isolated_ssh in \
+  "$WINDOWS_HOST_ENTRY" "$WINDOWS_HOST_LIB" \
+  "$LINUX_HOST_ENTRY" "$LINUX_HOST_LIB" \
+  "$HOST_PEER_IMPORT" "$LINUX_SYNC" "$WINDOWS_SYNC"
+do
+  require_tokens "$isolated_ssh" "release SSH process ownership" \
+    'ControlMaster=no' \
+    'ControlPersist=no' \
+    'ControlPath=none'
+done
+if grep -Fq '+=(-J ' \
+  "$WINDOWS_HOST_LIB" "$LINUX_HOST_LIB" "$LINUX_HOST_ENTRY" \
+  "$LINUX_SYNC" "$WINDOWS_SYNC"
+then
+  fail "release SSH still uses a jump shorthand that can escape its lane"
+fi
 require_tokens "$HOST_PEER_IMPORT" "immutable Mac-to-Vader peer import" \
   'prepare-macos-release-fips-peer.sh' \
   'verify-host-linux-peer-artifact.py' \

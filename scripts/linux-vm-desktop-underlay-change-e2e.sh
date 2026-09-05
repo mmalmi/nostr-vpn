@@ -225,11 +225,13 @@ PY
 
   GUEST_BINARY_COPY_TMP="$GUEST_IMPORT_DIR/nvpn.copy"
   local -a primary_scp
-  primary_scp=(scp -q -o BatchMode=yes -o ConnectTimeout=10)
+  primary_scp=(scp -q "${SSH_LIVENESS_OPTIONS[@]}")
   if [[ -n "$PRIMARY_PROXY" ]]; then
     primary_scp+=(-o "ProxyCommand=$PRIMARY_PROXY")
   elif [[ -n "$LINUX_JUMP" ]]; then
-    primary_scp+=(-J "$LINUX_JUMP")
+    primary_scp+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $LINUX_JUMP"
+    )
   fi
   run_primary \
     "test ! -e '$GUEST_IMPORT_DIR' && install -d -m 0700 '$GUEST_IMPORT_DIR'"
@@ -432,7 +434,8 @@ SH
   NETWORK_CREATED=1
   NIC_ATTACHED=1
   SECONDARY_PROXY="ssh -o BatchMode=yes -o ConnectionAttempts=1 \
--o ConnectTimeout=10 -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+-o ConnectTimeout=10 -o ControlMaster=no -o ControlPersist=no -o ControlPath=none \
+-o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
 $HYPERVISOR_SSH -W $SECONDARY_ADDRESS:22"
 }
 

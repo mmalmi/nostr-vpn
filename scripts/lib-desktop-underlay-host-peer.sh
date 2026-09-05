@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+
+DESKTOP_UNDERLAY_SSH_OPTIONS=(
+  -o BatchMode=yes
+  -o ConnectionAttempts=1
+  -o ConnectTimeout=10
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ControlPath=none
+  -o ServerAliveInterval=2
+  -o ServerAliveCountMax=2
+)
 # Shared import-only Linux peer lifecycle for physical desktop underlay gates.
 # The caller supplies ROOT, HYPERVISOR_SSH, ARTIFACT_DIR and fail().
 
@@ -204,8 +215,7 @@ desktop_underlay_import_host_peer() {
   }
 
   remote_dir="$(
-    ssh -o BatchMode=yes -o ConnectionAttempts=1 -o ConnectTimeout=10 \
-      -o ServerAliveInterval=2 -o ServerAliveCountMax=2 "$HYPERVISOR_SSH" \
+    ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
       mktemp -d /tmp/nvpn-desktop-underlay-peer.XXXXXX
   )" || {
     desktop_underlay_host_peer_error "could not create remote import directory"
@@ -220,33 +230,32 @@ desktop_underlay_import_host_peer() {
   esac
   DESKTOP_UNDERLAY_HOST_PEER_REMOTE_DIR="$remote_dir"
 
-  scp -q -o BatchMode=yes -o ConnectTimeout=10 \
+  scp -q "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" \
     "$DESKTOP_UNDERLAY_HOST_PEER_BINARY" \
     "$HYPERVISOR_SSH:$remote_dir/nvpn.copy" || {
       desktop_underlay_host_peer_error "could not import host Linux peer"
       return 1
     }
-  scp -q -o BatchMode=yes -o ConnectTimeout=10 \
+  scp -q "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" \
     "$receipt" \
     "$HYPERVISOR_SSH:$remote_dir/receipt.json.copy" || {
       desktop_underlay_host_peer_error "could not import host Linux peer receipt"
       return 1
     }
-  scp -q -o BatchMode=yes -o ConnectTimeout=10 \
+  scp -q "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" \
     "$peer_runner" \
     "$HYPERVISOR_SSH:$remote_dir/desktop-linux-underlay-peer-e2e.sh.copy" || {
       desktop_underlay_host_peer_error "could not import host peer fixture"
       return 1
     }
-  scp -q -o BatchMode=yes -o ConnectTimeout=10 \
+  scp -q "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" \
     "$listener_audit" \
     "$HYPERVISOR_SSH:$remote_dir/lib-desktop-linux-listener-audit.sh.copy" || {
       desktop_underlay_host_peer_error "could not import host listener audit"
       return 1
     }
 
-  if ! ssh -o BatchMode=yes -o ConnectionAttempts=1 -o ConnectTimeout=10 \
-    -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+  if ! ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" \
     "$HYPERVISOR_SSH" bash -s -- \
     "$remote_dir" \
     "$DESKTOP_UNDERLAY_HOST_PEER_SHA256" \
@@ -384,8 +393,7 @@ desktop_underlay_cleanup_host_peer() {
     alarm $seconds;
     exec @ARGV;
     die "exec failed: $!\n";
-  ' 30 ssh -o BatchMode=yes -o ConnectionAttempts=1 -o ConnectTimeout=10 \
-    -o ServerAliveInterval=2 -o ServerAliveCountMax=2 \
+  ' 30 ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" \
     "$HYPERVISOR_SSH" bash -s -- "$remote_dir" <<'SH'
 set -euo pipefail
 remote_dir="$1"

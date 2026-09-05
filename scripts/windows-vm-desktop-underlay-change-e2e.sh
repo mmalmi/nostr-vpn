@@ -246,7 +246,7 @@ capture_version_receipts() {
   run_ps_primary \
     "& $(ps_quote "$GUEST_BINARY") version --verbose" \
     | tr -d '\r' >"$ARTIFACT_DIR/target-version.txt"
-  ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+  ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
     "'$HYPERVISOR_BINARY' version --verbose" \
     >"$ARTIFACT_DIR/peer-version.txt"
   grep -Fxq "$expected" "$ARTIFACT_DIR/target-version.txt" \
@@ -301,7 +301,7 @@ random_mac() {
 
 discover_primary_interface() {
   local row_count rows
-  rows="$(ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+  rows="$(ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
     "virsh domiflist '$VM_NAME' | awk '\$2 == \"network\" { print \$1 \"|\" \$3 \"|\" \$5 }'")"
   row_count="$(grep -c . <<<"$rows" || true)"
   [[ "$row_count" == "1" ]] \
@@ -309,11 +309,11 @@ discover_primary_interface() {
   IFS='|' read -r PRIMARY_IFACE PRIMARY_SOURCE PRIMARY_MAC <<<"$rows"
   [[ -n "$PRIMARY_IFACE" && -n "$PRIMARY_SOURCE" && -n "$PRIMARY_MAC" ]]
 
-  PRIMARY_ADDRESS="$(ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+  PRIMARY_ADDRESS="$(ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
     "virsh domifaddr '$VM_NAME' --source lease | awk '\$2 == \"$PRIMARY_MAC\" && \$3 == \"ipv4\" { sub(/\\/.*/, \"\", \$4); print \$4; exit }'")"
   [[ -n "$PRIMARY_ADDRESS" ]] \
     || fail "could not resolve the Windows VM primary address from libvirt"
-  HYPERVISOR_UPLINK="$(ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+  HYPERVISOR_UPLINK="$(ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
     "ip -j -4 route get 1.1.1.1 | jq -r '.[0].dev'")"
   [[ -n "$HYPERVISOR_UPLINK" ]] \
     || fail "could not resolve the hypervisor uplink for the isolated peer"
@@ -321,7 +321,7 @@ discover_primary_interface() {
 
 attach_secondary_network() {
   SECONDARY_MAC="$(random_mac)"
-  ssh -o BatchMode=yes "$HYPERVISOR_SSH" bash -s -- \
+  ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" bash -s -- \
     "$VM_NAME" "$NETWORK_NAME" "$SECONDARY_GATEWAY" "$SECONDARY_NETMASK" "$SECONDARY_MAC" <<'SH'
 set -euo pipefail
 vm="$1"
@@ -367,7 +367,9 @@ virsh attach-interface \
 SH
   NETWORK_CREATED=1
   NIC_ATTACHED=1
-  SECONDARY_PROXY="ssh -o BatchMode=yes $HYPERVISOR_SSH -W $SECONDARY_ADDRESS:22"
+  SECONDARY_PROXY="ssh -o BatchMode=yes -o ControlMaster=no \
+-o ControlPersist=no -o ControlPath=none \
+$HYPERVISOR_SSH -W $SECONDARY_ADDRESS:22"
 }
 
 wait_for_secondary_adapter() {
@@ -489,7 +491,7 @@ start_windows_runner() {
 
 set_primary_link() {
   local state="$1"
-  ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+  ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
     "date +%s.%N; virsh domif-setlink '$VM_NAME' '$PRIMARY_IFACE' '$state' >/dev/null"
 }
 
@@ -499,7 +501,7 @@ assert_peer_recovered_from_source() {
   local label="$3"
   local observer="$ROOT/scripts/desktop-underlay-peer-recovery-observer.sh"
   [[ -r "$observer" ]] || fail "peer recovery observer is missing"
-  ssh -o BatchMode=yes "$HYPERVISOR_SSH" sudo -n bash -s -- \
+  ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" sudo -n bash -s -- \
     "$PEER_STATE_DIR" "$cut_timestamp" "$expected_source" \
     "$RECOVERY_DEADLINE_MS" "$label" <"$observer"
 }
@@ -802,7 +804,7 @@ Write-Output 'WINDOWS_GUEST_CLEANUP_AUDIT_OK'"
 }
 
 audit_hypervisor_cleanup() {
-  ssh -o BatchMode=yes "$HYPERVISOR_SSH" bash -s -- \
+  ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" bash -s -- \
     "$VM_NAME" "$NETWORK_NAME" "$PRIMARY_IFACE" "$PRIMARY_MAC" \
     "$PEER_TUN_IFACE" "$PEER_STATE_DIR" "$COUNTER_CHAIN" \
     "$PEER_NETNS" "$PEER_HOST_VETH" "$PEER_ENDPOINT_HOST" \
@@ -888,7 +890,7 @@ collect_failure_artifacts() {
   fi
 
   if [[ "$PEER_INITIALIZED" == "1" ]]; then
-    ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+    ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
       sudo -n bash -s -- "$PEER_STATE_DIR" "$HYPERVISOR_BINARY" \
       >"$ARTIFACT_DIR/peer-failure-diagnostics.txt" 2>&1 <<'SH' || true
 set -u
@@ -956,7 +958,7 @@ cleanup() {
   set +u
 
   if [[ -n "$PRIMARY_IFACE" ]]; then
-    ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+    ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
       "virsh domif-setlink '$VM_NAME' '$PRIMARY_IFACE' up" >/dev/null 2>&1 || true
   fi
 
@@ -1012,12 +1014,12 @@ if (Test-Path -LiteralPath \$runnerPath) {
     || cleanup_failed=1
   if [[ "$QUARANTINE_GUEST_NETWORK" == "0" ]]; then
     if [[ "$NIC_ATTACHED" == "1" && -n "$SECONDARY_MAC" ]]; then
-      ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+      ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
         "virsh detach-interface --domain '$VM_NAME' --type network --mac '$SECONDARY_MAC' --live" \
         >/dev/null 2>&1 || true
     fi
     if [[ "$NETWORK_CREATED" == "1" ]]; then
-      ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+      ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
         "virsh net-destroy '$NETWORK_NAME'" >/dev/null 2>&1 || cleanup_failed=1
     fi
     if [[ "$NIC_ATTACHED" == "1" ]]; then

@@ -28,6 +28,15 @@ for command in git ssh scp iconv base64 jq awk; do
     || fail "required command is missing: $command"
 done
 
+WINDOWS_UNDERLAY_SSH_OPTIONS=(
+  -o BatchMode=yes
+  -o ConnectTimeout=10
+  -o ConnectionAttempts=1
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ControlPath=none
+)
+
 ps_quote() {
   local value="${1//\'/\'\'}"
   printf "'%s'" "$value"
@@ -37,14 +46,14 @@ primary_ssh_command() {
   local channel_timeout="${1:-}"
   WINDOWS_PRIMARY_SSH=(
     ssh
-    -o BatchMode=yes
-    -o ConnectTimeout=10
-    -o ConnectionAttempts=1
+    "${WINDOWS_UNDERLAY_SSH_OPTIONS[@]}"
   )
   if [[ -n "$PRIMARY_PROXY" ]]; then
     WINDOWS_PRIMARY_SSH+=(-o "ProxyCommand=$PRIMARY_PROXY")
   elif [[ -n "$WINDOWS_JUMP" ]]; then
-    WINDOWS_PRIMARY_SSH+=(-J "$WINDOWS_JUMP")
+    WINDOWS_PRIMARY_SSH+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $WINDOWS_JUMP"
+    )
   fi
   if [[ -n "$channel_timeout" ]]; then
     WINDOWS_PRIMARY_SSH+=(-o "ChannelTimeout=session=${channel_timeout}s")
@@ -56,9 +65,7 @@ secondary_ssh_command() {
   local channel_timeout="${1:-}"
   WINDOWS_SECONDARY_SSH=(
     ssh
-    -o BatchMode=yes
-    -o ConnectTimeout=10
-    -o ConnectionAttempts=1
+    "${WINDOWS_UNDERLAY_SSH_OPTIONS[@]}"
     -o "ProxyCommand=$SECONDARY_PROXY"
   )
   if [[ -n "$channel_timeout" ]]; then
@@ -168,12 +175,12 @@ peer_command() {
   )
   case "$action" in
     namespace-setup|namespace-cleanup|namespace-audit)
-      ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+      ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
         sudo -n env "${peer_env[@]}" "$@" \
         "$DESKTOP_UNDERLAY_HOST_PEER_RUNNER" "$action"
       ;;
     *)
-      ssh -o BatchMode=yes "$HYPERVISOR_SSH" \
+      ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
         sudo -n ip netns exec "$PEER_NETNS" env "${peer_env[@]}" "$@" \
         "$DESKTOP_UNDERLAY_HOST_PEER_RUNNER" "$action"
       ;;

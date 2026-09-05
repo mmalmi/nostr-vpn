@@ -33,6 +33,9 @@ SSH_LIVENESS_OPTIONS=(
   -o BatchMode=yes
   -o ConnectionAttempts=1
   -o ConnectTimeout=10
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ControlPath=none
   -o ServerAliveInterval=2
   -o ServerAliveCountMax=2
 )
@@ -67,7 +70,9 @@ primary_ssh_command() {
   if [[ -n "$PRIMARY_PROXY" ]]; then
     LINUX_PRIMARY_SSH+=(-o "ProxyCommand=$PRIMARY_PROXY")
   elif [[ -n "$LINUX_JUMP" ]]; then
-    LINUX_PRIMARY_SSH+=(-J "$LINUX_JUMP")
+    LINUX_PRIMARY_SSH+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $LINUX_JUMP"
+    )
   fi
   LINUX_PRIMARY_SSH+=("$LINUX_SSH")
 }

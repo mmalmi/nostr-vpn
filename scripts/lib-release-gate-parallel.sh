@@ -101,6 +101,13 @@ release_gate_parallel_group_alive() {
       '
 }
 
+release_gate_parallel_group_snapshot() {
+  local pgid="$1"
+  [[ -n "$pgid" ]] || return 0
+  ps -axo pid=,ppid=,pgid=,stat=,comm= 2>/dev/null \
+    | awk -v expected="$pgid" '$3 == expected { print }'
+}
+
 release_gate_parallel_wait_group_gone() {
   local pgid="$1"
   local attempts=0
@@ -204,8 +211,14 @@ release_gate_parallel_wait() {
   local orphan_cleanup_failed=0
   local pgid="${RELEASE_GATE_PARALLEL_PGIDS[$index]:-}"
   if ((status == 0)) && release_gate_parallel_group_alive "$pgid"; then
-    orphaned_group=1
-    release_gate_parallel_terminate_group "$pgid" || orphan_cleanup_failed=1
+    # SSH ProxyCommand and pipe helpers can still be closing after their lane
+    # wrapper has been reaped. Give normal process teardown the same short
+    # grace used after TERM before treating a persistent child as an orphan.
+    if ! release_gate_parallel_wait_group_gone "$pgid"; then
+      orphaned_group=1
+      release_gate_parallel_group_snapshot "$pgid" >&2 || true
+      release_gate_parallel_terminate_group "$pgid" || orphan_cleanup_failed=1
+    fi
   fi
 
   local duration=$(( $(date +%s) - started_at ))

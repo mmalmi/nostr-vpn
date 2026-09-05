@@ -19,6 +19,12 @@ EXACT_COMMIT="${NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT:-}"
   exit 2
 }
 sync_commit=""
+SSH_ISOLATION_OPTIONS=(
+  -o BatchMode=yes
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ControlPath=none
+)
 if [[ -n "$EXACT_COMMIT" ]]; then
   [[ "$EXACT_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
     echo "NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT must be an exact lowercase Git commit" >&2
@@ -38,22 +44,26 @@ if [[ -n "$EXACT_COMMIT" ]]; then
 fi
 
 ssh_command() {
-  SSH_CMD=(ssh -o BatchMode=yes)
+  SSH_CMD=(ssh "${SSH_ISOLATION_OPTIONS[@]}")
   if [[ -n "$SSH_PROXY_COMMAND" ]]; then
     SSH_CMD+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
   elif [[ -n "$SSH_JUMP" ]]; then
-    SSH_CMD+=(-J "$SSH_JUMP")
+    SSH_CMD+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $SSH_JUMP"
+    )
   fi
   SSH_CMD+=("$SSH_HOST")
 }
 
 git_ssh_command() {
   local -a command
-  command=(ssh -o BatchMode=yes)
+  command=(ssh "${SSH_ISOLATION_OPTIONS[@]}")
   if [[ -n "$SSH_PROXY_COMMAND" ]]; then
     command+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
   elif [[ -n "$SSH_JUMP" ]]; then
-    command+=(-J "$SSH_JUMP")
+    command+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $SSH_JUMP"
+    )
   fi
   printf '%q ' "${command[@]}"
 }

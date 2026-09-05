@@ -17,17 +17,25 @@ FIPS_REPO="${NVPN_WINDOWS_FIPS_REPO_PATH:-${NVPN_FIPS_REPO_PATH:-$SRC_ROOT/fips}
 GUEST_FIPS_REPO="${NVPN_WINDOWS_GUEST_FIPS_REPO_PATH:-C:\\src\\fips}"
 GUEST_FIPS_BARE_REPO="${NVPN_WINDOWS_FIPS_GIT_BARE_PATH:-${GUEST_FIPS_REPO}.git}"
 CDK_SPILMAN_REPO="${NVPN_WINDOWS_CDK_SPILMAN_REPO_PATH:-$SRC_ROOT/cashu_spilman_channels}"
+SSH_ISOLATION_OPTIONS=(
+  -o BatchMode=yes
+  -o ControlMaster=no
+  -o ControlPersist=no
+  -o ControlPath=none
+)
 
 run_ps() {
   local script="$1"
   local encoded
   local -a ssh_cmd
   encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
-  ssh_cmd=(ssh -o BatchMode=yes)
+  ssh_cmd=(ssh "${SSH_ISOLATION_OPTIONS[@]}")
   if [[ -n "$SSH_PROXY_COMMAND" ]]; then
     ssh_cmd+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
   elif [[ -n "$SSH_JUMP" ]]; then
-    ssh_cmd+=(-J "$SSH_JUMP")
+    ssh_cmd+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $SSH_JUMP"
+    )
   fi
   ssh_cmd+=("$SSH_HOST")
   "${ssh_cmd[@]}" powershell.exe -NoProfile -EncodedCommand "$encoded"
@@ -35,11 +43,13 @@ run_ps() {
 
 git_ssh_command() {
   local -a ssh_cmd
-  ssh_cmd=(ssh -o BatchMode=yes)
+  ssh_cmd=(ssh "${SSH_ISOLATION_OPTIONS[@]}")
   if [[ -n "$SSH_PROXY_COMMAND" ]]; then
     ssh_cmd+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
   elif [[ -n "$SSH_JUMP" ]]; then
-    ssh_cmd+=(-J "$SSH_JUMP")
+    ssh_cmd+=(
+      -o "ProxyCommand=ssh -o BatchMode=yes -o ControlMaster=no -o ControlPersist=no -o ControlPath=none -W %h:%p $SSH_JUMP"
+    )
   fi
   printf '%q ' "${ssh_cmd[@]}"
 }

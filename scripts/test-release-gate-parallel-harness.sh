@@ -158,8 +158,19 @@ if release_gate_parallel_group_alive "$peer_pgid"; then
   fail "cancelled peer process group survived the failed lane"
 fi
 
-# A successful wrapper with a stubborn child must fail closed and leave no
-# process behind. This exercises TERM and KILL escalation, not source strings.
+# A successful wrapper may finish just before a short-lived transport helper.
+# Let natural teardown drain without turning a healthy lane into a failure.
+settling_lane() {
+  ( sleep 0.1 ) &
+}
+
+release_gate_parallel_start "settling lane" settling_lane
+settling="$RELEASE_GATE_PARALLEL_LAST_INDEX"
+release_gate_parallel_wait "$settling" >/dev/null \
+  || fail "short-lived lane descendant was misclassified as an orphan"
+
+# A successful wrapper with a stubborn child must still fail closed and leave
+# no process behind. This exercises TERM and KILL escalation, not source text.
 orphan_lane() {
   (
     trap 'printf "term received\n" >"$1"' TERM
