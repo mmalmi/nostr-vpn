@@ -123,11 +123,12 @@ internal object TunnelConfigRefreshPolicy {
     fun shouldDeferRestartForQueuedApproval(
         tunnelRunning: Boolean,
         configJson: String,
+        pendingJoinReceipt: Boolean = false,
     ): Boolean =
         tunnelRunning &&
-            runCatching {
+            (pendingJoinReceipt || runCatching {
                 JSONObject(configJson).optJSONArray("queuedJoinRosters")?.length() ?: 0
-            }.getOrDefault(0) > 0
+            }.getOrDefault(0) > 0)
 
     internal fun stableFingerprint(configJson: String): String =
         runCatching {

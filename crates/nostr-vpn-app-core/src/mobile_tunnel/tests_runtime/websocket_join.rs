@@ -474,6 +474,10 @@
                 },
         );
         let roster_applied_at = Instant::now();
+        assert!(
+            guest.pending_join_roster_receipts.has_pending_receipts(),
+            "a roster-triggered Android restart must wait for the receiver's durable receipt"
+        );
         tokio::time::sleep(Duration::from_millis(500)).await;
         assert_eq!(
             guest
@@ -611,6 +615,10 @@
             })
             .await
             .expect("the forced unrouted receipt attempt did not fail");
+            assert!(
+                guest.pending_join_roster_receipts.has_pending_receipts(),
+                "a failed receipt send must keep the existing tunnel alive for retry"
+            );
             assert_eq!(
                 guest
                     .pending_join_roster_receipts
@@ -765,6 +773,10 @@
         })
         .await
         .expect("receipt sidecar remained after all transport-confirmed deliveries");
+        assert!(
+            !guest.pending_join_roster_receipts.has_pending_receipts(),
+            "transport-confirmed receipt delivery must release the Android restart guard"
+        );
         assert_eq!(
             guest
                 .take_app_config_toml()

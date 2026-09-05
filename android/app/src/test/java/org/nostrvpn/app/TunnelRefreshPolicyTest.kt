@@ -235,4 +235,29 @@ class TunnelRefreshPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun runningTunnelDrainsReceiverReceiptWithoutAnAdminOutbox() {
+        assertTrue(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = true,
+                configJson = """{"queuedJoinRosters":[]}""",
+                pendingJoinReceipt = true,
+            ),
+        )
+        assertFalse(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = true,
+                configJson = """{"queuedJoinRosters":[]}""",
+                pendingJoinReceipt = false,
+            ),
+        )
+        assertFalse(
+            TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
+                tunnelRunning = false,
+                configJson = """{"queuedJoinRosters":[]}""",
+                pendingJoinReceipt = true,
+            ),
+        )
+    }
 }

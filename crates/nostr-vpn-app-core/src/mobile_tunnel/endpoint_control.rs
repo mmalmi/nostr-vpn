@@ -399,27 +399,35 @@ async fn apply_mobile_join_roster_frame(
     source_peer: PeerIdentity,
     join_roster: &JoinRosterControl,
 ) -> Result<()> {
-    let updated = apply_mobile_join_roster(
-        control.app_config,
-        control.app_config_dirty,
-        control.config_path,
-        join_roster,
-    )?;
-    let applied = updated.is_some()
-        || mobile_join_roster_is_durably_persisted(
+    let updated = {
+        let _applying = control
+            .pending_join_roster_receipts
+            .applying
+            .lock()
+            .map_err(|_| anyhow!("mobile join receipt apply lock poisoned"))?;
+        let updated = apply_mobile_join_roster(
             control.app_config,
+            control.app_config_dirty,
             control.config_path,
             join_roster,
         )?;
-    if !applied {
-        return Ok(());
-    }
-    let roster_event_id = join_roster.signed_roster.artifact_hash();
-    let committed =
-        control.config_path.is_some() || !control.app_config_dirty.load(Ordering::Acquire);
-    control
-        .pending_join_roster_receipts
-        .enqueue(roster_event_id, source_peer, committed)?;
+        let applied = updated.is_some()
+            || mobile_join_roster_is_durably_persisted(
+                control.app_config,
+                control.config_path,
+                join_roster,
+            )?;
+        if !applied {
+            return Ok(());
+        }
+        let roster_event_id = join_roster.signed_roster.artifact_hash();
+        let committed =
+            control.config_path.is_some() || !control.app_config_dirty.load(Ordering::Acquire);
+        control
+            .pending_join_roster_receipts
+            .enqueue(roster_event_id, source_peer, committed)?;
+        updated
+    };
     if let Some(updated) = updated {
         apply_mobile_roster_runtime_update(control, updated).await?;
     }

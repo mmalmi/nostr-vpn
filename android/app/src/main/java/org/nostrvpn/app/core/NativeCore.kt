@@ -20,6 +20,7 @@ internal object NativeCore {
     external fun mobileTunnelFree(handle: Long)
     external fun mobileTunnelAttachTunFd(handle: Long, fd: Int): Boolean
     external fun mobileTunnelNetworkChanged(handle: Long): Boolean
+    external fun mobileTunnelHasPendingJoinReceipts(handle: Long): Boolean
     external fun mobileTunnelWireGuardUnderlayReady(handle: Long): Boolean
     /// Raw fd of the userspace WG upstream UDP socket, or -1 if WG
     /// upstream isn't running. The VpnService must call `protect(fd)`

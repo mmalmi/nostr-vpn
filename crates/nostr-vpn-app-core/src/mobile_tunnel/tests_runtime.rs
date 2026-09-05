@@ -6,6 +6,23 @@
             .port()
     }
 
+    #[test]
+    fn mobile_join_restart_waits_during_apply_before_receipt_is_queued() {
+        let pending = PendingJoinRosterReceiptQueue::default();
+        assert!(!pending.has_pending_receipts());
+        {
+            let _applying = pending.applying.lock().expect("begin roster apply");
+            assert!(
+                pending.has_pending_receipts(),
+                "a config observer must not restart between persistence and receipt enqueue"
+            );
+        }
+        assert!(
+            !pending.has_pending_receipts(),
+            "an ignored or failed apply must not leave a restart permanently deferred"
+        );
+    }
+
     fn available_tcp_port() -> u16 {
         std::net::TcpListener::bind("127.0.0.1:0")
             .expect("bind test TCP port")

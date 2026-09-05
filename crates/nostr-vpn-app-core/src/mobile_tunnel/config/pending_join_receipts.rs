@@ -27,6 +27,7 @@ struct PersistedPendingJoinRosterReceipts {
 #[derive(Debug)]
 struct PendingJoinRosterReceiptQueue {
     path: Option<PathBuf>,
+    applying: Mutex<()>,
     receipts: Mutex<HashMap<String, PendingJoinRosterReceipt>>,
     changed: tokio::sync::Notify,
 }
@@ -37,6 +38,7 @@ impl Default for PendingJoinRosterReceiptQueue {
     fn default() -> Self {
         Self {
             path: None,
+            applying: Mutex::new(()),
             receipts: Mutex::new(HashMap::new()),
             changed: tokio::sync::Notify::new(),
         }
@@ -44,6 +46,18 @@ impl Default for PendingJoinRosterReceiptQueue {
 }
 
 impl PendingJoinRosterReceiptQueue {
+    #[cfg(any(test, target_os = "android"))]
+    fn has_pending_receipts(&self) -> bool {
+        // Config-file observers can request a restart before apply has queued
+        // its receipt. Keep the live carrier through that gap and until ACK.
+        let Ok(_applying) = self.applying.try_lock() else {
+            return true;
+        };
+        self.receipts
+            .lock()
+            .map_or(true, |receipts| !receipts.is_empty())
+    }
+
     fn load(path: Option<PathBuf>) -> Result<Self> {
         let Some(path) = path else {
             return Ok(Self::default());
@@ -122,6 +136,7 @@ impl PendingJoinRosterReceiptQueue {
         }
         Ok(Self {
             path: Some(path),
+            applying: Mutex::new(()),
             receipts: Mutex::new(receipts),
             changed: tokio::sync::Notify::new(),
         })

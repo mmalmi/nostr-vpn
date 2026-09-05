@@ -12,6 +12,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
 
 ### Fixed
 
+- Keep Android's live approval connection until its durable receipt reaches
+  the admin, avoiding a tunnel restart in the middle of device joining.
 - Disable iOS FIPS settings while the previous VPN state is being restored so
   taps cannot appear to succeed before their configuration can be saved.
 - Start the iOS VPN carrier when creating an admin network, matching Android

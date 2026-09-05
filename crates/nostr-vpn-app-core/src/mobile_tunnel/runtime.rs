@@ -783,6 +783,11 @@ impl MobileTunnel {
         })
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) fn has_pending_join_receipts(&self) -> bool {
+        self.pending_join_roster_receipts.has_pending_receipts()
+    }
+
     pub(crate) fn take_app_config_toml(&self) -> Result<String> {
         pending_app_config_toml(&self.app_config, &self.config, &self.app_config_dirty)
     }

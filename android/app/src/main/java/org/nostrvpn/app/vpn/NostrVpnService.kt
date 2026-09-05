@@ -196,6 +196,8 @@ class NostrVpnService : VpnService() {
             TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
                 tunnelRunning = running.get(),
                 configJson = tunnelConfigJson,
+                pendingJoinReceipt = tunnelHandle != 0L &&
+                    NativeCore.mobileTunnelHasPendingJoinReceipts(tunnelHandle),
             )
         ) {
             deferTunnelRestartUntilQueuedApprovalDrains(foregroundStarted)
@@ -263,6 +265,8 @@ class NostrVpnService : VpnService() {
             TunnelConfigRefreshPolicy.shouldDeferRestartForQueuedApproval(
                 tunnelRunning = running.get(),
                 configJson = latestConfigJson,
+                pendingJoinReceipt = tunnelHandle != 0L &&
+                    NativeCore.mobileTunnelHasPendingJoinReceipts(tunnelHandle),
             )
         ) {
             underlyingNetworkHandler.postDelayed(

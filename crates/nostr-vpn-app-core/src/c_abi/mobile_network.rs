@@ -46,6 +46,19 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNetwork
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelHasPendingJoinReceipts(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jboolean {
+    let Some(tunnel) = tunnel_from_jlong(handle) else {
+        return 0;
+    };
+    u8::from(tunnel.tunnel.has_pending_join_receipts())
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelWireGuardUnderlayReady(
     _env: JNIEnv<'_>,
     _class: JClass<'_>,
