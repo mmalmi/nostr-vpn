@@ -399,6 +399,7 @@ test('component proof scopes desktop crates and Rust test modules', () => {
     'crates/nostr-vpn-cli/src/wireguard_exit_helpers.rs',
     'crates/nostr-vpn-cli/src/fips_private_mesh/linux_cleanup.rs',
     'crates/nostr-vpn-cli/src/fips_private_mesh/tests_network_cleanup.rs',
+    'scripts/windows-vm-app-launch-smoke.sh',
   ]
   try {
     git('init', '-q')
@@ -449,6 +450,7 @@ test('component proof scopes desktop crates and Rust test modules', () => {
     )
     assertScope('linux-cleanup', [paths[13]], ['linux'])
     assertScope('linux-cleanup-tests', [paths[14]], [])
+    assertScope('windows-installer-build-gate', [paths[15]], ['windows'])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

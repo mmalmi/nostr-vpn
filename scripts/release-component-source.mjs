@@ -97,7 +97,7 @@ const buildScripts = {
   ],
   linux: [/build-host-linux-/, /build-nvpn-linux-musl$/, /host-linux-native-builder-/, /host_linux_package_content/, /lib-host-linux-/],
   macos: [/build-.*macos/, /scripts\/macos-build$/, /lib-macos-release-app-ownership/, /verify-macos-release-publication-artifacts/],
-  windows: [/windows-build\.ps1$/],
+  windows: [/windows-build\.ps1$/, /^scripts\/windows-vm-app-launch-smoke\.sh$/],
 }
 
 function git(root, args, label) {
