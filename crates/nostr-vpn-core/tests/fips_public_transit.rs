@@ -288,6 +288,7 @@ async fn public_mixed_transit_endpoint(seed_index: usize) -> Arc<FipsEndpoint> {
 }
 
 async fn wait_for_expected_transit(endpoint: &FipsEndpoint, expected_seed_npub: &str) {
+    let started = std::time::Instant::now();
     tokio::time::timeout(CONNECT_TIMEOUT, async {
         loop {
             let peers = endpoint.peers().await.expect("query endpoint peers");
@@ -309,6 +310,10 @@ async fn wait_for_expected_transit(endpoint: &FipsEndpoint, expected_seed_npub: 
     })
     .await
     .expect("endpoint did not authenticate to the expected public WebSocket seed");
+    eprintln!(
+        "authenticated public seed in {} ms",
+        started.elapsed().as_millis()
+    );
 }
 
 async fn wait_for_connected_peer(endpoint: &FipsEndpoint, expected_npub: &str) {
@@ -422,6 +427,7 @@ async fn deliver_ping(
     recipient_npub: &str,
     network_id: &str,
 ) {
+    let started = std::time::Instant::now();
     let recipient = PeerIdentity::from_npub(recipient_npub).expect("recipient identity");
     let frame = FipsControlFrame::Capabilities {
         network_id: network_id.to_string(),
@@ -437,4 +443,8 @@ async fn deliver_ping(
         .unwrap_or_else(|| panic!("{network_id}: control service closed"));
     assert_eq!(received.frame, frame);
     assert_eq!(received.source_peer.npub(), sender_npub);
+    eprintln!(
+        "{network_id}: authenticated control roundtrip {} ms",
+        started.elapsed().as_millis()
+    );
 }

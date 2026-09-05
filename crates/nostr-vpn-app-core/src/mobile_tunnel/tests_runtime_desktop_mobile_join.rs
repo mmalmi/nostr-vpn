@@ -102,32 +102,23 @@
                 .enable_all()
                 .build()
                 .expect("desktop/mobile join runtime")
-                .block_on(desktop_admin_to_mobile_joiner());
+                .block_on(desktop_admin_to_mobile_joiner(false));
         });
     }
 
-    async fn desktop_admin_to_mobile_joiner() {
+    async fn desktop_admin_to_mobile_joiner(routed: bool) {
         let dir = desktop_mobile_join_test_dir("desktop-admin-mobile-joiner");
         let config_path = dir.join("mobile-config.toml");
         let (admin_app, joiner_app, queued, _admin_pubkey) =
             direct_manual_join_apps("desktop-admin-mobile-joiner");
         joiner_app.save(&config_path).expect("save mobile joiner config");
         let joiner_pubkey = joiner_app.own_nostr_pubkey_hex().expect("mobile pubkey");
-        let admin_pubkey = admin_app.own_nostr_pubkey_hex().expect("desktop pubkey");
-        let desktop_port = available_udp_port();
-        let mobile_port = available_udp_port();
-        let desktop = bind_direct_desktop_endpoint(
-            admin_app.nostr.secret_key.clone(),
-            desktop_port,
-            &joiner_pubkey,
-            mobile_port,
-        )
-        .await;
         let mut mobile_config =
             MobileTunnelConfig::from_app_with_config_path(&joiner_app, &config_path)
                 .expect("mobile joiner tunnel config");
-        mobile_config.listen_port = mobile_port;
-        add_direct_mobile_peer_hint(&mut mobile_config, &admin_pubkey, desktop_port);
+        let (desktop, carriers) = bind_desktop_mobile_join_carrier(
+            &admin_app, &joiner_pubkey, &mut mobile_config, routed,
+        ).await;
         let mobile = Box::pin(MobileTunnel::start_async(mobile_config, joiner_app))
             .await
             .expect("start mobile joiner");
@@ -151,9 +142,13 @@
             "mobile joiner must persist the exact desktop-admin roster before acknowledging"
         );
 
+        assert_desktop_mobile_join_carrier(&desktop, &mobile, routed).await;
         desktop_control.stop().await;
         shutdown_started_mobile_tunnel(mobile).await;
         desktop.shutdown().await.expect("shutdown desktop endpoint");
+        for carrier in carriers {
+            carrier.shutdown().await.expect("shutdown local join carrier");
+        }
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -164,11 +159,11 @@
                 .enable_all()
                 .build()
                 .expect("mobile/desktop join runtime")
-                .block_on(mobile_admin_to_desktop_joiner());
+                .block_on(mobile_admin_to_desktop_joiner(false));
         });
     }
 
-    async fn mobile_admin_to_desktop_joiner() {
+    async fn mobile_admin_to_desktop_joiner(routed: bool) {
         let dir = desktop_mobile_join_test_dir("mobile-admin-desktop-joiner");
         let mobile_config_path = dir.join("mobile-config.toml");
         let desktop_config_path = dir.join("desktop-config.toml");
@@ -185,23 +180,15 @@
             &queued.join_roster,
         )
         .expect("queue mobile admin join roster");
-        let mobile_port = available_udp_port();
-        let desktop_port = available_udp_port();
-        let desktop = bind_direct_desktop_endpoint(
-            joiner_app.nostr.secret_key.clone(),
-            desktop_port,
-            &admin_pubkey,
-            mobile_port,
-        )
-        .await;
-        let mut desktop_control = FipsControlTcpRuntime::start(Arc::clone(&desktop))
-            .await
-            .expect("start desktop joiner state control");
         let mut mobile_config =
             MobileTunnelConfig::from_app_with_config_path(&admin_app, &mobile_config_path)
                 .expect("mobile admin tunnel config");
-        mobile_config.listen_port = mobile_port;
-        add_direct_mobile_peer_hint(&mut mobile_config, &joiner_pubkey, desktop_port);
+        let (desktop, carriers) = bind_desktop_mobile_join_carrier(
+            &joiner_app, &admin_pubkey, &mut mobile_config, routed,
+        ).await;
+        let mut desktop_control = FipsControlTcpRuntime::start(Arc::clone(&desktop))
+            .await
+            .expect("start desktop joiner state control");
         let queued_launch = nostr_vpn_core::join_delivery::load_join_rosters(&mobile_config_path)
             .into_iter()
             .map(|(_, queued)| queued)
@@ -261,8 +248,98 @@
             "desktop joiner must persist the exact mobile-admin roster before acknowledging"
         );
 
+        assert_desktop_mobile_join_carrier(&desktop, &mobile, routed).await;
         shutdown_started_mobile_tunnel(mobile).await;
         desktop_control.stop().await;
         desktop.shutdown().await.expect("shutdown desktop endpoint");
+        for carrier in carriers {
+            carrier.shutdown().await.expect("shutdown local join carrier");
+        }
         let _ = fs::remove_dir_all(dir);
+    }
+
+    async fn bind_desktop_mobile_join_carrier(
+        desktop_app: &AppConfig,
+        mobile_pubkey: &str,
+        mobile_config: &mut MobileTunnelConfig,
+        via_seed: bool,
+    ) -> (Arc<FipsEndpoint>, Vec<Arc<FipsEndpoint>>) {
+        let desktop_port = available_udp_port();
+        mobile_config.listen_port = available_udp_port();
+        let desktop_pubkey = desktop_app.own_nostr_pubkey_hex().expect("desktop pubkey");
+        let (peer_pubkey, peer_port, carriers) = if via_seed {
+            let (seed, seed_url) = bind_manual_join_seed().await;
+            mobile_config.websocket_seed_urls = vec![seed_url.clone()];
+            let router_keys = Keys::generate();
+            let router_port = available_udp_port();
+            let router = bind_wss_physical_router(
+                &seed_url,
+                &PublicKey::from_hex(&desktop_pubkey)
+                    .expect("desktop key")
+                    .to_bech32()
+                    .expect("desktop npub"),
+                &format!("127.0.0.1:{desktop_port}"),
+                &router_keys.secret_key().to_bech32().expect("router nsec"),
+                router_port,
+            )
+            .await;
+            (
+                router_keys.public_key().to_hex(),
+                router_port,
+                vec![router, seed],
+            )
+        } else {
+            add_direct_mobile_peer_hint(mobile_config, &desktop_pubkey, desktop_port);
+            (mobile_pubkey.to_string(), mobile_config.listen_port, Vec::new())
+        };
+        let desktop = bind_direct_desktop_endpoint(
+            desktop_app.nostr.secret_key.clone(),
+            desktop_port,
+            &peer_pubkey,
+            peer_port,
+        )
+        .await;
+        (desktop, carriers)
+    }
+
+    async fn assert_desktop_mobile_join_carrier(
+        desktop: &FipsEndpoint,
+        mobile: &MobileTunnelStarted,
+        routed: bool,
+    ) {
+        if !routed {
+            return;
+        }
+        for (endpoint, remote_npub) in [
+            (desktop, mobile.endpoint.npub()),
+            (mobile.endpoint.as_ref(), desktop.npub()),
+        ] {
+            assert!(
+                endpoint.peers().await.expect("read physical peer links").iter()
+                    .all(|peer| peer.npub != remote_npub || !peer.connected),
+                "routed join must not bypass the local WebSocket seed with a direct link"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_mobile_manual_join_desktop_admin_via_websocket_seed() {
+        run_desktop_mobile_join_test("desktop-admin-wss-mobile", || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("routed desktop/mobile runtime")
+                .block_on(desktop_admin_to_mobile_joiner(true));
+        });
+    }
+
+    #[test]
+    fn desktop_mobile_manual_join_mobile_admin_via_websocket_seed() {
+        run_desktop_mobile_join_test("mobile-admin-wss-desktop", || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("routed mobile/desktop runtime")
+                .block_on(mobile_admin_to_desktop_joiner(true));
+        });
     }
