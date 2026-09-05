@@ -43,6 +43,7 @@ require_tokens "$CONTROLLER" "host-local exit fixture" \
   'mobile_wg_fixture_assert_dns_case_evidence' \
   'wait_for_fixture_dns_quiet' \
   'RUST_LOG=info,nvpn::secure_dns_runtime=debug' \
+  'NVPN_MACOS_UNDERLAY_ACTIVATION_DEADLINE_MS=$ACTIVATION_DEADLINE_MS' \
   'MACOS_VM_WIREGUARD_EXIT_E2E_OK'
 
 for forbidden in \
@@ -92,6 +93,9 @@ require_tokens "$GUEST" "production WireGuard lifecycle" \
   'dns-$DNS_LABEL-daemon.log' \
   'dns-$DNS_LABEL-status.json' \
   'payload_after "$requested_ms"' \
+  'physical_underlay_selected "$expected_iface"' \
+  'activation_elapsed=$((physical_ready_ms - requested_ms))' \
+  'product_elapsed=$((now - physical_ready_ms))' \
   'wireguard_last_rebind_target_is "$expected_iface"' \
   'wait_for_crash_live_precondition' \
   'crash_fail_closed_after_sigkill' \

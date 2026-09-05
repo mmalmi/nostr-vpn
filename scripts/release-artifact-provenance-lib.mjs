@@ -1328,6 +1328,23 @@ function requireDesktopNetworkReceipt({
           || milliseconds < 0
           || milliseconds > 4_000,
       )
+      || !Array.isArray(summary.underlayActivationMilliseconds)
+      || summary.underlayActivationMilliseconds.length !== 2
+      || summary.underlayActivationMilliseconds.some(
+        (milliseconds) =>
+          !Number.isSafeInteger(milliseconds)
+          || milliseconds < 0
+          || milliseconds > 10_000,
+      )
+      || !Array.isArray(summary.handoffTransitionMilliseconds)
+      || summary.handoffTransitionMilliseconds.length !== 2
+      || summary.handoffTransitionMilliseconds.some(
+        (milliseconds, index) =>
+          !Number.isSafeInteger(milliseconds)
+          || milliseconds
+            !== summary.handoffRecoveryMilliseconds[index]
+              + summary.underlayActivationMilliseconds[index],
+      )
       || !Number.isSafeInteger(summary.crashRestartPayloadMilliseconds)
       || summary.crashRestartPayloadMilliseconds < 0
       || summary.crashRestartPayloadMilliseconds > 4_000

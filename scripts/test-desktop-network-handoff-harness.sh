@@ -1020,6 +1020,12 @@ require_tokens "$MACOS_NETWORK_GUEST" "production macOS transition evidence" \
   'Ethernet' \
   'Roaming Underlay' \
   'NVPN_MACOS_UNDERLAY_RECOVERY_DEADLINE_MS:-4000' \
+  'NVPN_MACOS_UNDERLAY_ACTIVATION_DEADLINE_MS:-10000' \
+  'physical_underlay_selected "$expected_iface"' \
+  'activation_elapsed=$((physical_ready_ms - requested_ms))' \
+  'product_elapsed=$((now - physical_ready_ms))' \
+  'primary_to_secondary_activation_ms=' \
+  'primary_to_secondary_total_ms=' \
   'FIPS underlay carrier(s) rebound' \
   'runtime_wireguard_state_is false true' \
   'runtime_wireguard_state_is false false' \
@@ -1139,10 +1145,87 @@ do
 done
 [[ "$(grep -Fc 'connected_peer_count") == "0"' "$NETWORK_EVIDENCE")" == 2 ]] \
   || fail "macOS release evidence does not preserve the isolated zero-peer runtime contract"
+require_tokens "$NETWORK_EVIDENCE" "macOS split underlay timing evidence" \
+  'primary_to_secondary_activation_ms' \
+  'secondary_to_primary_activation_ms' \
+  'first_total == first_activation + first' \
+  'second_total == second_activation + second' \
+  '"underlayActivationMilliseconds"' \
+  '"handoffTransitionMilliseconds"'
 
 MACOS_DEFINITIONS="$COMBINED_DIR/macos-network-definitions.sh"
 printf 'export NVPN_MACOS_NETWORK_ROOT=%q\n' "$ROOT" >"$MACOS_DEFINITIONS"
 sed '/^validate_inputs$/,$d' "$MACOS_NETWORK_GUEST" >>"$MACOS_DEFINITIONS"
+
+TIMING_PROBE_DIR="$COMBINED_DIR/macos-underlay-timing"
+mkdir -p "$TIMING_PROBE_DIR"
+bash -s -- "$MACOS_DEFINITIONS" "$TIMING_PROBE_DIR" <<'BASH'
+set -euo pipefail
+definitions="$1"
+probe_dir="$2"
+set -- definitions-only
+# shellcheck disable=SC1090
+source "$definitions"
+RECOVERY_DEADLINE_MS=4000
+ACTIVATION_DEADLINE_MS=10000
+capture_underlay_recovery_failure() { return 0; }
+sleep() { return 0; }
+next_value() {
+  local values="$1" cursor="$2" index value
+  index="$(<"$cursor")"
+  value="$(sed -n "$((index + 1))p" "$values")"
+  [[ -n "$value" ]] || return 1
+  printf '%s\n' "$((index + 1))" >"$cursor"
+  printf '%s\n' "$value"
+}
+run_success_case() {
+  printf '100\n5100\n8500\n8600\n' >"$probe_dir/times"
+  printf '0\n' >"$probe_dir/time-cursor"
+  printf '0\n' >"$probe_dir/physical-cursor"
+  printf '0\n' >"$probe_dir/recovery-cursor"
+  monotonic_ms() {
+    next_value "$probe_dir/times" "$probe_dir/time-cursor"
+  }
+  physical_underlay_selected() {
+    local count
+    count="$(<"$probe_dir/physical-cursor")"
+    printf '%s\n' "$((count + 1))" >"$probe_dir/physical-cursor"
+    ((count >= 1))
+  }
+  underlay_recovered() {
+    local count
+    count="$(<"$probe_dir/recovery-cursor")"
+    printf '%s\n' "$((count + 1))" >"$probe_dir/recovery-cursor"
+    ((count >= 1))
+  }
+  [[ "$(wait_for_underlay_recovery handoff en0 100 1 1)" \
+    == $'3500\t5000\t8500' ]]
+}
+run_product_timeout_case() {
+  printf '100\n5100\n9201\n' >"$probe_dir/times"
+  printf '0\n' >"$probe_dir/time-cursor"
+  printf '0\n' >"$probe_dir/physical-cursor"
+  monotonic_ms() {
+    next_value "$probe_dir/times" "$probe_dir/time-cursor"
+  }
+  physical_underlay_selected() {
+    local count
+    count="$(<"$probe_dir/physical-cursor")"
+    printf '%s\n' "$((count + 1))" >"$probe_dir/physical-cursor"
+    ((count >= 1))
+  }
+  underlay_recovered() { return 1; }
+  if wait_for_underlay_recovery handoff en0 100 1 1 \
+    >"$probe_dir/timeout.out" 2>"$probe_dir/timeout.err"
+  then
+    return 1
+  fi
+  grep -Fq 'within 4000ms after macOS selected it' \
+    "$probe_dir/timeout.err"
+}
+run_success_case
+run_product_timeout_case
+BASH
 
 SCUTIL_FIXTURES="$COMBINED_DIR/scutil"
 mkdir -p "$SCUTIL_FIXTURES"

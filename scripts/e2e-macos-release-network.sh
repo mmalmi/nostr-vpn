@@ -33,6 +33,7 @@ PRIMARY_IFACE="${NVPN_MACOS_PRIMARY_INTERFACE:-en0}"
 SECONDARY_IFACE="${NVPN_MACOS_SECONDARY_INTERFACE:-en2}"
 WAIT_SECS="${NVPN_MACOS_NETWORK_WAIT_SECS:-30}"
 RECOVERY_DEADLINE_MS="${NVPN_MACOS_UNDERLAY_RECOVERY_DEADLINE_MS:-4000}"
+ACTIVATION_DEADLINE_MS="${NVPN_MACOS_UNDERLAY_ACTIVATION_DEADLINE_MS:-10000}"
 FIPS_NETWORK_ID="${NVPN_MACOS_FIPS_NETWORK_ID:-}"
 FIPS_CLIENT_LISTEN_PORT="${NVPN_MACOS_FIPS_CLIENT_LISTEN_PORT:-}"
 EXPECTED_FIPS_REV="${NVPN_MACOS_FIPS_EXPECTED_REV:-}"
@@ -86,6 +87,9 @@ validate_inputs() {
   [[ "$RECOVERY_DEADLINE_MS" =~ ^[1-9][0-9]*$ \
     && "$RECOVERY_DEADLINE_MS" -le 4000 ]] \
     || fail "underlay recovery deadline must be at most four seconds"
+  [[ "$ACTIVATION_DEADLINE_MS" =~ ^[1-9][0-9]*$ \
+    && "$ACTIVATION_DEADLINE_MS" -le 10000 ]] \
+    || fail "underlay activation deadline must be at most ten seconds"
   [[ -n "$FIPS_NETWORK_ID" ]] \
     || fail "isolated network id is missing"
   [[ "$FIPS_CLIENT_LISTEN_PORT" =~ ^[1-9][0-9]{0,4}$ \
@@ -1298,6 +1302,12 @@ underlay_recovered() {
     && wireguard_last_rebind_target_is "$expected_iface"
 }
 
+physical_underlay_selected() {
+  local expected_iface="$1"
+  [[ "$(route_value default interface 2>/dev/null || true)" \
+    == "$expected_iface" ]]
+}
+
 verify_underlay_runtime_invariants() {
   local label="$1" expected_iface="$2" requested_ms="$3"
   local expected_rebind="$4" expected_wg_rebind="$5"
@@ -1321,7 +1331,8 @@ probe_boolean() {
 
 capture_underlay_recovery_failure() {
   local label="$1" expected_iface="$2" requested_ms="$3"
-  local expected_rebind="$4" expected_wg_rebind="$5" now
+  local expected_rebind="$4" expected_wg_rebind="$5"
+  local physical_ready_ms="${6:-}" now
   now="$(monotonic_ms)"
   {
     printf 'label=%s\n' "$label"
@@ -1329,6 +1340,14 @@ capture_underlay_recovery_failure() {
     printf 'requested_monotonic_ms=%s\n' "$requested_ms"
     printf 'captured_monotonic_ms=%s\n' "$now"
     printf 'elapsed_ms=%s\n' "$((now - requested_ms))"
+    if [[ -n "$physical_ready_ms" ]]; then
+      printf 'underlay_activation_ms=%s\n' \
+        "$((physical_ready_ms - requested_ms))"
+      printf 'product_recovery_ms=%s\n' "$((now - physical_ready_ms))"
+    else
+      printf 'underlay_activation_ms=not-observed\n'
+      printf 'product_recovery_ms=not-started\n'
+    fi
     printf 'endpoint_route_interface=%s\n' \
       "$(endpoint_route_interface 2>/dev/null || true)"
     printf 'endpoint_route_state_valid=%s\n' \
@@ -1365,30 +1384,54 @@ capture_underlay_recovery_failure() {
 wait_for_underlay_recovery() {
   local label="$1" expected_iface="$2" requested_ms="$3"
   local expected_rebind="$4" expected_wg_rebind="$5"
-  local now elapsed
+  local now activation_elapsed product_elapsed total_elapsed
+  local physical_ready_ms=""
   while true; do
-    if underlay_recovered \
+    now="$(monotonic_ms)"
+    if [[ -z "$physical_ready_ms" ]] \
+      && physical_underlay_selected "$expected_iface"
+    then
+      physical_ready_ms="$now"
+    fi
+    if [[ -n "$physical_ready_ms" ]] \
+      && underlay_recovered \
       "$expected_iface" "$requested_ms" "$expected_rebind" \
       "$expected_wg_rebind"
     then
       now="$(monotonic_ms)"
-      elapsed=$((now - requested_ms))
-      if (( elapsed < 0 || elapsed > RECOVERY_DEADLINE_MS )); then
+      activation_elapsed=$((physical_ready_ms - requested_ms))
+      product_elapsed=$((now - physical_ready_ms))
+      total_elapsed=$((now - requested_ms))
+      if (( activation_elapsed < 0 \
+        || activation_elapsed > ACTIVATION_DEADLINE_MS \
+        || product_elapsed < 0 \
+        || product_elapsed > RECOVERY_DEADLINE_MS )); then
         capture_underlay_recovery_failure \
           "$label" "$expected_iface" "$requested_ms" \
-          "$expected_rebind" "$expected_wg_rebind"
-        fail "$label recovered in ${elapsed}ms (limit ${RECOVERY_DEADLINE_MS}ms)"
+          "$expected_rebind" "$expected_wg_rebind" "$physical_ready_ms"
+        fail "$label recovered after ${activation_elapsed}ms of macOS activation and ${product_elapsed}ms of product recovery"
         return 1
       fi
-      printf '%s\n' "$elapsed"
+      printf '%s\t%s\t%s\n' \
+        "$product_elapsed" "$activation_elapsed" "$total_elapsed"
       return 0
     fi
-    now="$(monotonic_ms)"
-    if (( now - requested_ms > RECOVERY_DEADLINE_MS )); then
+    if [[ -z "$physical_ready_ms" ]] \
+      && (( now - requested_ms > ACTIVATION_DEADLINE_MS ))
+    then
       capture_underlay_recovery_failure \
         "$label" "$expected_iface" "$requested_ms" \
         "$expected_rebind" "$expected_wg_rebind"
-      fail "$label did not restore WireGuard payload, carrier rebind, DNS, and a fresh handshake on $expected_iface in ${RECOVERY_DEADLINE_MS}ms"
+      fail "macOS did not select $expected_iface within ${ACTIVATION_DEADLINE_MS}ms"
+      return 1
+    fi
+    if [[ -n "$physical_ready_ms" ]] \
+      && (( now - physical_ready_ms > RECOVERY_DEADLINE_MS ))
+    then
+      capture_underlay_recovery_failure \
+        "$label" "$expected_iface" "$requested_ms" \
+        "$expected_rebind" "$expected_wg_rebind" "$physical_ready_ms"
+      fail "$label did not restore WireGuard payload, carrier rebind, and a fresh handshake on $expected_iface within ${RECOVERY_DEADLINE_MS}ms after macOS selected it"
       return 1
     fi
     sleep 0.1
@@ -1397,7 +1440,8 @@ wait_for_underlay_recovery() {
 
 run_underlay_gate() {
   local payload_pid baseline wg_baseline first_requested first_elapsed
-  local second_requested second_elapsed
+  local first_activation first_total second_requested second_elapsed
+  local second_activation second_total
   baseline="$(tr -d '[:space:]' <"$STATE_DIR/rebind-baseline")"
   wg_baseline="$(tr -d '[:space:]' <"$STATE_DIR/wireguard-rebind-baseline")"
   [[ "$baseline" =~ ^[0-9]+$ ]] || fail "invalid carrier-rebind baseline"
@@ -1412,11 +1456,11 @@ run_underlay_gate() {
   first_requested="$(monotonic_ms)"
   sudo -n /usr/sbin/networksetup \
     -setnetworkserviceenabled "$PRIMARY_SERVICE" off
-  first_elapsed="$(
+  IFS=$'\t' read -r first_elapsed first_activation first_total < <(
     wait_for_underlay_recovery \
       primary-to-secondary "$SECONDARY_IFACE" "$first_requested" \
       "$((baseline + 1))" "$((wg_baseline + 1))"
-  )"
+  )
   verify_underlay_runtime_invariants \
     primary-to-secondary "$SECONDARY_IFACE" "$first_requested" \
     "$((baseline + 1))" "$((wg_baseline + 1))"
@@ -1427,11 +1471,11 @@ run_underlay_gate() {
   second_requested="$(monotonic_ms)"
   sudo -n /usr/sbin/networksetup \
     -setnetworkserviceenabled "$PRIMARY_SERVICE" on
-  second_elapsed="$(
+  IFS=$'\t' read -r second_elapsed second_activation second_total < <(
     wait_for_underlay_recovery \
       secondary-to-primary "$PRIMARY_IFACE" "$second_requested" \
       "$((baseline + 2))" "$((wg_baseline + 2))"
-  )"
+  )
   verify_underlay_runtime_invariants \
     secondary-to-primary "$PRIMARY_IFACE" "$second_requested" \
     "$((baseline + 2))" "$((wg_baseline + 2))"
@@ -1443,7 +1487,11 @@ run_underlay_gate() {
 
   {
     printf 'primary_to_secondary_ms=%s\n' "$first_elapsed"
+    printf 'primary_to_secondary_activation_ms=%s\n' "$first_activation"
+    printf 'primary_to_secondary_total_ms=%s\n' "$first_total"
     printf 'secondary_to_primary_ms=%s\n' "$second_elapsed"
+    printf 'secondary_to_primary_activation_ms=%s\n' "$second_activation"
+    printf 'secondary_to_primary_total_ms=%s\n' "$second_total"
     printf 'endpoint_route_interface=%s\n' "$(endpoint_route_interface)"
     printf 'carrier_rebinds=%s->%s\n' "$baseline" "$(rebind_count)"
     printf 'wireguard_rebinds=%s->%s\n' \

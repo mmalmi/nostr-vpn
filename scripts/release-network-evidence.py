@@ -1639,9 +1639,25 @@ def build_desktop(args: argparse.Namespace) -> None:
         underlay = key_values(underlay_path)
         first = int(underlay.get("primary_to_secondary_ms", "4001"))
         second = int(underlay.get("secondary_to_primary_ms", "4001"))
+        first_activation = int(
+            underlay.get("primary_to_secondary_activation_ms", "10001")
+        )
+        second_activation = int(
+            underlay.get("secondary_to_primary_activation_ms", "10001")
+        )
+        first_total = int(
+            underlay.get("primary_to_secondary_total_ms", "14001")
+        )
+        second_total = int(
+            underlay.get("secondary_to_primary_total_ms", "14001")
+        )
         require(
             0 <= first <= 4_000
             and 0 <= second <= 4_000
+            and 0 <= first_activation <= 10_000
+            and 0 <= second_activation <= 10_000
+            and first_total == first_activation + first
+            and second_total == second_activation + second
             and underlay.get("connected_peer_count") == "0",
             "macOS dual-underlay receipt is incomplete",
         )
@@ -1670,6 +1686,11 @@ def build_desktop(args: argparse.Namespace) -> None:
                 "artifactReceiptSha256": sha256(artifact_path),
                 "dnsPolicyCount": len(rows),
                 "handoffRecoveryMilliseconds": [first, second],
+                "underlayActivationMilliseconds": [
+                    first_activation,
+                    second_activation,
+                ],
+                "handoffTransitionMilliseconds": [first_total, second_total],
                 "crashRestartPayloadMilliseconds": int(
                     crash["restart_payload_ms"]
                 ),

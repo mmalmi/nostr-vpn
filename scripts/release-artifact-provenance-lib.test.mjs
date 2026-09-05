@@ -1422,6 +1422,8 @@ test('release receipt collection requires exact source and strict public UI gate
           macosArtifact.cliExecutableSha256,
         ),
         handoffRecoveryMilliseconds: [100, 200],
+        underlayActivationMilliseconds: [300, 400],
+        handoffTransitionMilliseconds: [400, 600],
         crashRestartPayloadMilliseconds: 300,
         directRestored: true,
         singletonAfterCrashRecovery: true,
@@ -1771,6 +1773,13 @@ test('release receipt collection requires exact source and strict public UI gate
       )
       writeFileSync(path, original)
     }
+    assertRejectedReceiptMutation(
+      paths.macos.network,
+      (receipt) => {
+        receipt.summary.handoffTransitionMilliseconds[0] += 1
+      },
+      /macOS desktop network receipt is incomplete/,
+    )
     const androidIdentityPaths = [
       paths.android.physical,
       paths.android.install,
