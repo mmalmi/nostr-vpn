@@ -601,6 +601,14 @@ grep -Fq 'image: ${NVPN_EXIT_NODE_E2E_IMAGE:-nostr-vpn-e2e-node}' \
   <<<"$cashu_mint_service" \
   || fail "Cashu mint must reuse the paid node image instead of rebuilding implicitly"
 
+for cleanup_script in e2e-umbrel-web-docker.sh e2e-umbrel-auth-join-docker.sh; do
+  cleanup_body="$(sed -n '/^cleanup() {$/,/^}$/p' "$ROOT_DIR/scripts/$cleanup_script")"
+  grep -Fq 'find /cleanup ! -type s -exec chown -h $(id -u):$(id -g)' <<<"$cleanup_body" \
+    || fail "$cleanup_script does not reclaim its root-written test files"
+  grep -Fq -- '--pull never --network none' <<<"$cleanup_body" \
+    || fail "$cleanup_script cleanup can fetch images or access the network"
+done
+
 required_contracts=(
   'source "$ROOT_DIR/scripts/lib-release-gate-timing.sh"'
   'release_gate_timing_init "$log_dir"'

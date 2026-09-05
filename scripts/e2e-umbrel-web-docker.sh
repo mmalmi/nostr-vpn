@@ -35,6 +35,12 @@ cleanup() {
   fi
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
   if [[ "$DATA_DIR_CREATED" == true ]]; then
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+      docker run --rm --pull never --network none \
+        -v "$DATA_DIR:/cleanup" --entrypoint sh "$IMAGE" \
+        -c "find /cleanup ! -type s -exec chown -h $(id -u):$(id -g) {} +" \
+        >/dev/null 2>&1 || exit_code=1
+    fi
     rm -rf "$DATA_DIR"
   fi
   exit "$exit_code"

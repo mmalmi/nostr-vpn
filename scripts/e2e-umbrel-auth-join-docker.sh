@@ -38,6 +38,12 @@ cleanup() {
     kill "$STUB_PID" >/dev/null 2>&1 || true
     wait "$STUB_PID" 2>/dev/null || true
   fi
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+    docker run --rm --pull never --network none \
+      -v "$TMP:/cleanup" --entrypoint sh "$IMAGE" \
+      -c "find /cleanup ! -type s -exec chown -h $(id -u):$(id -g) {} +" \
+      >/dev/null 2>&1 || status=1
+  fi
   rm -rf "$TMP"
   exit "$status"
 }
@@ -97,6 +103,7 @@ import hmac
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 
 port, secret, password = int(sys.argv[1]), sys.argv[2].encode(), sys.argv[3]
 
@@ -133,7 +140,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
-ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
+class LocalLoginServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # This local fixture needs no reverse-DNS lookup of the test host.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = "localhost", self.server_address[1]
+
+LocalLoginServer(("0.0.0.0", port), Handler).serve_forever()
 PY
 STUB_PID=$!
 

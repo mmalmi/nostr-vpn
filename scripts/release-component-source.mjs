@@ -23,6 +23,7 @@ const harnessOnlyPaths = new Set([
   'scripts/e2e-fips-roaming-docker.sh',
   'scripts/e2e-device-roster.sh',
   'scripts/e2e-umbrel-auth-join-docker.sh',
+  'scripts/e2e-umbrel-web-docker.sh',
   'scripts/e2e-web-startos-manual-join-docker.sh',
   'scripts/capture-mobile-ios-underlay-output.py',
   'scripts/desktop-manual-join-ax.swift',

@@ -23,6 +23,22 @@ scripts/test-mobile-release-join-gate-harness.sh
 scripts/test-desktop-network-handoff-harness.sh
 scripts/test-mobile-ios-release-runner-harness.sh
 
+python3 - scripts/e2e-umbrel-auth-join-docker.sh <<'PY'
+import pathlib
+import socket
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+fixture = source.split('<<\'PY\' &\n', 1)[1].split('\nPY\n', 1)[0]
+fixture = fixture.replace('.serve_forever()', '.server_close()')
+def reject_dns(*args):
+    raise AssertionError("local login fixture must not resolve the host name")
+socket.getfqdn = reject_dns
+sys.argv = ["login-fixture", "0", "fixture-secret", "fixture-password"]
+exec(compile(fixture, "umbrel-login-fixture", "exec"))
+print("Umbrel local login fixture starts without reverse DNS")
+PY
+
 python3 - scripts/release-gate.sh scripts/build-linux-arm64-cli-gate.sh <<'PY'
 import pathlib
 import sys
