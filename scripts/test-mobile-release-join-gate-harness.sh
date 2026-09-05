@@ -19,6 +19,48 @@ FILES=(
 for file in "${FILES[@]}"; do
   bash -n "$file"
 done
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-failure-log.XXXXXX")"
+  trap 'rm -rf "$PRIVATE_DIR"' EXIT
+  ADB=(failure_log_adb -s selected-test-device)
+  failure_log_adb() {
+    printf '%s\n' "$@" >"$PRIVATE_DIR/adb-arguments"
+    printf 'retained service lifecycle log\n'
+    return "${FAKE_ADB_RESULT:-0}"
+  }
+  RELEASE_JOIN_DEVICE_MUTATED=0
+  release_join_android_capture_failure_log "$PRIVATE_DIR/not-selected.log"
+  [[ ! -e "$PRIVATE_DIR/not-selected.log" && ! -e "$PRIVATE_DIR/adb-arguments" ]]
+  RELEASE_JOIN_DEVICE_MUTATED=1
+  release_join_android_capture_failure_log "$PRIVATE_DIR/selected.log"
+  [[ "$(head -2 "$PRIVATE_DIR/adb-arguments" | tr '\n' ' ')" == '-s selected-test-device ' ]]
+  grep -Fxq NostrVpnService:I "$PRIVATE_DIR/adb-arguments"
+  grep -Fxq '*:S' "$PRIVATE_DIR/adb-arguments"
+  grep -Fq 'retained service lifecycle log' "$PRIVATE_DIR/selected.log"
+  FAKE_ADB_RESULT=7
+  release_join_android_capture_failure_log "$PRIVATE_DIR/offline.log"
+  grep -Fq 'status 7' "$PRIVATE_DIR/offline.log.stderr"
+  release_join_android_capture_failure_log "$PRIVATE_DIR/missing/output.log"
+  # Diagnostics must not abort cleanup or replace the original failure code.
+  failure_log_adb() { sleep 30; }
+  before="$(release_join_now_ms)"
+  release_join_android_capture_failure_log "$PRIVATE_DIR/stalled.log"
+  grep -Fq 'status 124' "$PRIVATE_DIR/stalled.log.stderr"
+  elapsed=$(( $(release_join_now_ms) - before ))
+  ((elapsed >= 4900 && elapsed < 7000)) || {
+    echo "Android failure logs did not respect their five-second cleanup bound" >&2
+    exit 1
+  }
+)
+for join_driver in \
+  mobile-release-join-e2e.sh \
+  macos-vm-release-mobile-join-e2e.sh \
+  ubuntu-vm-release-mobile-join-e2e.sh \
+  windows-vm-release-mobile-join-e2e.sh
+do
+  grep -Fq 'release_join_android_capture_failure_log ' "$ROOT/scripts/$join_driver"
+done
 for join_driver in \
   mobile-release-join-e2e.sh \
   macos-vm-release-mobile-join-e2e.sh \

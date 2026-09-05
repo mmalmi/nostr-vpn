@@ -134,6 +134,9 @@ cleanup() {
   local status=$?
   local cleanup_status=0 package route ios_app_bundle ios_runner_bundle bundle
   trap - EXIT
+  if ((status != 0)); then
+    release_join_android_capture_failure_log "$RESULT_DIR/android-service-failure.log"
+  fi
   if [[ -n "${RELEASE_JOIN_IOS_TEST_PID:-}" \
     || -n "${RELEASE_JOIN_IOS_TEST_PGID:-}" ]]; then
     release_join_ios_abort_test || cleanup_status=1

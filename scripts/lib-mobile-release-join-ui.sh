@@ -110,6 +110,22 @@ release_join_observe_until_ms() {
   return 1
 }
 
+release_join_android_capture_failure_log() {
+  local output="$1" deadline_ms result=0
+  [[ "${RELEASE_JOIN_DEVICE_MUTATED:-0}" -eq 1 ]] || return 0
+  deadline_ms=$(( $(release_join_now_ms) + 5000 ))
+  # Keep only this app's lifecycle records, before cleanup can erase context.
+  # Reuse the selected device and bounded poll runner; never impede cleanup.
+  release_join_run_until_ms "$deadline_ms" "Android service failure log capture" \
+    "${ADB[@]}" logcat -d -v epoch -s NostrVpnService:I '*:S' \
+    >"$output" 2>"$output.stderr" || result=$?
+  if ((result != 0)); then
+    printf 'Android service log capture failed (status %s)\n' "$result" \
+      >>"$output.stderr" || true
+  fi
+  return 0
+}
+
 release_join_android_accepted_snapshot_ms() {
   local participant="$1" snapshot_ms
   release_join_android_dump_ui || return 1

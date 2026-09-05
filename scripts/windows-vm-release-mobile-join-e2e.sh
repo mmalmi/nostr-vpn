@@ -197,6 +197,9 @@ acceptance_observer_pids=()
 cleanup() {
   local status=$?
   trap - EXIT
+  if ((status != 0)); then
+    release_join_android_capture_failure_log "$PLATFORM_RESULT/android-service-failure.log"
+  fi
   local observer_pid cleanup_status=0
   for observer_pid in "${acceptance_observer_pids[@]-}"; do
     kill "$observer_pid" >/dev/null 2>&1 || true

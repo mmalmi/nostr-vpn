@@ -162,6 +162,9 @@ cleanup() {
   local status=$?
   local cleanup_status=0
   trap - EXIT
+  if ((status != 0)); then
+    release_join_android_capture_failure_log "$RESULT_DIR/macos/android-service-failure.log"
+  fi
   if [[ -n "${RELEASE_JOIN_IOS_TEST_PID:-}" ]] \
       && kill -0 "$RELEASE_JOIN_IOS_TEST_PID" 2>/dev/null
   then
