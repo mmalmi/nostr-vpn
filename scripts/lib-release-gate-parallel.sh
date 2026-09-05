@@ -12,6 +12,7 @@ RELEASE_GATE_PARALLEL_STARTED_AT=()
 RELEASE_GATE_PARALLEL_LAST_INDEX=""
 RELEASE_GATE_PARALLEL_LOG_DIR=""
 RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS="${RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS:-2}"
+RELEASE_GATE_PARALLEL_SSH_DRAIN_SECONDS="${RELEASE_GATE_PARALLEL_SSH_DRAIN_SECONDS:-15}"
 RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES="${RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES:-80}"
 RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES="${RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES:-200}"
 
@@ -108,13 +109,28 @@ release_gate_parallel_group_snapshot() {
     | awk -v expected="$pgid" '$3 == expected { print }'
 }
 
+release_gate_parallel_group_contains_only_ssh() {
+  local pgid="$1"
+  [[ -n "$pgid" ]] || return 1
+  ps -axo pgid=,stat=,comm= 2>/dev/null \
+    | awk -v expected="$pgid" '
+        $1 == expected && $2 !~ /^Z/ {
+          found = 1
+          if ($3 !~ /(^|\/)ssh$/) unexpected = 1
+        }
+        END { exit !(found && !unexpected) }
+      '
+}
+
 release_gate_parallel_wait_group_gone() {
   local pgid="$1"
-  local attempts=0
-  while ((attempts < 100)); do
+  local timeout_seconds="${2:-2}"
+  local deadline
+  [[ "$timeout_seconds" =~ ^[1-9][0-9]*$ ]] || return 1
+  deadline=$((SECONDS + timeout_seconds))
+  while ((SECONDS < deadline)); do
     release_gate_parallel_group_alive "$pgid" || return 0
-    sleep 0.02
-    attempts=$((attempts + 1))
+    sleep 0.05
   done
   ! release_gate_parallel_group_alive "$pgid"
 }
@@ -209,12 +225,19 @@ release_gate_parallel_wait() {
 
   local orphaned_group=0
   local orphan_cleanup_failed=0
+  local natural_drain_seconds=2
   local pgid="${RELEASE_GATE_PARALLEL_PGIDS[$index]:-}"
   if ((status == 0)) && release_gate_parallel_group_alive "$pgid"; then
-    # SSH ProxyCommand and pipe helpers can still be closing after their lane
-    # wrapper has been reaped. Give normal process teardown the same short
-    # grace used after TERM before treating a persistent child as an orphan.
-    if ! release_gate_parallel_wait_group_gone "$pgid"; then
+    # A bounded OpenSSH ProxyCommand can remain briefly while it closes the
+    # forwarded channel after its successful parent exits. Give only an
+    # all-SSH remainder its configured transport drain; every other process
+    # type keeps the generic two-second fail-closed grace.
+    if release_gate_parallel_group_contains_only_ssh "$pgid"; then
+      natural_drain_seconds="$RELEASE_GATE_PARALLEL_SSH_DRAIN_SECONDS"
+    fi
+    if ! release_gate_parallel_wait_group_gone \
+      "$pgid" "$natural_drain_seconds"
+    then
       orphaned_group=1
       release_gate_parallel_group_snapshot "$pgid" >&2 || true
       release_gate_parallel_terminate_group "$pgid" || orphan_cleanup_failed=1

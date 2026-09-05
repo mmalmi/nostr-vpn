@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 # production two-second grace period.
 # shellcheck disable=SC2034 # Read by the sourced runner.
 export RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS=1
+# Keep the transport-drain regression short while still exceeding the generic
+# two-second descendant grace.
+export RELEASE_GATE_PARALLEL_SSH_DRAIN_SECONDS=10
 # shellcheck disable=SC1091
 source "$ROOT_DIR/scripts/lib-release-gate-parallel.sh"
 
@@ -168,6 +171,20 @@ release_gate_parallel_start "settling lane" settling_lane
 settling="$RELEASE_GATE_PARALLEL_LAST_INDEX"
 release_gate_parallel_wait "$settling" >/dev/null \
   || fail "short-lived lane descendant was misclassified as an orphan"
+
+# An OpenSSH ProxyCommand can outlive its already-successful parent briefly
+# while closing the forwarded channel. Match the real process name and prove
+# the lane waits for that bounded transport drain without accepting other
+# process types as successful descendants.
+ln -s /bin/sleep "$tmp/ssh"
+ssh_settling_lane() {
+  ( "$tmp/ssh" 8 ) &
+}
+
+release_gate_parallel_start "settling SSH transport" ssh_settling_lane
+ssh_settling="$RELEASE_GATE_PARALLEL_LAST_INDEX"
+release_gate_parallel_wait "$ssh_settling" >/dev/null \
+  || fail "bounded SSH transport teardown was misclassified as an orphan"
 
 # A successful wrapper with a stubborn child must still fail closed and leave
 # no process behind. This exercises TERM and KILL escalation, not source text.
