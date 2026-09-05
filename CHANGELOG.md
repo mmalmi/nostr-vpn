@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.10 - 2026-09-04
+## 4.1.10 - 2026-09-06
 
 ### Release notes
 
@@ -12,6 +12,10 @@ starts its encrypted approval carrier before exchanging a signed roster.
 
 ### Fixed
 
+- Fix Linux CLI startup through launchers such as `sudo` by distinguishing the
+  actual VPN daemon from the process launching it.
+- Preserve existing router port mappings during routine daemon reloads and
+  deliver device approvals before potentially slow router discovery.
 - Keep mobile devices' live approval connection until their durable receipt reaches
   the admin, avoiding a tunnel restart in the middle of device joining.
 - Disable iOS FIPS settings while the previous VPN state is being restored so
@@ -38,8 +42,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
   grows, while reserving capacity for configured peers and handshakes.
 - Keep the public bootstrap pair connected by assigning one canonical dialer
   across both UDP and WebSocket, avoiding cross-connection replacement races.
-- Update the FIPS consumer chain to core and endpoint 0.4.73, TCP endpoint
-  0.2.9, and pubsub adapter 0.4.16 without changing any wire format.
+- Update the FIPS consumer chain to core and endpoint 0.4.74, TCP endpoint
+  0.2.10, and pubsub adapter 0.4.17 without changing any wire format.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 
