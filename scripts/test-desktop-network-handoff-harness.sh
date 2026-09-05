@@ -1057,6 +1057,19 @@ require_tokens "$MACOS_NETWORK_GUEST" "underlay timeout diagnostics" \
   'capture_underlay_recovery_failure \
         "$label" "$expected_iface" "$requested_ms"' \
   'capture_underlay_routes'
+underlay_recovered_body="$(
+  sed -n '/^underlay_recovered() {$/,/^}$/p' "$MACOS_NETWORK_GUEST"
+)"
+if grep -Fq 'runtime_dns_state_matches' <<<"$underlay_recovered_body" \
+  || grep -Fq 'runtime_has_no_fips_peers' <<<"$underlay_recovered_body"
+then
+  fail "macOS timed underlay probe still includes diagnostic CLI snapshots"
+fi
+run_underlay_body="$(
+  sed -n '/^run_underlay_gate() {$/,/^}$/p' "$MACOS_NETWORK_GUEST"
+)"
+[[ "$(grep -Fc 'verify_underlay_runtime_invariants' <<<"$run_underlay_body")" -eq 2 ]] \
+  || fail "macOS underlay gate does not validate runtime invariants after both timed transitions"
 require_tokens "$MACOS_NETWORK_GUEST" "preexisting installed-state isolation" \
   'lib-macos-owned-test-app.sh' \
   'quiesce_installed_state' \

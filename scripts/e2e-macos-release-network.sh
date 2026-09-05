@@ -1293,11 +1293,22 @@ underlay_recovered() {
   wireguard_endpoint_route_state_valid "$expected_iface" \
     && wireguard_interface >/dev/null \
     && payload_after "$requested_ms" \
-    && runtime_dns_state_matches \
-    && runtime_has_no_fips_peers \
     && [[ "$(rebind_count)" == "$expected_rebind" ]] \
     && [[ "$(wireguard_rebind_count)" == "$expected_wg_rebind" ]] \
     && wireguard_last_rebind_target_is "$expected_iface"
+}
+
+verify_underlay_runtime_invariants() {
+  local label="$1" expected_iface="$2" requested_ms="$3"
+  local expected_rebind="$4" expected_wg_rebind="$5"
+  runtime_dns_state_matches \
+    && runtime_has_no_fips_peers \
+      "$RESULT_DIR/fips-zero-peer-after-$label.json" \
+    && return 0
+  capture_underlay_recovery_failure \
+    "$label" "$expected_iface" "$requested_ms" \
+    "$expected_rebind" "$expected_wg_rebind"
+  fail "$label changed DNS or isolated zero-peer runtime state after recovery"
 }
 
 probe_boolean() {
@@ -1406,6 +1417,9 @@ run_underlay_gate() {
       primary-to-secondary "$SECONDARY_IFACE" "$first_requested" \
       "$((baseline + 1))" "$((wg_baseline + 1))"
   )"
+  verify_underlay_runtime_invariants \
+    primary-to-secondary "$SECONDARY_IFACE" "$first_requested" \
+    "$((baseline + 1))" "$((wg_baseline + 1))"
   dns_query_works || fail "DNS failed after the secondary underlay recovered"
   captured_probe_works \
     || fail "local forwarded exit traffic failed after the secondary underlay recovered"
@@ -1418,6 +1432,9 @@ run_underlay_gate() {
       secondary-to-primary "$PRIMARY_IFACE" "$second_requested" \
       "$((baseline + 2))" "$((wg_baseline + 2))"
   )"
+  verify_underlay_runtime_invariants \
+    secondary-to-primary "$PRIMARY_IFACE" "$second_requested" \
+    "$((baseline + 2))" "$((wg_baseline + 2))"
   dns_query_works || fail "DNS failed after the primary underlay recovered"
   captured_probe_works \
     || fail "local forwarded exit traffic failed after the primary underlay recovered"
