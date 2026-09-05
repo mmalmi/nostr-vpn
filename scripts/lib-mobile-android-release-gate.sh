@@ -501,6 +501,27 @@ PY
   echo "Android exact company-signed Release replacement passed: $receipt"
 }
 
+android_release_prepare_idle_output() {
+  local raw output path archive
+  raw="$(android_idle_cpu_path)"
+  output="${NVPN_ANDROID_FOREGROUND_IDLE_RECEIPT:-$(dirname "$raw")/receipt.json}"
+  [[ "$raw" != "$output" ]] || return 1
+  # Validate both before moving either. A retry must not overwrite the raw
+  # sample and then fail minutes later on its previous exclusive receipt.
+  for path in "$raw" "$output"; do
+    if [[ -L "$path" || ( -e "$path" && ! -f "$path" ) ]]; then
+      echo "Android idle evidence must be a regular non-symlink file: $path" >&2
+      return 1
+    fi
+  done
+  [[ -e "$raw" || -e "$output" ]] || return 0
+  mkdir -p "$(dirname "$raw")"
+  archive="$(mktemp -d "$(dirname "$raw")/previous-idle.XXXXXX")" || return 1
+  if [[ -e "$raw" ]]; then mv -- "$raw" "$archive/idle-cpu.json" || return 1; fi
+  if [[ -e "$output" ]]; then mv -- "$output" "$archive/receipt.json" || return 1; fi
+  echo "Preserved previous Android idle evidence: $archive"
+}
+
 write_android_release_foreground_idle_receipt() {
   local raw_receipt artifact_receipt output
   raw_receipt="$(android_idle_cpu_path)"

@@ -2813,6 +2813,9 @@ if [[ "$clear_state" -eq 1 ]]; then
 fi
 
 if truthy "$RELEASE_BLACKBOX_GATE"; then
+  if truthy "$IDLE_CPU_GATE"; then
+    android_release_prepare_idle_output
+  fi
   verify_android_release_install
   start_main_activity
   "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
