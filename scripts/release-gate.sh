@@ -9,6 +9,7 @@ cd "$ROOT_DIR"
 source "$ROOT_DIR/scripts/release_common.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-timeout.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-timing.sh"
+source "$ROOT_DIR/scripts/lib-release-gate-state.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-parallel.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-required-modes.sh"
 source "$ROOT_DIR/scripts/lib-macos-vm-identity.sh"
@@ -404,6 +405,10 @@ run_release_gate_candidate_preflight() {
   # Fail on cheap source-quality errors before any remote platform starts an
   # expensive exact-candidate build. These use the locked release graph and
   # are not repeated by the later full host validation lane.
+  release_gate_checkpoint_run "Source quality" run_release_gate_source_quality
+}
+
+run_release_gate_source_quality() {
   cargo fmt --check
   cargo clippy --locked --workspace --all-targets -- -D warnings
 }
@@ -469,8 +474,14 @@ run_release_gate_static_preflight() {
 
 run_rust_validation_lane() {
   ./scripts/security-audit-rust.sh
-  run_local_fips_regression_tests
   export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
+  release_gate_checkpoint_run "Rust regression checks" run_rust_regression_checks
+  ./scripts/e2e-manual-join-cli.sh
+  ./scripts/e2e-update-cli.sh
+}
+
+run_rust_regression_checks() {
+  run_local_fips_regression_tests
   # This fixture contains a strict end-to-end latency assertion. Keep it out of
   # the workspace suite while the cold Docker image may be compiling, then run
   # and measure it once after joining that build below.
@@ -487,8 +498,6 @@ run_rust_validation_lane() {
   # every other untimed Rust regression has already run there exactly once.
   release_cargo_test_filter nostr-vpn-app-core desktop_mobile_manual_join_desktop_admin_to_mobile_joiner
   release_cargo_test_filter nostr-vpn-app-core desktop_mobile_manual_join_mobile_admin_to_desktop_joiner
-  ./scripts/e2e-manual-join-cli.sh
-  ./scripts/e2e-update-cli.sh
 }
 
 run_host_validation_lane() {
@@ -2392,12 +2401,17 @@ release_gate_cleanup() {
     echo "Release gate could not write its diagnostic run summary." >&2
     status=1
   fi
+  if [[ -n "$RELEASE_GATE_STATE_DIR" ]]; then
+    node "$RELEASE_GATE_STATE_TOOL" finish "$RELEASE_GATE_STATE_DIR" "$status" || status=1
+  fi
   exit "$status"
 }
 
 main() {
   RELEASE_GATE_STARTED_AT="$(date +%s)"
   local log_dir="${NVPN_RELEASE_GATE_LOG_DIR:-$ROOT_DIR/artifacts/release-gate-logs/$(date -u +%Y%m%dT%H%M%SZ)}"
+  release_gate_state_init "$ROOT_DIR"
+  trap release_gate_cleanup EXIT
   release_gate_parallel_init "$log_dir"
   release_gate_timing_init "$log_dir"
   HOST_LINUX_VM_BUNDLE_PATH_RECEIPT="$log_dir/host-linux-vm-bundle-path.txt"
@@ -2552,7 +2566,7 @@ main() {
   # commands never race each other over the shared realized lock.
   release_gate_parallel_start \
     "Android compile, unit tests, and lint" \
-    run_android_static_validation_lane
+    release_gate_checkpoint_run "Android static checks" run_android_static_validation_lane
   concurrent_validation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
   # The Linux launch smoke owns an isolated Compose container and target

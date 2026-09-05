@@ -648,10 +648,14 @@ platform_preparation_line="$(
 candidate_preflight_body="$(
   sed -n '/^run_release_gate_candidate_preflight() {$/,/^}$/p' "$release_gate"
 )"
-grep -Fq 'cargo clippy --locked --workspace --all-targets -- -D warnings' \
+grep -Fq 'release_gate_checkpoint_run "Source quality" run_release_gate_source_quality' \
   <<<"$candidate_preflight_body" \
+  || fail "release gate preflight does not validate or reuse exact source-quality evidence"
+source_quality_body="$(sed -n '/^run_release_gate_source_quality() {$/,/^}$/p' "$release_gate")"
+grep -Fq 'cargo clippy --locked --workspace --all-targets -- -D warnings' \
+  <<<"$source_quality_body" \
   || fail "release gate candidate preflight omits strict fail-fast Clippy"
-grep -Fq 'cargo fmt --check' <<<"$candidate_preflight_body" \
+grep -Fq 'cargo fmt --check' <<<"$source_quality_body" \
   || fail "release gate candidate preflight omits fail-fast formatting"
 rust_validation_body="$(
   sed -n '/^run_rust_validation_lane() {$/,/^}$/p' "$release_gate"

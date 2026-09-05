@@ -20,6 +20,8 @@ CI runs the same fast tier and, in parallel, the remaining workspace tests,
 dataplane tooling contracts, release tooling contracts, web checks, and selected
 platform compatibility jobs. A local fast pass is not the whole CI matrix.
 
+For interrupted releases, see [release gate recovery](release-resume.md).
+
 ## Health And Full Native Matrix
 
 Preflight the managed lab without running tests:

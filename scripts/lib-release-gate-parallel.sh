@@ -48,6 +48,9 @@ release_gate_parallel_start() {
   # Bash 3 has no portable `setsid`, but monitor mode gives each background
   # job a dedicated process group. Every descendant stays in that group even
   # if it forks during TERM grace or its wrapper exits.
+  if type release_gate_state_phase >/dev/null 2>&1; then
+    release_gate_state_phase "$label" running
+  fi
   set -m
   (
     # The parent has already placed this wrapper in its own group. Disable
@@ -241,6 +244,14 @@ release_gate_parallel_wait() {
       orphaned_group=1
       release_gate_parallel_group_snapshot "$pgid" >&2 || true
       release_gate_parallel_terminate_group "$pgid" || orphan_cleanup_failed=1
+    fi
+  fi
+
+  if type release_gate_state_phase >/dev/null 2>&1; then
+    if ((status == 0 && orphaned_group == 0)); then
+      release_gate_state_phase "$label" passed
+    else
+      release_gate_state_phase "$label" failed "$((status == 0 ? 1 : status))"
     fi
   fi
 

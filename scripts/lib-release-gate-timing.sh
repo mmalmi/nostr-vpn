@@ -42,6 +42,9 @@ release_gate_timing_run() {
   [[ -z "$RELEASE_GATE_TIMING_ACTIVE_LABEL" ]] || return 2
   RELEASE_GATE_TIMING_ACTIVE_LABEL="$label"
   RELEASE_GATE_TIMING_ACTIVE_STARTED_AT="$(date +%s)"
+  if type release_gate_state_phase >/dev/null 2>&1; then
+    release_gate_state_phase "$label" running
+  fi
   # Keep this as a plain command. Wrapping it in `if` or `||` disables Bash's
   # fail-fast behavior inside shell functions and can mask an early failure.
   "$@"
@@ -49,6 +52,9 @@ release_gate_timing_run() {
   release_gate_timing_record \
     serial "$label" "$RELEASE_GATE_TIMING_ACTIVE_STARTED_AT" \
     "$finished_at" 0 || return 1
+  if type release_gate_state_phase >/dev/null 2>&1; then
+    release_gate_state_phase "$RELEASE_GATE_TIMING_ACTIVE_LABEL" passed
+  fi
   RELEASE_GATE_TIMING_ACTIVE_LABEL=""
   RELEASE_GATE_TIMING_ACTIVE_STARTED_AT=""
 }
@@ -61,6 +67,9 @@ release_gate_timing_finish_active() {
     serial "$RELEASE_GATE_TIMING_ACTIVE_LABEL" \
     "$RELEASE_GATE_TIMING_ACTIVE_STARTED_AT" "$finished_at" "$status" \
     || return 1
+  if type release_gate_state_phase >/dev/null 2>&1; then
+    release_gate_state_phase "$RELEASE_GATE_TIMING_ACTIVE_LABEL" failed "$status"
+  fi
   RELEASE_GATE_TIMING_ACTIVE_LABEL=""
   RELEASE_GATE_TIMING_ACTIVE_STARTED_AT=""
 }

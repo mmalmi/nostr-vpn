@@ -11,8 +11,10 @@ bash -n \
   scripts/build-linux-arm64-cli-gate.sh \
   scripts/release-gate.sh \
   scripts/lib-release-gate-parallel.sh \
+  scripts/lib-release-gate-state.sh \
   scripts/mobile-release-join-e2e.sh
 
+node --test scripts/release-gate-state.test.mjs
 scripts/test-release-gate-parallel-harness.sh
 scripts/test-release-gate-timing-harness.sh
 scripts/test-mobile-release-join-gate-harness.sh

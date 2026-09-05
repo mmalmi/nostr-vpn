@@ -91,11 +91,23 @@ if (
 ) process.exit(1)
 NODE
 
+# Exercise the actual entry point in a separate checkout: the enclosing gate
+# owns its checkout lock while running this preflight regression harness.
+fixture_root="$tmp/checkout"
+mkdir -p "$fixture_root/scripts"
+for script in "$ROOT_DIR"/scripts/*; do
+  ln -s "$script" "$fixture_root/scripts/$(basename "$script")"
+done
+git -C "$fixture_root" init -q
+printf 'artifacts/\nscripts/\n' >"$fixture_root/.gitignore"
+git -C "$fixture_root" add .gitignore
+git -C "$fixture_root" -c user.name=Fixture -c user.email=fixture@example.invalid \
+  commit --allow-empty -qm fixture
 failed_run_dir="$tmp/failed-run"
 if env \
   NVPN_RELEASE_GATE_LOG_DIR="$failed_run_dir" \
   NVPN_RELEASE_GATE_REQUIRE_COMPLETE=invalid \
-  "$ROOT_DIR/scripts/release-gate.sh" \
+  "$fixture_root/scripts/release-gate.sh" \
   >"$tmp/failed-run.out" 2>"$tmp/failed-run.err"
 then
   fail "invalid complete-mode preflight unexpectedly passed"
