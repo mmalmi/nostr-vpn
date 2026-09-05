@@ -270,12 +270,12 @@ release_gate_parallel_wait_group() {
   fi
 
   # Bash 3 has no `wait -n`. Poll only the lane wrapper PIDs, then reap and
-  # report each lane as soon as it finishes. A failed lane cleans only its own
-  # process group; independent peers finish so the gate reports their complete
-  # result set instead of throwing away useful builds and diagnostics.
+  # report each lane as soon as it finishes. Fail fast: sibling lanes can own
+  # shared VM caches and must not survive a failed release attempt or race the
+  # next exact-candidate run.
   while ((${#remaining[@]})); do
     local pending=()
-    local index pid status
+    local index pid status group_failed=0
     for index in "${remaining[@]}"; do
       pid="${RELEASE_GATE_PARALLEL_PIDS[$index]:-}"
       if [[ -z "$pid" ]]; then
@@ -295,8 +295,15 @@ release_gate_parallel_wait_group() {
         if ((first_failure == 0)); then
           first_failure="$status"
         fi
+        group_failed=1
+        break
       fi
     done
+    if ((group_failed)); then
+      release_gate_parallel_cancel_all || first_failure=1
+      remaining=()
+      break
+    fi
     # Bash 3 treats "${pending[@]}" as an unbound expansion under `set -u`
     # when every lane was reaped in this poll.
     if ((${#pending[@]})); then

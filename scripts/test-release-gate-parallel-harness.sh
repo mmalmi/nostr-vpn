@@ -122,15 +122,24 @@ fi
   || fail "bounded console output truncated the retained lane log"
 RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES=80
 
-# A failed lane must not cancel or hide an independent peer's result.
-collect_peer() {
-  sleep 0.2
-  printf 'independent lane completed\n'
-  : >"$tmp/collect-complete"
+# A failed lane must cancel its still-running siblings so a stale VM or cache
+# mutation cannot race the next exact-candidate release attempt.
+cancellable_peer() {
+  trap 'printf "term received\n" >"$tmp/peer-term"; exit 0' TERM
+  : >"$tmp/peer-ready"
+  while :; do
+    sleep 10 || true
+  done
 }
 
-release_gate_parallel_start "independent peer" collect_peer
+release_gate_parallel_start "cancellable peer" cancellable_peer
 peer="$RELEASE_GATE_PARALLEL_LAST_INDEX"
+for _ in $(seq 1 50); do
+  [[ -f "$tmp/peer-ready" ]] && break
+  sleep 0.02
+done
+[[ -f "$tmp/peer-ready" ]] || fail "cancellable peer did not start"
+peer_pgid="${RELEASE_GATE_PARALLEL_PGIDS[$peer]}"
 release_gate_parallel_start "collected failure" lane_fails_before_followup
 collected_failure="$RELEASE_GATE_PARALLEL_LAST_INDEX"
 set +e
@@ -139,14 +148,15 @@ status=$?
 set -e
 [[ "$status" == 7 ]] \
   || fail "parallel group returned $status instead of the collected failure"
-[[ -f "$tmp/collect-complete" ]] \
-  || fail "a failed lane cancelled its independent peer"
+[[ -f "$tmp/peer-term" ]] \
+  || fail "a failed lane did not terminate its running sibling"
 [[ ! -e "$tmp/continued-after-failure" ]] \
   || fail "a failed lane continued mutating after its first error"
-grep -Fq 'independent lane completed' "${RELEASE_GATE_PARALLEL_LOGS[$peer]}" \
-  || fail "independent peer log was not preserved"
 [[ -z "${RELEASE_GATE_PARALLEL_PIDS[$peer]:-}" ]] \
-  || fail "parallel group did not reap its completed peer"
+  || fail "parallel group did not reap its cancelled peer"
+if release_gate_parallel_group_alive "$peer_pgid"; then
+  fail "cancelled peer process group survived the failed lane"
+fi
 
 # A successful wrapper with a stubborn child must fail closed and leave no
 # process behind. This exercises TERM and KILL escalation, not source strings.
