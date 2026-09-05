@@ -319,16 +319,45 @@ fn unix_process_stat_treats_exiting_and_dead_states_as_not_running() {
 
 #[test]
 fn linux_proc_fields_preserve_full_daemon_command_and_reject_zombies() {
-    let command = crate::linux_proc_cmdline_to_command(
+    assert!(crate::linux_proc_daemon_matches_config(
         b"nvpn\0daemon\0--service\0--config\0/var/lib/nvpn/config.toml\0",
-    )
-    .expect("command");
-    assert!(crate::daemon_command_matches_config(
-        &command,
         Path::new("/var/lib/nvpn/config.toml")
     ));
     assert!(crate::linux_proc_stat_counts_as_running("123 (nvpn) S 1 2 3"));
     assert!(!crate::linux_proc_stat_counts_as_running("123 (nvpn) Z 1 2 3"));
+}
+
+#[test]
+fn linux_proc_daemon_detection_rejects_launchers_and_other_config_paths() {
+    let config = Path::new("/var/lib/nvpn/config.toml");
+    for launcher in ["sudo", "/usr/bin/timeout", "/usr/bin/strace", "env", "sh"] {
+        let cmdline = format!(
+            "{launcher}\0/path/nvpn\0daemon\0--config\0/var/lib/nvpn/config.toml\0"
+        );
+        assert!(
+            !crate::linux_proc_daemon_matches_config(cmdline.as_bytes(), config),
+            "launcher {launcher} is not the daemon"
+        );
+    }
+    assert!(!crate::linux_proc_daemon_matches_config(
+        b"/path/nvpn\0daemon\0--config\0/var/lib/nvpn/config.toml.other\0",
+        config
+    ));
+    assert!(!crate::linux_proc_daemon_matches_config(
+        b"/path/nvpn\0status\0--config\0/var/lib/nvpn/config.toml\0",
+        config
+    ));
+}
+
+#[test]
+fn linux_proc_daemon_detection_preserves_spaces_and_config_equals_syntax() {
+    let config = Path::new("/var/lib/nvpn test/config.toml");
+    for cmdline in [
+        b"/path with spaces/nvpn\0daemon\0--config\0/var/lib/nvpn test/config.toml\0".as_slice(),
+        b"/path/nvpn-paid-exit\0daemon\0--service\0--config=/var/lib/nvpn test/config.toml\0".as_slice(),
+    ] {
+        assert!(crate::linux_proc_daemon_matches_config(cmdline, config));
+    }
 }
 
 #[test]
