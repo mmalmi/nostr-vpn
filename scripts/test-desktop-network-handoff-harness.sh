@@ -1048,6 +1048,12 @@ require_tokens "$MACOS_NETWORK_GUEST" "production macOS transition evidence" \
   'forwarded_probe_live=true' \
   'endpoint_route_interface' \
   'MACOS_RELEASE_NETWORK_DIRECT_OK'
+require_tokens "$MACOS_WIREGUARD" "macOS SSH-loss reconciliation" \
+  'poll_remote_prepare_status' \
+  'results/prepare.txt' \
+  'run_prepare' \
+  'UNDERLAY_STARTED=1' \
+  'preserving macOS guest state after incomplete cleanup'
 require_tokens "$MACOS_NETWORK_GUEST" "underlay timeout diagnostics" \
   'capture_underlay_recovery_failure' \
   'underlay-failure-$label.txt' \

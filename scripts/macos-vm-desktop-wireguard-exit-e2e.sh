@@ -64,6 +64,7 @@ APP_GIT_TREE=""
 INSTALLED_STATE_SNAPSHOT_STARTED=0
 GUEST_NETWORK_CLEANED=0
 INSTALLED_STATE_RESTORED=0
+UNDERLAY_STARTED=0
 
 fail() {
   echo "macOS VM Release network gate failed: $*" >&2
@@ -197,6 +198,35 @@ run_dns_case() {
   remote_phase primary dns-case
 }
 
+poll_remote_prepare_status() {
+  remote_shell primary "
+    for ignored in {1..300}; do
+      if test -s '$REMOTE_DIR/results/prepare.txt'; then
+        echo pass
+        exit 0
+      fi
+      sleep 0.1
+    done
+    echo timeout
+  "
+}
+
+run_prepare() {
+  local status prepare_status
+  if remote_phase primary prepare; then
+    return 0
+  else
+    status="$?"
+  fi
+  [[ "$status" -eq 255 ]] || return "$status"
+  prepare_status="$(poll_remote_prepare_status)" || return "$status"
+  if [[ "$prepare_status" == pass ]]; then
+    echo "macOS prepare SSH transport dropped after the verified remote action completed" >&2
+    return 0
+  fi
+  return "$status"
+}
+
 poll_remote_underlay_status() {
   remote_shell secondary "
     for ignored in {1..300}; do
@@ -236,7 +266,7 @@ copy_guest_results() {
   [[ -n "$REMOTE_DIR" ]] || return 0
   mkdir -p "$ARTIFACT_DIR"
   local lane=primary
-  [[ -n "$SECONDARY_IP" ]] && lane=secondary
+  [[ "$UNDERLAY_STARTED" -eq 1 ]] && lane=secondary
   local -a options=()
   while IFS= read -r option; do
     options+=("$option")
@@ -291,7 +321,7 @@ remove_remote_dir() {
     *) fail "refusing to remove an unsafe macOS guest state path" ;;
   esac
   local lane=primary
-  [[ -n "$SECONDARY_IP" ]] && lane=secondary
+  [[ "$UNDERLAY_STARTED" -eq 1 ]] && lane=secondary
   local quoted
   printf -v quoted '%q' "$REMOTE_DIR"
   remote_shell "$lane" \
@@ -320,7 +350,7 @@ cleanup() {
   fi
   if [[ -n "$REMOTE_DIR" ]]; then
     local lane=primary
-    [[ -n "$SECONDARY_IP" ]] && lane=secondary
+    [[ "$UNDERLAY_STARTED" -eq 1 ]] && lane=secondary
     if [[ "$GUEST_NETWORK_CLEANED" -eq 1 ]]; then
       :
     elif remote_phase "$lane" cleanup; then
@@ -343,9 +373,13 @@ cleanup() {
       echo "macOS guest network receipts could not be copied" >&2
       cleanup_failed=1
     fi
-    if ! remove_remote_dir; then
-      echo "macOS guest private fixture state survived cleanup" >&2
-      cleanup_failed=1
+    if [[ "$cleanup_failed" -eq 0 ]]; then
+      if ! remove_remote_dir; then
+        echo "macOS guest private fixture state survived cleanup" >&2
+        cleanup_failed=1
+      fi
+    else
+      echo "preserving macOS guest state after incomplete cleanup" >&2
     fi
   fi
   if remove_forward_target; then
@@ -521,7 +555,7 @@ valid_npub "$MACOS_NPUB" \
   || fail "macos-utm returned no private tunnel address"
 DNS_CASE_LABEL=direct-baseline
 DNS_CASE_PROBE_HOST=example.com
-remote_phase primary prepare
+run_prepare
 
 for DNS_CASE_LABEL in \
   automatic-profile cloudflare-doh quad9-doh custom-doh through-exit
@@ -585,6 +619,7 @@ before_transfer="$(
   mobile_wg_fixture_wg_bytes "$CONTAINER" | transfer_total
 )"
 before_forward="$(mobile_wg_fixture_forward_packets "$CONTAINER")"
+UNDERLAY_STARTED=1
 remote_phase primary underlay-start
 underlay_status="$(poll_remote_underlay_status)"
 if [[ "$underlay_status" != "pass" ]]; then
