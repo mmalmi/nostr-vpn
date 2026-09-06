@@ -21,6 +21,98 @@ for file in "${FILES[@]}"; do
 done
 (
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-stop.XXXXXX")"
+  trap 'rm -rf "$PRIVATE_DIR"' EXIT
+  ADB=(cleanup_adb -s selected-test-device)
+  cleanup_adb() {
+    printf '%s\n' "$@" >>"$PRIVATE_DIR/adb-arguments"
+    case "${FAKE_STOP_RESULT:-stopped}" in
+      stopped) printf 'ACTIVITY MANAGER SERVICES\n  (nothing)\n' ;;
+      active) printf 'ServiceRecord{123 selected-test-package/.NostrVpnService}\n' ;;
+      ambiguous) printf 'query unavailable\n' ;;
+      offline) return 7 ;;
+      stalled) sleep 30 ;;
+    esac
+  }
+  # An iOS-only mutation must not grant ownership of Android cleanup.
+  RELEASE_JOIN_DEVICE_MUTATED=1
+  RELEASE_JOIN_ANDROID_MUTATED=0
+  release_join_android_stop
+  [[ ! -e "$PRIVATE_DIR/adb-arguments" ]]
+  RELEASE_JOIN_ANDROID_MUTATED=1
+  NVPN_DEFAULT_APP_ID=selected-test-package
+  release_join_android_stop
+  [[ "$(head -2 "$PRIVATE_DIR/adb-arguments" | tr '\n' ' ')" == '-s selected-test-device ' ]]
+  grep -Fxq selected-test-package "$PRIVATE_DIR/adb-arguments"
+  grep -Fxq force-stop "$PRIVATE_DIR/adb-arguments"
+  grep -Fxq dumpsys "$PRIVATE_DIR/adb-arguments"
+  grep -Fxq services "$PRIVATE_DIR/adb-arguments"
+  if grep -Eq 'clear|uninstall|reboot' "$PRIVATE_DIR/adb-arguments"; then
+    echo "Android cleanup attempted destructive recovery" >&2
+    exit 1
+  fi
+  for FAKE_STOP_RESULT in active ambiguous offline; do
+    if release_join_android_stop; then
+      echo "Android cleanup accepted $FAKE_STOP_RESULT state" >&2
+      exit 1
+    fi
+  done
+  FAKE_STOP_RESULT=stalled
+  before="$(release_join_now_ms)"
+  if release_join_android_stop; then
+    echo "Android cleanup accepted a stalled device command" >&2
+    exit 1
+  fi
+  elapsed=$(( $(release_join_now_ms) - before ))
+  ((elapsed >= 4900 && elapsed < 7000))
+)
+(
+  # Exercise the actual desktop cleanup functions, not just their text.
+  PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-cleanup-trap.XXXXXX")"
+  trap 'rm -rf "$PRIVATE_DIR"' EXIT
+  for join_driver in ubuntu windows macos; do
+    for entry_status in 0 7; do
+      for stop_status in 0 1; do
+        result=0
+        (
+          RESULT_DIR="$PRIVATE_DIR"
+          PLATFORM_RESULT="$PRIVATE_DIR"
+          mkdir -p "$RESULT_DIR/macos" "$PRIVATE_DIR/state"
+          PRIVATE_DIR="$PRIVATE_DIR/state"
+          remote_pid="" REMOTE_ACTION_PID="" import_ready=0
+          acceptance_observer_pids=()
+          MACOS_MOBILE_DIRECTION_LABEL=fixture
+          remote() { :; }
+          ubuntu_vm_cleanup_imported_release_bundle() { :; }
+          release_join_android_capture_failure_log() { :; }
+          release_join_android_stop() {
+            printf 'stop\n' >>"$RESULT_DIR/calls"
+            return "$stop_status"
+          }
+          if [[ "$join_driver" == macos ]]; then
+            eval "$(sed -n '/^macos_mobile_direction_cleanup() {$/,/^}$/p' "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh")"
+            trap macos_mobile_direction_cleanup EXIT
+          else
+            eval "$(sed -n '/^cleanup() {$/,/^}$/p' "$ROOT/scripts/$join_driver-vm-release-mobile-join-e2e.sh")"
+            trap cleanup EXIT
+          fi
+          exit "$entry_status"
+        ) || result=$?
+        [[ -s "$PRIVATE_DIR/calls" ]]
+        rm "$PRIVATE_DIR/calls"
+        if ((entry_status != 0)); then
+          [[ "$result" -eq "$entry_status" ]]
+        elif ((stop_status != 0)); then
+          [[ "$result" -ne 0 ]]
+        else
+          [[ "$result" -eq 0 ]]
+        fi
+      done
+    done
+  done
+)
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-failure-log.XXXXXX")"
   trap 'rm -rf "$PRIVATE_DIR"' EXIT
   ADB=(failure_log_adb -s selected-test-device)
@@ -29,10 +121,10 @@ done
     printf 'retained service lifecycle log\n'
     return "${FAKE_ADB_RESULT:-0}"
   }
-  RELEASE_JOIN_DEVICE_MUTATED=0
+  RELEASE_JOIN_ANDROID_MUTATED=0
   release_join_android_capture_failure_log "$PRIVATE_DIR/not-selected.log"
   [[ ! -e "$PRIVATE_DIR/not-selected.log" && ! -e "$PRIVATE_DIR/adb-arguments" ]]
-  RELEASE_JOIN_DEVICE_MUTATED=1
+  RELEASE_JOIN_ANDROID_MUTATED=1
   release_join_android_capture_failure_log "$PRIVATE_DIR/selected.log"
   [[ "$(head -2 "$PRIVATE_DIR/adb-arguments" | tr '\n' ' ')" == '-s selected-test-device ' ]]
   grep -Fxq NostrVpnService:I "$PRIVATE_DIR/adb-arguments"

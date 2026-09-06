@@ -308,6 +308,8 @@ macos_mobile_direction_cleanup() {
   local status=$? observer_pid
   trap - EXIT
   if [[ "$status" -ne 0 ]]; then
+    release_join_android_capture_failure_log \
+      "$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-android-service-failure.log"
     remote diagnostics >"$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-daemon-diagnostic.log" \
       2>&1 || true
   fi
@@ -340,6 +342,9 @@ macos_mobile_direction_cleanup() {
   if [[ "$status" -ne 0 && -s "$PRIVATE_DIR/android-ui.xml" ]]; then
     cp "$PRIVATE_DIR/android-ui.xml" \
       "$RESULT_DIR/macos/${MACOS_MOBILE_DIRECTION_LABEL}-android-ui.xml"
+  fi
+  if ! release_join_android_stop; then
+    [[ "$status" -ne 0 ]] || status=1
   fi
   exit "$status"
 }

@@ -217,6 +217,7 @@ cleanup() {
   fi
   remote Cleanup >"$PLATFORM_RESULT/windows-cleanup.log" 2>&1 \
     || cleanup_status=$?
+  release_join_android_stop || cleanup_status=1
   if [[ "$status" -ne 0 && -s "$PRIVATE_DIR/android-ui.xml" ]]; then
     cp "$PRIVATE_DIR/android-ui.xml" "$PLATFORM_RESULT/android-ui-failure.xml"
   fi

@@ -6,6 +6,7 @@
 RELEASE_JOIN_ARTIFACTS_VALIDATED=0
 RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=0
 RELEASE_JOIN_DEVICE_MUTATED=0
+RELEASE_JOIN_ANDROID_MUTATED=0
 RELEASE_JOIN_IOS_CLEANUP_ARMED=0
 RELEASE_JOIN_IOS_CLEANUP_BUNDLE_ID=""
 RELEASE_JOIN_INSTALL_ANDROID=1
@@ -250,6 +251,8 @@ release_join_reset_android_state() {
     echo "Set NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR=YES to clear Android app data between join phases" >&2
     return 1
   }
+  RELEASE_JOIN_DEVICE_MUTATED=1
+  RELEASE_JOIN_ANDROID_MUTATED=1
   "${ADB[@]}" shell am force-stop "$package" >/dev/null 2>&1 || true
   "${ADB[@]}" shell pm clear "$package" >/dev/null
   release_join_assert_one_android_package
@@ -326,6 +329,8 @@ release_join_prepare_android_release() {
 
   release_join_require_device_mutation_allowed || return 1
   RELEASE_JOIN_DEVICE_MUTATED=1
+  # shellcheck disable=SC2034 # read by the caller's Android cleanup trap
+  RELEASE_JOIN_ANDROID_MUTATED=1
   if "${ADB[@]}" shell pm path "$package" >/dev/null 2>&1; then
     preexisting_package=true
   fi

@@ -112,7 +112,7 @@ release_join_observe_until_ms() {
 
 release_join_android_capture_failure_log() {
   local output="$1" deadline_ms result=0
-  [[ "${RELEASE_JOIN_DEVICE_MUTATED:-0}" -eq 1 ]] || return 0
+  [[ "${RELEASE_JOIN_ANDROID_MUTATED:-0}" -eq 1 ]] || return 0
   deadline_ms=$(( $(release_join_now_ms) + 5000 ))
   # Keep only this app's lifecycle records, before cleanup can erase context.
   # Reuse the selected device and bounded poll runner; never impede cleanup.
@@ -124,6 +124,22 @@ release_join_android_capture_failure_log() {
       >>"$output.stderr" || true
   fi
   return 0
+}
+
+release_join_android_stop() {
+  [[ "${RELEASE_JOIN_ANDROID_MUTATED:-0}" -eq 1 ]] || return 0
+  local package="${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}"
+  local deadline_ms services
+  deadline_ms=$(( $(release_join_now_ms) + 5000 ))
+  # Stop only the selected test app, retaining its state and failure evidence.
+  release_join_run_until_ms "$deadline_ms" "Android test app stop" \
+    "${ADB[@]}" shell am force-stop "$package" >/dev/null || return 1
+  services="$(release_join_run_until_ms "$deadline_ms" "Android test app cleanup" \
+    "${ADB[@]}" shell dumpsys activity services "$package")" || return 1
+  [[ "$services" == *"(nothing)"* && "$services" != *"ServiceRecord{"* ]] || {
+    echo "Android test app service did not stop cleanly" >&2
+    return 1
+  }
 }
 
 release_join_android_accepted_snapshot_ms() {
