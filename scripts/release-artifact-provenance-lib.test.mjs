@@ -205,59 +205,64 @@ test('component proof retains only unchanged platform product inputs', () => {
   }
 })
 
-test('component proof treats only the native-lab supervisor as harness-only', () => {
-  const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))
-  const git = (...args) => {
-    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
-    assert.equal(result.status, 0, result.stderr)
-    return result.stdout.trim()
-  }
-  const commit = (path, value, message) => {
-    write(join(root, path), value)
-    git('add', path)
-    git('commit', '-qm', message)
-    return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') }
-  }
-  try {
-    git('init', '-q')
-    git('config', 'user.name', 'Release Test')
-    git('config', 'user.email', 'release@example.invalid')
-    const receipt = commit('README.md', 'base\n', 'receipt source')
-    const nativeLab = commit(
-      'scripts/native-lab.py',
-      'print("resource supervisor")\n',
-      'native-lab harness change',
-    )
-    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
-      assert.doesNotThrow(() => proveUnchangedPlatformInputs({
-        candidateRoot: root,
-        platform,
-        receiptCommit: receipt.commit,
-        receiptTree: receipt.tree,
-        candidateCommit: nativeLab.commit,
-        candidateTree: nativeLab.tree,
-      }))
+for (const [helper, nearbyHelper] of [
+  ['native-lab.py', 'native-lab-helper.py'],
+  ['docker-replace-nvpn-binary', 'docker-replace-nvpn-image'],
+]) {
+  test(`component proof treats only ${helper} as harness-only`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))
+    const git = (...args) => {
+      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+      assert.equal(result.status, 0, result.stderr)
+      return result.stdout.trim()
     }
-    git('checkout', '-q', '-b', 'nearby-script', receipt.commit)
-    const nearby = commit(
-      'scripts/native-lab-helper.py',
-      'print("ordinary script")\n',
-      'nearby ordinary script change',
-    )
-    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
-      assert.throws(() => proveUnchangedPlatformInputs({
-        candidateRoot: root,
-        platform,
-        receiptCommit: receipt.commit,
-        receiptTree: receipt.tree,
-        candidateCommit: nearby.commit,
-        candidateTree: nearby.tree,
-      }), /changed product\/build input scripts\/native-lab-helper\.py/)
+    const commit = (path, value, message) => {
+      write(join(root, path), value)
+      git('add', path)
+      git('commit', '-qm', message)
+      return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') }
     }
-  } finally {
-    rmSync(root, { recursive: true, force: true })
-  }
-})
+    try {
+      git('init', '-q')
+      git('config', 'user.name', 'Release Test')
+      git('config', 'user.email', 'release@example.invalid')
+      const receipt = commit('README.md', 'base\n', 'receipt source')
+      const nativeLab = commit(
+        `scripts/${helper}`,
+        'print("resource supervisor")\n',
+        'native-lab harness change',
+      )
+      for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+        assert.doesNotThrow(() => proveUnchangedPlatformInputs({
+          candidateRoot: root,
+          platform,
+          receiptCommit: receipt.commit,
+          receiptTree: receipt.tree,
+          candidateCommit: nativeLab.commit,
+          candidateTree: nativeLab.tree,
+        }))
+      }
+      git('checkout', '-q', '-b', 'nearby-script', receipt.commit)
+      const nearby = commit(
+        `scripts/${nearbyHelper}`,
+        'print("ordinary script")\n',
+        'nearby ordinary script change',
+      )
+      for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+        assert.throws(() => proveUnchangedPlatformInputs({
+          candidateRoot: root,
+          platform,
+          receiptCommit: receipt.commit,
+          receiptTree: receipt.tree,
+          candidateCommit: nearby.commit,
+          candidateTree: nearby.tree,
+        }), new RegExp(`changed product/build input scripts/${nearbyHelper.replaceAll('.', '\\.')}`))
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+}
 
 test('component proof separates the Umbrel web product from native platform inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-umbrel-publisher-component-proof-'))

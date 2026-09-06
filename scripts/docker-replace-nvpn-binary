@@ -105,6 +105,9 @@ command -v file >/dev/null 2>&1 || fail "file is not on PATH"
 [[ -x "$binary" ]] || fail "nvpn binary is not executable: $binary"
 
 image_arch="$(docker image inspect "$base_image" --format '{{.Architecture}}')"
+# With no launch defaults, Docker retains the existing placeholder behavior.
+image_cmd="$(docker image inspect "$base_image" --format '{{json (index .Config "Cmd")}}')"
+[[ "$image_cmd" != null ]] || image_cmd='[]'
 file_output="$(file -b "$binary")"
 assert_arch_match "$image_arch" "$file_output"
 
@@ -118,7 +121,7 @@ trap cleanup EXIT
 
 container_id="$(docker create "$base_image" true)"
 docker cp "$binary" "$container_id:/usr/local/bin/nvpn"
-commit_id="$(docker commit "$container_id" "$target_image")"
+commit_id="$(docker commit --change "CMD $image_cmd" "$container_id" "$target_image")"
 docker rm "$container_id" >/dev/null
 container_id=""
 
