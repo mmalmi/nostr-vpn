@@ -195,6 +195,18 @@ require_tokens "$WINDOWS" "exact Windows underlay candidate" \
   'WINDOWS_EXACT_INSTALLER_RECEIPT_SHA256=' \
   '\$ReceiptHash -ne $(ps_quote "$EXPECTED_INSTALLER_RECEIPT_SHA256")' \
   'Windows underlay CLI differs from the exact installed-and-launched installer payload'
+require_tokens "$WINDOWS" "import-only Windows underlay source binding" \
+  'NVPN_WINDOWS_SYNC_PATH_DEPS=0' \
+  'proveUnchangedPlatformInputs' \
+  "platform: 'linux'" \
+  'host-peer-component-proof.json'
+# shellcheck disable=SC2016
+if grep -Fq 'NVPN_EXPECTED_APP_GIT_SHA="$ARTIFACT_APP_SHA"' "$WINDOWS"; then
+  fail "Windows artifact source still overwrites the separately verified peer source"
+fi
+if grep -Fq 'GUEST_FIPS_REPO' "$WINDOWS"; then
+  fail "import-only Windows underlay still syncs unused dependency checkouts"
+fi
 require_tokens "$RELEASE_GATE" "Windows underlay exact artifact handoff" \
   'NVPN_WINDOWS_EXACT_CLI_PATH="$exact_cli_path"' \
   'NVPN_WINDOWS_INSTALLER_RECEIPT_PATH="$guest_installer_receipt"'

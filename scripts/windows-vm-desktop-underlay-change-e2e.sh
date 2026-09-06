@@ -20,7 +20,6 @@ WINDOWS_SSH="${NVPN_WINDOWS_SSH_HOST:?set NVPN_WINDOWS_SSH_HOST}"
 PRIMARY_PROXY="${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}"
 WINDOWS_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nvpn-desktop-underlay\\windows-target\\nostr-vpn-release-gate}"
-GUEST_FIPS_REPO="${NVPN_WINDOWS_GUEST_FIPS_REPO_PATH:-C:\\src\\nvpn-desktop-underlay\\windows-target\\fips-release-gate}"
 GUEST_BINARY="${NVPN_WINDOWS_EXACT_CLI_PATH:?set NVPN_WINDOWS_EXACT_CLI_PATH to the packaged Windows CLI}"
 GUEST_INSTALLER_RECEIPT="${NVPN_WINDOWS_INSTALLER_RECEIPT_PATH:?set NVPN_WINDOWS_INSTALLER_RECEIPT_PATH to its installer receipt}"
 HOST_INSTALLER_RECEIPT="${NVPN_WINDOWS_HOST_INSTALLER_RECEIPT_PATH:?set NVPN_WINDOWS_HOST_INSTALLER_RECEIPT_PATH to the host-copied installer receipt}"
@@ -116,7 +115,6 @@ resolve_expected_fips_revision() {
 
 sync_and_import_candidates() {
   local harness_sha harness_tree windows_head windows_tree
-  local expected_fips_tree="" windows_fips_tree=""
   [[ "$ARTIFACT_APP_SHA" =~ ^[0-9a-f]{40}$ \
     && "$ARTIFACT_APP_TREE" =~ ^[0-9a-f]{40}$ ]] \
     || fail "Windows underlay requires an exact packaged app revision and tree"
@@ -149,28 +147,32 @@ sync_and_import_candidates() {
     fi
   } >"$ARTIFACT_DIR/source-provenance.txt"
 
+  # The imported peer may precede harness-only commits in the Windows build.
+  # Prove its product inputs are unchanged without relabeling its source.
+  node --input-type=module - "$ROOT" "${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}" \
+    "$ARTIFACT_APP_SHA" "$ARTIFACT_APP_TREE" \
+    >"$ARTIFACT_DIR/host-peer-component-proof.json" <<'JS'
+import { execFileSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
+const [root, peerRoot, candidateCommit, candidateTree] = process.argv.slice(2)
+const { proveUnchangedPlatformInputs } = await import(
+  pathToFileURL(`${root}/scripts/release-component-source.mjs`))
+const git = ref => execFileSync('git', ['-C', peerRoot, 'rev-parse', ref], { encoding: 'utf8' }).trim()
+console.log(JSON.stringify(proveUnchangedPlatformInputs({
+  candidateRoot: root, platform: 'linux',
+  receiptCommit: git('HEAD'), receiptTree: git('HEAD^{tree}'),
+  candidateCommit, candidateTree,
+}), null, 2))
+JS
+
   env \
     NVPN_WINDOWS_SSH_HOST="$WINDOWS_SSH" \
     NVPN_WINDOWS_SSH_PROXY_COMMAND="$PRIMARY_PROXY" \
     NVPN_WINDOWS_SSH_JUMP="$WINDOWS_JUMP" \
     NVPN_WINDOWS_GUEST_REPO_PATH="$GUEST_REPO" \
-    NVPN_WINDOWS_GUEST_FIPS_REPO_PATH="$GUEST_FIPS_REPO" \
-    NVPN_WINDOWS_FIPS_REPO_PATH="${LOCAL_FIPS_REPO:-$ROOT/../fips}" \
-    NVPN_WINDOWS_SYNC_PATH_DEPS="$([[ -n "$LOCAL_FIPS_REPO" ]] && echo 1 || echo 0)" \
+    NVPN_WINDOWS_SYNC_PATH_DEPS=0 \
     NVPN_WINDOWS_GIT_SYNC_EXACT_APP_COMMIT="$harness_sha" \
     "$ROOT/scripts/windows-vm-git-sync.sh" "$WINDOWS_SSH"
-
-  if [[ -n "$LOCAL_FIPS_REPO" ]]; then
-    for crate in fips-core fips-endpoint fips-identity; do
-      [[ -f "$LOCAL_FIPS_REPO/crates/$crate/Cargo.toml" ]] \
-        || fail "NVPN_FIPS_REPO_PATH is missing crates/$crate/Cargo.toml"
-    done
-    expected_fips_tree="$(
-      git -C "$LOCAL_FIPS_REPO" rev-parse 'HEAD^{tree}'
-    )"
-    run_ps_primary \
-      "git -C $(ps_quote "$GUEST_FIPS_REPO") checkout --detach $(ps_quote "$FIPS_SOURCE_REVISION") | Out-Null"
-  fi
 
   windows_head="$(run_ps_primary \
     "Set-Location $(ps_quote "$GUEST_REPO"); git rev-parse HEAD" \
@@ -183,14 +185,6 @@ sync_and_import_candidates() {
   [[ "$windows_head" == "$harness_sha" \
     && "$windows_tree" == "$harness_tree" ]] \
     || fail "Windows checkout differs from the exact harness revision/tree"
-  if [[ -n "$LOCAL_FIPS_REPO" ]]; then
-    windows_fips_tree="$(run_ps_primary \
-      "git -C $(ps_quote "$GUEST_FIPS_REPO") rev-parse 'HEAD^{tree}'" \
-      | tr -d '\r' \
-      | awk '/^[0-9a-f]{40}$/ { value = $0 } END { print value }')"
-    [[ "$windows_fips_tree" == "$expected_fips_tree" ]] \
-      || fail "Windows FIPS tree differs from the local release-gate tree"
-  fi
   run_ps_primary \
     "& $(ps_quote "$GUEST_REPO\\scripts\\test-desktop-windows-wireguard-ownership.ps1")" \
     >"$ARTIFACT_DIR/windows-wireguard-ownership-harness.log"
@@ -231,8 +225,7 @@ Write-Host \"WINDOWS_EXACT_INSTALLER_RECEIPT_SHA256=\$ReceiptHash\"
 Write-Host \"WINDOWS_EXACT_INSTALLER_CLI_SHA256=\$CliHash\"" \
     >"$ARTIFACT_DIR/exact-artifact-validation.log"
 
-  NVPN_EXPECTED_APP_GIT_SHA="$ARTIFACT_APP_SHA" \
-    desktop_underlay_import_host_peer \
+  desktop_underlay_import_host_peer \
       >"$ARTIFACT_DIR/host-peer-import.log" 2>&1 \
     || {
       tail -n 120 "$ARTIFACT_DIR/host-peer-import.log" >&2 || true

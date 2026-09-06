@@ -915,7 +915,7 @@ then
 fi
 require_tokens "$WINDOWS_HOST" "exact provenance/artifact-import contract" \
   'the exact FIPS release-gate checkout must be committed and clean' \
-  'checkout --detach' \
+  'NVPN_WINDOWS_SYNC_PATH_DEPS=0' \
   'target-version.txt' \
   'peer-version.txt' \
   'Windows underlay CLI differs from the exact installed-and-launched installer payload' \
