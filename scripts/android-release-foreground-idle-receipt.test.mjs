@@ -12,7 +12,8 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import {
   createAndroidForegroundIdleReceipt,
@@ -96,6 +97,37 @@ function fixture(root) {
   writeFileSync(rawPath, `${JSON.stringify(raw)}\n`)
   return { artifact, raw, artifactPath, rawPath, outputPath }
 }
+
+test('foreground-idle CLI writes evidence and rejects invalid commands through symlinked paths', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-android-idle-cli-'))
+  try {
+    const value = fixture(root)
+    const script = fileURLToPath(new URL('./android-release-foreground-idle-receipt.mjs', import.meta.url))
+    const scriptAlias = join(root, 'receipt-command.mjs')
+    const directoryAlias = join(root, 'scripts')
+    symlinkSync(script, scriptAlias)
+    symlinkSync(dirname(script), directoryAlias, 'dir')
+    for (const entry of [script, scriptAlias, join(directoryAlias, 'android-release-foreground-idle-receipt.mjs')]) {
+      const invalid = spawnSync(process.execPath, [entry, 'invalid-command'], { encoding: 'utf8' })
+      assert.equal(invalid.status, 1, `${entry}: ${invalid.stderr}`)
+      assert.match(invalid.stderr, /usage:/)
+      const result = spawnSync(process.execPath, [entry, 'create',
+        '--artifact-receipt', value.artifactPath,
+        '--raw-receipt', value.rawPath,
+        '--output', value.outputPath,
+        '--verified-live-context',
+      ], { encoding: 'utf8' })
+      assert.equal(result.status, 0, result.stderr)
+      assert.match(result.stdout, /Android foreground-idle receipt:/)
+      const receipt = JSON.parse(readFileSync(value.outputPath, 'utf8'))
+      assert.equal(receipt.artifactReceiptSha256, sha256(readFileSync(value.artifactPath)))
+      assert.equal(receipt.rawIdleCpuReceiptSha256, sha256(readFileSync(value.rawPath)))
+      assert.deepEqual(receipt.sample, value.raw)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('live Android foreground-idle receipt binds the raw sample to the exact artifact', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-android-idle-receipt-'))
