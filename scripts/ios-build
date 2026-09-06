@@ -314,7 +314,6 @@ run_ios_archive() {
   ensure_profiles
   ensure_dir "$DIST_DIR"
 
-  run_ios_rust
   run_ios_xcframework
   run_ios_project
 

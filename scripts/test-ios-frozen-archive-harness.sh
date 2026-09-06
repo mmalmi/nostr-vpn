@@ -1243,6 +1243,11 @@ if (
 archive = ios_build.split("run_ios_archive() {", 1)[1].split(
     "\nrun_export_archive() {", 1
 )[0]
+if "\n  run_ios_rust\n" in archive or archive.count("\n  run_ios_xcframework\n") != 1:
+    raise SystemExit("frozen iOS archive must build Rust only through its framework step")
+ios_runner = pathlib.Path(sys.argv[1]).parents[1].joinpath("tools/run-ios").read_text(encoding="utf-8")
+if "xcframework) build_rust; build_xcframework ;;" not in ios_runner:
+    raise SystemExit("the framework step must build both Rust targets before packaging")
 for required in (
     'local NVPN_IOS_RUST_PROFILE="release"',
     "export NVPN_IOS_RUST_PROFILE",
@@ -1259,7 +1264,7 @@ for required in (
     if required not in tool:
         raise SystemExit("frozen archive validator does not require Release Rust")
 if archive.index("prepare_frozen_revision_args") > archive.index(
-    "run_ios_rust"
+    "run_ios_xcframework"
 ):
     raise SystemExit("frozen archive builds before pinning the full Git SHA")
 if (
