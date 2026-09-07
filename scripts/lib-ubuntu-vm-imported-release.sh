@@ -396,6 +396,7 @@ GUEST
     "$builder_mode" "$dockerfile_sha" "$payload_sha" \
     "$harness_sha" "$harness_tree" <<'GUEST'
 set -euo pipefail
+trap 'printf "Ubuntu VM import verification failed at remote line %s\n" "$LINENO" >&2' ERR
 remote_dir="$1"
 guest_repo="$2"
 app_sha="$3"
