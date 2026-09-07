@@ -45,10 +45,11 @@ async fn public_mixed_transport_prefers_udp_for_cross_seed_control() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn local_mixed_transit_prefers_udp_and_falls_back_to_websocket() {
+async fn local_mixed_transit_prefers_udp_and_recovers_from_websocket_fallback() {
     for udp_reachable in [true, false] {
         // A bound but unread socket models a UDP black hole, not a TCP/WS
-        // outage. Keep it bound for the entire fallback round.
+        // outage. Once WSS works, turn it into a UDP forwarder to model the
+        // network becoming reachable without restarting either endpoint.
         let udp_socket = UdpSocket::bind("127.0.0.1:0").expect("reserve UDP seed address");
         let udp_address = udp_socket
             .local_addr()
@@ -56,7 +57,10 @@ async fn local_mixed_transit_prefers_udp_and_falls_back_to_websocket() {
             .to_string();
         let url = available_websocket_url();
         let mut seed_config = local_transit_config(Some(&url), None);
-        let _black_hole = if udp_reachable {
+        let seed_udp_socket = UdpSocket::bind("127.0.0.1:0").expect("reserve UDP listener");
+        let seed_udp_address = seed_udp_socket.local_addr().expect("UDP listener address");
+        drop(seed_udp_socket);
+        let black_hole = if udp_reachable {
             drop(udp_socket);
             seed_config.transports.udp = TransportInstances::Single(UdpConfig {
                 bind_addr: Some(udp_address.clone()),
@@ -64,6 +68,10 @@ async fn local_mixed_transit_prefers_udp_and_falls_back_to_websocket() {
             });
             None
         } else {
+            seed_config.transports.udp = TransportInstances::Single(UdpConfig {
+                bind_addr: Some(seed_udp_address.to_string()),
+                ..UdpConfig::default()
+            });
             Some(udp_socket)
         };
         let seed = bind_local_transit_endpoint(seed_config).await;
@@ -103,6 +111,62 @@ async fn local_mixed_transit_prefers_udp_and_falls_back_to_websocket() {
             "mixed-seed-to-client",
         )
         .await;
+        if let Some(socket) = black_hole {
+            socket
+                .set_nonblocking(true)
+                .expect("nonblocking UDP forwarder");
+            let socket = tokio::net::UdpSocket::from_std(socket).expect("async UDP forwarder");
+            let forwarder = tokio::spawn(async move {
+                let mut buffer = [0u8; 65536];
+                let mut client_address = None;
+                loop {
+                    let (len, source) = socket
+                        .recv_from(&mut buffer)
+                        .await
+                        .expect("forward UDP receive");
+                    let destination = if source == seed_udp_address {
+                        client_address.expect("client sent first")
+                    } else {
+                        client_address = Some(source);
+                        seed_udp_address
+                    };
+                    socket
+                        .send_to(&buffer[..len], destination)
+                        .await
+                        .expect("forward UDP send");
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    if client
+                        .peers()
+                        .await
+                        .expect("upgrade peer state")
+                        .iter()
+                        .any(|peer| {
+                            peer.connected
+                                && peer.npub == seed.npub()
+                                && peer.transport_type.as_deref() == Some("udp")
+                        })
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("WSS fallback did not return to reachable UDP");
+            assert_seed_transport(&client, seed.npub(), "udp").await;
+            deliver_ping(
+                &client_control,
+                &mut seed_control,
+                client.npub(),
+                seed.npub(),
+                "recovered-udp",
+            )
+            .await;
+            forwarder.abort();
+        }
         client_control.stop().await;
         seed_control.stop().await;
         client.shutdown().await.expect("shutdown mixed client");
