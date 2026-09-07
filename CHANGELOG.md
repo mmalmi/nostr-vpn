@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.10 - 2026-09-06
+## 4.1.10 - 2026-09-07
 
 ### Release notes
 
@@ -12,6 +12,8 @@ starts its encrypted approval carrier before exchanging a signed roster.
 
 ### Fixed
 
+- Keep iOS Internet route changes visibly pending until the running VPN has
+  applied them, including switching back to This device while staying connected.
 - Fix Linux CLI startup through launchers such as `sudo` by distinguishing the
   actual VPN daemon from the process launching it.
 - Preserve existing router port mappings during routine daemon reloads and
