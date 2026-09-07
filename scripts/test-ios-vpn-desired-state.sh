@@ -205,9 +205,6 @@ start_functions = (
     app.split("func syncPacketTunnelConfig(", 1)[1].split(
         "private func actionRequiresPacketTunnelConfigSync", 1
     )[0],
-    lifecycle.split("private func reconcileStartupTunnelRoutes", 1)[1].split(
-        "private func requireStartupTunnelReconciliation", 1
-    )[0],
     lifecycle.split("private func performVpnStart", 1)[1].split(
         "private func performVpnStop", 1
     )[0],
@@ -232,7 +229,7 @@ startup_routes = lifecycle.split("private func reconcileStartupTunnelRoutes", 1)
 )[0]
 if not startup_routes.index("packetTunnelNeedsStart") < startup_routes.index(
     "installedRouteState"
-) < startup_routes.index("vpnController.start"):
+) < startup_routes.index("enqueuePacketTunnelOperation"):
     raise SystemExit("startup does not restart persisted VPN-on intent after NE disconnect")
 if "providerIsResponsive()" not in startup_routes:
     raise SystemExit("startup trusts saved routes without proving the provider is alive")
