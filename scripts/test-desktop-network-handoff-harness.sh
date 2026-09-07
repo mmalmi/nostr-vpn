@@ -419,11 +419,37 @@ require_tokens "$LINUX_HOST_ENTRY" "host-coordinated DNS counter snapshot" \
   'after="$(stable_dns_counters)"' \
   'signal_guest "dns-$name.snapshotted"' \
   'wait_for_guest_marker "dns-$name.resumed" 30'
-require_tokens "$LINUX_HOST_ENTRY" "sustained DNS counter quiescence" \
-  'stable_samples=0' \
-  'for attempt in $(seq 1 100)' \
-  'if ((stable_samples >= 20))' \
-  'stable_samples=0'
+# Exercise the real polling function with a simulated clock: remote-call
+# latency must not turn a four-second quiet window into twenty SSH samples.
+counter_poll="$(sed -n '/^stable_dns_counters() {$/,/^}$/p' "$LINUX_HOST_ENTRY")"
+for scenario in quiet delayed changing unavailable; do
+  (
+    eval "$counter_poll"
+    SECONDS=0
+    sleep() { SECONDS=$((SECONDS + 1)); }
+    fail() { return 1; }
+    peer_command() {
+      [[ "$1" == counters ]] || return 1
+      case "$scenario" in
+        quiet) printf 'packets=0\n' ;;
+        delayed) printf 'packets=%s\n' "$((SECONDS >= 4))" ;;
+        changing) printf 'packets=%s\n' "$SECONDS" ;;
+        unavailable) return 1 ;;
+      esac
+    }
+    if stable_dns_counters >"$COMBINED_DIR/counters-$scenario.txt"; then
+      case "$scenario:$SECONDS" in
+        quiet:5|delayed:9) ;;
+        *) exit 1 ;;
+      esac
+    else
+      case "$scenario:$SECONDS" in
+        changing:20|unavailable:0) ;;
+        *) exit 1 ;;
+      esac
+    fi
+  ) || fail "DNS counter polling did not honor its elapsed-time window: $scenario"
+done
 direct_restore="$(
   sed -n '/^run_dns_matrix_and_direct_restore() {$/,/^}$/p' "$LINUX_HOST_ENTRY"
 )"

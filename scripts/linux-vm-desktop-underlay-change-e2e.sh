@@ -656,21 +656,19 @@ counter_value() {
 }
 
 stable_dns_counters() {
-  local previous current attempt stable_samples=0
-  previous="$(peer_command counters)"
-  for attempt in $(seq 1 100); do
+  local previous current started="$SECONDS" quiet_since
+  previous="$(peer_command counters)" || return 1
+  quiet_since="$SECONDS"
+  while ((SECONDS - started < 20)); do
     sleep 0.2
-    current="$(peer_command counters)"
-    if [[ "$current" == "$previous" ]]; then
-      ((stable_samples += 1))
-      # Let requests holding the previous resolver exceed the 3s DoH timeout
-      # before attributing any packets to the newly selected policy.
-      if ((stable_samples >= 20)); then
-        printf '%s\n' "$current"
-        return 0
-      fi
-    else
-      stable_samples=0
+    current="$(peer_command counters)" || return 1
+    if [[ "$current" != "$previous" ]]; then
+      quiet_since="$SECONDS"
+    # Five clock ticks guarantee at least four quiet seconds despite SECONDS'
+    # one-second precision, exceeding the old resolver's three-second timeout.
+    elif ((SECONDS - quiet_since >= 5)); then
+      printf '%s\n' "$current"
+      return 0
     fi
     previous="$current"
   done
