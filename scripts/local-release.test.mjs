@@ -2435,7 +2435,7 @@ test('Linux publication reuses the VM-installed deb and real static-musl CLI arc
   )
   assert.doesNotMatch(linuxBuild, /cargo build/)
   assert.doesNotMatch(linuxBuild, /prepare-host-linux-vm-bundle\.sh/)
-  assert.match(githubRelease, /cargo build --release --locked -p nvpn/)
+  assert.doesNotMatch(githubRelease, /cargo build --release --locked -p nvpn/)
 })
 
 test('exact artifact copy safely replaces a stale read-only destination', (context) => {
@@ -2531,29 +2531,21 @@ test('Windows publication reuses the exact installer and CLI archive that passed
   assert.match(proof, /install directory overlaps the gated publish directory/)
 })
 
-test('Linux release reclaims Docker smoke storage before host packaging', () => {
+test('hosted release retains Rust and Docker verification without duplicate native packaging', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
   const verifyJobStart = workflow.indexOf('  verify:')
-  const linuxJobStart = workflow.indexOf('  build-linux-app:')
-  const linuxJobEnd = workflow.indexOf('  build-windows-app:', linuxJobStart)
-  const verifyJob = workflow.slice(verifyJobStart, workflow.indexOf('  build-cli:', verifyJobStart))
-  const linuxJob = workflow.slice(linuxJobStart, linuxJobEnd)
-  const buildx = linuxJob.indexOf('uses: docker/setup-buildx-action@v3')
-  const smoke = linuxJob.indexOf('- name: Smoke launch Linux GUI')
-  const cleanup = linuxJob.indexOf('- name: Reclaim Linux GUI smoke storage')
-  const desktopPackage = linuxJob.indexOf('- name: Build Linux desktop package')
-
-  assert.ok(verifyJobStart >= 0 && linuxJobStart >= 0 && linuxJobEnd > linuxJobStart)
+  const verifyJobEnd = workflow.indexOf('  macos-sdk-compat:', verifyJobStart)
+  const verifyJob = workflow.slice(verifyJobStart, verifyJobEnd)
+  assert.ok(verifyJobStart >= 0 && verifyJobEnd > verifyJobStart)
   assert.match(verifyJob, /uses: docker\/setup-buildx-action@v3/)
-  assert.ok(buildx >= 0 && smoke > buildx && cleanup > smoke && desktopPackage > cleanup)
-  assert.match(linuxJob, /docker compose down --volumes --remove-orphans/)
-  assert.match(linuxJob, /docker system prune --all --force --volumes/)
+  assert.match(verifyJob, /run: \.\/scripts\/release-gate\.sh/)
+  assert.doesNotMatch(workflow, /^  build-linux-app:/m)
 })
 
 test('hosted release verification disables every private Windows lane', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
   const verifyStart = workflow.indexOf('  verify:')
-  const verifyEnd = workflow.indexOf('  build-cli:', verifyStart)
+  const verifyEnd = workflow.indexOf('  macos-sdk-compat:', verifyStart)
   const verifyJob = workflow.slice(verifyStart, verifyEnd)
 
   assert.ok(verifyStart >= 0 && verifyEnd > verifyStart)
@@ -2786,14 +2778,17 @@ test('Actions cannot mutate public releases and local promotion is exact-stage g
   assert.ok(preflight >= 0 && mutationGate > preflight && publish > mutationGate)
 })
 
-test('GitHub platform builds run beside verification and join before release', () => {
+test('GitHub release verifies the gated bytes without rebuilding unused platform packages', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
   const releaseJobStart = workflow.indexOf('  release:')
   const releaseJob = workflow.slice(releaseJobStart)
 
   assert.ok(releaseJobStart >= 0)
-  assert.doesNotMatch(workflow, /^    needs: verify$/m)
   assert.match(releaseJob, /needs:\n      - verify/)
+  assert.match(releaseJob, /- macos-sdk-compat/)
+  assert.match(workflow, /run: \.\/scripts\/release-gate\.sh/)
+  assert.match(releaseJob, /verify-release-publication-bundle\.mjs/)
+  assert.match(releaseJob, /--require-draft/)
   for (const job of [
     'build-cli',
     'build-macos-app',
@@ -2802,32 +2797,22 @@ test('GitHub platform builds run beside verification and join before release', (
     'build-android-app',
     'build-startos',
   ]) {
-    assert.match(releaseJob, new RegExp(`needs\\.${job}\\.result == 'success'`))
-    assert.match(releaseJob, new RegExp(`- ${job}`))
+    assert.doesNotMatch(workflow, new RegExp(`^  ${job}:`, 'm'))
   }
+  assert.doesNotMatch(workflow, /actions\/upload-artifact|MACOS_CERTIFICATE_P12|ANDROID_KEYSTORE|STARTOS_DEV_KEY/)
 })
 
-test('GitHub release requires and publishes both StartOS package architectures', () => {
+test('GitHub release inspects the exact gated StartOS packages without a signing key', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
-  const startosJobStart = workflow.indexOf('  build-startos:')
   const releaseJobStart = workflow.indexOf('  release:')
-  const startosJob = workflow.slice(startosJobStart, releaseJobStart)
   const releaseJob = workflow.slice(releaseJobStart)
-
-  assert.ok(startosJobStart >= 0 && releaseJobStart > startosJobStart)
-  assert.match(startosJob, /STARTOS_DEV_KEY/)
-  assert.match(startosJob, /STARTOS_CLI_VERSION: '1\.1\.0'/)
-  assert.match(startosJob, /startos_cli_sha256: 70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a/)
-  assert.match(startosJob, /startos_cli_sha256: 5feebd3f9b24a130e54496040b09e78b93307a5eee0052d56cab29a12ec4c571/)
-  assert.match(startosJob, /releases\/download\/start-cli\/v\$\{STARTOS_CLI_VERSION\}/)
-  assert.match(startosJob, /\.startos\/build\.key\.pem/)
-  assert.match(startosJob, /sha256sum --check/)
-  assert.match(startosJob, /start-cli \$\{STARTOS_CLI_VERSION\}/)
-  assert.match(startosJob, /target: x86/)
-  assert.match(startosJob, /target: arm/)
-  assert.match(startosJob, /scripts\/startos-release\.mjs/)
-  assert.match(releaseJob, /needs\.build-startos\.result == 'success'/)
-  assert.match(releaseJob, /- build-startos/)
+  assert.ok(releaseJobStart >= 0)
+  assert.match(releaseJob, /STARTOS_CLI_VERSION: '1\.1\.0'/)
+  assert.match(releaseJob, /STARTOS_CLI_SHA256: '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'/)
+  assert.match(releaseJob, /sha256sum --check/)
+  assert.match(releaseJob, /start-cli \$\{STARTOS_CLI_VERSION\}/)
+  assert.match(releaseJob, /verify-release-publication-bundle\.mjs/)
+  assert.doesNotMatch(workflow, /STARTOS_DEV_KEY|\.startos\/build\.key\.pem/)
   assert.doesNotMatch(releaseJob, /--built-line/)
 })
 
