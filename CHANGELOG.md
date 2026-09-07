@@ -14,6 +14,9 @@ a signed roster.
 
 ### Fixed
 
+- Protect local keys, payment state, device rosters, and privileged daemon
+  files against unsafe filesystem links, and reject untrusted web origins.
+- Preserve pending iOS join receipts when restoring VPN routes after relaunch.
 - Recover encrypted sessions automatically after the other device's VPN
   restarts, so retained connections can deliver device approvals again.
 - Keep iOS Internet route changes visibly pending until the running VPN has
