@@ -31,12 +31,15 @@ done
   ADB=(trace)
   release_join_android_stop() { trace stop; }
   release_join_android_launch() { trace launch; }
-  release_join_android_dump_ui() { trace dump; }
-  release_join_android_query_dumped() {
-    case "$scenario:$1:$2" in
-      fresh:resource:network-setup-create|saved:text:▾) return 0 ;;
-      *) return 1 ;;
-    esac
+  release_join_android_dump_ui() {
+    trace dump
+    RELEASE_JOIN_ANDROID_UI_XML="$tmp/ui.xml"
+    # Dialog accessibility exposes descriptions without resource IDs.
+    if [[ "$scenario" == fresh ]]; then
+      printf '<hierarchy><node text="" resource-id="" content-desc="Create Network" bounds="[0,0][100,100]"/></hierarchy>' >"$RELEASE_JOIN_ANDROID_UI_XML"
+    else
+      printf '<hierarchy><node text="▾" resource-id="" content-desc="" bounds="[0,0][100,100]"/></hierarchy>' >"$RELEASE_JOIN_ANDROID_UI_XML"
+    fi
   }
   release_join_android_wait_query() { trace "wait:$1:$2"; }
   release_join_android_tap_center() { trace "tap:$1:$2"; }
@@ -54,7 +57,7 @@ done
     if [[ "$scenario" == saved ]]; then
       grep -Fxq 'tap:text:▾' "$tmp/calls"
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
-      grep -Fxq 'wait:resource:network-setup-create' "$tmp/calls"
+      grep -Fxq 'wait:description:Create Network' "$tmp/calls"
     else
       ! grep -q '^tap:' "$tmp/calls"
     fi
@@ -1161,7 +1164,7 @@ PY
       printf '%s\n' "$fake_qr_width"
       return
     fi
-    if [[ "$kind" == resource && "$expected" == join-request-qr-content ]]; then
+    if [[ "$kind" == description && "$expected" == 'Join request QR content width' ]]; then
       printf '%s\n' "$fake_content_width"
       return
     fi
@@ -1242,8 +1245,8 @@ PY
       if [[ "$kind" == description && "$expected" == "Join request QR code" ]]; then
         return 0
       fi
-      if [[ "$kind" == resource \
-        && "$expected" == joiner-device-id-value \
+      if [[ "$kind" == description-prefix \
+        && "$expected" == 'Joiner Device ID value: ' \
         && "$output" == description ]]
       then
         printf 'Joiner Device ID value: %s\n' "$RELEASE_JOIN_ANDROID_JOINER_ID"

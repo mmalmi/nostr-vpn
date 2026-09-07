@@ -300,14 +300,14 @@ release_join_android_open_network_setup() {
   local deadline=$((SECONDS + RELEASE_JOIN_UI_WAIT_SECS))
   while ((SECONDS < deadline)); do
     release_join_android_dump_ui || return 1
-    if release_join_android_query_dumped resource network-setup-create center >/dev/null 2>&1; then
+    if release_join_android_query_dumped description 'Create Network' center >/dev/null 2>&1; then
       return 0
     fi
     if release_join_android_query_dumped text '▾' center >/dev/null 2>&1; then
       release_join_android_tap_center text '▾' || return 1
       release_join_android_wait_query text 'Add network' || return 1
       release_join_android_tap_center text 'Add network' || return 1
-      release_join_android_wait_query resource network-setup-create
+      release_join_android_wait_query description 'Create Network'
       return $?
     fi
     sleep 0.1
@@ -381,7 +381,7 @@ release_join_android_accept_camera_permission() {
 
 release_join_android_accept_join_transport_permissions() {
   release_join_android_wait_through_system_prompts \
-    resource manual-join-expand 10 || {
+    description 'Manual join' 10 || {
       echo "Android join transport permission did not complete" >&2
       return 1
     }
@@ -451,10 +451,10 @@ release_join_android_open_link_device() {
 
 release_join_android_create_admin() {
   release_join_android_launch
-  release_join_android_wait_query resource network-setup-create
-  release_join_android_tap resource network-setup-create
-  release_join_android_wait_query resource network-create-submit
-  release_join_android_tap resource network-create-submit
+  release_join_android_wait_query description 'Create Network'
+  release_join_android_tap description 'Create Network'
+  release_join_android_wait_query description 'Create network'
+  release_join_android_tap description 'Create network'
   release_join_android_accept_admin_transport_permissions
   release_join_android_wait_vpn_connected
   release_join_android_open_link_device
@@ -481,12 +481,12 @@ release_join_android_create_admin() {
 
 release_join_android_show_qr() {
   release_join_android_launch
-  release_join_android_wait_query resource network-setup-join
-  release_join_android_tap resource network-setup-join
+  release_join_android_wait_query description 'Join Network'
+  release_join_android_tap description 'Join Network'
   release_join_android_accept_join_transport_permissions
-  release_join_android_scroll_to resource manual-join-expand
-  release_join_android_tap resource manual-join-expand
-  release_join_android_wait_query resource joiner-device-id-value
+  release_join_android_scroll_to description 'Manual join'
+  release_join_android_tap description 'Manual join'
+  release_join_android_wait_query description-prefix 'Joiner Device ID value: '
   RELEASE_JOIN_ANDROID_JOINER_ID="$(
     release_join_android_public_value "Joiner Device ID value"
   )"
@@ -527,7 +527,7 @@ release_join_android_assert_qr_full_width() {
   )" || return 1
   content_width="$(
     release_join_android_query_dumped \
-      resource "join-request-qr-content" width
+      description "Join request QR content width" width
   )" || return 1
   [[ "$qr_width" =~ ^[1-9][0-9]*$ \
     && "$content_width" =~ ^[1-9][0-9]*$ ]] \
@@ -585,7 +585,7 @@ release_join_android_wait_qr_join_complete() {
         description "Join request QR code" center >/dev/null 2>&1; then
       description="$(
         release_join_android_query_dumped \
-          resource joiner-device-id-value description
+          description-prefix 'Joiner Device ID value: ' description
       )" || return 1
       [[ "$description" == \
         "Joiner Device ID value: $RELEASE_JOIN_ANDROID_JOINER_ID" ]] \
@@ -754,24 +754,24 @@ release_join_require_fresh_ios_pending_qr() {
 release_join_android_manual_submit() {
   local admin="$1" network="$2"
   release_join_android_launch
-  release_join_android_wait_query resource network-setup-join
-  release_join_android_tap resource network-setup-join
+  release_join_android_wait_query description 'Join Network'
+  release_join_android_tap description 'Join Network'
   release_join_android_accept_join_transport_permissions
-  release_join_android_scroll_to resource manual-join-expand
-  release_join_android_tap resource manual-join-expand
-  release_join_android_wait_query resource joiner-device-id-value
+  release_join_android_scroll_to description 'Manual join'
+  release_join_android_tap description 'Manual join'
+  release_join_android_wait_query description-prefix 'Joiner Device ID value: '
   RELEASE_JOIN_ANDROID_JOINER_ID="$(
     release_join_android_public_value "Joiner Device ID value"
   )"
   release_join_valid_npub "$RELEASE_JOIN_ANDROID_JOINER_ID"
-  release_join_android_enter resource manual-join-admin-id "$admin"
+  release_join_android_enter description 'Manual join admin Device ID' "$admin"
   release_join_android_enter \
-    resource manual-join-network-id "$network" visible-center
-  release_join_android_wait_query resource manual-join-submit
-  release_join_android_tap_center resource manual-join-submit
+    description 'Manual join Network ID' "$network" visible-center
+  release_join_android_wait_query description 'Add network manually'
+  release_join_android_tap_center description 'Add network manually'
   local deadline=$((SECONDS + 3))
   while ((SECONDS < deadline)); do
-    if ! release_join_android_query resource manual-join-submit center >/dev/null 2>&1; then
+    if ! release_join_android_query description 'Add network manually' center >/dev/null 2>&1; then
       echo "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1"
       export RELEASE_JOIN_ANDROID_JOINER_ID
       return 0
