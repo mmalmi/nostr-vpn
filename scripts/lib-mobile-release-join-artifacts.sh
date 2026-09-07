@@ -596,7 +596,7 @@ release_join_install_ios_release() {
     # Changing only the QR app variant must not replace it or revoke its trust.
     if [[ -n "${NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT:-}" ]]; then
       [[ "$RELEASE_JOIN_ARTIFACTS_VALIDATED" -eq 1 ]] || return 1
-      ios_release_network_require_installed_reuse \
+      IOS_BUNDLE_ID="$bundle" ios_release_network_require_installed_reuse \
         "$app_path" "$runner" "$NVPN_RELEASE_JOIN_IOS_RECEIPT" \
         "$NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT" "$runner_tree" \
         "$(printf %s "$udid" | shasum -a 256 | awk '{print $1}')" \

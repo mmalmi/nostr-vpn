@@ -587,6 +587,22 @@ ios_release_network_abort_active_run
 [[ ! -e "$pending_log" && ! -e "$pending_result" ]] \
   || fail "interrupt cleanup retained unredacted diagnostics"
 
+cleanup_started=$SECONDS
+bash -c '
+  set -euo pipefail
+  ROOT="$1"
+  source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  source "$ROOT/scripts/lib-mobile-wireguard-fixture.sh"
+  NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$2/exit-cleanup"
+  IOS_RELEASE_NETWORK_PREPARED=1
+  NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS=5
+  NVPN_IOS_XCTEST_TERM_GRACE_SECS=1
+  ios_release_network_disconnect_cleanup_inner() { return 0; }
+  trap "mobile_wg_fixture_begin_cleanup; ios_release_network_disconnect_cleanup" EXIT
+' _ "$ROOT" "$TEMP_ROOT"
+((SECONDS - cleanup_started < 3)) \
+  || fail "completed EXIT cleanup waited for its watchdog deadline"
+
 timeout_signing="$(
   mktemp -d "$TEMP_ROOT/nvpn-ios-release-signing.XXXXXX"
 )"

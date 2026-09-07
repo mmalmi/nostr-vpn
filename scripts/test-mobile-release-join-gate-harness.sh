@@ -689,7 +689,9 @@ PY
   # Switching to the separately signed QR variant must retain a proven runner.
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
   plutil -replace CFBundleShortVersionString -string 1.0 "$runner/Info.plist"
-  IOS_BUNDLE_ID=fi.siriusbusiness.nvpn
+  # The join path owns its bundle selection, not the packet-gate caller's globals.
+  IOS_BUNDLE_ID=unrelated.native.app
+  unset IOS_RELEASE_NETWORK_DEVICE IOS_RELEASE_NETWORK_SIGNING_DIR
   PRIVATE_DIR="$tmp"
   RELEASE_JOIN_IOS_CLEANUP_ARMED=0
   RELEASE_JOIN_INSTALL_IOS=1
@@ -710,6 +712,7 @@ PY
     "$(printf 'c%.0s' {1..64})" "$tmp/derived" fixture-hardware-udid
   [[ "$(grep -Fc 'device install app' "$tmp/devicectl.log")" == 1 ]] \
     || { echo "join variant replaced the verified installed runner" >&2; exit 1; }
+  [[ "$IOS_BUNDLE_ID" == unrelated.native.app ]]
   printf '%s\n' '{}' >"$NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT"
   : >"$tmp/devicectl.log"
   if release_join_install_ios_release \
