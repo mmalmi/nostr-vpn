@@ -1447,6 +1447,24 @@ fi
     visible-center
 )" == "279 2013" ]]
 
+# A modal's real scroll viewport must not inherit full-screen navigation margins.
+printf '%s\n' \
+  '<hierarchy><node resource-id="android:id/content" bounds="[120,863][960,1655]">' \
+  '  <node class="android.widget.ScrollView" scrollable="false" bounds="[183,1052][897,1403]">' \
+  '    <node content-desc="Join Network" bounds="[183,1251][897,1403]" />' \
+  '    <node content-desc="Clipped control" bounds="[183,1300][897,1500]" />' \
+  '  </node>' \
+  '</node></hierarchy>' >"$inset_viewport_fixture"
+[[ "$("$ROOT/scripts/mobile-release-join-ui-query.py" \
+  "$inset_viewport_fixture" description 'Join Network' safe-center)" == '540 1327' ]]
+if "$ROOT/scripts/mobile-release-join-ui-query.py" \
+  "$inset_viewport_fixture" description 'Clipped control' safe-center >/dev/null; then
+  echo 'Android modal accepted a control outside its scroll viewport' >&2
+  exit 1
+fi
+[[ "$("$ROOT/scripts/mobile-release-join-ui-query.py" \
+  "$inset_viewport_fixture" description 'Clipped control' visible-center)" == '540 1351' ]]
+
 # A partially visible manual-join field must use the clipped safe viewport
 # rather than silently failing before text entry.
 (

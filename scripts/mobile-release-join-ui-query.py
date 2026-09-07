@@ -73,7 +73,16 @@ def bounds(node: ET.Element) -> tuple[int, int, int, int]:
     return left, top, right, bottom
 
 
-def viewport(root: ET.Element, node: ET.Element) -> tuple[int, int, int, int]:
+def viewport(root: ET.Element, node: ET.Element) -> tuple[int, int, int, int, bool]:
+    parents = {child: parent for parent in root.iter() for child in parent}
+    parent = parents.get(node)
+    while parent is not None:
+        if (
+            parent.get("scrollable") == "true"
+            or parent.get("class", "").endswith("ScrollView")
+        ):
+            return (*bounds(parent), True)
+        parent = parents.get(parent)
     node_box = bounds(node)
     boxes: list[tuple[int, int, int, int]] = []
     for candidate in root.iter("node"):
@@ -90,7 +99,7 @@ def viewport(root: ET.Element, node: ET.Element) -> tuple[int, int, int, int]:
             boxes.append(box)
     if not boxes:
         raise ValueError("hierarchy has no valid viewport")
-    return max(boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1]))
+    return (*max(boxes, key=lambda box: (box[2] - box[0]) * (box[3] - box[1])), False)
 
 
 def main() -> int:
@@ -106,13 +115,13 @@ def main() -> int:
     if args.output in ("center", "safe-center", "visible-center"):
         if args.output in ("safe-center", "visible-center"):
             try:
-                viewport_left, viewport_top, viewport_right, viewport_bottom = viewport(
+                viewport_left, viewport_top, viewport_right, viewport_bottom, scroll_viewport = viewport(
                     root, node
                 )
             except ValueError:
                 return 1
-            safe_top = viewport_top + 200
-            safe_bottom = viewport_bottom - 300
+            safe_top = viewport_top if scroll_viewport else viewport_top + 200
+            safe_bottom = viewport_bottom if scroll_viewport else viewport_bottom - 300
             left, top, right, bottom = bounds(node)
             if args.output == "visible-center":
                 left, top = max(left, viewport_left), max(top, safe_top)
