@@ -95,15 +95,10 @@ extension AppModel {
         }
 
         statusMessage = needsStart ? "Restoring VPN" : "Updating VPN routes"
-        try await vpnController.start(
-            state: state,
-            network: activeNetwork,
-            tunnelConfigJson: core.mobileTunnelConfigJson(),
-            providerOptionsConfigJson: providerOptionsConfigJson
-        )
-        try requireStartupTunnelReconciliation(generation)
-        debugLog("startup reconciled PacketTunnel status=\(status ?? -1)")
-        return true
+        // Relaunch must preserve the approval carrier just like a live config
+        // update. The shared queue waits for pending receipts before replacing it.
+        enqueuePacketTunnelOperation(.syncConfig(reason: "startup", force: true))
+        return false
     }
 
     private func requireStartupTunnelReconciliation(_ generation: UInt64) throws {
