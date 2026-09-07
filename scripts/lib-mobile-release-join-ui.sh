@@ -173,14 +173,14 @@ release_join_observe_pair_until_ms() {
 
 release_join_android_dump_ui() {
   RELEASE_JOIN_ANDROID_UI_XML="$PRIVATE_DIR/android-ui.xml"
-  "${ADB[@]}" shell uiautomator dump /sdcard/nvpn-release-join.xml >/dev/null 2>&1
+  "${ADB[@]}" shell uiautomator dump /sdcard/nvpn-release-join.xml >/dev/null 2>&1 || return 1
   "${ADB[@]}" exec-out cat /sdcard/nvpn-release-join.xml \
     >"$RELEASE_JOIN_ANDROID_UI_XML"
 }
 
 release_join_android_query() {
   local kind="$1" expected="$2" output="$3"
-  release_join_android_dump_ui
+  release_join_android_dump_ui || return 1
   release_join_android_query_dumped "$kind" "$expected" "$output"
 }
 
@@ -529,7 +529,7 @@ release_join_android_background_foreground_pending_qr() {
 
 release_join_android_assert_qr_full_width() {
   local qr_width content_width ratio_bps
-  release_join_android_dump_ui
+  release_join_android_dump_ui || return 1
   qr_width="$(
     release_join_android_query_dumped \
       description "Join request QR code" width
@@ -589,7 +589,7 @@ release_join_android_wait_qr_join_complete() {
   local description
   while ((SECONDS < deadline)); do
     release_join_android_launch >/dev/null 2>&1 || true
-    release_join_android_dump_ui
+    release_join_android_dump_ui || return 1
     if release_join_android_query_dumped \
         description "Join request QR code" center >/dev/null 2>&1; then
       description="$(

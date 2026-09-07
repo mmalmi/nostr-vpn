@@ -20,6 +20,27 @@ for file in "${FILES[@]}"; do
   bash -n "$file"
 done
 (
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-snapshot.XXXXXX")"
+  trap 'rm -rf "$PRIVATE_DIR"' EXIT
+  ADB=(snapshot_adb)
+  snapshot_adb() {
+    [[ "$1" != shell ]] || return "$dump_status"
+    printf 'read\n' >>"$PRIVATE_DIR/reads"
+    printf '<hierarchy><node resource-id="accepted" bounds="[0,0][100,100]"/></hierarchy>'
+  }
+  # A previous accepted snapshot must not survive a failed fresh device dump.
+  for dump_status in 0 7; do
+    result=0
+    release_join_android_query resource accepted center >/dev/null || result=$?
+    if (( (dump_status == 0 && result != 0) || (dump_status != 0 && result == 0) )); then
+      echo 'Android UI query accepted a stale snapshot or rejected a fresh one' >&2
+      exit 1
+    fi
+  done
+  [[ $(wc -l <"$PRIVATE_DIR/reads" | tr -d ' ') == 1 ]]
+)
+(
   source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-network-setup.XXXXXX")"
