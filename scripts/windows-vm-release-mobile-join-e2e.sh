@@ -45,7 +45,7 @@ SSH_PROXY_COMMAND="${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nostr-vpn}"
 GUEST_FIPS_REPO="${NVPN_WINDOWS_GUEST_FIPS_REPO_PATH:-C:\\src\\fips}"
 GUEST_ARTIFACT_ROOT="${NVPN_WINDOWS_RELEASE_JOIN_ARTIFACT_ROOT:-C:\\src\\nostr-vpn\\artifacts\\windows-release-mobile-join}"
-GUEST_APP="${NVPN_WINDOWS_RELEASE_APP_PATH:-C:\\src\\nostr-vpn\\windows\\NostrVpn.Windows\\bin\\Release\\net8.0-windows\\win-x64\\publish\\NostrVpn.Windows.exe}"
+GUEST_APP="${NVPN_WINDOWS_RELEASE_APP_PATH:-$GUEST_REPO\\windows\\NostrVpn.Windows\\bin\\Release\\net8.0-windows\\win-x64\\publish\\NostrVpn.Windows.exe}"
 REMOTE_SCRIPT="$GUEST_REPO\\scripts\\windows-release-mobile-join-remote.ps1"
 [[ -n "$SSH_HOST" ]] || {
   echo "Set NVPN_WINDOWS_SSH_HOST for Windows/Pixel Release join coverage" >&2

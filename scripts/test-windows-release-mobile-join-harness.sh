@@ -111,6 +111,16 @@ grep -Fq 'windows-release-artifact.json' "$REMOTE" \
   || fail "Windows remote wrapper has no artifact receipt"
 grep -Fq 'NostrVpn.Windows.exe' "$HOST" \
   || fail "Windows host wrapper does not select the Release app"
+for guest_repo in 'C:\src\nostr-vpn' 'C:\release candidate\nostr-vpn'; do
+  for explicit_app in '' 'C:\frozen release\NostrVpn.Windows.exe'; do
+    GUEST_REPO="$guest_repo" NVPN_WINDOWS_RELEASE_APP_PATH="$explicit_app" \
+      bash -c '
+        eval "$(sed -n "/^GUEST_APP=/p" "$1")"
+        [[ "$GUEST_APP" == "${NVPN_WINDOWS_RELEASE_APP_PATH:-$GUEST_REPO\\windows\\NostrVpn.Windows\\bin\\Release\\net8.0-windows\\win-x64\\publish\\NostrVpn.Windows.exe}" ]]
+      ' _ "$HOST" \
+      || fail "Windows app path does not follow its selected checkout or explicit artifact"
+  done
+done
 grep -Fq 'RELEASE_JOIN_ANDROID_APK="${NVPN_RELEASE_JOIN_ANDROID_APK:-${RELEASE_JOIN_ANDROID_APK:-}}"' "$HOST" \
   || fail "Windows host wrapper does not map the public Android APK input"
 for artifact in nostr_vpn_app_core.dll nvpn.exe; do
