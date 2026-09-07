@@ -28,7 +28,8 @@ run_fast() {
   node scripts/sync-versions.mjs --check
   cargo fmt --check
   cargo clippy --workspace --all-targets -- -D warnings
-  scripts/test-dataplane-safety-fast.sh nvpn app-state
+  # mobile-test-kit runs all app-core tests below, including app-state.
+  scripts/test-dataplane-safety-fast.sh nvpn
   scripts/mobile-test-kit.sh rust
   scripts/test-mobile-platform-tools.sh
 }

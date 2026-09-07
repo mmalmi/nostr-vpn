@@ -67,29 +67,8 @@ jobs:
       - name: Test post-release fleet rollout
         run: ./scripts/test-fleet-release-canary-harness.sh
 
-  checks:
-    name: Lint + focused tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
-
-      - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-bin: false
-
-      - name: Run focused verification
-        run: ./scripts/verify.sh fast
-
   rust-tests:
-    name: Rust workspace tests
+    name: Rust lint + workspace tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -97,6 +76,11 @@ jobs:
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Install Linux native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
@@ -106,8 +90,15 @@ jobs:
         with:
           cache-bin: false
 
-      - name: Run remaining workspace tests
-        run: cargo test --workspace --exclude nostr-vpn-app-core
+      # One full workspace run includes every focused nvpn/app-core test.
+      # Keep lint in this job so it shares the same resolved dependencies.
+      - name: Check sources and run workspace tests once
+        run: |
+          python3 scripts/test-native-lab.py
+          node scripts/sync-versions.mjs --check
+          cargo fmt --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
 
   web:
     name: Web typecheck
