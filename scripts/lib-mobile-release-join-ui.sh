@@ -114,6 +114,10 @@ release_join_android_capture_failure_log() {
   local output="$1" deadline_ms result=0
   [[ "${RELEASE_JOIN_ANDROID_MUTATED:-0}" -eq 1 ]] || return 0
   deadline_ms=$(( $(release_join_now_ms) + 5000 ))
+  # Capture the visible failure without waiting for the accessibility tree to idle.
+  release_join_run_until_ms "$deadline_ms" "Android failure screen capture" \
+    "${ADB[@]}" exec-out screencap -p \
+    >"$output.png" 2>"$output.png.stderr" || true
   # Keep only this app's lifecycle records, before cleanup can erase context.
   # Reuse the selected device and bounded poll runner; never impede cleanup.
   release_join_run_until_ms "$deadline_ms" "Android service failure log capture" \

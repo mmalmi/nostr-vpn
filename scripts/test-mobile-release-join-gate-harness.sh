@@ -202,6 +202,10 @@ done
   ADB=(failure_log_adb -s selected-test-device)
   failure_log_adb() {
     printf '%s\n' "$@" >"$PRIVATE_DIR/adb-arguments"
+    if [[ "$3 $4 $5" == 'exec-out screencap -p' ]]; then
+      printf 'failure-screen\n'
+      return "${FAKE_ADB_RESULT:-0}"
+    fi
     printf 'retained service lifecycle log\n'
     return "${FAKE_ADB_RESULT:-0}"
   }
@@ -210,6 +214,7 @@ done
   [[ ! -e "$PRIVATE_DIR/not-selected.log" && ! -e "$PRIVATE_DIR/adb-arguments" ]]
   RELEASE_JOIN_ANDROID_MUTATED=1
   release_join_android_capture_failure_log "$PRIVATE_DIR/selected.log"
+  grep -Fxq 'failure-screen' "$PRIVATE_DIR/selected.log.png"
   [[ "$(head -2 "$PRIVATE_DIR/adb-arguments" | tr '\n' ' ')" == '-s selected-test-device ' ]]
   grep -Fxq NostrVpnService:I "$PRIVATE_DIR/adb-arguments"
   grep -Fxq '*:S' "$PRIVATE_DIR/adb-arguments"
