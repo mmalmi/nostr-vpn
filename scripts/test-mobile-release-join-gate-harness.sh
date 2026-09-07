@@ -561,7 +561,10 @@ for path, bundle, build, version in (
 PY
   xcrun() {
     printf '%s\n' "$*" >>"$tmp/devicectl.log"
-    [[ "$*" != *"device install app"* ]] || return 99
+    if [[ "$*" == *"device install app"* ]]; then
+      [[ "${ALLOW_APP_INSTALL:-0}" == 1 && "$*" == *" $app --quiet" ]]
+      return
+    fi
     local output="" previous=""
     for argument in "$@"; do
       [[ "$previous" != --json-output ]] || output="$argument"
@@ -682,6 +685,44 @@ PY
     exit 1
   fi
   grep -Fq 'installed iOS bundle version mismatch' "$tmp/runner-mismatch.log"
+
+  # Switching to the separately signed QR variant must retain a proven runner.
+  source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  plutil -replace CFBundleShortVersionString -string 1.0 "$runner/Info.plist"
+  IOS_BUNDLE_ID=fi.siriusbusiness.nvpn
+  PRIVATE_DIR="$tmp"
+  RELEASE_JOIN_IOS_CLEANUP_ARMED=0
+  RELEASE_JOIN_INSTALL_IOS=1
+  NVPN_RELEASE_JOIN_IOS_RECEIPT="$tmp/variant.json"
+  printf '%s\n' '{"installedBuildNumber":"4001008","installedMarketingVersion":"4.1.5"}' \
+    >"$NVPN_RELEASE_JOIN_IOS_RECEIPT"
+  NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT="$tmp/installed-runner.json"
+  ios_release_network_write_runner_install_receipt \
+    "$runner" "$NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT" "$runner_tree" \
+    "$(printf %s fixture-hardware-udid | shasum -a 256 | awk '{print $1}')" \
+    "$(release_join_sha256 "$RELEASE_JOIN_IOS_XCTESTRUN")" \
+    "$(python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" tree-sha "$tmp/derived/Build/Products")"
+  ALLOW_APP_INSTALL=1
+  : >"$tmp/devicectl.log"
+  release_join_install_ios_release \
+    "$app" "$(printf '1%.0s' {1..40})" "$(printf '2%.0s' {1..40})" \
+    "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" \
+    "$(printf 'c%.0s' {1..64})" "$tmp/derived" fixture-hardware-udid
+  [[ "$(grep -Fc 'device install app' "$tmp/devicectl.log")" == 1 ]] \
+    || { echo "join variant replaced the verified installed runner" >&2; exit 1; }
+  printf '%s\n' '{}' >"$NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT"
+  : >"$tmp/devicectl.log"
+  if release_join_install_ios_release \
+      "$app" 1 2 3 4 5 "$tmp/derived" fixture-hardware-udid \
+      >"$tmp/retained-runner-mismatch.log" 2>&1
+  then
+    echo "join variant accepted missing installed runner provenance" >&2
+    exit 1
+  fi
+  if grep -Fq 'device install app' "$tmp/devicectl.log"; then
+    echo "join variant changed the phone before validating retained runner provenance" >&2
+    exit 1
+  fi
 )
 
 (

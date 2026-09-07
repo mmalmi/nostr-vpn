@@ -592,12 +592,29 @@ release_join_install_ios_release() {
     python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" tree-sha "$runner"
   )" || return 1
   if [[ "$RELEASE_JOIN_INSTALL_IOS" -eq 1 ]]; then
+    # The packet gate has already installed and receipted this exact runner.
+    # Changing only the QR app variant must not replace it or revoke its trust.
+    if [[ -n "${NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT:-}" ]]; then
+      [[ "$RELEASE_JOIN_ARTIFACTS_VALIDATED" -eq 1 ]] || return 1
+      ios_release_network_require_installed_reuse \
+        "$app_path" "$runner" "$NVPN_RELEASE_JOIN_IOS_RECEIPT" \
+        "$NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT" "$runner_tree" \
+        "$(printf %s "$udid" | shasum -a 256 | awk '{print $1}')" \
+        "$(release_join_sha256 "$RELEASE_JOIN_IOS_XCTESTRUN")" \
+        "$(python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" \
+          tree-sha "$derived/Build/Products")" || return 1
+    fi
     if ! xcrun devicectl device install app \
-        --device "$IOS_DEVICE" "$app_path" --quiet \
-      || ! xcrun devicectl device install app \
+        --device "$IOS_DEVICE" "$app_path" --quiet
+    then
+      echo "Exact iOS app installation failed" >&2
+      return 1
+    fi
+    if [[ -z "${NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT:-}" ]] \
+      && ! xcrun devicectl device install app \
         --device "$IOS_DEVICE" "$runner" --quiet
     then
-      echo "Exact iOS app/runner installation failed" >&2
+      echo "Exact iOS runner installation failed" >&2
       return 1
     fi
     replacement_install=true
