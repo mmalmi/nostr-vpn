@@ -190,3 +190,41 @@ for receipt in (
 
 print("Android Release semantic start/stop cleanup source contract passed")
 PY
+
+# Exercise the production setup flow with OS/UI boundaries replaced. Creating
+# a network can start its approval carrier and raise Android's permission sheet.
+source "$release_gate"
+for permission_result in 0 1; do
+  (
+    create_network=1
+    DEBUG_NETWORK_NAME=fixture
+    submitted=0
+    permission_seen=0
+    start_main_activity() { :; }
+    sleep() { :; }
+    truthy() { [[ "$1" == 1 ]]; }
+    android_ui_query() { return 1; }
+    replace_android_ui_text() { :; }
+    android_ui_scroll_to() { :; }
+    tap_android_ui() {
+      [[ "$2" != network-create-submit ]] || submitted=1
+    }
+    maybe_accept_vpn_dialog() {
+      [[ "$submitted" == 1 ]] || return 1
+      permission_seen=1
+      return "$permission_result"
+    }
+    wait_for_android_ui() {
+      [[ "$2" != 'Internet tab' ]] || [[ "$permission_seen" == 1 ]]
+    }
+    if android_release_ensure_network_ui; then
+      [[ "$permission_result" == 0 && "$permission_seen" == 1 ]]
+    else
+      [[ "$permission_result" == 1 && "$permission_seen" == 1 ]]
+    fi
+  ) || {
+    echo 'Android network setup did not resolve its actual permission boundary' >&2
+    exit 1
+  }
+done
+echo 'Android Release network creation permission handling passed'

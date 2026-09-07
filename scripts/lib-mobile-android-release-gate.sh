@@ -552,6 +552,7 @@ android_release_ensure_network_ui() {
   replace_android_ui_text network-create-name "$DEBUG_NETWORK_NAME" || return 1
   android_ui_scroll_to resource network-create-submit || return 1
   tap_android_ui resource network-create-submit || return 1
+  maybe_accept_vpn_dialog || return 1
   wait_for_android_ui description "Internet tab" || {
     echo "Android network created through shipped UI did not reach the app shell" >&2
     return 1
