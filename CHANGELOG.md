@@ -16,6 +16,8 @@ a signed roster.
 
 - Protect local keys, payment state, device rosters, and privileged daemon
   files against unsafe filesystem links, and reject untrusted web origins.
+- Safely stage downloaded updates and app replacements without following
+  precreated filesystem links or misinterpreting installation paths.
 - Preserve pending iOS join receipts when restoring VPN routes after relaunch.
 - Recover encrypted sessions automatically after the other device's VPN
   restarts, so retained connections can deliver device approvals again.
