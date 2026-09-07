@@ -367,7 +367,7 @@ verify_pixel_relaunch() {
 calibrate_windows_clock
 
 # Windows admin -> Pixel joiner.
-release_join_reset_android_state
+release_join_android_open_network_setup
 remote Reset >"$PLATFORM_RESULT/desktop-admin-reset.log" 2>&1
 REMOTE_NETWORK_NAME="Release Windows admin"
 remote CreateAdmin >"$PLATFORM_RESULT/desktop-admin-create.log" 2>&1
@@ -442,7 +442,7 @@ verify_desktop_relaunch \
 verify_pixel_relaunch "$WINDOWS_ADMIN_ID" "desktop-admin"
 
 # Pixel admin -> Windows joiner.
-release_join_reset_android_state
+release_join_android_open_network_setup
 REMOTE_PARTICIPANT_NPUB=""
 remote Reset >"$PLATFORM_RESULT/desktop-joiner-reset.log" 2>&1
 remote Bootstrap >"$PLATFORM_RESULT/desktop-joiner-bootstrap.log" 2>&1

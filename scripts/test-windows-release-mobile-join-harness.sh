@@ -195,9 +195,9 @@ do
     || fail "Windows/Pixel orchestrator lacks $evidence"
 done
 artifact_validated_line="$(grep -n 'RELEASE_JOIN_ARTIFACTS_VALIDATED=1' "$HOST" | head -n 1 | cut -d: -f1)"
-first_android_reset_line="$(grep -n 'release_join_reset_android_state' "$HOST" | head -n 1 | cut -d: -f1)"
-[[ -n "$artifact_validated_line" && -n "$first_android_reset_line" \
-  && "$artifact_validated_line" -lt "$first_android_reset_line" ]] \
+first_android_setup_line="$(grep -n 'release_join_android_open_network_setup' "$HOST" | head -n 1 | cut -d: -f1)"
+[[ -n "$artifact_validated_line" && -n "$first_android_setup_line" \
+  && "$artifact_validated_line" -lt "$first_android_setup_line" ]] \
   || fail "Windows mutates the Pixel before validating the reused signed artifact"
 desktop_admin_phase="$(
   sed -n \

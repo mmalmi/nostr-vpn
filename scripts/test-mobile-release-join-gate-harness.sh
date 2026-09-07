@@ -20,6 +20,48 @@ for file in "${FILES[@]}"; do
   bash -n "$file"
 done
 (
+  source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-network-setup.XXXXXX")"
+  trap 'rm -rf "$tmp"' EXIT
+  RELEASE_JOIN_UI_WAIT_SECS=2
+  RELEASE_JOIN_ARTIFACTS_VALIDATED=1
+  NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=1
+  trace() { printf '%s\n' "$*" >>"$tmp/calls"; }
+  ADB=(trace)
+  release_join_android_stop() { trace stop; }
+  release_join_android_launch() { trace launch; }
+  release_join_android_dump_ui() { trace dump; }
+  release_join_android_query_dumped() {
+    case "$scenario:$1:$2" in
+      fresh:resource:network-setup-create|saved:text:▾) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
+  release_join_android_wait_query() { trace "wait:$1:$2"; }
+  release_join_android_tap_center() { trace "tap:$1:$2"; }
+  # Even navigation must not run before exact-artifact validation arms the device.
+  if release_join_android_open_network_setup; then
+    echo 'Android setup navigation ignored device ownership' >&2
+    exit 1
+  fi
+  [[ ! -e "$tmp/calls" ]]
+  RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
+  for scenario in fresh saved; do
+    : >"$tmp/calls"
+    release_join_android_open_network_setup
+    [[ "$(head -2 "$tmp/calls" | tr '\n' ' ')" == 'stop launch ' ]]
+    if [[ "$scenario" == saved ]]; then
+      grep -Fxq 'tap:text:▾' "$tmp/calls"
+      grep -Fxq 'tap:text:Add network' "$tmp/calls"
+      grep -Fxq 'wait:resource:network-setup-create' "$tmp/calls"
+    else
+      ! grep -q '^tap:' "$tmp/calls"
+    fi
+    ! grep -Eq 'clear|uninstall|delete|reset' "$tmp/calls"
+  done
+)
+(
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-stop.XXXXXX")"
   trap 'rm -rf "$PRIVATE_DIR"' EXIT
@@ -915,7 +957,7 @@ PY
   }
   release_join_valid_npub() { [[ "$1" == npub1* ]]; }
   release_join_restart_ios_in_place() { trace restart-ios; }
-  release_join_reset_android_state() { trace reset-android; }
+  release_join_android_open_network_setup() { trace network-setup-android; }
   ios_create_admin() {
     RELEASE_JOIN_IOS_ADMIN_ID=npub1iosadmin
     RELEASE_JOIN_IOS_NETWORK_ID=ios-network

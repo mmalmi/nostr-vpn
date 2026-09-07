@@ -244,20 +244,6 @@ release_join_assert_one_android_process() {
   }
 }
 
-release_join_reset_android_state() {
-  local package="${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}"
-  release_join_require_device_mutation_allowed || return 1
-  [[ "${NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR:-}" == "YES" ]] || {
-    echo "Set NVPN_RELEASE_JOIN_ALLOW_ANDROID_DATA_CLEAR=YES to clear Android app data between join phases" >&2
-    return 1
-  }
-  RELEASE_JOIN_DEVICE_MUTATED=1
-  RELEASE_JOIN_ANDROID_MUTATED=1
-  "${ADB[@]}" shell am force-stop "$package" >/dev/null 2>&1 || true
-  "${ADB[@]}" shell pm clear "$package" >/dev/null
-  release_join_assert_one_android_package
-}
-
 release_join_prepare_android_release() {
   local package="${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}"
   local apk="$ROOT/android/app/build/outputs/apk/release/app-release.apk"

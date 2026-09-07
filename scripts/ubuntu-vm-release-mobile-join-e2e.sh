@@ -425,7 +425,7 @@ linux_admin_pixel_visible() {
 calibrate_remote_clock
 
 # Imported Linux desktop admin -> physical Pixel joiner.
-release_join_reset_android_state
+release_join_android_open_network_setup
 remote Reset >"$RESULT_DIR/desktop-admin-reset.log"
 remote Bootstrap >"$RESULT_DIR/desktop-admin-bootstrap.log"
 remote ReadMarker >"$RESULT_DIR/desktop-admin-bootstrap.json"
@@ -514,7 +514,7 @@ remote ReadMarker >"$RESULT_DIR/desktop-admin-relaunch.json"
 )" == true ]]
 
 # Physical Pixel admin -> imported Linux desktop joiner.
-release_join_reset_android_state
+release_join_android_open_network_setup
 remote Cleanup 1 >"$RESULT_DIR/desktop-admin-service-cleanup.log"
 service_cleanup_armed=0
 remote Reset >"$RESULT_DIR/desktop-joiner-reset.log"

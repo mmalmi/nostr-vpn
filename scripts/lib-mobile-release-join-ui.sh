@@ -291,6 +291,31 @@ release_join_android_launch() {
     -n "$package/org.nostrvpn.app.MainActivity" >/dev/null
 }
 
+release_join_android_open_network_setup() {
+  release_join_require_device_mutation_allowed || return 1
+  RELEASE_JOIN_DEVICE_MUTATED=1
+  RELEASE_JOIN_ANDROID_MUTATED=1
+  release_join_android_stop || return 1
+  release_join_android_launch || return 1
+  local deadline=$((SECONDS + RELEASE_JOIN_UI_WAIT_SECS))
+  while ((SECONDS < deadline)); do
+    release_join_android_dump_ui || return 1
+    if release_join_android_query_dumped resource network-setup-create center >/dev/null 2>&1; then
+      return 0
+    fi
+    if release_join_android_query_dumped text '▾' center >/dev/null 2>&1; then
+      release_join_android_tap_center text '▾' || return 1
+      release_join_android_wait_query text 'Add network' || return 1
+      release_join_android_tap_center text 'Add network' || return 1
+      release_join_android_wait_query resource network-setup-create
+      return $?
+    fi
+    sleep 0.1
+  done
+  echo 'Android did not expose its public network setup controls' >&2
+  return 1
+}
+
 release_join_android_tap_center() {
   local kind="$1" expected="$2" point
   point="$(
