@@ -136,6 +136,9 @@ cleanup() {
   trap - EXIT
   if ((status != 0)); then
     release_join_android_capture_failure_log "$RESULT_DIR/android-service-failure.log"
+    if [[ -s "${RELEASE_JOIN_ANDROID_UI_XML:-}" ]]; then
+      cp "$RELEASE_JOIN_ANDROID_UI_XML" "$RESULT_DIR/android-ui-failure.xml" || true
+    fi
   fi
   if [[ -n "${RELEASE_JOIN_IOS_TEST_PID:-}" \
     || -n "${RELEASE_JOIN_IOS_TEST_PGID:-}" ]]; then
@@ -344,9 +347,10 @@ phase_ios_admin_android_manual() {
   release_join_android_manual_submit \
     "$RELEASE_JOIN_IOS_ADMIN_ID" "$RELEASE_JOIN_IOS_NETWORK_ID"
   release_join_android_wait_vpn_connected
-  # Prepare the public roster before approval. Navigation and repeated app
-  # launches are setup work, not delivery observation.
-  release_join_android_open_devices
+  # Manual submission lands on Devices. Observe its pending row before approval
+  # without relaunching the app or navigating during delivery.
+  release_join_android_wait_query \
+    resource "roster-participant-pending-$RELEASE_JOIN_IOS_ADMIN_ID"
   admin_log="$(ios_log ios-admin-android-manual)"
   release_join_ios_start_test \
     testManualAdminAddRequiresRosterProgress \

@@ -974,7 +974,14 @@ PY
   release_join_android_wait_vpn_connected() {
     trace android-vpn-connected
   }
-  release_join_android_open_devices() { trace android-devices-ready; }
+  release_join_android_open_devices() {
+    echo "Pending manual join must not reopen or navigate the app" >&2
+    return 1
+  }
+  release_join_android_wait_query() {
+    [[ "$1" == resource && "$2" == roster-participant-pending-npub1iosadmin ]]
+    trace android-devices-ready
+  }
   release_join_observe_until_ms() {
     [[ "$1" == 1900 && "$4" == release_join_android_accepted_snapshot_ms ]]
     trace "android-manual-accepted:$5"
