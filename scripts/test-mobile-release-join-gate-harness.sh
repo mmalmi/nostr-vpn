@@ -31,7 +31,6 @@ done
       active) printf 'ServiceRecord{123 selected-test-package/.NostrVpnService}\n' ;;
       ambiguous) printf 'query unavailable\n' ;;
       offline) return 7 ;;
-      stalled) sleep 30 ;;
     esac
   }
   # An iOS-only mutation must not grant ownership of Android cleanup.
@@ -57,14 +56,18 @@ done
       exit 1
     fi
   done
-  FAKE_STOP_RESULT=stalled
-  before="$(release_join_now_ms)"
+  # The shared deadline runner is exercised with a real blocked child below.
+  # Here test only this caller's five-second budget and timeout propagation.
+  release_join_now_ms() { printf '1000\n'; }
+  release_join_run_until_ms() {
+    printf '%s\n' "$1" >"$PRIVATE_DIR/deadline"
+    return 124
+  }
   if release_join_android_stop; then
     echo "Android cleanup accepted a stalled device command" >&2
     exit 1
   fi
-  elapsed=$(( $(release_join_now_ms) - before ))
-  ((elapsed >= 4900 && elapsed < 7000))
+  [[ "$(<"$PRIVATE_DIR/deadline")" == 6000 ]]
 )
 (
   # Exercise the actual desktop cleanup functions, not just their text.
@@ -135,15 +138,14 @@ done
   grep -Fq 'status 7' "$PRIVATE_DIR/offline.log.stderr"
   release_join_android_capture_failure_log "$PRIVATE_DIR/missing/output.log"
   # Diagnostics must not abort cleanup or replace the original failure code.
-  failure_log_adb() { sleep 30; }
-  before="$(release_join_now_ms)"
+  release_join_now_ms() { printf '1000\n'; }
+  release_join_run_until_ms() {
+    printf '%s\n' "$1" >"$PRIVATE_DIR/deadline"
+    return 124
+  }
   release_join_android_capture_failure_log "$PRIVATE_DIR/stalled.log"
   grep -Fq 'status 124' "$PRIVATE_DIR/stalled.log.stderr"
-  elapsed=$(( $(release_join_now_ms) - before ))
-  ((elapsed >= 4900 && elapsed < 7000)) || {
-    echo "Android failure logs did not respect their five-second cleanup bound" >&2
-    exit 1
-  }
+  [[ "$(<"$PRIVATE_DIR/deadline")" == 6000 ]]
 )
 for join_driver in \
   mobile-release-join-e2e.sh \
