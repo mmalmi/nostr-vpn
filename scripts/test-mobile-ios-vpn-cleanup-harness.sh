@@ -245,11 +245,20 @@ grep -Fq 'source "$ROOT/scripts/lib-mobile-ios-release-network.sh"' \
   "$ROOT/scripts/mobile-wireguard-exit-e2e.sh" \
   || fail "mobile WireGuard gate bypasses the audited Release iOS driver"
 
-python3 - "$ROOT/ios/UITests/NostrVpnReleaseNetworkUITests.swift" <<'PY'
+python3 - "$ROOT/ios/UITests/NostrVpnReleaseNetworkUITests.swift" \
+  "$ROOT/ios/UITests/NostrVpnReleaseNetworkUI.swift" <<'PY'
 import pathlib
 import sys
 
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+ui = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+transition = ui.split("func waitForInternetTransitionToSettle", 1)[1].split(
+    "func element(", 1
+)[0]
+if "status.label" in transition or "status.value" in transition:
+    raise SystemExit("route readiness reads a status element that can disappear between snapshots")
+if "unexpectedStatus.exists" not in transition or "NSCompoundPredicate" not in transition:
+    raise SystemExit("route readiness does not reject errors in the same accessibility query")
 lifecycle = source.split("func testReleaseNetworkLifecycle() throws {", 1)[1].split(
     "func testReleaseDisconnectCleanup() throws {", 1
 )[0]
