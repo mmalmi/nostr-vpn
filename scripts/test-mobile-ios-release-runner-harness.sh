@@ -677,6 +677,8 @@ packet_processes="$TEMP_ROOT/packet-processes.json"
 (
   xcrun() {
     local previous="" output="" argument
+    [[ "$*" == *"--timeout 1"* ]] \
+      || fail "PacketTunnel process query can exceed its cleanup deadline"
     for argument in "$@"; do
       [[ "$previous" != --json-output ]] || output="$argument"
       previous="$argument"
@@ -700,6 +702,23 @@ packet_processes="$TEMP_ROOT/packet-processes.json"
   ! ios_release_network_require_packet_tunnel_stopped \
     fixture-device "$packet_processes" 1 >/dev/null 2>&1
 ) || fail "disconnect cleanup accepted a live PacketTunnel"
+for invalid_inventory in '{}' '{"result":{"runningProcesses":null}}'; do
+  (
+    xcrun() {
+      local output
+      output="$(xcrun_json_output_path "$@")" || return
+      printf '%s\n' "$invalid_inventory" >"$output"
+    }
+    ! ios_release_network_require_packet_tunnel_stopped \
+      fixture-device "$packet_processes" 1 >/dev/null 2>&1
+  ) || fail "disconnect cleanup accepted a missing process inventory"
+done
+(
+  xcrun() { return 2; }
+  ! ios_release_network_require_packet_tunnel_stopped \
+    fixture-device "$packet_processes" 1 >"$TEMP_ROOT/process-query-failed.log" 2>&1
+  grep -Fq 'could not inspect' "$TEMP_ROOT/process-query-failed.log"
+) || fail "unavailable process query was reported as a running PacketTunnel"
 if sed -n '/ios_release_network_test_command()/,/^}/p' "$RUNNER" \
   | grep -Fq -- '-quiet'
 then

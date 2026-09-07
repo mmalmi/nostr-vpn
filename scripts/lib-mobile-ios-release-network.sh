@@ -1185,14 +1185,24 @@ ios_release_network_xctrunner_process_ids() {
 }
 
 ios_release_network_require_packet_tunnel_stopped() {
-  local device="$1" output="$2" timeout="${3:-15}" deadline
+  local device="$1" output="$2" timeout="${3:-15}" deadline remaining
   [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || return 2
   deadline=$((SECONDS + timeout))
   while ((SECONDS < deadline)); do
-    if xcrun devicectl device info processes \
-        --device "$device" --json-output "$output" --quiet >/dev/null \
-      && jq -e '
-        [.result.runningProcesses[]?
+    remaining=$((deadline - SECONDS))
+    if ! xcrun devicectl device info processes \
+        --device "$device" --json-output "$output" \
+        --timeout "$remaining" --quiet >/dev/null
+    then
+      echo "iOS cleanup could not inspect PacketTunnel processes within its deadline" >&2
+      return 1
+    fi
+    if ! jq -e '.result.runningProcesses | type == "array"' "$output" >/dev/null; then
+      echo "iOS cleanup could not inspect a valid PacketTunnel process inventory" >&2
+      return 1
+    fi
+    if jq -e '
+        [.result.runningProcesses[]
           | select((.executable | gsub("%20"; " "))
             | endswith("/Nostr VPN.app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"))]
         | length == 0
