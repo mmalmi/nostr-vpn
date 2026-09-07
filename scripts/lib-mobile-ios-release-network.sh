@@ -1870,10 +1870,12 @@ ios_release_network_disconnect_cleanup() {
     else
       status=$?
     fi
+    # EXIT cleanup can inherit ignored TERM and omit its child's EXIT trap.
+    # Signal completion before waiting, so the watchdog exits in either case.
+    rm -f "$marker"
     kill "$watchdog" >/dev/null 2>&1 || true
     wait "$watchdog" >/dev/null 2>&1 || true
     ios_release_network_terminate_process_group "$pid" || cleanup_failed=1
-    rm -f "$marker"
     ios_release_network_stop_active_processes || cleanup_failed=1
     if [[ -s "${xcresult%.xcresult}-diagnostic-redaction.json" ]]; then
       ios_release_network_clear_pending_diagnostics
