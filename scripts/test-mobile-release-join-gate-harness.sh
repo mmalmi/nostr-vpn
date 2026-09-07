@@ -484,10 +484,10 @@ PY
 )
 
 (
-  # Android no-install reuse pulls and byte-compares the real installed APK.
+  # Cover reuse, replacement, and fresh installs through one real preparation path.
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-android-noinstall.XXXXXX")"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-android-install.XXXXXX")"
   trap 'rm -rf "$tmp"' EXIT
   apk="$tmp/app-release.apk"
   printf 'exact installed apk\n' >"$apk"
@@ -495,13 +495,14 @@ PY
     printf '%s\n' "$*" >>"$tmp/adb.log"
     case "$*" in
       "shell pm path fi.siriusbusiness.nvpn")
+        [[ "$installed" == true ]] || return 1
         printf 'package:/data/app/exact/base.apk\n'
         ;;
       "shell pm list packages") printf 'package:fi.siriusbusiness.nvpn\n' ;;
       "pull /data/app/exact/base.apk "*) cp "$apk" "$3" ;;
       "shell dumpsys package fi.siriusbusiness.nvpn") printf '  flags=[ HAS_CODE ]\n' ;;
       "shell pidof fi.siriusbusiness.nvpn") printf '1234\n' ;;
-      "install -r "*) return 99 ;;
+      "install -r "*) installed=true ;;
       *) : ;;
     esac
   }
@@ -521,23 +522,30 @@ PY
   APP_GIT_SHA="$RELEASE_JOIN_ANDROID_APP_SHA"
   APP_GIT_TREE="$RELEASE_JOIN_ANDROID_APP_TREE"
   NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=1
-  NVPN_RELEASE_JOIN_INSTALL_ANDROID=0
   NVPN_RELEASE_JOIN_INSTALL_IOS=1
-  release_join_configure_install_modes
   release_join_assert_fips_unchanged() { :; }
   release_join_assert_app_unchanged() { :; }
-  release_join_prepare_android_release
-  if grep -Fq 'install -r' "$tmp/adb.log"; then
-    echo "Android exact-artifact reuse unexpectedly installed an APK" >&2
-    exit 1
-  fi
-  python3 - "$RESULT_DIR/android-release-install.json" <<'PY'
+  sleep() { :; }
+  for scenario in '0 true 0' '1 true 1' '1 false 2'; do
+    read -r NVPN_RELEASE_JOIN_INSTALL_ANDROID installed expected_installs <<<"$scenario"
+    preexisting="$installed"
+    : >"$tmp/adb.log"
+    release_join_configure_install_modes
+    release_join_prepare_android_release
+    actual_installs="$(grep -c '^install -r ' "$tmp/adb.log" || true)"
+    [[ "$actual_installs" -eq "$expected_installs" ]] || {
+      echo "Android preparation made $actual_installs installs; expected $expected_installs ($scenario)" >&2
+      exit 1
+    }
+    python3 - "$RESULT_DIR/android-release-install.json" "$preexisting" "$NVPN_RELEASE_JOIN_INSTALL_ANDROID" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
 assert r["installedArtifactVerified"] is True
-assert r["replacementInstall"] is False
-assert r["replacementInstallVerified"] is False
+assert r["preexistingCanonicalPackage"] is (sys.argv[2] == "true")
+assert r["replacementInstall"] is (sys.argv[3] == "1")
+assert r["replacementInstallVerified"] is (sys.argv[3] == "1")
 PY
+  done
 )
 
 (

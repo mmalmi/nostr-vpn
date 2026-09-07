@@ -335,10 +335,11 @@ release_join_prepare_android_release() {
     preexisting_package=true
   fi
   if [[ "$RELEASE_JOIN_INSTALL_ANDROID" -eq 1 ]]; then
-    # Install twice. The second operation is necessarily an in-place replacement
-    # of the canonical package, even on a phone that began this gate clean.
-    "${ADB[@]}" install -r "$apk" >/dev/null
-    release_join_assert_one_android_package
+    # A fresh phone needs an initial install before proving in-place replacement.
+    if [[ "$preexisting_package" != true ]]; then
+      "${ADB[@]}" install -r "$apk" >/dev/null
+      release_join_assert_one_android_package
+    fi
     "${ADB[@]}" install -r "$apk" >/dev/null
     release_join_assert_one_android_package
     replacement_install=true
