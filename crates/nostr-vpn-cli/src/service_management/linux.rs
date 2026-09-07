@@ -43,19 +43,19 @@ fn linux_install_service(
         return Ok(());
     }
 
-    for step in linux_service_disable_steps(LINUX_SERVICE_UNIT_NAME) {
-        let _ = run_systemctl_allow_missing(&step, "disable/stop existing service", true);
-    }
-    stop_existing_daemons_before_service_install(config_path)?;
     let service_executable = linux_service_binary_path();
-    install_service_executable_copy(executable, &service_executable)?;
     let unit = linux_service_unit_content(
         &service_executable,
         config_path,
         iface,
         mesh_refresh_interval_secs,
         log_path,
-    );
+    )?;
+    for step in linux_service_disable_steps(LINUX_SERVICE_UNIT_NAME) {
+        let _ = run_systemctl_allow_missing(&step, "disable/stop existing service", true);
+    }
+    stop_existing_daemons_before_service_install(config_path)?;
+    install_service_executable_copy(executable, &service_executable)?;
     let temp = unit_path.with_extension(format!("tmp-{}", std::process::id()));
     fs::write(&temp, unit).with_context(|| format!("failed to write {}", temp.display()))?;
     #[cfg(unix)]
@@ -255,7 +255,7 @@ fn systemd_first_argument(value: &str) -> Option<String> {
         } else if character == '\\' {
             escaped = true;
         } else if character == '"' {
-            return Some(parsed);
+            return Some(parsed.replace("%%", "%").replace("$$", "$"));
         } else {
             parsed.push(character);
         }
@@ -270,14 +270,35 @@ pub(crate) fn linux_service_unit_content(
     iface: &str,
     mesh_refresh_interval_secs: u64,
     log_path: &Path,
-) -> String {
+) -> Result<String> {
+    for (label, value) in [
+        ("executable path", executable.to_string_lossy()),
+        ("config path", config_path.to_string_lossy()),
+        ("interface", std::borrow::Cow::Borrowed(iface)),
+        ("log path", log_path.to_string_lossy()),
+    ] {
+        if value.chars().any(char::is_control) {
+            return Err(anyhow!(
+                "systemd {label} must not contain control characters"
+            ));
+        }
+    }
+    // StandardOutput/StandardError paths do not support quoted C escapes.
+    // Reject line continuation and trailing whitespace rather than changing
+    // their path identity when systemd reads the unit.
+    let log = log_path.to_string_lossy();
+    if log.ends_with('\\') || log.trim_end() != log {
+        return Err(anyhow!(
+            "systemd log path must not end with backslash or whitespace"
+        ));
+    }
     let exec = systemd_quote(&executable.display().to_string());
-    let config = systemd_quote(&config_path.display().to_string());
-    let iface = systemd_quote(iface);
-    let log = log_path.display().to_string();
-    format!(
+    let config = systemd_quote(&config_path.display().to_string().replace('$', "$$"));
+    let iface = systemd_quote(&iface.replace('$', "$$"));
+    let log = log.replace('%', "%%");
+    Ok(format!(
         "[Unit]\nDescription=Nostr VPN daemon\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart={exec} daemon --service --config {config} --iface {iface} --mesh-refresh-interval-secs {mesh_refresh_interval_secs}\nRestart=always\nRestartSec=3\nStandardOutput=append:{log}\nStandardError=append:{log}\n\n[Install]\nWantedBy=multi-user.target\n"
-    )
+    ))
 }
 
 #[cfg(target_os = "linux")]

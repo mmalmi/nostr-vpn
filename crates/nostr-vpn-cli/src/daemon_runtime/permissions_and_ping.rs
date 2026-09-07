@@ -1,137 +1,82 @@
-pub(crate) fn set_daemon_runtime_file_permissions(path: &Path) -> Result<()> {
+pub(crate) fn set_daemon_cleanup_file_permissions(path: &Path) -> Result<()> {
+    // Cleanup snapshots may contain WireGuard private and preshared keys.
+    set_runtime_file_permissions(path, 0o600)
+}
+
+pub(crate) fn set_private_cache_file_permissions(path: &Path) -> Result<()> {
+    set_runtime_file_permissions(path, 0o600)
+}
+
+fn set_runtime_file_permissions(path: &Path, mode: u32) -> Result<()> {
     #[cfg(unix)]
     {
-        // Daemon runtime files must stay readable by the desktop app even when
-        // the daemon was started with elevated privileges.
-        let metadata = fs::symlink_metadata(path).with_context(|| {
-            format!(
-                "failed to inspect daemon runtime file permissions on {}",
-                path.display()
-            )
-        })?;
-        let file_type = metadata.file_type();
-        if file_type.is_symlink() || !file_type.is_file() {
-            return Err(anyhow!(
-                "refusing to set daemon runtime permissions on non-regular file {}",
-                path.display()
-            ));
-        }
-        let permissions = fs::Permissions::from_mode(0o644);
-        fs::set_permissions(path, permissions).with_context(|| {
-            format!(
-                "failed to set daemon runtime file permissions on {}",
-                path.display()
-            )
-        })?;
+        let file = runtime_open_options_no_follow()
+            .read(true)
+            .open(path)
+            .with_context(|| format!("failed to open runtime file {}", path.display()))?;
+        validate_daemon_runtime_file(&file, path)?;
+        file.set_permissions(fs::Permissions::from_mode(mode))
+            .with_context(|| format!("failed to protect runtime file {}", path.display()))?;
     }
-
     #[cfg(not(unix))]
-    let _ = path;
-
+    let _ = (path, mode);
     Ok(())
 }
 
-pub(crate) fn set_daemon_cleanup_file_permissions(path: &Path) -> Result<()> {
+pub(crate) fn validate_daemon_runtime_file(file: &fs::File, path: &Path) -> Result<fs::Metadata> {
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("failed to inspect open runtime file {}", path.display()))?;
+    #[cfg(unix)]
+    let single_link = {
+        use std::os::unix::fs::MetadataExt;
+        metadata.nlink() == 1
+    };
+    #[cfg(not(unix))]
+    let single_link = true;
+    if !metadata.is_file() || !single_link {
+        return Err(anyhow!(
+            "refusing runtime file {}: expected a regular file with one link",
+            path.display()
+        ));
+    }
+    Ok(metadata)
+}
+
+pub(crate) fn open_daemon_log_file(path: &Path) -> Result<fs::File> {
+    let mut options = runtime_open_options_no_follow();
+    options.create(true).append(true);
     #[cfg(unix)]
     {
-        // Linux cleanup snapshots can contain an exact `wg showconf` restore
-        // payload, including private and preshared keys. Unlike UI-facing
-        // daemon status files, cleanup ownership is never desktop-readable.
-        let metadata = fs::symlink_metadata(path).with_context(|| {
-            format!(
-                "failed to inspect daemon cleanup file permissions on {}",
-                path.display()
-            )
-        })?;
-        let file_type = metadata.file_type();
-        if file_type.is_symlink() || !file_type.is_file() {
-            return Err(anyhow!(
-                "refusing to set daemon cleanup permissions on non-regular file {}",
-                path.display()
-            ));
-        }
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).with_context(|| {
-            format!(
-                "failed to set daemon cleanup file permissions on {}",
-                path.display()
-            )
-        })?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o644);
     }
-
-    #[cfg(not(unix))]
-    let _ = path;
-
-    Ok(())
+    let file = options
+        .open(path)
+        .with_context(|| format!("failed to open daemon log {}", path.display()))?;
+    // Validate before chmod, truncation, or handing the file to a child. A
+    // hard link must never turn the daemon into an arbitrary-file writer.
+    validate_daemon_runtime_file(&file, path)?;
+    #[cfg(unix)]
+    file.set_permissions(fs::Permissions::from_mode(0o644))
+        .with_context(|| format!("failed to protect daemon log {}", path.display()))?;
+    Ok(file)
 }
 
 pub(crate) fn set_daemon_cleanup_directory_permissions(path: &Path) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
-        let metadata = fs::symlink_metadata(path).with_context(|| {
-            format!(
-                "failed to inspect daemon cleanup directory permissions on {}",
-                path.display()
-            )
-        })?;
-        let file_type = metadata.file_type();
-        if file_type.is_symlink() || !file_type.is_dir() {
-            return Err(anyhow!(
-                "refusing to use non-directory daemon cleanup path {}",
-                path.display()
-            ));
-        }
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).with_context(|| {
-            format!(
-                "failed to set daemon cleanup directory permissions on {}",
-                path.display()
-            )
-        })?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let directory = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_NONBLOCK)
+            .open(path)
+            .with_context(|| format!("failed to open daemon cleanup directory {}", path.display()))?;
+        directory.set_permissions(fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("failed to protect daemon cleanup directory {}", path.display()))?;
     }
-
     #[cfg(not(target_os = "linux"))]
     let _ = path;
-
-    Ok(())
-}
-
-pub(crate) fn set_daemon_runtime_file_permissions_on_file(
-    file: &fs::File,
-    path: &Path,
-) -> Result<()> {
-    #[cfg(unix)]
-    {
-        file.set_permissions(fs::Permissions::from_mode(0o644))
-            .with_context(|| {
-                format!(
-                    "failed to set daemon runtime file permissions on {}",
-                    path.display()
-                )
-            })?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = file;
-        let _ = path;
-    }
-
-    Ok(())
-}
-
-pub(crate) fn set_private_cache_file_permissions(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).with_context(|| {
-            format!(
-                "failed to set daemon peer cache file permissions on {}",
-                path.display()
-            )
-        })?;
-    }
-
-    #[cfg(not(unix))]
-    let _ = path;
-
     Ok(())
 }
 

@@ -6,6 +6,54 @@ use nostr_vpn_core::paid_route_store::{load_paid_route_store, update_paid_route_
 const ROLE_ENV: &str = "NVPN_PAID_ROUTE_TRANSACTION_TEST_ROLE";
 const STORE_ENV: &str = "NVPN_PAID_ROUTE_TRANSACTION_TEST_STORE";
 
+#[cfg(unix)]
+#[test]
+fn paid_route_lock_rejects_links_without_modifying_target() {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
+
+    let directory = std::env::temp_dir().join(format!(
+        "nvpn-paid-route-lock-security-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir(&directory).expect("create lock test directory");
+    let store_path = directory.join("paid-routes.json");
+    let lock_path = store_path.with_extension("json.lock");
+    let target = directory.join("unrelated-file");
+    std::fs::write(&target, b"must remain unchanged").expect("write target");
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640))
+        .expect("set target permissions");
+    let before = std::fs::metadata(&target).expect("target metadata");
+
+    for hard_link in [true, false] {
+        if hard_link {
+            std::fs::hard_link(&target, &lock_path).expect("hard link lock target");
+        } else {
+            symlink(&target, &lock_path).expect("symlink lock target");
+        }
+        let mut updated = false;
+        let result = update_paid_route_store(&store_path, |_| {
+            updated = true;
+            Ok(())
+        });
+        let after = std::fs::metadata(&target).expect("target metadata after transaction");
+        assert!(result.is_err(), "linked lock must be rejected");
+        assert!(!updated, "unsafe lock must not enter transaction");
+        assert_eq!(after.permissions().mode(), before.permissions().mode());
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
+        assert_eq!(
+            std::fs::read(&target).expect("read target"),
+            b"must remain unchanged"
+        );
+        std::fs::remove_file(&lock_path).expect("remove test lock");
+    }
+    assert!(!store_path.exists());
+    std::fs::remove_dir_all(directory).expect("remove lock test directory");
+}
+
 #[test]
 fn concurrent_process_updates_survive() {
     if let Some(role) = std::env::var_os(ROLE_ENV) {

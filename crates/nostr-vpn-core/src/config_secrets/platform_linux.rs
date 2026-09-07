@@ -1,7 +1,7 @@
 #[cfg(target_os = "linux")]
 mod platform {
     use std::fs::{self, File, OpenOptions};
-    use std::io::{Read, Write};
+    use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;
     use std::path::{Path, PathBuf};
 
@@ -43,8 +43,8 @@ mod platform {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        let mut file = open_secret_for_write(&secret_path)?;
-        file.write_all(value.as_bytes())
+        validate_existing_secret_path(&secret_path)?;
+        crate::config::write_private_file_preserving_user_owner(&secret_path, value.as_bytes())
             .with_context(|| format!("failed to write {}", secret_path.display()))
     }
 
@@ -78,18 +78,6 @@ mod platform {
                 .map(Some)
                 .with_context(|| format!("failed to open {}", path.display())),
         }
-    }
-
-    fn open_secret_for_write(path: &Path) -> Result<File> {
-        validate_existing_secret_path(path)?;
-        OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(path)
-            .with_context(|| format!("failed to open {}", path.display()))
     }
 
     fn validate_existing_secret_path(path: &Path) -> Result<bool> {

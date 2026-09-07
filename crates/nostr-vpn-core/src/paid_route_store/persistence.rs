@@ -110,6 +110,14 @@ fn repair_paid_route_lock(file: &File, path: &Path, owner: Option<(u32, u32)>) -
     let metadata = file
         .metadata()
         .with_context(|| format!("failed to inspect paid route lock {}", path.display()))?;
+    // A privileged daemon must not change ownership or permissions through a
+    // hard link to another file. Inspect the open handle before any mutation.
+    if !metadata.is_file() || metadata.nlink() != 1 {
+        return Err(anyhow!(
+            "paid route lock must be a regular file with a single link: {}",
+            path.display()
+        ));
+    }
     if let Some((uid, gid)) = owner
         && (metadata.uid(), metadata.gid()) != (uid, gid)
     {

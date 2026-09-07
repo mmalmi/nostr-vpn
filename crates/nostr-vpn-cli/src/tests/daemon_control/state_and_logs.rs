@@ -316,6 +316,87 @@ fn daemon_log_compaction_rejects_symlinked_log() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
+#[test]
+fn daemon_control_publication_does_not_follow_links() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-control-links-{nonce}"));
+    fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("private-file");
+    let config = dir.join("config.toml");
+    let control = daemon_control_file_path(&config);
+    fs::write(&target, "keep private content").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+
+    for hard_link in [false, true] {
+        if hard_link {
+            fs::hard_link(&target, &control).unwrap();
+        } else {
+            symlink(&target, &control).unwrap();
+        }
+        write_daemon_control_request(&config, DaemonControlRequest::Stop).unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep private content");
+        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(take_daemon_control_request(&config), Some(DaemonControlRequest::Stop));
+        assert!(!control.exists());
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_log_and_permissions_reject_linked_files_before_mutation() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-runtime-links-{nonce}"));
+    fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("private-file");
+    let runtime = dir.join("daemon.log");
+    fs::write(&target, "keep private content").unwrap();
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+
+    for hard_link in [false, true] {
+        if hard_link {
+            fs::hard_link(&target, &runtime).unwrap();
+        } else {
+            symlink(&target, &runtime).unwrap();
+        }
+        assert!(open_daemon_log_file(&runtime).is_err());
+        assert!(compact_log_file_if_needed(&runtime, 2, 1).is_err());
+        assert!(set_daemon_cleanup_file_permissions(&runtime).is_err());
+        assert!(set_private_cache_file_permissions(&runtime).is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "keep private content");
+        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o640);
+        fs::remove_file(&runtime).unwrap();
+    }
+    let mut log = open_daemon_log_file(&runtime).expect("create a regular daemon log");
+    std::io::Write::write_all(&mut log, b"normal log entry\n").unwrap();
+    assert_eq!(fs::read_to_string(&runtime).unwrap(), "normal log entry\n");
+    assert_eq!(fs::metadata(&runtime).unwrap().permissions().mode() & 0o777, 0o644);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_runtime_operations_reject_fifo_without_waiting_for_a_peer() {
+    use std::os::unix::ffi::OsStrExt;
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-runtime-fifo-{nonce}"));
+    fs::create_dir_all(&dir).unwrap();
+    let runtime = dir.join("daemon.log");
+    let path = std::ffi::CString::new(runtime.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    assert!(open_daemon_log_file(&runtime).is_err());
+    assert!(compact_log_file_if_needed(&runtime, 2, 1).is_err());
+    assert!(set_daemon_cleanup_file_permissions(&runtime).is_err());
+    assert!(set_private_cache_file_permissions(&runtime).is_err());
+    fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn daemon_status_ignores_and_quarantines_corrupt_daemon_state() {
     let nonce = SystemTime::now()

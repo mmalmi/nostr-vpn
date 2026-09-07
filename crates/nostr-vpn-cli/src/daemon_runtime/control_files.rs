@@ -325,7 +325,7 @@ fn runtime_open_options_no_follow() -> OpenOptions {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
     options
 }
@@ -336,13 +336,7 @@ pub(crate) fn redirect_stdio_to_daemon_log(config_path: &Path) -> Result<()> {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let mut options = runtime_open_options_no_follow();
-    let log_file = options
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .with_context(|| format!("failed to open {}", log_path.display()))?;
-    let _ = set_daemon_runtime_file_permissions_on_file(&log_file, &log_path);
+    let log_file = open_daemon_log_file(&log_path)?;
 
     #[cfg(unix)]
     {
@@ -433,21 +427,25 @@ pub(crate) fn compact_log_file_if_needed(
             path.display()
         ));
     }
-    let original_len = metadata.len();
+    let mut read_options = runtime_open_options_no_follow();
+    let mut file = read_options
+        .read(true)
+        .write(true)
+        .open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?;
+    let original_len = validate_daemon_runtime_file(&file, path)?.len();
     if original_len <= max_bytes {
         return Ok(false);
     }
 
     let retain_start = original_len.saturating_sub(retain_bytes);
-    let mut read_options = runtime_open_options_no_follow();
-    let mut file = read_options
-        .read(true)
-        .open(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
     std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(retain_start))
         .with_context(|| format!("failed to seek {}", path.display()))?;
     let mut retained = Vec::with_capacity(retain_bytes as usize);
-    std::io::Read::read_to_end(&mut file, &mut retained)
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(&mut file, retain_bytes),
+        &mut retained,
+    )
         .with_context(|| format!("failed to read {}", path.display()))?;
     if let Some(newline) = retained.iter().position(|byte| *byte == b'\n') {
         retained.drain(..=newline);
@@ -459,12 +457,12 @@ pub(crate) fn compact_log_file_if_needed(
         retained.len(),
         original_len
     );
-    let mut write_options = runtime_open_options_no_follow();
-    let mut file = write_options
-        .write(true)
-        .truncate(true)
-        .open(path)
+    // Keep the validated handle: the config owner can replace the path while
+    // the elevated daemon is retaining the old log tail.
+    file.set_len(0)
         .with_context(|| format!("failed to compact {}", path.display()))?;
+    std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0))
+        .with_context(|| format!("failed to rewind {}", path.display()))?;
     std::io::Write::write_all(&mut file, header.as_bytes())
         .with_context(|| format!("failed to write compaction header to {}", path.display()))?;
     std::io::Write::write_all(&mut file, &retained)
@@ -553,13 +551,12 @@ pub(crate) fn write_daemon_control_request(
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    fs::write(&control_file, format!("{}\n", request.as_str())).with_context(|| {
+    write_runtime_file_atomically(&control_file, format!("{}\n", request.as_str()).as_bytes()).with_context(|| {
         format!(
             "failed to write daemon control request {}",
             control_file.display()
         )
     })?;
-    set_daemon_runtime_file_permissions(&control_file)?;
     if let Err(error) = persist_desired_daemon_vpn_enabled_for_request(config_path, request) {
         eprintln!(
             "daemon: failed to persist desired VPN state in {}: {}",
@@ -660,7 +657,6 @@ pub(crate) fn write_daemon_control_ready(config_path: &Path, pid: u32) -> Result
     }
     write_runtime_file_atomically(&ready_file, format!("{pid}\n").as_bytes())
         .with_context(|| format!("failed to write {}", ready_file.display()))?;
-    set_daemon_runtime_file_permissions(&ready_file)?;
     Ok(())
 }
 
@@ -716,7 +712,6 @@ pub(crate) fn write_daemon_control_result(
     let raw = serde_json::to_vec_pretty(&payload)?;
     write_runtime_file_atomically(&result_file, &raw)
         .with_context(|| format!("failed to write {}", result_file.display()))?;
-    set_daemon_runtime_file_permissions(&result_file)?;
     Ok(())
 }
 
@@ -930,7 +925,6 @@ pub(crate) fn write_daemon_pid_record(path: &Path, record: &DaemonPidRecord) -> 
     let raw = serde_json::to_string_pretty(record)?;
     write_runtime_file_atomically(path, raw.as_bytes())
         .with_context(|| format!("failed to write daemon pid file {}", path.display()))?;
-    set_daemon_runtime_file_permissions(path)?;
     Ok(())
 }
 
@@ -955,8 +949,6 @@ pub(crate) fn read_daemon_state(path: &Path) -> Result<Option<DaemonRuntimeState
                         path.display(),
                         error
                     );
-                } else {
-                    let _ = set_daemon_runtime_file_permissions(path);
                 }
                 return Ok(Some(parsed));
             }
@@ -975,6 +967,5 @@ pub(crate) fn write_daemon_state(path: &Path, state: &DaemonRuntimeState) -> Res
     let raw = serde_json::to_string_pretty(state)?;
     write_runtime_file_atomically(path, raw.as_bytes())
         .with_context(|| format!("failed to write daemon state file {}", path.display()))?;
-    set_daemon_runtime_file_permissions(path)?;
     Ok(())
 }
