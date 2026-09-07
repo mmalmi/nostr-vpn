@@ -1190,10 +1190,15 @@ ios_release_network_require_packet_tunnel_stopped() {
   deadline=$((SECONDS + timeout))
   while ((SECONDS < deadline)); do
     remaining=$((deadline - SECONDS))
+    ((remaining <= 5)) || remaining=5
     if ! xcrun devicectl device info processes \
         --device "$device" --json-output "$output" \
         --timeout "$remaining" --quiet >/dev/null
     then
+      if jq -e '.info.outcome == "timeout"' "$output" >/dev/null 2>&1; then
+        sleep 0.25
+        continue
+      fi
       echo "iOS cleanup could not inspect PacketTunnel processes within its deadline" >&2
       return 1
     fi
@@ -1212,7 +1217,7 @@ ios_release_network_require_packet_tunnel_stopped() {
     fi
     sleep 0.25
   done
-  echo "iOS PacketTunnel process remained after disconnect cleanup" >&2
+  echo "iOS cleanup could not verify PacketTunnel stopped within its deadline" >&2
   return 1
 }
 

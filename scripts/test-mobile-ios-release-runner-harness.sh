@@ -719,6 +719,31 @@ packet_processes="$TEMP_ROOT/packet-processes.json"
   ios_release_network_require_packet_tunnel_stopped \
     fixture-device "$packet_processes" 1
 ) || fail "disconnect cleanup rejected an absent PacketTunnel"
+for query_mode in recovers unavailable; do
+  (
+    query_attempts=0
+    xcrun() {
+      local output
+      output="$(xcrun_json_output_path "$@")" || return
+      [[ "$*" =~ --timeout[[:space:]][1-5][[:space:]] ]] \
+        || fail "one stalled query can consume the entire cleanup budget"
+      query_attempts=$((query_attempts + 1))
+      if [[ "$query_mode" == unavailable || "$query_attempts" -eq 1 ]]; then
+        SECONDS=$((SECONDS + 5))
+        printf '%s\n' '{"info":{"outcome":"timeout"}}' >"$output"
+        return 2
+      fi
+      printf '%s\n' '{"result":{"runningProcesses":[]}}' >"$output"
+    }
+    if [[ "$query_mode" == recovers ]]; then
+      ios_release_network_require_packet_tunnel_stopped fixture-device "$packet_processes"
+      [[ "$query_attempts" -eq 2 ]]
+    else
+      ! ios_release_network_require_packet_tunnel_stopped fixture-device "$packet_processes"
+      [[ "$query_attempts" -ge 2 && "$query_attempts" -le 3 ]]
+    fi
+  ) || fail "disconnect process inventory $query_mode did not respect its total budget"
+done
 (
   xcrun() {
     local previous="" output="" argument
