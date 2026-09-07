@@ -175,7 +175,7 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn default_public_seeds_prefer_websocket_and_retain_udp_fallback() {
+    fn default_public_seeds_prefer_udp_and_retain_identity_pinned_websocket_fallback() {
         for (npub, addresses) in DEFAULT_FIPS_BOOTSTRAP_PEERS {
             let peers = fips_endpoint_peers_from_mesh(
                 &[],
@@ -186,19 +186,23 @@ mod endpoint_config_tests {
                 Vec::new(),
             );
             let peer = peers.first().expect("default public bootstrap peer");
+            assert_eq!(peers.len(), 1);
+            assert_eq!(peer.npub, *npub);
+            assert!(peer.connect_on_start);
+            assert!(peer.auto_reconnect);
             let websocket = peer
                 .addresses
                 .iter()
                 .find(|hint| split_peer_transport_addr(&hint.addr).0 == "websocket")
-                .expect("public WebSocket carrier");
+                .expect("identity-pinned public WebSocket fallback");
             let udp = peer
                 .addresses
                 .iter()
                 .find(|hint| split_peer_transport_addr(&hint.addr).0 == "udp")
-                .expect("public UDP fallback");
+                .expect("preferred public UDP carrier");
 
-            assert_eq!(websocket.priority, FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY);
-            assert_eq!(udp.priority, FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY);
+            assert_eq!(udp.priority, FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY);
+            assert_eq!(websocket.priority, FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY);
         }
     }
 

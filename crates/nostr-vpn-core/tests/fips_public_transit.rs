@@ -1,4 +1,4 @@
-use std::net::TcpListener;
+use std::net::{TcpListener, ToSocketAddrs, UdpSocket};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,14 +34,99 @@ async fn public_transit_routes_fips_control_by_npub_without_direct_peer_config()
 }
 
 /// Live regression for the native-client mixed-transport bootstrap. Each
-/// endpoint knows only one public seed and retains UDP as a fallback, while
-/// preferring the deployed cross-seed WebSocket route.
+/// endpoint knows only one public seed, prefers UDP, and retains an
+/// identity-pinned WebSocket fallback.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires the deployed public FIPS transit service"]
-async fn public_mixed_transport_prefers_websocket_for_cross_seed_control() {
+async fn public_mixed_transport_prefers_udp_for_cross_seed_control() {
     tokio::time::timeout(PUBLIC_END_TO_END_TIMEOUT, public_mixed_transit_round())
         .await
         .expect("public mixed-transport FIPS-TCP gate exceeded 100 seconds");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn local_mixed_transit_prefers_udp_and_falls_back_to_websocket() {
+    for udp_reachable in [true, false] {
+        // A bound but unread socket models a UDP black hole, not a TCP/WS
+        // outage. Keep it bound for the entire fallback round.
+        let udp_socket = UdpSocket::bind("127.0.0.1:0").expect("reserve UDP seed address");
+        let udp_address = udp_socket
+            .local_addr()
+            .expect("UDP seed address")
+            .to_string();
+        let url = available_websocket_url();
+        let mut seed_config = local_transit_config(Some(&url), None);
+        let _black_hole = if udp_reachable {
+            drop(udp_socket);
+            seed_config.transports.udp = TransportInstances::Single(UdpConfig {
+                bind_addr: Some(udp_address.clone()),
+                ..UdpConfig::default()
+            });
+            None
+        } else {
+            Some(udp_socket)
+        };
+        let seed = bind_local_transit_endpoint(seed_config).await;
+        let mut client_config = local_transit_config(None, None);
+        client_config.transports.udp = TransportInstances::Single(UdpConfig {
+            bind_addr: Some("127.0.0.1:0".to_string()),
+            ..UdpConfig::default()
+        });
+        client_config.peers = vec![udp_first_seed_peer(seed.npub(), &udp_address, &url)];
+        let client = bind_local_transit_endpoint(client_config).await;
+        wait_for_expected_transit(&client, seed.npub()).await;
+        assert_seed_transport(
+            &client,
+            seed.npub(),
+            if udp_reachable { "udp" } else { "websocket" },
+        )
+        .await;
+        let mut seed_control = FipsControlTcpRuntime::start(Arc::clone(&seed))
+            .await
+            .expect("seed control");
+        let mut client_control = FipsControlTcpRuntime::start(Arc::clone(&client))
+            .await
+            .expect("client control");
+        deliver_ping(
+            &client_control,
+            &mut seed_control,
+            client.npub(),
+            seed.npub(),
+            "mixed-client-to-seed",
+        )
+        .await;
+        deliver_ping(
+            &seed_control,
+            &mut client_control,
+            seed.npub(),
+            client.npub(),
+            "mixed-seed-to-client",
+        )
+        .await;
+        client_control.stop().await;
+        seed_control.stop().await;
+        client.shutdown().await.expect("shutdown mixed client");
+        seed.shutdown().await.expect("shutdown mixed seed");
+    }
+}
+
+fn udp_first_seed_peer(npub: &str, udp_address: &str, websocket_url: &str) -> PeerConfig {
+    let mut peer = PeerConfig::new(npub, "udp", udp_address);
+    peer.addresses[0].priority = 10;
+    peer.with_address(PeerAddress::with_priority("websocket", websocket_url, 200))
+}
+
+async fn assert_seed_transport(endpoint: &FipsEndpoint, seed_npub: &str, transport: &str) {
+    let peers = endpoint
+        .peers()
+        .await
+        .expect("query authenticated seed transport");
+    let seed = peers
+        .iter()
+        .find(|peer| peer.connected && peer.npub == seed_npub)
+        .expect("authenticated seed");
+    assert_eq!(seed.transport_type.as_deref(), Some(transport));
+    eprintln!("authenticated seed transport: {transport}");
 }
 
 async fn public_mixed_transit_round() {
@@ -260,7 +345,10 @@ async fn public_mixed_transit_endpoint(seed_index: usize) -> Arc<FipsEndpoint> {
     config.node.discovery.nostr.advertise = false;
     config.node.discovery.lan.enabled = false;
     config.node.discovery.local.enabled = false;
-    config.transports.udp = TransportInstances::Single(UdpConfig::default());
+    config.transports.udp = TransportInstances::Single(UdpConfig {
+        bind_addr: Some("0.0.0.0:0".to_string()),
+        ..UdpConfig::default()
+    });
     config.transports.websocket = TransportInstances::Single(WebSocketConfig::default());
     let (expected_seed_npub, seed_url) = DEFAULT_FIPS_WEBSOCKET_SEEDS
         .get(seed_index)
@@ -269,11 +357,16 @@ async fn public_mixed_transit_endpoint(seed_index: usize) -> Arc<FipsEndpoint> {
         .iter()
         .find(|(npub, _)| npub == expected_seed_npub)
         .and_then(|(_, addresses)| addresses.first())
-        .expect("matching public UDP seed");
-    let mut seed_peer = PeerConfig::new(*expected_seed_npub, "websocket", *seed_url);
-    seed_peer.addresses[0].priority = 10;
-    seed_peer = seed_peer.with_address(PeerAddress::with_priority("udp", *seed_address, 200));
-    config.peers = vec![seed_peer];
+        .expect("matching public UDP seed")
+        .to_socket_addrs()
+        .expect("resolve public UDP seed like the native config adapter")
+        .find(|address| address.is_ipv4())
+        .expect("public IPv4 UDP seed");
+    config.peers = vec![udp_first_seed_peer(
+        expected_seed_npub,
+        &seed_address.to_string(),
+        seed_url,
+    )];
 
     let endpoint = Arc::new(
         FipsEndpoint::builder()
@@ -284,6 +377,7 @@ async fn public_mixed_transit_endpoint(seed_index: usize) -> Arc<FipsEndpoint> {
             .expect("bind public mixed-transport transit endpoint"),
     );
     wait_for_expected_transit(&endpoint, expected_seed_npub).await;
+    assert_seed_transport(&endpoint, expected_seed_npub, "udp").await;
     endpoint
 }
 
@@ -301,7 +395,7 @@ async fn wait_for_expected_transit(endpoint: &FipsEndpoint, expected_seed_npub: 
                         .iter()
                         .filter(|peer| peer.connected)
                         .all(|peer| peer.npub == expected_seed_npub),
-                    "public WebSocket URL authenticated an unexpected seed identity"
+                    "seed address authenticated an unexpected seed identity"
                 );
                 return;
             }
@@ -309,7 +403,7 @@ async fn wait_for_expected_transit(endpoint: &FipsEndpoint, expected_seed_npub: 
         }
     })
     .await
-    .expect("endpoint did not authenticate to the expected public WebSocket seed");
+    .expect("endpoint did not authenticate to the expected seed");
     eprintln!(
         "authenticated public seed in {} ms",
         started.elapsed().as_millis()
