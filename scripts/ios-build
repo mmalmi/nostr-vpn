@@ -347,16 +347,23 @@ run_ios_archive() {
 }
 
 run_export_archive() {
-  local export_dir="$1" options="$2"
+  local export_dir="$1" options="$2" pending
+  # Callers validate the IPA against the frozen archive before accepting it.
+  # Never replace an existing export simply because the release was resumed.
+  [[ ! -e "$export_dir" ]] || return 0
   ensure_dir "$(dirname "$export_dir")"
-  rm -rf "$export_dir"
-  mkdir -p "$export_dir"
-  xcodebuild \
+  pending="$(mktemp -d "$(dirname "$export_dir")/.nvpn-ios-export.XXXXXX")"
+  if ! xcodebuild \
     -exportArchive \
     -archivePath "$ARCHIVE_PATH" \
-    -exportPath "$export_dir" \
+    -exportPath "$pending" \
     -exportOptionsPlist "$options" \
     -allowProvisioningUpdates
+  then
+    echo "Failed iOS export retained at $pending; the frozen archive can be retried." >&2
+    return 1
+  fi
+  mv "$pending" "$export_dir"
 }
 
 exact_ipa_path() {

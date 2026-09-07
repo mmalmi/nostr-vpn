@@ -1212,6 +1212,47 @@ fi
   }
 )
 
+# Exercise the real export step without signing, building, or touching a device.
+# A failed export must not occupy the final path or destroy a previous export.
+(
+  eval "$(sed -n '/^run_export_archive() {/,/^exact_ipa_path() {/p' \
+    "$ROOT/scripts/ios-build" | sed '$d')"
+  ensure_dir() { mkdir -p "$1"; }
+  ARCHIVE_PATH="$TMP_ROOT/export-archive"
+  calls=0
+  fail_export=1
+  xcodebuild() {
+    local destination=""
+    calls=$((calls + 1))
+    while (($#)); do
+      if [[ "$1" == -exportPath ]]; then destination="$2"; break; fi
+      shift
+    done
+    printf 'retained export evidence\n' >"$destination/export.log"
+    [[ "$fail_export" -eq 0 ]] || return 70
+    printf 'signed IPA fixture\n' >"$destination/app.ipa"
+  }
+  output="$TMP_ROOT/export-resume/release-testing"
+  if run_export_archive "$output" "$TMP_ROOT/options.plist"; then
+    echo 'Failed Xcode export was accepted' >&2
+    exit 1
+  fi
+  [[ ! -e "$output" ]] || {
+    echo 'Failed export blocked retry with an incomplete final directory' >&2
+    exit 1
+  }
+  failed_log="$(find "$TMP_ROOT/export-resume" -name export.log -type f)"
+  [[ -s "$failed_log" ]] || { echo 'Failed export evidence was lost' >&2; exit 1; }
+  fail_export=0
+  run_export_archive "$output" "$TMP_ROOT/options.plist"
+  [[ -s "$output/app.ipa" && -s "$failed_log" && "$calls" -eq 2 ]]
+  run_export_archive "$output" "$TMP_ROOT/options.plist"
+  [[ -s "$output/app.ipa" && -s "$failed_log" && "$calls" -eq 2 ]] || {
+    echo 'Existing export was unnecessarily replaced' >&2
+    exit 1
+  }
+)
+
 python3 - \
   "$ROOT/scripts/ios-build" \
   "$ROOT/scripts/local-release.mjs" \
