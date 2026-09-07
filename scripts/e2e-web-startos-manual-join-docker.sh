@@ -319,7 +319,11 @@ case "${NVPN_WEB_STARTOS_JOIN_IMAGE_READY:-0}" in
   *) "${COMPOSE[@]}" build node-a-daemon ;;
 esac
 
-env -u NO_COLOR pnpm --dir "$ROOT_DIR/web/control-panel" exec playwright install chromium
+chromium_executable="$(pnpm --dir "$ROOT_DIR/web/control-panel" exec node \
+  -p 'require("@playwright/test").chromium.executablePath()')"
+if [[ ! -x "$chromium_executable" ]]; then
+  env -u NO_COLOR pnpm --dir "$ROOT_DIR/web/control-panel" exec playwright install chromium
+fi
 
 run_direction node-a-admin "$FIXTURE"
 run_direction node-b-admin "$FIXTURE"

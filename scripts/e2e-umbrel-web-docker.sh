@@ -87,7 +87,11 @@ if [[ -z "$PEER_NPUB" ]]; then
   exit 1
 fi
 
-env -u NO_COLOR pnpm --dir "$ROOT_DIR/web/control-panel" exec playwright install chromium
+chromium_executable="$(pnpm --dir "$ROOT_DIR/web/control-panel" exec node \
+  -p 'require("@playwright/test").chromium.executablePath()')"
+if [[ ! -x "$chromium_executable" ]]; then
+  env -u NO_COLOR pnpm --dir "$ROOT_DIR/web/control-panel" exec playwright install chromium
+fi
 
 PLAYWRIGHT_ARGS=("$@")
 if ((${#PLAYWRIGHT_ARGS[@]} == 0)); then
