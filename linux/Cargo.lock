@@ -2490,9 +2490,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.80"
+version = "0.2.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1961103103a3b250f39016d0f4e089cee7f61c598234c5773c98f00b43473dee"
+checksum = "f8e651580b2d77e746ddf48d206f2159229d942dc879a95ca9431a11e3a30f42"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2512,9 +2512,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.80"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1f6e108351f28899e1bc4516a99c1f0efbd0e14e99c61fe14368e64bd89ff6c"
+checksum = "661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2524,9 +2524,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.80"
+version = "0.2.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cbb452596ed45e59fd51478545703e3b4f0e35f2d9ffe79a9f9731140f08ddd"
+checksum = "5fab53a9c7a45beaed44a2c35343b3228bd65c65601041b1338bdbdc71b283b2"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2545,9 +2545,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.80"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3886054a4e540317f0a2ae580d3a7aa40694b632a4dc4b7ee2e4959f73927535"
+checksum = "a49500940585ae01292152740e5d4282138a6d6806fe0e012f2b15205694c430"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2560,9 +2560,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.80"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fbd714b573c9c962023551ab12fa0bcbc8e3b185faa480abb8d2bb2b224c056"
+checksum = "e0153f9c43ba08f3e66531fc91113f54974bd20f559d90528414ab17ce2eb951"
 dependencies = [
  "flate2",
  "hashtree-blossom",
@@ -2573,6 +2573,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tar",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
