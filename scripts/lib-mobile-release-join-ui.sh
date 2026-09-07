@@ -528,10 +528,6 @@ release_join_android_assert_pending_qr() {
     | grep -Fxq "$RELEASE_JOIN_ANDROID_JOINER_ID"
 }
 
-release_join_android_wait_join_complete() {
-  release_join_android_wait_accepted_participant "$1"
-}
-
 release_join_android_wait_accepted_participant() {
   local participant="$1" deadline=$((SECONDS + RELEASE_JOIN_DELIVERY_WAIT_SECS))
   while ((SECONDS < deadline)); do

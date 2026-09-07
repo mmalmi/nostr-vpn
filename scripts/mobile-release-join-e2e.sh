@@ -337,12 +337,16 @@ phase_android_admin_ios_qr() {
 
 phase_ios_admin_android_manual() {
   local admin_log ios_admin_relaunch_joiner submitted completed
+  local accepted="$RESULT_DIR/iphone-admin-pixel-manual-accepted.ms"
   release_join_restart_ios_in_place
   release_join_reset_android_state
   ios_create_admin "Release manual iPhone admin"
   release_join_android_manual_submit \
     "$RELEASE_JOIN_IOS_ADMIN_ID" "$RELEASE_JOIN_IOS_NETWORK_ID"
   release_join_android_wait_vpn_connected
+  # Prepare the public roster before approval. Navigation and repeated app
+  # launches are setup work, not delivery observation.
+  release_join_android_open_devices
   admin_log="$(ios_log ios-admin-android-manual)"
   release_join_ios_start_test \
     testManualAdminAddRequiresRosterProgress \
@@ -351,10 +355,13 @@ phase_ios_admin_android_manual() {
   release_join_ios_wait_marker \
     NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS= "$RELEASE_JOIN_IOS_SETUP_WAIT_SECS" \
     || fail "iPhone admin did not submit the manual approval"
-  submitted="$(release_join_now_ms)"
-  release_join_android_wait_join_complete "$RELEASE_JOIN_IOS_ADMIN_ID" \
+  submitted="$(ios_marker_value_from "$admin_log" NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS)"
+  release_join_observe_until_ms \
+    "$((submitted + RELEASE_JOIN_DELIVERY_WAIT_SECS * 1000))" "$accepted" \
+    "Pixel manual-join acceptance" release_join_android_accepted_snapshot_ms \
+    "$RELEASE_JOIN_IOS_ADMIN_ID" \
     || fail "Pixel manual join never left its locally pending admin row"
-  completed="$(release_join_now_ms)"
+  completed="$(<"$accepted")"
   assert_delivery_deadline "$submitted" "$completed" "iPhone-admin-to-Pixel-manual"
   release_join_android_relaunch_and_wait_accepted "$RELEASE_JOIN_IOS_ADMIN_ID" \
     || fail "Pixel manual join did not retain the signed roster across relaunch"

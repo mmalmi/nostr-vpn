@@ -948,6 +948,7 @@ PY
   ios_marker_value_from() {
     case "$2" in
       NVPN_RELEASE_JOIN_JOINER_ID) printf '%s\n' npub1iosjoiner ;;
+      NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS) printf '900\n' ;;
       NVPN_RELEASE_JOIN_ROSTER_APPLIED_MS) printf '1000\n' ;;
       NVPN_RELEASE_JOIN_QR_RELAUNCH_DURABLE) printf '%s\n' "$RELEASE_JOIN_ANDROID_ADMIN_ID" ;;
       NVPN_RELEASE_JOIN_QR_CONTENT_WIDTH_BPS) printf '9900\n' ;;
@@ -973,7 +974,12 @@ PY
   release_join_android_wait_vpn_connected() {
     trace android-vpn-connected
   }
-  release_join_android_wait_join_complete() { trace "android-manual-accepted:$1"; }
+  release_join_android_open_devices() { trace android-devices-ready; }
+  release_join_observe_until_ms() {
+    [[ "$1" == 1900 && "$4" == release_join_android_accepted_snapshot_ms ]]
+    trace "android-manual-accepted:$5"
+    printf '1000\n' >"$2"
+  }
   release_join_android_manual_admin_prepare() { trace "android-admin-prepared:$1"; }
   release_join_android_manual_admin_tap() {
     trace "android-admin-submitted:$1"
@@ -1016,6 +1022,12 @@ PY
   : >"$trace_file"
   phase_ios_admin_android_manual
   grep -Fxq android-manual-joiner "$trace_file"
+  ready_line="$(grep -n -m1 '^android-devices-ready$' "$trace_file" | cut -d: -f1 || true)"
+  approval_line="$(grep -n -m1 '^ios-test:' "$trace_file" | cut -d: -f1)"
+  if [[ -z "$ready_line" || -z "$approval_line" ]] || ((ready_line >= approval_line)); then
+    echo "Android manual-join delivery observer navigated after approval" >&2
+    exit 1
+  fi
   grep -Fxq 'android-manual-accepted:npub1iosadmin' "$trace_file"
   grep -Fxq 'ios-finish:testManualAdminAddRequiresRosterProgress' "$trace_file"
   [[ "$RELEASE_JOIN_IOS_ADMIN_MANUAL_RELAUNCH_DURABLE" == 1 ]]
