@@ -148,7 +148,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3536,9 +3536,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.17"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ca75398f05280369036f0c9e496b4e535a9c48f68e1a934e1f5c18d552d686"
+checksum = "b4952a0e1f73401056dd061361ccca286f7f0f440a831838e9999a570393f38f"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3909,9 +3909,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.74"
+version = "0.4.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "216c0132229957f0340c71dcc47f11634976d211df5c3643a8cc9c588f645a3b"
+checksum = "be6f43ae403dc9a15bdaf68917ba3ac7454c2af12b1a858c8a663d7fef9e27ae"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -3954,9 +3954,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.74"
+version = "0.4.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c026e32c1ca18a272f424578ff49600dedea8512076e46d3747d51ee62c97116"
+checksum = "3792e9273549d1be219ad6c020c21f90ebb80b7a423cf9b678413dfd8ee27fdf"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -3984,9 +3984,9 @@ checksum = "511e85644bc05a28503a09a1fe150a6fcc736aab0d67fab2784bf4a531ab332d"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.10"
+version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f76d4278507a3d6215dc8bdb4ff3a9d8eb52c1f214f3ee8f502a40a559d3f858"
+checksum = "c20749293aaa38a24ebd53a27c5362fc463d9389ca29a3aa8f678a621696d6dd"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -6883,7 +6883,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

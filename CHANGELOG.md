@@ -7,11 +7,15 @@ All notable changes to this project are documented in this file.
 ### Release notes
 
 Cashu paid exits now connect, recover, and bill reliably with either manual or
-automatic selection on every supported platform. iPhone device joining now
-starts its encrypted approval carrier before exchanging a signed roster.
+automatic selection on platforms that support paid exits. iOS does not support
+paid exits. Device joining also recovers encrypted connections after a peer's
+VPN restarts, and iPhone joining starts its approval carrier before exchanging
+a signed roster.
 
 ### Fixed
 
+- Recover encrypted sessions automatically after the other device's VPN
+  restarts, so retained connections can deliver device approvals again.
 - Keep iOS Internet route changes visibly pending until the running VPN has
   applied them, including switching back to This device while staying connected.
 - Fix Linux CLI startup through launchers such as `sudo` by distinguishing the
@@ -37,15 +41,15 @@ starts its encrypted approval carrier before exchanging a signed roster.
 - Keep Linux mesh startup working on minimal and NAS kernels without the
   iptables `comment` matcher while retaining fatal handling for real firewall
   and lock failures.
-- Prefer authenticated WebSocket for the built-in public bootstrap pair while
-  retaining UDP as a fallback, so Linux and other native clients do not depend
-  on an intermittently unavailable public UDP carrier.
+- Prefer authenticated UDP for the built-in public bootstrap pair while
+  retaining WebSocket as a fallback on networks that block UDP, and migrate
+  older native defaults to the same preference on desktop and mobile.
 - Keep public bootstrap admission available as the connected client population
   grows, while reserving capacity for configured peers and handshakes.
 - Keep the public bootstrap pair connected by assigning one canonical dialer
   across both UDP and WebSocket, avoiding cross-connection replacement races.
-- Update the FIPS consumer chain to core and endpoint 0.4.74, TCP endpoint
-  0.2.10, and pubsub adapter 0.4.17 without changing any wire format.
+- Update the FIPS consumer chain to core and endpoint 0.4.75, TCP endpoint
+  0.2.11, and pubsub adapter 0.4.18 without changing any wire format.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 
