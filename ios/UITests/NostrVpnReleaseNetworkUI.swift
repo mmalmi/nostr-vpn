@@ -226,18 +226,25 @@ extension NostrVpnReleaseNetworkUITests {
             "Restoring VPN",
             "Turning VPN on",
         ]
+        let transient = NSCompoundPredicate(orPredicateWithSubpredicates:
+            transientMessages.map {
+                NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", $0, $0)
+            }
+        )
+        // Query text and existence in one snapshot: a completed transition can
+        // remove the notice between an exists check and a separate label read.
+        let unexpectedStatus = app.descendants(matching: .any)
+            .matching(identifier: "internet-settings-status")
+            .matching(NSCompoundPredicate(notPredicateWithSubpredicate: transient))
+            .firstMatch
         let deadline = Date().addingTimeInterval(timeout)
         var quietSince: Date?
         repeat {
+            if unexpectedStatus.exists {
+                throw gateError("VPN route transition reported an unexpected status")
+            }
             if status.exists {
                 quietSince = nil
-                let message = "\(status.label) \(status.value as? String ?? "")"
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard transientMessages.contains(where: message.contains) else {
-                    throw gateError(
-                        "VPN route transition failed with status: \(message)"
-                    )
-                }
             } else if let quietSince {
                 if Date().timeIntervalSince(quietSince) >= 1 {
                     return
