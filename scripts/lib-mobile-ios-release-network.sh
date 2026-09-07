@@ -1799,7 +1799,9 @@ ios_release_network_disconnect_cleanup_inner() {
       "$markers" "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" \
     && ios_release_network_assert_retained_no_secrets \
       "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" \
-      "$host_markers" "$markers"
+      "$host_markers" "$markers" \
+    && ios_release_network_require_packet_tunnel_stopped \
+      "$IOS_RELEASE_NETWORK_DEVICE" "$result_dir/$stem-packet-tunnel-processes.json"
 }
 
 ios_release_network_cleanup_watchdog() {
@@ -1884,11 +1886,6 @@ ios_release_network_disconnect_cleanup() {
       echo "iOS disconnect cleanup exceeded its ${timeout}s total deadline" >&2
     fi
     [[ "$status" -eq 0 ]] || cleanup_failed=1
-    if [[ "$cleanup_failed" -eq 0 ]]; then
-      ios_release_network_require_packet_tunnel_stopped \
-        "$IOS_RELEASE_NETWORK_DEVICE" "$result_dir/$stem-packet-tunnel-processes.json" \
-        || cleanup_failed=1
-    fi
   fi
   if [[ "$preserve_prepared" != "1" ]]; then
     ios_release_network_cleanup_private_artifacts || cleanup_failed=1
