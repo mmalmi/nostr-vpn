@@ -84,6 +84,7 @@ const harnessOnlyPaths = new Set([
   'scripts/ubuntu-vm-release-mobile-join-e2e.sh',
   'scripts/validate-mobile-underlay-continuity.py',
   'scripts/verify-host-linux-peer-artifact.py',
+  'scripts/verify.sh',
   'scripts/verify-paid-exit-seller-ui-receipts.py',
   'scripts/verify-paid-exit-seller-ui-receipts.mjs',
   'scripts/windows-release-publication-proof.ps1',
