@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, ErrorKind};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::config::normalize_runtime_network_id;
+use crate::config::{normalize_runtime_network_id, write_private_file_preserving_user_owner};
 use crate::fips_control::SignedRoster;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,29 +92,8 @@ pub fn write_signed_rosters(path: &Path, store: &SignedRosterStore) -> Result<()
     }
     let raw = serde_json::to_string_pretty(store)
         .with_context(|| format!("failed to serialize signed roster store {}", path.display()))?;
-    let mut tmp = path.to_path_buf();
-    let mut name = tmp
-        .file_name()
-        .map(|name| name.to_os_string())
-        .unwrap_or_else(|| std::ffi::OsString::from("signed-rosters.json"));
-    name.push(".tmp");
-    tmp.set_file_name(name);
-
-    fs::write(&tmp, raw)
-        .with_context(|| format!("failed to write signed roster temp {}", tmp.display()))?;
-    if let Err(error) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(io::Error::new(
-            error.kind(),
-            format!(
-                "failed to rename signed roster store {} -> {}: {error}",
-                tmp.display(),
-                path.display()
-            ),
-        )
-        .into());
-    }
-    Ok(())
+    write_private_file_preserving_user_owner(path, raw.as_bytes())
+        .with_context(|| format!("failed to write signed roster store {}", path.display()))
 }
 
 pub fn upsert_signed_roster(path: &Path, signed_roster: SignedRoster) -> Result<bool> {

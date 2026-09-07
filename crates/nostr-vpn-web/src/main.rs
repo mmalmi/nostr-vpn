@@ -1,12 +1,12 @@
 use std::env;
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header, uri::Authority};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
     validate_web_exposure(&args)?;
     let Args {
         listen,
-        behind_trusted_proxy: _,
+        behind_trusted_proxy,
         config,
         nvpn,
         static_dir,
@@ -165,7 +165,10 @@ async fn main() -> Result<()> {
     } else {
         tracing::info!("static web UI disabled");
     }
-    app = app.layer(middleware::from_fn(enforce_web_request_boundary));
+    app = app.layer(middleware::from_fn_with_state(
+        behind_trusted_proxy,
+        enforce_web_request_boundary,
+    ));
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!("nostr-vpn web api listening on {}", listen);
@@ -187,15 +190,21 @@ fn validate_web_exposure(args: &Args) -> Result<()> {
     Ok(())
 }
 
-async fn enforce_web_request_boundary(request: Request, next: Next) -> Response {
-    let origin = request
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok());
-    let host = request
-        .headers()
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok());
+async fn enforce_web_request_boundary(
+    State(behind_trusted_proxy): State<bool>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let mut hosts = request.headers().get_all(header::HOST).iter();
+    let host = hosts.next().and_then(|value| value.to_str().ok());
+    if hosts.next().is_some() || !web_host_allowed(host, behind_trusted_proxy) {
+        return (StatusCode::FORBIDDEN, "request host rejected").into_response();
+    }
+    let mut origins = request.headers().get_all(header::ORIGIN).iter();
+    let origin = match origins.next().map(HeaderValue::to_str).transpose() {
+        Ok(origin) if origins.next().is_none() => origin,
+        _ => return (StatusCode::FORBIDDEN, "invalid origin rejected").into_response(),
+    };
     if !web_origin_allowed(origin, host) {
         return (StatusCode::FORBIDDEN, "cross-origin request rejected").into_response();
     }
@@ -208,6 +217,29 @@ async fn enforce_web_request_boundary(request: Request, next: Next) -> Response 
             .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     response
+}
+
+fn web_host_allowed(host: Option<&str>, behind_trusted_proxy: bool) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    let Ok(authority) = host.parse::<Authority>() else {
+        return false;
+    };
+    if host.contains('@') {
+        return false;
+    }
+    // Matching Origin to Host alone permits DNS rebinding: both headers can name
+    // an attacker-controlled domain that has started resolving to loopback.
+    // An authenticated platform proxy owns this boundary when explicitly enabled.
+    behind_trusted_proxy
+        || authority.host().eq_ignore_ascii_case("localhost")
+        || authority
+            .host()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 fn web_origin_allowed(origin: Option<&str>, host: Option<&str>) -> bool {
@@ -657,6 +689,84 @@ fn internal_error(error: impl std::fmt::Display) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn boundary_response(behind_trusted_proxy: bool, headers: &str) -> String {
+        let app = Router::new()
+            .route("/api/qr_matrix", post(qr_matrix))
+            .layer(middleware::from_fn_with_state(
+                behind_trusted_proxy,
+                enforce_web_request_boundary,
+            ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind web test server");
+        let address = listener.local_addr().expect("listener address");
+        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            let mut stream = tokio::net::TcpStream::connect(address)
+                .await
+                .expect("connect to web test server");
+            let body = r#"{"text":"hello"}"#;
+            let request = format!(
+                "POST /api/qr_matrix HTTP/1.1\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(request.as_bytes())
+                .await
+                .expect("send API request");
+            let mut response = String::new();
+            stream
+                .read_to_string(&mut response)
+                .await
+                .expect("read API response");
+            response
+        })
+        .await;
+        server.abort();
+        response.expect("API request completed")
+    }
+
+    #[tokio::test]
+    async fn web_boundary_rejects_dns_rebinding_before_api_dispatch() {
+        for origin in ["", "Origin: http://attacker.example:8081\r\n"] {
+            let response =
+                boundary_response(false, &format!("Host: attacker.example:8081\r\n{origin}")).await;
+            assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+            assert!(!response.contains("\"cells\""));
+        }
+    }
+
+    #[tokio::test]
+    async fn web_boundary_accepts_loopback_api_requests() {
+        for host in ["127.0.0.1:8081", "localhost:8081", "[::1]:8081"] {
+            let response =
+                boundary_response(false, &format!("Host: {host}\r\nOrigin: http://{host}\r\n"))
+                    .await;
+            assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+            assert!(response.contains("cache-control: no-store\r\n"));
+            assert!(response.contains("\"cells\""));
+        }
+        let response = boundary_response(false, "Host: localhost:8081\r\n").await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    }
+
+    #[tokio::test]
+    async fn web_boundary_preserves_trusted_proxy_origin_checks() {
+        let response =
+            boundary_response(true, "Host: vpn.example\r\nOrigin: https://vpn.example\r\n").await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        for origin in [
+            "Origin: https://attacker.example\r\n",
+            "Origin: null\r\n",
+            "Origin: https://vpn.example\r\nOrigin: https://attacker.example\r\n",
+            "Origin: https://vpn.example/\u{80}\r\n",
+        ] {
+            let response = boundary_response(true, &format!("Host: vpn.example\r\n{origin}")).await;
+            assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+        }
+    }
 
     #[test]
     fn default_listen_address_is_loopback() {

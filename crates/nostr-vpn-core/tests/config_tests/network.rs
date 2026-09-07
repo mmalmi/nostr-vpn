@@ -317,6 +317,62 @@ fn save_creates_private_config_file_on_unix() {
     assert_eq!(mode, 0o600);
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn save_restricts_existing_secret_sidecar_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = unique_temp_config_path("private-secret-sidecar").with_extension("");
+    fs::create_dir(&dir).expect("create temp dir");
+    let path = dir.join("config.toml");
+    let sidecar = dir.join(".config.toml.nostr-secret-key.secret");
+    fs::write(&sidecar, "old-secret").expect("write existing sidecar");
+    fs::set_permissions(&sidecar, fs::Permissions::from_mode(0o666))
+        .expect("make existing sidecar accessible to other users");
+    let config = AppConfig::generated();
+
+    config.save(&path).expect("save config");
+
+    assert_eq!(
+        fs::metadata(&sidecar)
+            .expect("sidecar metadata")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        AppConfig::load(&path).expect("load config").nostr.secret_key,
+        config.nostr.secret_key
+    );
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn save_does_not_overwrite_hardlinked_secret_sidecar_target() {
+    let dir = unique_temp_config_path("hardlinked-secret-sidecar").with_extension("");
+    fs::create_dir(&dir).expect("create temp dir");
+    let path = dir.join("config.toml");
+    let target = dir.join("unrelated-file");
+    let sidecar = dir.join(".config.toml.nostr-secret-key.secret");
+    fs::write(&target, "do-not-overwrite").expect("write target");
+    fs::hard_link(&target, &sidecar).expect("create secret sidecar hardlink");
+    let config = AppConfig::generated();
+
+    config.save(&path).expect("save config");
+
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "do-not-overwrite"
+    );
+    assert_eq!(
+        AppConfig::load(&path).expect("load config").nostr.secret_key,
+        config.nostr.secret_key
+    );
+    fs::remove_dir_all(&dir).expect("remove temp dir");
+}
+
 #[cfg(unix)]
 #[test]
 fn save_replaces_config_symlink_instead_of_following_it() {

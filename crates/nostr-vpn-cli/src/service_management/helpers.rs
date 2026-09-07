@@ -34,7 +34,10 @@ pub(crate) fn parse_nonzero_pid(value: &str) -> Option<u32> {
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn systemd_quote(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('%', "%%");
     format!("\"{escaped}\"")
 }
 

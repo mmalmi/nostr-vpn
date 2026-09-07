@@ -328,7 +328,8 @@ fn linux_service_unit_runs_service_supervised_daemon() {
         "nvpn",
         60,
         Path::new("/home/example/.local/state/nvpn/daemon.log"),
-    );
+    )
+    .expect("valid systemd service unit");
 
     assert!(unit.contains("ExecStart=\"/usr/local/bin/nvpn\" daemon --service --config"));
     assert!(unit.contains("--iface \"nvpn\""));
@@ -355,7 +356,8 @@ fn linux_service_unit_parser_extracts_service_executable() {
         "nvpn",
         20,
         Path::new("/home/example/.local/state/nvpn/daemon.log"),
-    );
+    )
+    .expect("valid systemd service unit");
 
     assert_eq!(
         linux_service_executable_path_from_unit_contents(&unit).as_deref(),
@@ -372,7 +374,8 @@ fn linux_service_unit_parser_extracts_exact_config_identity() {
         "nvpn",
         20,
         Path::new("/home/example/.local/state/nvpn/daemon.log"),
-    );
+    )
+    .expect("valid systemd service unit");
 
     assert_eq!(
         linux_service_config_path_from_unit_contents(&unit).as_deref(),
@@ -383,6 +386,65 @@ fn linux_service_unit_parser_extracts_exact_config_identity() {
         &unit,
         Path::new("/home/other/.config/nvpn/config.toml")
     ));
+}
+
+#[test]
+fn linux_service_unit_rejects_injected_directives_in_every_input() {
+    for injected in [
+        "nvpn\nExecStartPost=/bin/false",
+        "nvpn\rExecStartPost=/bin/false",
+        "nvpn\0suffix",
+    ] {
+        for field in 0..4 {
+            let executable = if field == 0 {
+                injected
+            } else {
+                "/usr/local/bin/nvpn"
+            };
+            let config = if field == 1 {
+                injected
+            } else {
+                "/etc/nvpn/config.toml"
+            };
+            let iface = if field == 2 { injected } else { "nvpn" };
+            let log = if field == 3 {
+                injected
+            } else {
+                "/var/log/nvpn.log"
+            };
+            assert!(
+                crate::linux_service_unit_content(
+                    Path::new(executable),
+                    Path::new(config),
+                    iface,
+                    20,
+                    Path::new(log)
+                )
+                .is_err(),
+                "injected field {field} must be rejected before installing a unit"
+            );
+        }
+    }
+}
+
+#[test]
+fn linux_service_unit_keeps_specifiers_and_environment_references_literal() {
+    let config = Path::new("/srv/nvpn/%n/${USER}/with \\\"quotes\\\"/config.toml");
+    let log = Path::new("/srv/nvpn/%n/${USER}/daemon.log");
+    let unit = crate::linux_service_unit_content(
+        Path::new("/usr/local/bin/nvpn"),
+        config,
+        "${USER}",
+        20,
+        log,
+    )
+    .expect("literal metacharacters are supported");
+
+    assert!(unit.contains("--config \"/srv/nvpn/%%n/$${USER}/"));
+    assert!(unit.contains("--iface \"$${USER}\""));
+    assert!(unit.contains("StandardOutput=append:/srv/nvpn/%%n/${USER}/daemon.log\n"));
+    assert!(unit.contains("StandardError=append:/srv/nvpn/%%n/${USER}/daemon.log\n"));
+    assert!(linux_service_unit_matches_config(&unit, config));
 }
 
 #[test]

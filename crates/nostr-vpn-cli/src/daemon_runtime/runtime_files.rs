@@ -158,22 +158,25 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let mut truncate_options = runtime_open_options_no_follow();
-    let truncate_log = truncate_options
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&log_file_path)
+    #[cfg(windows)]
+    {
+        // Windows append-only handles cannot truncate. Keep the separate write
+        // handle used by the Windows launcher, validating it before mutation.
+        let truncate_log = runtime_open_options_no_follow()
+            .create(true)
+            .write(true)
+            .open(&log_file_path)
+            .with_context(|| format!("failed to open {}", log_file_path.display()))?;
+        validate_daemon_runtime_file(&truncate_log, &log_file_path)?;
+        truncate_log
+            .set_len(0)
+            .with_context(|| format!("failed to truncate {}", log_file_path.display()))?;
+    }
+    let log_file = open_daemon_log_file(&log_file_path)?;
+    #[cfg(not(windows))]
+    log_file
+        .set_len(0)
         .with_context(|| format!("failed to truncate {}", log_file_path.display()))?;
-    let _ = set_daemon_runtime_file_permissions_on_file(&truncate_log, &log_file_path);
-    drop(truncate_log);
-    let mut append_options = runtime_open_options_no_follow();
-    let log_file = append_options
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-        .with_context(|| format!("failed to open {}", log_file_path.display()))?;
-    let _ = set_daemon_runtime_file_permissions_on_file(&log_file, &log_file_path);
     let stderr_log = log_file
         .try_clone()
         .context("failed to clone daemon log file handle")?;
