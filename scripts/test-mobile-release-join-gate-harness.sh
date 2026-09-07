@@ -898,7 +898,7 @@ PY
   trace() { printf '%s\n' "$*" >>"$trace_file"; }
   fail() { echo "$*" >&2; return 1; }
   ios_log() { printf '%s/%s.log\n' "$RESULT_DIR" "$1"; }
-  release_join_now_ms() { printf '1000\n'; }
+  release_join_now_ms() { trace clock; printf '1000\n'; }
   assert_delivery_deadline() {
     [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[0-9]+$ ]]
     trace "delivered:$3"
@@ -989,6 +989,18 @@ PY
   [[ -n "$qr_carrier_line" && -n "$qr_approval_line" ]]
   ((qr_carrier_line < qr_approval_line))
   grep -Fxq stage-ios-qr "$trace_file"
+  pending_line="$(grep -n -m1 '^android-qr-pending$' "$trace_file" | cut -d: -f1)"
+  stage_line="$(grep -n -m1 '^stage-ios-qr$' "$trace_file" | cut -d: -f1)"
+  clock_line="$(grep -n -m1 '^clock$' "$trace_file" | cut -d: -f1)"
+  approval_line="$(grep -n -m1 '^ios-marker:NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=$' "$trace_file" | cut -d: -f1)"
+  ((pending_line < stage_line)) || {
+    echo "Pending QR check raced approval after staging the image" >&2
+    exit 1
+  }
+  ((clock_line < approval_line)) || {
+    echo "QR delivery clock started after observing approval" >&2
+    exit 1
+  }
   grep -Fxq 'android-qr-accepted:npub1iosadmin' "$trace_file"
   grep -Fxq 'android-relaunch-accepted:npub1iosadmin' "$trace_file"
 

@@ -249,6 +249,10 @@ phase_ios_admin_android_qr() {
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_IMPORT_READY=1 \
     "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
     || fail "iPhone did not open its shipped QR image importer"
+  # The runner cannot approve until this image is staged. Checking after decode
+  # races its confirmation tap and incorrectly rejects a fast successful join.
+  release_join_android_assert_pending_qr \
+    || fail "Pixel QR disappeared before the iPhone received its request image"
   release_join_stage_ios_qr_image \
     "$ANDROID_QR_CAPTURE" "$IOS_QR_STAGED_FILENAME"
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_IMAGE_SELECTED=1 \
@@ -257,12 +261,11 @@ phase_ios_admin_android_qr() {
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_QR_IMAGE_IMPORTED=1 \
     "$((RELEASE_JOIN_IMPORT_WAIT_SECS + 5))" \
     || fail "iPhone did not decode the Pixel's captured QR image"
-  release_join_android_assert_pending_qr \
-    || fail "Pixel QR disappeared before the iPhone submitted acceptance"
+  # Start before observing approval so polling never discounts delivery time.
+  submitted="$(release_join_now_ms)"
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS= \
     "$RELEASE_JOIN_IOS_SETUP_WAIT_SECS" \
     || fail "iPhone did not submit the decoded Pixel join request"
-  submitted="$(release_join_now_ms)"
   release_join_android_wait_qr_join_complete "$RELEASE_JOIN_IOS_ADMIN_ID" \
     || fail "Pixel stayed on QR view or lacked the exact iPhone admin roster row"
   completed="$(release_join_now_ms)"
