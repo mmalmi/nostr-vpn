@@ -595,13 +595,32 @@ bash -c '
   source "$ROOT/scripts/lib-mobile-wireguard-fixture.sh"
   NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$2/exit-cleanup"
   IOS_RELEASE_NETWORK_PREPARED=1
+  IOS_RELEASE_NETWORK_DEVICE=fixture-device
   NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS=5
   NVPN_IOS_XCTEST_TERM_GRACE_SECS=1
-  ios_release_network_disconnect_cleanup_inner() { return 0; }
+  child_done="$2/cleanup-worker-finished"
+  query_marker="$2/cleanup-inventory-checked"
+  ios_release_network_disconnect_cleanup_inner() {
+    touch "$child_done"
+  }
+  ios_release_network_require_packet_tunnel_stopped() {
+    [[ "$BASH_SUBSHELL" -eq 0 && -e "$child_done" && "$1" == fixture-device ]] || return 1
+    touch "$query_marker"
+  }
   trap "mobile_wg_fixture_begin_cleanup; ios_release_network_disconnect_cleanup" EXIT
 ' _ "$ROOT" "$TEMP_ROOT"
+[[ -e "$TEMP_ROOT/cleanup-inventory-checked" ]] \
+  || fail "disconnect cleanup omitted its final process inventory"
 ((SECONDS - cleanup_started < 3)) \
   || fail "completed EXIT cleanup waited for its watchdog deadline"
+(
+  IOS_RELEASE_NETWORK_PREPARED=1
+  IOS_RELEASE_NETWORK_DEVICE=fixture-device
+  NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$TEMP_ROOT/failed-inventory"
+  ios_release_network_disconnect_cleanup_inner() { return 0; }
+  ios_release_network_require_packet_tunnel_stopped() { return 1; }
+  ! ios_release_network_disconnect_cleanup
+) || fail "disconnect cleanup accepted a failed final process inventory"
 
 timeout_signing="$(
   mktemp -d "$TEMP_ROOT/nvpn-ios-release-signing.XXXXXX"
