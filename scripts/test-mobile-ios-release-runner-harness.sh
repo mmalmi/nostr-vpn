@@ -316,14 +316,40 @@ run_bounded success 5 2 FIRST \
 grep -Fxq FIRST "$TEMP_ROOT/success.log" \
   || fail "bounded runner did not retain command output"
 
+# The runner emits identical markers to stderr and its Documents file. Use the
+# captured stream after a successful test; file vending can hang independently.
+stream_log="$TEMP_ROOT/streamed-markers.log"
+stream_markers="$TEMP_ROOT/collected-markers.log"
+printf 'ordinary XCTest output\r\nNVPN_XCUITEST_RUN_ID=stream-run\r\nNVPN_XCUITEST_STARTED=1\r\nNVPN_XCUITEST_RUN_ID=stream-run\r\nNVPN_IOS_RELEASE_DISCONNECT_PASSED=1\r\n' >"$stream_log"
+(
+  xcrun() { fail "streamed marker collection contacted the phone"; }
+  ios_release_network_collect_markers "$stream_log" stream-run "$stream_markers"
+) || fail "could not collect exact-run streamed markers"
+[[ "$(wc -l <"$stream_markers" | tr -d '[:space:]')" -eq 4 ]] \
+  || fail "streamed marker collection lost or invented markers"
+grep -Fxq NVPN_IOS_RELEASE_DISCONNECT_PASSED=1 "$stream_markers" \
+  || fail "streamed markers retained carriage returns"
+
+for invalid_stream in stale mixed missing-start missing-context duplicate-start; do
+  case "$invalid_stream" in
+    stale) printf '%s\n' NVPN_XCUITEST_RUN_ID=stale NVPN_XCUITEST_STARTED=1 ;;
+    mixed) printf '%s\n' NVPN_XCUITEST_RUN_ID=stream-run NVPN_XCUITEST_STARTED=1 NVPN_XCUITEST_RUN_ID=stale NVPN_IOS_RELEASE_DISCONNECT_PASSED=1 ;;
+    missing-start) printf '%s\n' NVPN_XCUITEST_RUN_ID=stream-run NVPN_IOS_RELEASE_DISCONNECT_PASSED=1 ;;
+    missing-context) printf '%s\n' NVPN_XCUITEST_STARTED=1 ;;
+    duplicate-start) printf '%s\n' NVPN_XCUITEST_RUN_ID=stream-run NVPN_XCUITEST_STARTED=1 NVPN_XCUITEST_RUN_ID=stream-run NVPN_XCUITEST_STARTED=1 ;;
+  esac >"$stream_log"
+  if ios_release_network_collect_markers "$stream_log" stream-run "$stream_markers"; then
+    fail "accepted $invalid_stream streamed evidence"
+  fi
+  [[ ! -e "$stream_markers" ]] || fail "failed marker collection retained partial evidence"
+done
+
 device_marker="$TEMP_ROOT/device-marker.log"
 printf '%s\n' \
   'NVPN_XCUITEST_RUN_ID=device-marker' \
   'NVPN_XCUITEST_STARTED=1' >"$device_marker"
 (
-  ios_release_network_copy_runner_markers() {
-    cp "$device_marker" "$2"
-  }
+  xcrun() { fail "launch marker observation contacted the phone"; }
   ios_release_network_stop_forced_xctrunner() {
     fail "device marker success unexpectedly cleared the XCTest runner"
   }
@@ -332,13 +358,12 @@ printf '%s\n' \
     "$TEMP_ROOT/device-marker.log.output" \
     "$TEMP_ROOT/device-marker-host-markers.tsv" \
     fixture-device "" \
-    bash -c 'printf "Running tests...\n"; sleep 2'
+    bash -c 'printf "Running tests...\n"; cat "$1"; sleep 2' _ "$device_marker"
 )
 grep -Fq 'Running tests...' "$TEMP_ROOT/device-marker.log.output" \
   || fail "device-marker fixture did not retain runner launch output"
-if grep -Fq NVPN_XCUITEST_STARTED=1 "$TEMP_ROOT/device-marker.log.output"; then
-  fail "device-marker fixture accidentally streamed the first marker"
-fi
+grep -Fxq NVPN_XCUITEST_STARTED=1 "$TEMP_ROOT/device-marker.log.output" \
+  || fail "device-marker fixture lost the first streamed marker"
 
 process_fixture='{
   "result": {
@@ -404,9 +429,6 @@ printf '%s\n' \
   'NVPN_XCUITEST_STARTED=1' >"$stale_device_marker"
 set +e
 (
-  ios_release_network_copy_runner_markers() {
-    cp "$stale_device_marker" "$2"
-  }
   ios_release_network_xctrunner_installed() {
     printf '%s\n' installation-probe >>"$scoped_cleanup_log"
     return 0
@@ -427,7 +449,7 @@ set +e
     "$TEMP_ROOT/device-no-marker.log" \
     "$TEMP_ROOT/device-no-marker-host-markers.tsv" \
     fixture-device "" \
-    bash -c 'sleep 10'
+    bash -c 'cat "$1"; sleep 10' _ "$stale_device_marker"
 )
 device_no_marker_status=$?
 set -e

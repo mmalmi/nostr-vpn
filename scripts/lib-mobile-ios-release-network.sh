@@ -1134,21 +1134,8 @@ ios_release_network_abort_active_run() {
   return "$cleanup_failed"
 }
 
-ios_release_network_copy_runner_markers() {
-  local device="$1" destination="$2"
-  rm -f "$destination"
-  xcrun devicectl device copy from \
-    --device "$device" \
-    --domain-type appDataContainer \
-    --domain-identifier "$IOS_BUNDLE_ID.UITests.xctrunner" \
-    --source "Documents/nvpn-ui-gate-markers.log" \
-    --destination "$destination" \
-    --quiet >/dev/null 2>&1
-}
-
 ios_release_network_first_marker_observed() {
-  local marker="$1" runner_run_id="$2" log="$3" device="$4"
-  local device_markers="$5" probe_device="${6:-1}"
+  local marker="$1" runner_run_id="$2" log="$3"
   local context="NVPN_XCUITEST_RUN_ID=$runner_run_id"
   if grep -Fq -- "$marker" "$log" 2>/dev/null \
     && { [[ -z "$runner_run_id" ]] \
@@ -1156,13 +1143,7 @@ ios_release_network_first_marker_observed() {
   then
     return 0
   fi
-  [[ "$probe_device" -eq 1 && -n "$device" && -n "$device_markers" ]] \
-    || return 1
-  ios_release_network_copy_runner_markers "$device" "$device_markers" \
-    || return 1
-  grep -Fq -- "$marker" "$device_markers" 2>/dev/null \
-    && { [[ -z "$runner_run_id" ]] \
-      || grep -Fq -- "$context" "$device_markers" 2>/dev/null; }
+  return 1
 }
 
 ios_release_network_xctrunner_installed() {
@@ -1276,8 +1257,7 @@ ios_release_network_run_bounded_xcode() {
   local first_marker="$4" runner_run_id="$5" log="$6" host_markers="$7"
   local device="$8" process_summary="$9"
   shift 9
-  local pid pgid actual_pgid caller_pgid started device_markers=""
-  local next_device_probe=0 probe_device=0
+  local pid pgid actual_pgid caller_pgid started
   local reason="" status=0 monitor_was_enabled=0 marker_seen=0 forced_kill=0
   [[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || {
     echo "iOS $label timeout must be positive seconds" >&2
@@ -1334,21 +1314,11 @@ ios_release_network_run_bounded_xcode() {
   if [[ -n "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" ]]; then
     printf '%s\n' "$pgid" >"$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE"
   fi
-  if [[ -n "$first_marker" && -n "$device" ]]; then
-    device_markers="$(dirname "$log")/.nvpn-ios-launch-markers-$pid"
-    rm -f "$device_markers"
-  fi
   started=$SECONDS
   while ios_release_network_process_group_alive "$pgid"; do
-    probe_device=0
-    if ((SECONDS >= next_device_probe)); then
-      probe_device=1
-      next_device_probe=$((SECONDS + 1))
-    fi
     if [[ -n "$first_marker" && "$marker_seen" -eq 0 ]] \
       && ios_release_network_first_marker_observed \
-        "$first_marker" "$runner_run_id" "$log" "$device" \
-        "$device_markers" "$probe_device"
+        "$first_marker" "$runner_run_id" "$log"
     then
       marker_seen=1
     fi
@@ -1383,11 +1353,10 @@ ios_release_network_run_bounded_xcode() {
   fi
   if [[ -n "$first_marker" && "$marker_seen" -eq 0 ]] \
     && ios_release_network_first_marker_observed \
-      "$first_marker" "$runner_run_id" "$log" "$device" "$device_markers"
+      "$first_marker" "$runner_run_id" "$log"
   then
     marker_seen=1
   fi
-  [[ -z "$device_markers" ]] || rm -f "$device_markers"
   if [[ "$forced_kill" -eq 1 && -n "$device" ]]; then
     ios_release_network_stop_forced_xctrunner "$device" || status=1
   fi
@@ -1441,10 +1410,32 @@ PY
   rm -f "$lock_state"
 }
 
-ios_release_network_copy_markers() {
-  local destination="$1"
-  ios_release_network_copy_runner_markers \
-    "$IOS_RELEASE_NETWORK_DEVICE" "$destination"
+ios_release_network_collect_markers() {
+  local log="$1" run_id="$2" destination="$3"
+  # PhysicalGateMarker emits each run ID/marker pair to stderr atomically as
+  # well as Documents. The captured stream is already bound to this XCTest;
+  # vending the same file after completion adds an unrelated device operation.
+  if ! awk -v context="NVPN_XCUITEST_RUN_ID=$run_id" '
+    { sub(/\r$/, "") }
+    /^NVPN_/ {
+      if ($0 ~ /^NVPN_XCUITEST_RUN_ID=/) {
+        if ($0 != context || awaiting_marker) { invalid=1; exit 1 }
+        awaiting_marker=1
+      } else {
+        if (!awaiting_marker || $0 !~ /^NVPN_[A-Z0-9_]+=/) {
+          invalid=1; exit 1
+        }
+        awaiting_marker=0
+        if ($0 == "NVPN_XCUITEST_STARTED=1") starts++
+      }
+      print
+    }
+    END { if (invalid || awaiting_marker || starts != 1) exit 1 }
+  ' "$log" >"$destination"; then
+    rm -f "$destination"
+    echo "iOS Release streamed markers are incomplete or belong to another run" >&2
+    return 1
+  fi
 }
 
 ios_release_network_validate_markers() {
@@ -1634,7 +1625,7 @@ run_ios_release_network_case() {
     return 1
   fi
 
-  ios_release_network_copy_markers "$markers" || return 1
+  ios_release_network_collect_markers "$log" "$run_id" "$markers" || return 1
   ios_release_network_validate_markers \
     "$markers" "$run_id" "$label" "$lifecycle" "$underlay" "$direct" \
     "$start_stop" || return 1
@@ -1793,7 +1784,7 @@ ios_release_network_disconnect_cleanup_inner() {
     echo "iOS Release cleanup failed; safe diagnostics retained at $result_dir" >&2
     return 1
   fi
-  ios_release_network_copy_markers "$markers" || return 1
+  ios_release_network_collect_markers "$log" "$cleanup_run_id" "$markers" || return 1
   ios_release_network_validate_disconnect_markers \
       "$markers" "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" \
     && ios_release_network_assert_retained_no_secrets \
