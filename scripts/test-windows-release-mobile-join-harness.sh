@@ -20,6 +20,30 @@ for file in "$XAML" "$MODELS" "$VIEW_MODEL" "$NATIVE_CALL_GATE" "$ENROLLMENT" "$
   [[ -f "$file" ]] || fail "missing $(basename "$file")"
 done
 
+(
+  source "$ROOT/scripts/release_common.sh"
+  fixture="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-windows-join-source.XXXXXX")"
+  trap 'rm -rf "$fixture"' EXIT
+  for name in harness product; do
+    git init -q "$fixture/$name"
+    git -C "$fixture/$name" -c user.name=Test -c user.email=test@example.invalid \
+      commit -q --allow-empty -m "$name"
+  done
+  source_selection="$(sed -n '/^DESKTOP_ROOT=/,/^SSH_HOST=/p' "$HOST" | sed '$d')"
+  [[ -n "$source_selection" ]] || fail 'Windows join conflates product and harness sources'
+  ROOT="$fixture/harness"
+  for NVPN_RELEASE_APP_REPO_PATH in '' "$fixture/product"; do
+    eval "$source_selection"
+    [[ "$DESKTOP_ROOT" == "${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}" ]]
+    [[ "$DESKTOP_APP_GIT_SHA" == "$(git -C "$DESKTOP_ROOT" rev-parse HEAD)" ]]
+    [[ "$DESKTOP_APP_GIT_TREE" == "$(git -C "$DESKTOP_ROOT" rev-parse 'HEAD^{tree}')" ]]
+  done
+  printf 'uncommitted\n' >"$fixture/product/change"
+  if (eval "$source_selection"); then
+    fail 'Windows join accepted an uncommitted product checkout'
+  fi
+)
+
 python3 - "$ENROLLMENT" "$VIEW_MODEL" <<'PY'
 import pathlib
 import sys

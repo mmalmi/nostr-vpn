@@ -39,6 +39,13 @@ then
   exit 2
 fi
 
+DESKTOP_ROOT="${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}"
+DESKTOP_APP_GIT_SHA="$(git -C "$DESKTOP_ROOT" rev-parse HEAD)"
+DESKTOP_APP_GIT_TREE="$(git -C "$DESKTOP_ROOT" rev-parse 'HEAD^{tree}')"
+assert_release_checkout_state \
+  "$DESKTOP_ROOT" "$DESKTOP_APP_GIT_SHA" "$DESKTOP_APP_GIT_TREE" \
+  'Windows Release product' || exit 1
+
 SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-}}"
 SSH_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"
 SSH_PROXY_COMMAND="${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}"
@@ -179,8 +186,8 @@ remote() {
     "$(ps_quote "$GUEST_ARTIFACT_ROOT")" \
     "$(ps_quote "$GUEST_APP")" \
     "$(ps_quote "$GUEST_FIPS_REPO")" \
-    "$(ps_quote "$APP_GIT_SHA")" \
-    "$(ps_quote "$APP_GIT_TREE")" \
+    "$(ps_quote "$DESKTOP_APP_GIT_SHA")" \
+    "$(ps_quote "$DESKTOP_APP_GIT_TREE")" \
     "$(ps_quote "$RELEASE_JOIN_FIPS_SHA")" \
     "$(ps_quote "$RELEASE_JOIN_FIPS_TREE")" \
     "$(ps_quote "$RELEASE_JOIN_FIPS_VERSION")" \
@@ -582,6 +589,9 @@ finally:
     temporary.unlink(missing_ok=True)
 PY
 
+assert_release_checkout_state \
+  "$DESKTOP_ROOT" "$DESKTOP_APP_GIT_SHA" "$DESKTOP_APP_GIT_TREE" \
+  'Windows Release product' || exit 1
 receipt_binding_args=(
   --desktop-receipt "$DESKTOP_RECEIPT"
   --android-artifact-receipt "$ANDROID_ARTIFACT_RECEIPT"
@@ -589,8 +599,8 @@ receipt_binding_args=(
   --android-fips-metadata-receipt "$ANDROID_FIPS_METADATA_RECEIPT"
   --android-apk "$RELEASE_JOIN_ANDROID_APK"
   --phase-evidence "$PHASE_EVIDENCE"
-  --expected-desktop-app-sha "$APP_GIT_SHA"
-  --expected-desktop-app-tree "$APP_GIT_TREE"
+  --expected-desktop-app-sha "$DESKTOP_APP_GIT_SHA"
+  --expected-desktop-app-tree "$DESKTOP_APP_GIT_TREE"
   --expected-desktop-fips-sha "$RELEASE_JOIN_FIPS_SHA"
   --expected-desktop-fips-tree "$RELEASE_JOIN_FIPS_TREE"
   --expected-desktop-fips-version "$RELEASE_JOIN_FIPS_VERSION"
