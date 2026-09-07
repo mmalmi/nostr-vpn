@@ -122,6 +122,11 @@ if not sync.index("tunnelConfigHasQueuedJoinRosters") < sync.index("vpnControlle
     raise SystemExit("PacketTunnel restarts before queued join approvals are drained")
 if "queuedApprovalDeadline" not in sync or "Task.sleep" not in sync:
     raise SystemExit("queued join approval drain is not bounded and asynchronous")
+route_status = 'statusMessage = "Updating VPN routes"'
+if route_status not in sync or sync.index(route_status) > sync.index("queuedApprovalDeadline"):
+    raise SystemExit("internet settings appear idle while old VPN routes drain pending approvals")
+if 'statusMessage = "Reconnecting VPN"' in sync:
+    raise SystemExit("route replacement bypasses the shared restoring-VPN status")
 stop = lifecycle.split("private func performVpnStop(", 1)[1].split(
     "private func packetTunnelTransitionIsCurrent", 1
 )[0]

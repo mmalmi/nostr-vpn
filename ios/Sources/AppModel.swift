@@ -500,6 +500,7 @@ final class AppModel: ObservableObject {
             debugLog("PacketTunnel config sync skipped reason=\(reason) VPN transition pending")
             return
         }
+        statusMessage = "Updating VPN routes"
         tunnelConfigSyncTask?.cancel()
         tunnelConfigSyncTask = Task { [weak self] in
             do {
@@ -538,6 +539,7 @@ final class AppModel: ObservableObject {
         guard packetTunnelStartAllowed(reason: reason) else {
             return
         }
+        statusMessage = "Updating VPN routes"
         var tunnelConfigJson = core.mobileTunnelConfigJson()
         let queuedApprovalClock = ContinuousClock()
         let queuedApprovalDeadline = queuedApprovalClock.now.advanced(by: .seconds(12))
@@ -556,14 +558,13 @@ final class AppModel: ObservableObject {
         debugLog(
             "PacketTunnel config sync begin reason=\(reason) configLen=\(tunnelConfigJson.count) network=\(activeNetwork?.id ?? "nil")"
         )
-        statusMessage = "Updating VPN"
         try await vpnController.start(
             state: state,
             network: activeNetwork,
             tunnelConfigJson: tunnelConfigJson,
             providerOptionsConfigJson: providerOptionsConfigJson,
             onActiveTunnelDisconnected: { [weak self] in
-                self?.statusMessage = "Reconnecting VPN"
+                self?.statusMessage = "Restoring VPN"
             }
         )
         try requirePacketTunnelTransition(generation)
