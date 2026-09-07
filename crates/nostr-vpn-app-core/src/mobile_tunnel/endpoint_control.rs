@@ -7,6 +7,7 @@ struct FipsPeerAddressHint {
 }
 
 const FIPS_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 10;
+const FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY: u8 = 200;
 const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
 const FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
 // Mobile probes offline roster peers on its own bounded cadence. Let FIPS

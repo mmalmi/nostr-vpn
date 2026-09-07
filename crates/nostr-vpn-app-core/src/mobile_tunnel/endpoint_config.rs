@@ -164,7 +164,11 @@ fn fips_address_hints(
                 .filter_map(|endpoint| {
                     normalize_fips_transport_address(&endpoint).map(|addr| {
                         FipsPeerAddressHint {
-                            priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+                            priority: if split_peer_transport_addr(&addr).0 == "websocket" {
+                                FIPS_WEBSOCKET_FALLBACK_ENDPOINT_PRIORITY
+                            } else {
+                                FIPS_STATIC_PEER_ENDPOINT_PRIORITY
+                            },
                             addr,
                             seen_at_ms: None,
                         }

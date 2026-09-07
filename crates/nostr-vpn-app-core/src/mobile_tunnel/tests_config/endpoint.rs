@@ -7,6 +7,39 @@
     }
 
     #[test]
+    fn mobile_public_bootstrap_prefers_udp_with_identity_pinned_websocket_fallback() {
+        let app = AppConfig::default();
+        let mobile = MobileTunnelConfig {
+            bootstrap_peers: mobile_bootstrap_peer_hints(&app),
+            ..empty_config()
+        };
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+        for (npub, _) in nostr_vpn_core::config::DEFAULT_FIPS_BOOTSTRAP_PEERS {
+            let peer = config
+                .peers
+                .iter()
+                .find(|peer| peer.npub == *npub)
+                .expect("identity-pinned bootstrap peer");
+            let udp = peer
+                .addresses
+                .iter()
+                .find(|address| address.transport == "udp")
+                .expect("UDP carrier");
+            let websocket = peer
+                .addresses
+                .iter()
+                .find(|address| address.transport == "websocket")
+                .expect("WebSocket fallback");
+            assert_eq!(peer.auto_reconnect, FIPS_MOBILE_AUTO_RECONNECT);
+            assert_eq!(udp.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+            assert!(
+                udp.priority < websocket.priority,
+                "reachable UDP must outrank WSS even after fallback"
+            );
+        }
+    }
+
+    #[test]
     fn mobile_fips_config_uses_discovery_for_roster_peers() {
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
             "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc",
