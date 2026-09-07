@@ -304,6 +304,15 @@ release_join_android_open_network_setup() {
       return 0
     fi
     if release_join_android_query_dumped text '▾' center >/dev/null 2>&1; then
+      # A preceding exit test may have retained a now-stopped fixture. Select
+      # native internet through the UI, without erasing its saved configuration.
+      release_join_android_tap_center description 'Internet tab' || return 1
+      release_join_android_scroll_to resource internet-source-picker || return 1
+      if ! release_join_android_query text 'This device' center >/dev/null 2>&1; then
+        release_join_android_tap_center resource internet-source-picker || return 1
+        release_join_android_tap_center description 'Internet source This device' || return 1
+        release_join_android_wait_query text 'This device' || return 1
+      fi
       release_join_android_tap_center text '▾' || return 1
       release_join_android_wait_query text 'Add network' || return 1
       release_join_android_tap_center text 'Add network' || return 1

@@ -43,6 +43,10 @@ done
   }
   release_join_android_wait_query() { trace "wait:$1:$2"; }
   release_join_android_tap_center() { trace "tap:$1:$2"; }
+  release_join_android_scroll_to() { trace "scroll:$1:$2"; }
+  release_join_android_query() {
+    [[ "$1:$2" == 'text:This device' && "$scenario" == saved-direct ]]
+  }
   # Even navigation must not run before exact-artifact validation arms the device.
   if release_join_android_open_network_setup; then
     echo 'Android setup navigation ignored device ownership' >&2
@@ -50,18 +54,29 @@ done
   fi
   [[ ! -e "$tmp/calls" ]]
   RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
-  for scenario in fresh saved; do
+  for scenario in fresh saved-wireguard saved-direct; do
     : >"$tmp/calls"
     release_join_android_open_network_setup
     [[ "$(head -2 "$tmp/calls" | tr '\n' ' ')" == 'stop launch ' ]]
-    if [[ "$scenario" == saved ]]; then
+    forbidden='clear|uninstall|delete|reset'
+    if [[ "$scenario" != fresh ]]; then
+      grep -Fxq 'tap:description:Internet tab' "$tmp/calls"
+      if [[ "$scenario" == saved-wireguard ]]; then
+        grep -Fxq 'tap:description:Internet source This device' "$tmp/calls"
+        [[ $(grep -n 'tap:description:Internet source This device' "$tmp/calls" | cut -d: -f1) -lt $(grep -n 'tap:text:Add network' "$tmp/calls" | cut -d: -f1) ]]
+      else
+        forbidden+='|Internet source This device'
+      fi
       grep -Fxq 'tap:text:▾' "$tmp/calls"
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
       grep -Fxq 'wait:description:Create Network' "$tmp/calls"
     else
-      ! grep -q '^tap:' "$tmp/calls"
+      forbidden+='|^tap:'
     fi
-    ! grep -Eq 'clear|uninstall|delete|reset' "$tmp/calls"
+    if grep -Eq "$forbidden" "$tmp/calls"; then
+      echo 'Android setup made an unnecessary or destructive change' >&2
+      exit 1
+    fi
   done
 )
 (
