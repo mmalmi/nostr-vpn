@@ -8,6 +8,7 @@ HELPER="$ROOT/scripts/lib-macos-release-app-ownership.sh"
 trap 'echo "macOS app ownership harness failed at line $LINENO" >&2' ERR
 
 bash -n "$HOST" "$REMOTE" "$HELPER"
+bash "$ROOT/scripts/test-macos-release-approval-wait-harness.sh"
 python3 - "$HOST" "$REMOTE" "$HELPER" <<'PY'
 import pathlib
 import sys

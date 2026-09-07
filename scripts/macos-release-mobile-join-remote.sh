@@ -371,11 +371,18 @@ run_driver_against_held_app() {
 }
 
 run_manual_join_driver_hold() {
+  local setup_wait="${NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS:-90}"
+  [[ "$setup_wait" =~ ^[1-9][0-9]*$ ]] && ((setup_wait <= 90)) || {
+    echo "iOS setup wait must be a positive integer no greater than 90 seconds" >&2
+    return 2
+  }
   rm -f "$APPROVAL_STARTED"
   launch_app
   run_driver_against_held_app release-manual-join "$1" "$2"
   echo "NVPN_RELEASE_JOIN_MARKER NVPN_MACOS_RELEASE_APP_HOLDING=1"
-  local deadline=$((SECONDS + 30))
+  # The controller starts iOS after this marker: allow its existing 60-second
+  # launch budget plus setup. The delivery deadline starts only at approval.
+  local deadline=$((SECONDS + 60 + setup_wait))
   while [[ ! -f "$APPROVAL_STARTED" && "$SECONDS" -lt "$deadline" ]]; do
     sleep 0.1
   done
