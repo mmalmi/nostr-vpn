@@ -266,6 +266,7 @@ function Select-ComboItem {
     [System.Windows.Automation.SelectionItemPattern]::Pattern
   )
   $Pattern.Select()
+  $Expand.Collapse()
   Start-Sleep -Milliseconds 200
   if ((Read-ComboItem $AutomationId) -ne $Name) {
     throw "Windows UI Automation did not retain $Name in $AutomationId"
