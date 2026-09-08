@@ -795,20 +795,6 @@ release_join_android_manual_submit() {
   return 1
 }
 
-release_join_android_admin_add_visible() {
-  local joiner="$1"
-  release_join_android_dump_ui || return 1
-  if release_join_android_query_dumped \
-      description "Add joining device manually" center >/dev/null 2>&1
-  then
-    return 1
-  fi
-  release_join_android_query_dumped \
-      resource "roster-participant-pending-$joiner" center >/dev/null 2>&1 \
-    || release_join_android_query_dumped \
-      resource "roster-participant-accepted-$joiner" center >/dev/null 2>&1
-}
-
 release_join_android_manual_admin_prepare() {
   local joiner="$1" enabled
   release_join_android_open_link_device
@@ -837,8 +823,7 @@ release_join_android_manual_admin_prepare() {
 }
 
 release_join_android_manual_admin_tap() {
-  local joiner="$1" deadline enabled submitted_ms
-  local submitted_visible=0
+  local joiner="$1" enabled submitted_ms point
   [[ "${RELEASE_JOIN_ANDROID_ADMIN_ADD_JOINER:-}" == "$joiner" \
     && "${RELEASE_JOIN_ANDROID_ADMIN_ADD_BEFORE:-}" =~ ^[0-9]+$ ]] || {
     echo "Android manual admin-add was not prepared for this exact joiner" >&2
@@ -853,22 +838,14 @@ release_join_android_manual_admin_tap() {
     echo "Android prepared admin-add controls changed before submission" >&2
     return 1
   }
+  point="$(release_join_android_query \
+    description "Add joining device manually" visible-center)" || return 1
+  # Time the actual tap, not the preparatory accessibility snapshot. The caller
+  # already observes accepted state on both devices under this same deadline.
   submitted_ms="$(release_join_now_ms)"
-  release_join_android_tap_visible \
-    description "Add joining device manually" || return 1
-  deadline=$((SECONDS + 3))
-  while ((SECONDS < deadline)); do
-    if release_join_android_admin_add_visible "$joiner"; then
-      echo "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=$submitted_ms"
-      submitted_visible=1
-      break
-    fi
-    sleep 0.1
-  done
-  if ((submitted_visible != 1)); then
-    echo "Android manual admin-add tap did not visibly submit" >&2
-    return 1
-  fi
+  # shellcheck disable=SC2086
+  "${ADB[@]}" shell input tap $point || return 1
+  echo "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=$submitted_ms"
 }
 
 release_join_android_manual_admin_wait_accepted() {

@@ -1552,23 +1552,26 @@ fi
       "resource-prefix roster-participant- count") printf '2\n' ;;
       "text $joiner center") return 0 ;;
       "description Add joining device manually enabled") printf 'true\n' ;;
+      "description Add joining device manually visible-center")
+        printf 'point\n' >>"$tmp/events"
+        printf '120 240\n'
+        ;;
       *) return 1 ;;
     esac
   }
-  release_join_android_tap_visible() {
-    [[ "$*" == "description Add joining device manually" ]]
+  ADB=(manual_tap_adb)
+  manual_tap_adb() {
+    [[ "$*" == 'shell input tap 120 240' ]]
+    printf 'tap\n' >>"$tmp/events"
     tapped=1
   }
-  release_join_android_dump_ui() { :; }
-  release_join_android_query_dumped() {
-    if [[ "$*" == "description Add joining device manually center" ]]; then
-      ((tapped == 0))
-      return
-    fi
-    [[ "$*" == "resource roster-participant-pending-$joiner center" \
-      && "$tapped" == 1 ]]
+  release_join_android_dump_ui() {
+    printf 'unnecessary intermediate snapshot\n' >>"$tmp/events"
   }
-  release_join_now_ms() { printf '1234\n'; }
+  release_join_now_ms() {
+    printf 'time\n' >>"$tmp/events"
+    printf '1234\n'
+  }
 
   release_join_android_manual_admin_prepare "$joiner" >"$tmp/prepare"
   grep -Fq NVPN_RELEASE_JOIN_ADMIN_ADD_PREPARED=1 "$tmp/prepare"
@@ -1581,6 +1584,10 @@ fi
   release_join_android_manual_admin_tap "$joiner" >"$tmp/submit"
   grep -Fq NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=1234 "$tmp/submit"
   [[ "$tapped" == 1 ]]
+  [[ "$(<"$tmp/events")" == $'point\ntime\ntap' ]] || {
+    echo "Submission must resolve its target before timing the tap, then let the acceptance observer take the next snapshot" >&2
+    exit 1
+  }
 )
 
 (
