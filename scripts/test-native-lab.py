@@ -116,6 +116,28 @@ class NativeLabTests(unittest.TestCase):
                 pass
         process.communicate(timeout=5)
 
+    def test_ios_health_accepts_connected_selected_device(self) -> None:
+        inventory = (
+            "Name  Hostname  Identifier  State  Model\n"
+            "----  --------  ----------  -----  -----\n"
+            "Selected phone  selected.local  selected-id  connected  iPhone\n"
+            "Other phone  other.local  other-id  available (paired)  iPhone\n"
+            "Offline phone  offline.local  offline-id  unavailable  iPhone\n"
+        )
+        with (
+            mock.patch.object(NATIVE_LAB.platform, "system", return_value="Darwin"),
+            mock.patch.object(NATIVE_LAB.shutil, "which", return_value="/usr/bin/xcrun"),
+            mock.patch.object(NATIVE_LAB, "probe", return_value=(True, inventory)),
+        ):
+            for selected in ("Selected phone", "selected-id", "Other phone", "offline-id", "missing"):
+                with self.subTest(selected=selected):
+                    result = NATIVE_LAB.check_health(f"ios-device:{selected}")
+                    expected = "selected-id" if selected in ("Selected phone", "selected-id") else (
+                        "other-id" if selected == "Other phone" else ""
+                    )
+                    self.assertEqual(result["available"], bool(expected))
+                    self.assertEqual(result["allocation"], expected)
+
     def test_health_distinguishes_available_and_missing_commands(self) -> None:
         available = self.run_lab("health", "--health", f"command:{Path(sys.executable).name}")
         self.assertEqual(available.returncode, 0, available.stderr)

@@ -302,7 +302,7 @@ def check_health(spec):
         devices = []
         for row in output.splitlines()[2:]:
             columns = [column.strip() for column in row.split("  ") if column.strip()]
-            if len(columns) >= 4 and columns[3].startswith("available"):
+            if len(columns) >= 4 and columns[3].startswith(("available", "connected")):
                 devices.append({"name": columns[0], "identifier": columns[2]})
         matches = (
             devices
