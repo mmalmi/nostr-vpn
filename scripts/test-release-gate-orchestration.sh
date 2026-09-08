@@ -7,12 +7,15 @@ cd "$ROOT_DIR"
 # This is the bounded, host-independent subset that protects the expensive
 # exact-candidate run itself. The exhaustive release-tooling contracts remain
 # an independent CI job; these checks finish before any VM or phone is touched.
-bash -n \
+for script in \
   scripts/build-linux-arm64-cli-gate.sh \
   scripts/release-gate.sh \
   scripts/lib-release-gate-parallel.sh \
   scripts/lib-release-gate-state.sh \
   scripts/mobile-release-join-e2e.sh
+do
+  bash -n "$script"
+done
 
 node --test scripts/release-gate-state.test.mjs
 node --test scripts/windows-manual-join-preparation.test.mjs
