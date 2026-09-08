@@ -24,8 +24,7 @@ dump_debug() {
   set +e
   echo "umbrel web e2e failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
-  "${COMPOSE[@]}" logs --no-color --tail 200 web || true
-  "${COMPOSE[@]}" exec -T web sh -lc 'cat /data/config/nvpn/config.toml 2>/dev/null || true' || true
+  "${COMPOSE[@]}" logs --no-color --tail 200 daemon web || true
 }
 
 cleanup() {
@@ -50,12 +49,14 @@ trap cleanup EXIT
 wait_for_http() {
   local url="$1"
   for _ in $(seq 1 90); do
-    if curl -fsS "$url" >/dev/null 2>&1; then
+    if curl -fsS "$url" >/dev/null 2>&1 \
+      && curl -fsS -X POST "${url%/api/health}/api/tick" 2>/dev/null \
+        | jq -e '.daemonRunning == true' >/dev/null; then
       return 0
     fi
     sleep 1
   done
-  echo "umbrel web e2e failed: timed out waiting for $url" >&2
+  echo "umbrel web e2e failed: timed out waiting for web and daemon readiness at $url" >&2
   return 1
 }
 

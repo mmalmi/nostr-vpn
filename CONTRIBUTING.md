@@ -6,7 +6,17 @@ and `aarch64`.
 
 Install the prerequisites from the StartOS
 [environment setup guide](https://docs.start9.com/packaging/0.4.0.x/environment-setup.html),
-then build both package architectures:
+and use `start-cli 1.1.0`, the version required by the release validator. Check
+`start-cli --version` in the same environment that runs the release command;
+an older copy earlier in `PATH` will stop packaging.
+
+The checkout must be inside a packaging workspace created with
+`start-cli s9pk init-workspace <workspace>`. Keep the existing package-signing
+key in that workspace's `.startos/build.key.pem`; do not generate a replacement
+key for an existing package. The setup guide explains how to retain older keys.
+These prerequisites can be checked before building any release artifacts.
+
+Then build both package architectures:
 
 ```bash
 make
