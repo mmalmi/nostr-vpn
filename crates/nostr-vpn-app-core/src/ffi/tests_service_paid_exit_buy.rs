@@ -113,7 +113,11 @@
         runtime.daemon_state = Some(DaemonRuntimeState {
             vpn_enabled: true,
             vpn_active: true,
-            peers: Vec::new(),
+            peers: vec![DaemonPeerState {
+                participant_pubkey: seller.public_key().to_hex(),
+                reachable: true,
+                ..DaemonPeerState::default()
+            }],
             ..DaemonRuntimeState::default()
         });
         let state = runtime.state();

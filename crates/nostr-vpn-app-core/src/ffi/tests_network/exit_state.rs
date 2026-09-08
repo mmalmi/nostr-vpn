@@ -162,7 +162,7 @@
 
         assert!(!state.exit_node_blocked);
         assert!(!state.exit_node_active);
-        assert_eq!(state.exit_node_status_text, "Automatic paid exit · Pending");
+        assert_eq!(state.exit_node_status_text, "Automatic paid exit · Selecting provider");
 
         runtime.config.exit_node_leak_protection = true;
         let state = runtime.state();
@@ -190,4 +190,97 @@
             runtime.state().exit_node_status_text,
             "Manual paid exit · Pending"
         );
+    }
+
+    #[test]
+    fn automatic_exit_confirmation_tracks_selection_probe_and_live_connection() {
+        use nostr_vpn_core::paid_route_store::{
+            OpenPaidRouteBuyerSessionRequest, UpdatePaidRouteSessionProbeRequest,
+            update_paid_route_store,
+        };
+        use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+
+        let dir = unique_service_test_dir("nvpn-automatic-exit-confirmation");
+        let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test"));
+        runtime.startup_error = None;
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Buyer");
+        runtime.config.set_internet_source(InternetSource::PaidAutomatic);
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            vpn_enabled: true,
+            vpn_active: true,
+            ..DaemonRuntimeState::default()
+        });
+        assert_eq!(runtime.state().exit_node_status_text,
+            "Automatic paid exit · Selecting provider");
+
+        let seller = Keys::generate();
+        let seller_hex = seller.public_key().to_hex();
+        let seller_npub = seller.public_key().to_bech32().unwrap();
+        let now = unix_timestamp();
+        let mut offer_config = PaidExitConfig { enabled: true, ..PaidExitConfig::default() };
+        offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
+        offer_config.channel.free_probe_units = 1_048_576;
+        let signed = signed_paid_exit_offer_from_config(
+            "internet-exit", &seller, &offer_config, None, now,
+        ).unwrap();
+        let session = update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.upsert_signed_offer(signed, Vec::new(), now)?;
+            store.upsert_wallet_mint("https://mint.example", "Test mint", Some(10_000), now);
+            store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+                offer_selector: "internet-exit".to_string(),
+                buyer_npub: runtime.config.nostr_keys()?.public_key().to_bech32()?,
+                mint_url: Some("https://mint.example".to_string()),
+                channel_capacity_sat: Some(10),
+                initial_paid_msat: 0,
+                now_unix: now,
+            })
+        }).unwrap();
+        runtime.config.select_public_paid_exit_node(&seller_npub).unwrap();
+        let provider_name = short_pubkey(&seller_hex);
+        let connecting = runtime.state();
+        assert!(!connecting.exit_node_active);
+        assert_eq!(connecting.exit_node_status_text,
+            format!("Automatic paid exit · Selected {provider_name} · Connecting"));
+
+        runtime.daemon_state.as_mut().unwrap().peers.push(DaemonPeerState {
+            participant_pubkey: seller_hex.clone(),
+            reachable: true,
+            ..DaemonPeerState::default()
+        });
+        assert!(!runtime.state().exit_node_active, "connection alone is not success");
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.acknowledge_buyer_session_open(&seller_hex, &session.lease_id, now)?;
+            Ok(())
+        }).unwrap();
+        assert!(!runtime.state().exit_node_active, "admission alone is not success");
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.update_session_probe(UpdatePaidRouteSessionProbeRequest {
+                session_id: session.session_id,
+                realized_exit_ip: Some("198.51.100.42".to_string()),
+                observed_country_code: None,
+                observed_asn: None,
+                quality: None,
+                now_unix: now,
+            })?;
+            Ok(())
+        }).unwrap();
+
+        let active = runtime.state();
+        assert!(active.exit_node_active);
+        assert!(!active.exit_node_blocked);
+        assert_eq!(active.exit_node_status_text,
+            format!("Automatic paid exit · {provider_name} · 198.51.100.42 · Active"));
+        assert!(!active.networks[0].participants.iter()
+            .any(|peer| peer.pubkey_hex == seller_hex), "seller remains outside the private roster");
+
+        runtime.daemon_state.as_mut().unwrap().peers[0].reachable = false;
+        assert!(!runtime.state().exit_node_active, "old probe must not hide disconnection");
+        assert_eq!(runtime.state().exit_node_status_text, connecting.exit_node_status_text);
+        runtime.config.exit_node_leak_protection = true;
+        assert!(runtime.state().exit_node_blocked);
+        runtime.daemon_state.as_mut().unwrap().peers[0].reachable = true;
+        runtime.daemon_state.as_mut().unwrap().vpn_active = false;
+        assert!(!runtime.state().exit_node_active, "stopped tunnel must not show success");
+        let _ = fs::remove_dir_all(dir);
     }

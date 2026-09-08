@@ -111,7 +111,8 @@ struct RootView: View {
         if arguments.contains("--nvpn-screenshot-paid-wallet") {
             return .wallet
         }
-        if arguments.contains("--nvpn-screenshot-exit-nodes")
+        if arguments.contains("--nvpn-screenshot-paid-automatic")
+            || arguments.contains("--nvpn-screenshot-exit-nodes")
             || arguments.contains("--nvpn-screenshot-upstream") {
             return .internet
         }
