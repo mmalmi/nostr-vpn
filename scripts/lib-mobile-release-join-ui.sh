@@ -277,11 +277,13 @@ release_join_android_enter() {
     || return 1
   "${ADB[@]}" shell input keyevent KEYCODE_DEL || return 1
   "${ADB[@]}" shell input text "${value// /%s}" </dev/null || return 1
-  "${ADB[@]}" shell input keyevent KEYCODE_BACK || return 1
   deadline=$((SECONDS + 3))
   while ((SECONDS < deadline)); do
     actual="$(release_join_android_query text "$value" text 2>/dev/null || true)"
-    [[ "$actual" == "$value" ]] && return 0
+    if [[ "$actual" == "$value" ]]; then
+      "${ADB[@]}" shell input keyevent KEYCODE_BACK
+      return $?
+    fi
     sleep 0.1
   done
   echo "Android join field did not retain exact text: $selector" >&2

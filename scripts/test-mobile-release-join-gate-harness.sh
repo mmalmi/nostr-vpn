@@ -1507,14 +1507,20 @@ fi
   "$inset_viewport_fixture" description 'Clipped control' visible-center)" == '540 1351' ]]
 
 # A partially visible manual-join field must use the clipped safe viewport
-# rather than silently failing before text entry.
+# and finish text entry before dismissing the system input method.
 (
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  input_events="$(mktemp "${TMPDIR:-/tmp}/nvpn-join-input.XXXXXX")"
+  trap 'rm -f "$input_events"' EXIT
   ADB=(fake_adb)
   fake_adb() {
     if [[ "$*" == "shell dumpsys input_method" ]]; then
       printf 'mInputShown=true\n'
+    elif [[ "$*" == 'shell input text expected-value' ]]; then
+      printf 'text\n' >>"$input_events"
+    elif [[ "$*" == 'shell input keyevent KEYCODE_BACK' ]]; then
+      printf 'back\n' >>"$input_events"
     fi
   }
   sleep() { :; }
@@ -1526,12 +1532,14 @@ fi
     [[ "$*" == "resource manual-field" ]]
   }
   release_join_android_query() {
+    printf 'readback\n' >>"$input_events"
     [[ "$*" == "text expected-value text" ]] \
       && printf 'expected-value\n'
   }
 
   release_join_android_enter \
     resource manual-field expected-value visible-center
+  [[ "$(tr '\n' ' ' <"$input_events")" == 'text readback back ' ]]
 )
 
 # Exercise manual admin preparation and submission through observable UI state.
