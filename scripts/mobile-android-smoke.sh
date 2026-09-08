@@ -1128,7 +1128,7 @@ replace_android_ui_multiline_text() {
   local actual
   actual="$(android_ui_query resource "$selector" text)" || return 1
   if [[ "${actual%$'\n'}" != "${value%$'\n'}" ]]; then
-    echo "Android shipped multiline field entry mismatch: $selector" >&2
+    echo "Android shipped multiline field entry mismatch: $selector (expected ${#value} characters, observed ${#actual})" >&2
     return 1
   fi
 }
