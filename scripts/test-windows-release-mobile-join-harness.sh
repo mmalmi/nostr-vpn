@@ -20,6 +20,27 @@ for file in "$XAML" "$MODELS" "$VIEW_MODEL" "$NATIVE_CALL_GATE" "$ENROLLMENT" "$
   [[ -f "$file" ]] || fail "missing $(basename "$file")"
 done
 
+# Reuse the shared install policy; no new install is needed for an exact,
+# verified installed APK, and both receipt validations must retain that policy.
+(
+  source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
+  install_selection="$(sed -n '/^release_join_configure_install_modes$/,/^fi$/p' "$HOST")"
+  [[ -n "$install_selection" ]] || fail 'Windows join ignores the shared install policy'
+  NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=1 NVPN_RELEASE_JOIN_INSTALL_ANDROID=0
+  eval "$install_selection"
+  [[ "${android_install_binding_args[*]}" == --allow-verified-no-install ]]
+  NVPN_RELEASE_JOIN_INSTALL_ANDROID=1
+  eval "$install_selection"
+  [[ "${#android_install_binding_args[@]}" == 0 ]]
+  if NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=0 NVPN_RELEASE_JOIN_INSTALL_ANDROID=0 \
+      bash -c 'set -e; source "$1"; eval "$2"' _ \
+      "$ROOT/scripts/lib-mobile-release-join-artifacts.sh" "$install_selection"; then
+    fail 'Windows join disabled installation without exact artifact reuse'
+  fi
+  [[ "$(grep -Fc '"${android_install_binding_args[@]}"' "$HOST")" == 2 ]] \
+    || fail 'Windows initial and final receipt checks must use the same install policy'
+)
+
 (
   source "$ROOT/scripts/release_common.sh"
   fixture="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-windows-join-source.XXXXXX")"

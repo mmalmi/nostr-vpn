@@ -16,6 +16,11 @@ load_release_env "$ROOT"
 load_env_file_defaults "${NVPN_ZAPSTORE_ENV_FILE:-$ROOT/.env.zapstore.local}"
 load_mobile_env "$ROOT"
 RELEASE_JOIN_ANDROID_APK="${NVPN_RELEASE_JOIN_ANDROID_APK:-${RELEASE_JOIN_ANDROID_APK:-}}"
+release_join_configure_install_modes
+android_install_binding_args=()
+if [[ "$RELEASE_JOIN_INSTALL_ANDROID" -eq 0 ]]; then
+  android_install_binding_args+=(--allow-verified-no-install)
+fi
 
 [[ "$(uname -s)" == Darwin ]] || {
   echo "Windows/Pixel Release join gate must be controlled by macOS" >&2
@@ -101,6 +106,7 @@ ANDROID_FIPS_VERSION="$(jq -er '.fipsCoreVersion' "$ANDROID_ARTIFACT_RECEIPT")"
 ANDROID_APK_SHA="$(
   python3 "$ROOT/scripts/desktop_mobile_manual_join_receipt.py" \
     validate-android \
+    "${android_install_binding_args[@]}" \
     --receipt "$ANDROID_INSTALL_RECEIPT" \
     --android-artifact-receipt "$ANDROID_ARTIFACT_RECEIPT" \
     --android-fips-metadata-receipt "$ANDROID_FIPS_METADATA_RECEIPT" \
@@ -593,6 +599,7 @@ assert_release_checkout_state \
   "$DESKTOP_ROOT" "$DESKTOP_APP_GIT_SHA" "$DESKTOP_APP_GIT_TREE" \
   'Windows Release product' || exit 1
 receipt_binding_args=(
+  "${android_install_binding_args[@]}"
   --desktop-receipt "$DESKTOP_RECEIPT"
   --android-artifact-receipt "$ANDROID_ARTIFACT_RECEIPT"
   --android-install-receipt "$ANDROID_INSTALL_RECEIPT"
