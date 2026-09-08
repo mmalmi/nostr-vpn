@@ -22,9 +22,14 @@ extension RootView {
     var internetChoiceSettings: some View {
         return surface {
             sectionHeader("Use Internet", systemImage: "network")
-            Text(state.exitNodeStatusText)
+            Label(
+                state.exitNodeStatusText,
+                systemImage: state.exitNodeActive ? "checkmark.circle.fill"
+                    : state.exitNodeBlocked ? "exclamationmark.circle.fill" : "network"
+            )
                 .font(.callout)
-                .foregroundStyle(state.exitNodeBlocked ? Color.red : Color.secondary)
+                .foregroundStyle(state.exitNodeBlocked ? Color.red
+                    : state.exitNodeActive ? Color.green : Color.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("internet-source-status")

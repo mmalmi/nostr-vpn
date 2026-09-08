@@ -127,6 +127,10 @@ macro_rules! handle_daemon_state_tick {
                     unix_timestamp(),
                 ) {
                 Ok(true) => {
+                    expected_peers = expected_peer_count(&app);
+                    if daemon_vpn_active(vpn_enabled, expected_peers) {
+                        vpn_status = "VPN on".to_string();
+                    }
                     if let Err(error) = sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {
@@ -421,6 +425,14 @@ macro_rules! handle_daemon_state_tick {
                 {
                     let paid_exit_route_changed = automatic_paid_exit_route_changed
                         || manual_paid_exit_route_changed;
+                    if paid_exit_route_changed {
+                        expected_peers = expected_peer_count(&app);
+                        if !daemon_vpn_active(vpn_enabled, expected_peers) {
+                            vpn_status = daemon_vpn_idle_status(
+                                vpn_enabled, expected_peers, app.join_requests_enabled(),
+                            ).to_string();
+                        }
+                    }
                     if paid_exit_route_changed || paid_exit_payment_outbox_changed {
                         match sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,

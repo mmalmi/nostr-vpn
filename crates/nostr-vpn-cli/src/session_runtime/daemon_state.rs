@@ -375,7 +375,15 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
         .map(|status| (status.pubkey.as_str(), status))
         .collect::<HashMap<_, _>>();
     let network_id = app.effective_network_id();
-    for participant in &participant_pubkeys_list {
+    let mut status_participants = participant_pubkeys_list.clone();
+    if let Some(seller) = app.public_paid_exit_node_pubkey_hex()
+        && !participant_pubkeys.contains(&seller)
+    {
+        // Public sellers stay outside the private roster, but the UI needs
+        // their current connection state to confirm the selected exit is active.
+        status_participants.push(seller);
+    }
+    for participant in &status_participants {
         if Some(participant.as_str()) == own_pubkey.as_deref() {
             continue;
         }

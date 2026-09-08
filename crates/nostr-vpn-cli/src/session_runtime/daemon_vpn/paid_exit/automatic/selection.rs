@@ -12,7 +12,21 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
     }
 
     let store_path = paid_route_store_file_path(config_path);
-    let store = load_paid_route_store(&store_path)?;
+    let mut store = load_paid_route_store(&store_path)?;
+    let known_events = store
+        .offers
+        .values()
+        .map(|record| record.signed_offer.event.id)
+        .collect::<HashSet<_>>();
+    let received_offers = crate::control_pubsub_runtime::load_control_pubsub_events(config_path)?
+        .into_iter()
+        .filter(|event| !known_events.contains(&event.id))
+        .filter_map(|event| SignedPaidRouteOffer::from_event(event).ok())
+        .collect::<Vec<_>>();
+    if !received_offers.is_empty() {
+        persist_paid_exit_discovered_offers(&store_path, &received_offers, &[], None)?;
+        store = load_paid_route_store(&store_path)?;
+    }
     let selection = match automatic.selection(&store, now_unix) {
         Ok(selection) => selection,
         Err(_) => {
@@ -34,6 +48,10 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
             store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
             Ok(())
         })?;
+        let endpoint_hints = store.buyer_session_seller_fips_endpoints(&session_id)?;
+        let endpoints_before = app.fips_peer_endpoint_hints(&seller_npub);
+        app.add_fips_peer_endpoint_hints(&seller_npub, &endpoint_hints)?;
+        let endpoints_changed = endpoints_before != app.fips_peer_endpoint_hints(&seller_npub);
         let route_changed =
             app.public_paid_exit_node_pubkey_hex().as_deref() != Some(seller_pubkey.as_str());
         app.select_public_paid_exit_node(&seller_npub)?;
@@ -42,14 +60,14 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 "automatic paid exit recovery changed internet mode"
             ));
         }
-        if route_changed {
+        if route_changed || endpoints_changed {
             app.save(config_path)?;
         }
         if funded {
             queue_recovered_paid_exit_channel_open(app, config_path, &session_id, now_unix)?;
         }
         automatic.start_candidate(selection, seller_pubkey, session_id, funded, now_unix);
-        return Ok(route_changed);
+        return Ok(route_changed || endpoints_changed);
     }
 
     let buyer_npub = app
@@ -74,6 +92,11 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
     if !PaidExitAutomaticBuyer::enabled(app) {
         return Ok(false);
     }
+    let endpoint_hints = store.offers[&selection.offer_key]
+        .offer
+        .fips_endpoints
+        .clone();
+    app.add_fips_peer_endpoint_hints(&session.seller_npub, &endpoint_hints)?;
     app.select_public_paid_exit_node(&session.seller_npub)?;
     if !PaidExitAutomaticBuyer::enabled(app) {
         return Err(anyhow!(

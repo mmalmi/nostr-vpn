@@ -29,26 +29,22 @@ impl NativeAppRuntime {
                     .iter()
                     .find(|peer| peer.participant_pubkey == selected_exit_node)
             });
-            let active_paid_exit_ip = matches!(
+            let paid_exit = matches!(
                 self.config.internet_source,
                 InternetSource::PaidAutomatic | InternetSource::PaidManual
-            )
-            .then(|| self.active_paid_route_exit_ip(selected_exit_node))
-            .flatten();
-            let selected_exit_active = vpn_active
-                && if matches!(
-                    self.config.internet_source,
-                    InternetSource::PaidAutomatic | InternetSource::PaidManual
-                ) {
-                    // Public paid sellers are authenticated endpoint peers,
-                    // not members of the user's private network roster. A
-                    // fresh end-to-end probe is the readiness evidence.
+            );
+            let active_paid_exit_ip = paid_exit
+                .then(|| self.active_paid_route_exit_ip(selected_exit_node))
+                .flatten();
+            // Admission and a successful exit probe are not enough if
+            // the selected seller has since disconnected.
+            let selected_exit_active = vpn_active && selected_peer.is_some_and(|peer| {
+                peer.reachable && if paid_exit {
                     active_paid_exit_ip.is_some()
                 } else {
-                    selected_peer.is_some_and(|peer| {
-                        peer.reachable && peer_offers_exit_node(&peer.advertised_routes)
-                    })
-                };
+                    peer_offers_exit_node(&peer.advertised_routes)
+                }
+            });
             let blocked =
                 self.config.exit_node_leak_protection && vpn_enabled && !selected_exit_active;
             let text = if blocked {
@@ -58,8 +54,15 @@ impl NativeAppRuntime {
                 if realized_exit_ip.is_empty() {
                     format!("{source} · {name} · Connected")
                 } else {
-                    format!("{source} · {name} · {realized_exit_ip} · Connected")
+                    let connected = if self.config.internet_source == InternetSource::PaidAutomatic {
+                        "Active"
+                    } else {
+                        "Connected"
+                    };
+                    format!("{source} · {name} · {realized_exit_ip} · {connected}")
                 }
+            } else if self.config.internet_source == InternetSource::PaidAutomatic {
+                format!("{source} · Selected {name} · Connecting")
             } else {
                 format!("{source} · {name} · Pending")
             };
@@ -83,6 +86,8 @@ impl NativeAppRuntime {
                 blocked,
                 text: if blocked {
                     format!("{source} · Blocked")
+                } else if self.config.internet_source == InternetSource::PaidAutomatic {
+                    format!("{source} · Selecting provider")
                 } else {
                     format!("{source} · Pending")
                 },

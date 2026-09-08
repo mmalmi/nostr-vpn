@@ -68,6 +68,7 @@ info:
     @echo "  just e2e-umbrel-web"
     @echo "  just e2e-exit-node"
     @echo "  just e2e-paid-exit"
+    @echo "  just e2e-paid-exit-automatic"
     @echo "  just e2e-paid-exit-token"
     @echo "  just e2e-fips-routed-udp"
     @echo "  just e2e-join-request"
@@ -266,6 +267,9 @@ e2e-exit-node:
 
 e2e-paid-exit:
     ./scripts/e2e-paid-exit-docker.sh
+
+e2e-paid-exit-automatic:
+    ./scripts/e2e-paid-exit-automatic-docker.sh
 
 e2e-paid-exit-token:
     ./scripts/e2e-paid-exit-token-docker.sh

@@ -63,6 +63,7 @@ extension AppManager {
         let androidHex = "b94e73004cbf0a75be6a5121ecae5847b1d8c61e3d9bdaef940a7abb88a6b7f6"
         let ubuntuHex = "69bf3737c734af9c46ff160e074b9829dd5f5d872dae8470e4b3c930d9d5c08d"
         let joinHex = "34d9cd8f509f19ff2f0effe36115d32552295cbc75f7cab757c2aeee1876d300"
+        let automaticExit = CommandLine.arguments.contains("--nvpn-screenshot-paid-automatic")
         let networkId = "demo-mesh"
 
         let local = NativeParticipantState(
@@ -314,12 +315,14 @@ extension AppManager {
             nostrPubsubMaxEventBytes: 65_536,
             networkId: networkId,
             joinRequestQrCodeOrLink: "nvpn://join-request/demo",
-            internetSource: sellerScreenshot ? "direct" : "paid_manual",
+            internetSource: automaticExit ? "paid_automatic" : sellerScreenshot ? "direct" : "paid_manual",
             exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
             exitNodeLeakProtection: true,
             exitNodeActive: !sellerScreenshot,
             exitNodeBlocked: false,
-            exitNodeStatusText: sellerScreenshot ? "" : "Using paid internet: FI",
+            exitNodeStatusText: automaticExit
+                ? "Automatic paid exit · a14c…9b82 · 198.51.100.42 · Active"
+                : sellerScreenshot ? "" : "Using paid internet: FI",
             exitDnsMode: "automatic",
             exitDnsDohProvider: "cloudflare",
             exitDnsCustomDohUrl: "",

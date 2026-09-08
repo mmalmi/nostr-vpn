@@ -897,43 +897,50 @@ if truthy "$PAID_EXIT_MODE"; then
     wait_for_paid_exit_wallet_balance node-b "$PAID_EXIT_MINT" "$PAID_EXIT_SPILMAN_WALLET_TOPUP_SAT" >/dev/null
   fi
 
-  # Exercise a provider-link import over the production FIPS pubsub path. The
-  # link only constrains the seller, ceiling, and mint; the signed offer remains
-  # authoritative for the receiver and channel terms used below.
-  DISCOVER_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit discover \
-    --config "$CONFIG_PATH" \
-    --duration-secs 20 \
-    --json | tr -d '\r')"
-  assert_exact_paid_exit_offer marketplace "$DISCOVER_JSON"
+  if [[ "$PAID_EXIT_SELECTION_MODE" != "automatic" ]]; then
+    # Exercise a provider-link import over the production FIPS pubsub path. The
+    # link only constrains the seller, ceiling, and mint; the signed offer remains
+    # authoritative for the receiver and channel terms used below.
+    DISCOVER_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit discover \
+      --config "$CONFIG_PATH" \
+      --duration-secs 20 \
+      --json | tr -d '\r')"
+    assert_exact_paid_exit_offer marketplace "$DISCOVER_JSON"
 
-  PAID_EXIT_REJECT_MAX_MSAT_PER_GB="$((PAID_EXIT_PRICE_MSAT_PER_GB - 1))"
-  PAID_EXIT_REJECT_PROVIDER_LINK="${PAID_EXIT_PROVIDER_LINK/maxMsatPerGb=${PAID_EXIT_PRICE_MSAT_PER_GB}/maxMsatPerGb=${PAID_EXIT_REJECT_MAX_MSAT_PER_GB}}"
-  if [[ "$PAID_EXIT_REJECT_PROVIDER_LINK" == "$PAID_EXIT_PROVIDER_LINK" ]]; then
-    echo "exit-node docker e2e failed: provider link omitted its price ceiling" >&2
-    printf '%s\n' "$PAID_EXIT_PROVIDER_LINK" >&2
-    exit 1
+    PAID_EXIT_REJECT_MAX_MSAT_PER_GB="$((PAID_EXIT_PRICE_MSAT_PER_GB - 1))"
+    PAID_EXIT_REJECT_PROVIDER_LINK="${PAID_EXIT_PROVIDER_LINK/maxMsatPerGb=${PAID_EXIT_PRICE_MSAT_PER_GB}/maxMsatPerGb=${PAID_EXIT_REJECT_MAX_MSAT_PER_GB}}"
+    if [[ "$PAID_EXIT_REJECT_PROVIDER_LINK" == "$PAID_EXIT_PROVIDER_LINK" ]]; then
+      echo "exit-node docker e2e failed: provider link omitted its price ceiling" >&2
+      printf '%s\n' "$PAID_EXIT_PROVIDER_LINK" >&2
+      exit 1
+    fi
+    DISCOVER_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit discover \
+      --config "$CONFIG_PATH" \
+      --duration-secs 20 \
+      --provider "$PAID_EXIT_REJECT_PROVIDER_LINK" \
+      --json | tr -d '\r')"
+    if ! jq -e '.offers | length == 0' <<<"$DISCOVER_JSON" >/dev/null; then
+      echo "exit-node docker e2e failed: targeted import accepted an offer above its price ceiling" >&2
+      printf '%s\n' "$DISCOVER_JSON" >&2
+      exit 1
+    fi
+    DISCOVER_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit discover \
+      --config "$CONFIG_PATH" \
+      --duration-secs 0 \
+      --provider "$PAID_EXIT_PROVIDER_LINK" \
+      --json | tr -d '\r')"
+    assert_exact_paid_exit_offer provider-link "$DISCOVER_JSON"
   fi
-  DISCOVER_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit discover \
-    --config "$CONFIG_PATH" \
-    --duration-secs 20 \
-    --provider "$PAID_EXIT_REJECT_PROVIDER_LINK" \
-    --json | tr -d '\r')"
-  if ! jq -e '.offers | length == 0' <<<"$DISCOVER_JSON" >/dev/null; then
-    echo "exit-node docker e2e failed: targeted import accepted an offer above its price ceiling" >&2
-    printf '%s\n' "$DISCOVER_JSON" >&2
-    exit 1
-  fi
-  DISCOVER_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit discover \
-    --config "$CONFIG_PATH" \
-    --duration-secs 0 \
-    --provider "$PAID_EXIT_PROVIDER_LINK" \
-    --json | tr -d '\r')"
-  assert_exact_paid_exit_offer provider-link "$DISCOVER_JSON"
   PAID_BUY_CAPACITY_SAT="$PAID_EXIT_TOKEN_AMOUNT_SAT"
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
     PAID_BUY_CAPACITY_SAT="$PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT"
   fi
   if [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
+    BUYER_BEFORE_AUTOMATIC="$("${COMPOSE[@]}" exec -T node-b nvpn paid-exit status --json | tr -d '\r')"
+    jq -e '.offers | length == 0' <<<"$BUYER_BEFORE_AUTOMATIC" >/dev/null || {
+      echo "exit-node docker e2e failed: automatic buyer must begin without imported offers" >&2
+      exit 1
+    }
     "${COMPOSE[@]}" exec -T node-b nvpn set \
       --config "$CONFIG_PATH" \
       --internet-source paid_automatic >/dev/null
@@ -1034,6 +1041,7 @@ if truthy "$PAID_EXIT_MODE"; then
   fi
   if [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
     BUYER_PAID_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn paid-exit status --json | tr -d '\r')"
+    assert_exact_paid_exit_offer automatic "$BUYER_PAID_STATUS"
     PAID_EXIT_SESSION_ID="$(jq -r \
       --arg seller "$ALICE_NPUB" \
       '[.sessions[]? as $session
@@ -1237,6 +1245,27 @@ for _ in range(64):
         raise SystemExit(f"unexpected paid-exit download length: {len(body)}")
     time.sleep(0.25)
 ' "$PROBE_BASE_URL/down?bytes=32768"
+
+      # Confirm the GUI sees the funded connection after its periodic status
+      # snapshot catches up with automatic selection and payment processing.
+      BUYER_RUNTIME_STATE=""
+      for _ in $(seq 1 30); do
+        BUYER_RUNTIME_STATE="$("${COMPOSE[@]}" exec -T node-b cat /root/.config/nvpn/daemon.state.json)"
+        if jq -e --arg seller "$ALICE_NPUB" '
+          .vpn_active == true and .expected_peer_count > 0
+          and any(.peers[]?; .fips_endpoint_npub == $seller and .reachable == true)
+        ' <<<"$BUYER_RUNTIME_STATE" >/dev/null; then
+          break
+        fi
+        sleep 1
+      done
+      jq -e --arg seller "$ALICE_NPUB" '
+        .vpn_active == true and .expected_peer_count > 0
+        and any(.peers[]?; .fips_endpoint_npub == $seller and .reachable == true)
+      ' <<<"$BUYER_RUNTIME_STATE" >/dev/null || {
+        echo "exit-node docker e2e failed: automatic seller route is not active in GUI runtime state" >&2
+        exit 1
+      }
     else
       PAID_EXIT_PROBE_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit probe \
         --config "$CONFIG_PATH" \

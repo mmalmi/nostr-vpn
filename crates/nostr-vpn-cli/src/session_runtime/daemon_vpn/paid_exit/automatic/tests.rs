@@ -4,7 +4,7 @@ use nostr_vpn_core::config::InternetSource;
 use nostr_vpn_core::paid_routes::{PaidRouteChannelTerms, PaidRouteIpSupport, PaidRoutePricing};
 
 #[test]
-fn automatic_selection_activates_a_routable_unfunded_probe_session() {
+fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session() {
     let seller = Keys::generate();
     let seller_pubkey = seller.public_key().to_hex();
     let now = unix_timestamp();
@@ -32,19 +32,30 @@ fn automatic_selection_activates_a_routable_unfunded_probe_session() {
         },
         ..PaidExitConfig::default()
     };
-    let signed = nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config(
+    let seller_endpoint = "1.1.1.1:2122".to_string();
+    let signed = nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
         "automatic",
         &seller,
         &offer_config,
+        None,
+        std::slice::from_ref(&seller_endpoint),
         None,
         now,
     )
     .expect("signed offer");
     let mut store = PaidRouteStore::default();
     store.upsert_wallet_mint(mint, "approved", Some(100_000), now);
-    store
-        .upsert_signed_offer(signed, Vec::new(), now)
-        .expect("stored offer");
+    // The daemon receives the advert through pubsub. Opening the marketplace
+    // or running `paid-exit discover` must not be required for Automatic.
+    let cache_path = crate::control_pubsub_runtime::control_pubsub_store_file_path(&config_path);
+    std::fs::write(
+        cache_path,
+        serde_json::to_vec(&json!({
+            "version": 1, "events": [signed.event]
+        }))
+        .expect("encode received advert"),
+    )
+    .expect("persist received advert");
     update_paid_route_store(&store_path, |target| {
         *target = store;
         Ok(())
@@ -53,6 +64,9 @@ fn automatic_selection_activates_a_routable_unfunded_probe_session() {
 
     let mut app = AppConfig::generated();
     app.set_internet_source(InternetSource::PaidAutomatic);
+    app.fips_nostr_discovery_enabled = false;
+    app.connect_to_non_roster_fips_peers = false;
+    assert!(app.fips_peer_endpoints.is_empty());
     let mut automatic = PaidExitAutomaticBuyer::default();
     assert!(
         reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &config_path, now,)
@@ -76,6 +90,11 @@ fn automatic_selection_activates_a_routable_unfunded_probe_session() {
     );
     let saved = AppConfig::load(&config_path).expect("saved automatic route config");
     assert_eq!(saved.internet_source, InternetSource::PaidAutomatic);
+    assert_eq!(
+        saved.fips_peer_endpoint_hints(&seller_pubkey),
+        vec![seller_endpoint.clone()],
+        "automatic selection must dial the endpoint from the signed offer"
+    );
     assert_eq!(
         saved.public_paid_exit_node_pubkey_hex().as_deref(),
         Some(seller_pubkey.as_str())
@@ -118,6 +137,34 @@ fn automatic_selection_activates_a_routable_unfunded_probe_session() {
         "the automatic seller connection must activate the exit route"
     );
     assert!(!automatic.payments_allowed(&app, now));
+    // A restarted buyer may already have selected this seller, but still need
+    // to restore its signed endpoint before the tunnel can reconnect.
+    app.set_fips_peer_endpoint_hints(&seller_pubkey, &[])
+        .expect("clear seller endpoint");
+    app.save(&config_path)
+        .expect("save selection without endpoint");
+    let mut recovered = PaidExitAutomaticBuyer::default();
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 1,)
+            .expect("recover automatic session")
+    );
+    assert_eq!(
+        recovered
+            .candidate
+            .as_ref()
+            .expect("recovered candidate")
+            .session_id,
+        session.session.session_id,
+    );
+    let saved = AppConfig::load(&config_path).expect("saved recovered endpoint");
+    assert_eq!(
+        saved.fips_peer_endpoint_hints(&seller_pubkey),
+        vec![seller_endpoint]
+    );
+    assert_eq!(
+        load_paid_route_store(&store_path).unwrap().sessions.len(),
+        1
+    );
     let _ = fs::remove_dir_all(directory);
 }
 
