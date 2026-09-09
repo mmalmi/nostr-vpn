@@ -618,6 +618,33 @@ bash -c '
 ((SECONDS - cleanup_started < 3)) \
   || fail "completed EXIT cleanup waited for its watchdog deadline"
 
+(
+  # Finish cleanup while the real watchdog is sleeping. Its shell must reap
+  # that child before returning, rather than leaving it to the outer supervisor.
+  IOS_RELEASE_NETWORK_PREPARED=1
+  NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$TEMP_ROOT/watchdog-reap"
+  NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS=5
+  watchdog_sleep_pid_file="$TEMP_ROOT/watchdog-sleep.pid"
+  sleep() {
+    if [[ "$1" == 0.1 ]]; then
+      command sleep 1 &
+      printf '%s\n' "$!" >"$watchdog_sleep_pid_file"
+      wait "$!"
+    else
+      command sleep "$@"
+    fi
+  }
+  ios_release_network_disconnect_cleanup_inner() {
+    while [[ ! -s "$watchdog_sleep_pid_file" ]]; do command sleep 0.01; done
+  }
+  ios_release_network_disconnect_cleanup
+  watchdog_sleep_pid="$(cat "$watchdog_sleep_pid_file")"
+  if kill -0 "$watchdog_sleep_pid" 2>/dev/null; then
+    kill "$watchdog_sleep_pid" 2>/dev/null || true
+    fail "completed iOS cleanup orphaned its watchdog sleep"
+  fi
+)
+
 timeout_signing="$(
   mktemp -d "$TEMP_ROOT/nvpn-ios-release-signing.XXXXXX"
 )"
