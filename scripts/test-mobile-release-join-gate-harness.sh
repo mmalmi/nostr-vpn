@@ -1788,4 +1788,5 @@ NVPN_EXTERNAL_HARNESS_DIGEST="$external_digest" \
 }
 rm -rf "$external_fixture"
 
+bash "$ROOT/scripts/test-macos-join-late-observation-harness.sh"
 echo "Signed Release public-UI join gate contract passed"

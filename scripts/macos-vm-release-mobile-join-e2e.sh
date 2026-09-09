@@ -991,15 +991,19 @@ wait_log_marker \
   "$desktop_add_ios_log" NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS= 10
 desktop_ios_submitted_ms="$(release_join_now_ms)"
 release_join_ios_wait_marker \
-  NVPN_RELEASE_JOIN_ROSTER_APPLIED_MS= "$RELEASE_JOIN_DELIVERY_WAIT_SECS" \
+  NVPN_RELEASE_JOIN_ROSTER_APPLIED_MS= "$((RELEASE_JOIN_DELIVERY_WAIT_SECS + 15))" \
   || {
     echo "iPhone did not receive the macOS signed roster in time" >&2
     exit 1
   }
 desktop_ios_completed_ms="$(release_join_now_ms)"
+# Retain a late delivery's actual acknowledgment and relaunch evidence before
+# reporting its timing failure. Interrupting XCTest at the acceptance deadline
+# hides which delivery stage was late and prevents orderly device cleanup.
+desktop_ios_delivery_status=0
 assert_delivery_deadline \
   "$desktop_ios_submitted_ms" "$desktop_ios_completed_ms" \
-  "macOS-admin-to-iPhone-manual"
+  "macOS-admin-to-iPhone-manual" || desktop_ios_delivery_status=$?
 wait_log_marker \
   "$desktop_add_ios_log" "NVPN_RELEASE_JOIN_ADMIN_ACCEPTED=$IOS_JOINER_ID"
 wait_log_marker "$desktop_add_ios_log" NVPN_MACOS_RELEASE_APP_HOLDING=1
@@ -1029,6 +1033,7 @@ remote_pid=""
 remote_pid_owner=""
 remote verify "$IOS_JOINER_ID" \
   >"$RESULT_DIR/macos/desktop-ios-admin-verify.log"
+exit "$desktop_ios_delivery_status"
 )
 macos_admin_ios_status=$?
 set -e
