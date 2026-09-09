@@ -1185,15 +1185,18 @@ ios_release_network_xctrunner_process_ids() {
 }
 
 ios_release_network_require_packet_tunnel_stopped() {
-  local device="$1" output="$2" timeout="${3:-15}" deadline remaining
+  local device="$1" output="$2" timeout="${3:-30}" deadline remaining
   [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || return 2
   deadline=$((SECONDS + timeout))
   while ((SECONDS < deadline)); do
     remaining=$((deadline - SECONDS))
-    ((remaining <= 5)) || remaining=5
+    # CoreDevice rejects timeouts below five seconds. Leave enough budget
+    # for another valid query while XCTest releases its device connection.
+    ((remaining >= 5)) || break
+    rm -f "$output" || return 1
     if ! xcrun devicectl device info processes \
         --device "$device" --json-output "$output" \
-        --timeout "$remaining" --quiet >/dev/null
+        --timeout 5 --quiet >/dev/null
     then
       if jq -e '.info.outcome == "timeout"' "$output" >/dev/null 2>&1; then
         sleep 0.25

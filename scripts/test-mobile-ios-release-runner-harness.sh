@@ -708,7 +708,7 @@ packet_processes="$TEMP_ROOT/packet-processes.json"
 (
   xcrun() {
     local previous="" output="" argument
-    [[ "$*" == *"--timeout 1"* ]] \
+    [[ "$*" == *"--timeout 5"* ]] \
       || fail "PacketTunnel process query can exceed its cleanup deadline"
     for argument in "$@"; do
       [[ "$previous" != --json-output ]] || output="$argument"
@@ -717,30 +717,35 @@ packet_processes="$TEMP_ROOT/packet-processes.json"
     printf '%s\n' '{"result":{"runningProcesses":[]}}' >"$output"
   }
   ios_release_network_require_packet_tunnel_stopped \
-    fixture-device "$packet_processes" 1
+    fixture-device "$packet_processes" 5
 ) || fail "disconnect cleanup rejected an absent PacketTunnel"
-for query_mode in recovers unavailable; do
+for query_mode in recovers recovers-late unavailable; do
   (
     query_attempts=0
     xcrun() {
       local output
       output="$(xcrun_json_output_path "$@")" || return
-      [[ "$*" =~ --timeout[[:space:]][1-5][[:space:]] ]] \
-        || fail "one stalled query can consume the entire cleanup budget"
+      [[ "$*" =~ --timeout[[:space:]]5[[:space:]] ]] \
+        || fail "process queries must respect devicectl's five-second minimum"
       query_attempts=$((query_attempts + 1))
-      if [[ "$query_mode" == unavailable || "$query_attempts" -eq 1 ]]; then
+      if [[ "$query_mode" == unavailable || "$query_attempts" -eq 1 ]] \
+        || [[ "$query_mode" == recovers-late && "$query_attempts" -le 3 ]]; then
         SECONDS=$((SECONDS + 5))
         printf '%s\n' '{"info":{"outcome":"timeout"}}' >"$output"
         return 2
       fi
       printf '%s\n' '{"result":{"runningProcesses":[]}}' >"$output"
     }
-    if [[ "$query_mode" == recovers ]]; then
+    if [[ "$query_mode" == recovers || "$query_mode" == recovers-late ]]; then
       ios_release_network_require_packet_tunnel_stopped fixture-device "$packet_processes"
-      [[ "$query_attempts" -eq 2 ]]
+      if [[ "$query_mode" == recovers ]]; then
+        [[ "$query_attempts" -eq 2 ]]
+      else
+        [[ "$query_attempts" -eq 4 ]]
+      fi
     else
       ! ios_release_network_require_packet_tunnel_stopped fixture-device "$packet_processes"
-      [[ "$query_attempts" -ge 2 && "$query_attempts" -le 3 ]]
+      [[ "$query_attempts" -ge 2 && "$query_attempts" -le 6 ]]
     fi
   ) || fail "disconnect process inventory $query_mode did not respect its total budget"
 done
@@ -756,7 +761,7 @@ done
       >"$output"
   }
   ! ios_release_network_require_packet_tunnel_stopped \
-    fixture-device "$packet_processes" 1 >/dev/null 2>&1
+    fixture-device "$packet_processes" 5 >/dev/null 2>&1
 ) || fail "disconnect cleanup accepted a live PacketTunnel"
 for invalid_inventory in '{}' '{"result":{"runningProcesses":null}}'; do
   (
@@ -766,13 +771,13 @@ for invalid_inventory in '{}' '{"result":{"runningProcesses":null}}'; do
       printf '%s\n' "$invalid_inventory" >"$output"
     }
     ! ios_release_network_require_packet_tunnel_stopped \
-      fixture-device "$packet_processes" 1 >/dev/null 2>&1
+      fixture-device "$packet_processes" 5 >/dev/null 2>&1
   ) || fail "disconnect cleanup accepted a missing process inventory"
 done
 (
   xcrun() { return 2; }
   ! ios_release_network_require_packet_tunnel_stopped \
-    fixture-device "$packet_processes" 1 >"$TEMP_ROOT/process-query-failed.log" 2>&1
+    fixture-device "$packet_processes" 5 >"$TEMP_ROOT/process-query-failed.log" 2>&1
   grep -Fq 'could not inspect' "$TEMP_ROOT/process-query-failed.log"
 ) || fail "unavailable process query was reported as a running PacketTunnel"
 if sed -n '/ios_release_network_test_command()/,/^}/p' "$RUNNER" \
