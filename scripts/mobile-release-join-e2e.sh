@@ -474,10 +474,10 @@ release_join_ios_run_test \
 
 case "$RELEASE_JOIN_PHASE_SELECTION" in
   full)
-    phase_ios_admin_android_qr
-    phase_android_admin_ios_qr
     phase_ios_admin_android_manual
     phase_android_admin_ios_manual
+    phase_ios_admin_android_qr
+    phase_android_admin_ios_qr
     ;;
   manual-only)
     phase_ios_admin_android_manual
