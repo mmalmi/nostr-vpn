@@ -288,9 +288,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
             }
             guard let acknowledged else {
+                NSLog("nvpn-pkt: config handoff could not commit because the tunnel stopped")
                 completionHandler?(nil)
                 return
             }
+            let receiptsPending = withTunnelHandle { handle in
+                nostr_vpn_mobile_tunnel_has_pending_join_receipts(handle)
+            }
+            NSLog(
+                "nvpn-pkt: config handoff acknowledged=%d joinReceiptsPending=%d",
+                acknowledged ? 1 : 0,
+                receiptsPending == true ? 1 : 0
+            )
             appMessageSnapshotLock.lock()
             if appConfigSnapshot == snapshot {
                 appConfigSnapshot.removeAll(keepingCapacity: false)
