@@ -482,6 +482,7 @@ case "${1:-}" in
   verify)
     [[ $# == 2 ]] || { echo "usage: $0 verify <participant-npub>" >&2; exit 2; }
     run_driver release-verify "$2" _
+    assert_service_ready
     ;;
   service-preflight)
     [[ $# == 1 ]] || { echo "usage: $0 service-preflight" >&2; exit 2; }
