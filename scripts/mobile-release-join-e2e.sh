@@ -169,7 +169,6 @@ cleanup() {
     fi
     package="${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}"
     "${ADB[@]}" shell am force-stop "$package" >/dev/null 2>&1 || cleanup_status=1
-    "${ADB[@]}" shell pm clear "$package" >/dev/null 2>&1 || cleanup_status=1
     [[ -z "$("${ADB[@]}" shell pidof "$package" 2>/dev/null | tr -d '\r')" ]] \
       || cleanup_status=1
     route="$("${ADB[@]}" shell ip route get 1.1.1.1 2>/dev/null | tr -d '\r')"
