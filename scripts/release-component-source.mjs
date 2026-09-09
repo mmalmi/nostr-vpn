@@ -139,6 +139,13 @@ function isProductInput(path, platform) {
       || /\/tests(?:_[^/]+)?\.rs$/.test(path)
     )
   ) return false
+  // Both includes are gated on target_os = "ios" (the flow module also has
+  // host tests). Their parent files stay shared inputs so a changed include
+  // boundary invalidates every platform that could start compiling them.
+  if (
+    path === 'crates/nostr-vpn-app-core/src/mobile_tunnel/ios_packet_flow.rs'
+    || path === 'crates/nostr-vpn-app-core/src/c_abi/ios_packet_flow.rs'
+  ) return platform === 'ios'
   if (path.startsWith('crates/nostr-vpn-cli/')) {
     if (path === 'crates/nostr-vpn-cli/src/fips_private_mesh/linux_cleanup.rs') {
       return platform === 'linux'

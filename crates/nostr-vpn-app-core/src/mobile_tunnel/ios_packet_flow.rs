@@ -8,8 +8,7 @@ pub(crate) type IosPacketFlowWriteCallback = unsafe extern "C" fn(
 ) -> bool;
 pub(crate) type IosPacketFlowFailureCallback =
     unsafe extern "C" fn(context: *mut std::ffi::c_void, message: *const std::ffi::c_char);
-pub(crate) type IosPacketFlowReleaseCallback =
-    unsafe extern "C" fn(context: *mut std::ffi::c_void);
+pub(crate) type IosPacketFlowReleaseCallback = unsafe extern "C" fn(context: *mut std::ffi::c_void);
 
 pub(crate) struct IosPacketFlowCallbacks {
     context: usize,
@@ -37,10 +36,7 @@ impl IosPacketFlowCallbacks {
     }
 
     fn write(&self, packets: &[Vec<u8>]) -> bool {
-        let packet_pointers = packets
-            .iter()
-            .map(Vec::as_ptr)
-            .collect::<Vec<_>>();
+        let packet_pointers = packets.iter().map(Vec::as_ptr).collect::<Vec<_>>();
         let packet_lengths = packets.iter().map(Vec::len).collect::<Vec<_>>();
         unsafe {
             (self.write)(
@@ -56,10 +52,7 @@ impl IosPacketFlowCallbacks {
         let message = std::ffi::CString::new(message)
             .expect("static iOS packet flow failure message must not contain NUL");
         unsafe {
-            (self.failure)(
-                self.context as *mut std::ffi::c_void,
-                message.as_ptr(),
-            );
+            (self.failure)(self.context as *mut std::ffi::c_void, message.as_ptr());
         }
     }
 }
@@ -83,11 +76,7 @@ impl IosPacketFlowRuntime {
         callbacks: IosPacketFlowCallbacks,
         counters: Arc<MobileTunAtomicCounters>,
     ) -> Self {
-        let task = runtime.spawn(run_ios_packet_flow_writer(
-            inbound_rx,
-            callbacks,
-            counters,
-        ));
+        let task = runtime.spawn(run_ios_packet_flow_writer(inbound_rx, callbacks, counters));
         Self { task: Some(task) }
     }
 
@@ -164,7 +153,9 @@ fn send_ios_packet_flow_batch(
     let mut packets = Vec::with_capacity(lengths.len());
     for &length in lengths {
         if length == 0 || length > IOS_PACKET_FLOW_MAX_PACKET_BYTES {
-            return Err(anyhow!("iOS packet flow returned invalid packet length {length}"));
+            return Err(anyhow!(
+                "iOS packet flow returned invalid packet length {length}"
+            ));
         }
         let end = offset
             .checked_add(length)
@@ -189,14 +180,17 @@ fn send_ios_packet_flow_batch(
         for _ in &packet_lengths {
             counters.note_drop();
         }
-        return Err(match error {
+        return match error {
             tokio_mpsc::error::TrySendError::Full(_) => {
-                anyhow!("mobile tunnel outbound packet channel is full")
+                // NEPacketTunnelFlow can deliver a startup burst faster than
+                // the dispatcher drains it. Keep the queue bounded and count
+                // the loss; temporary pressure must not tear down the VPN.
+                Ok(())
             }
             tokio_mpsc::error::TrySendError::Closed(_) => {
-                anyhow!("mobile tunnel outbound packet channel stopped")
+                Err(anyhow!("mobile tunnel outbound packet channel stopped"))
             }
-        });
+        };
     }
     for length in packet_lengths {
         counters.note_read(length);
@@ -332,10 +326,7 @@ mod ios_packet_flow_tests {
             .blocking_send(vec![ipv4.clone(), ipv6.clone()])
             .unwrap();
         write_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(
-            state.writes.lock().unwrap().as_slice(),
-            &[vec![ipv4, ipv6]]
-        );
+        assert_eq!(state.writes.lock().unwrap().as_slice(), &[vec![ipv4, ipv6]]);
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
         while counters.snapshot().packets_written != 2 && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(1));
@@ -409,28 +400,15 @@ mod ios_packet_flow_tests {
     }
 
     #[test]
-    fn ios_packet_flow_outbound_send_fails_fast_at_the_bounded_capacity() {
+    fn ios_packet_flow_outbound_overload_drops_without_stopping_the_tunnel() {
         let runtime = test_runtime();
         let counters = Arc::new(MobileTunAtomicCounters::default());
         let (outbound_tx, mut outbound_rx) = tokio_mpsc::channel(1);
-        send_ios_packet_flow_batch(
-            &outbound_tx,
-            &counters,
-            &[0x45, 0, 0, 20],
-            &[4],
-        )
-        .unwrap();
+        send_ios_packet_flow_batch(&outbound_tx, &counters, &[0x45, 0, 0, 20], &[4]).unwrap();
 
         let started_at = std::time::Instant::now();
-        let error = send_ios_packet_flow_batch(
-            &outbound_tx,
-            &counters,
-            &[0x60, 0, 0, 0],
-            &[4],
-        )
-        .unwrap_err();
+        send_ios_packet_flow_batch(&outbound_tx, &counters, &[0x60, 0, 0, 0], &[4]).unwrap();
         assert!(started_at.elapsed() < Duration::from_millis(250));
-        assert!(error.to_string().contains("channel is full"));
 
         assert_eq!(
             runtime.block_on(outbound_rx.recv()).unwrap(),
@@ -438,6 +416,21 @@ mod ios_packet_flow_tests {
         );
         assert_eq!(counters.snapshot().packets_read, 1);
         assert_eq!(counters.snapshot().packets_dropped, 1);
+
+        // Once the consumer catches up, the same live bridge accepts traffic.
+        send_ios_packet_flow_batch(&outbound_tx, &counters, &[0x60, 0, 0, 0], &[4]).unwrap();
+        assert_eq!(
+            runtime.block_on(outbound_rx.recv()).unwrap(),
+            vec![vec![0x60, 0, 0, 0]]
+        );
+        assert_eq!(counters.snapshot().packets_read, 2);
+
+        // Actual shutdown remains a failure so the provider cancels its flow.
+        drop(outbound_rx);
+        let error = send_ios_packet_flow_batch(&outbound_tx, &counters, &[0x45, 0, 0, 20], &[4])
+            .unwrap_err();
+        assert!(error.to_string().contains("channel stopped"));
+        assert_eq!(counters.snapshot().packets_dropped, 2);
     }
 
     #[test]
@@ -445,13 +438,7 @@ mod ios_packet_flow_tests {
         let counters = MobileTunAtomicCounters::default();
         let (outbound_tx, mut outbound_rx) = tokio_mpsc::channel(1);
         assert!(
-            send_ios_packet_flow_batch(
-                &outbound_tx,
-                &counters,
-                &[0x45, 0, 0, 20],
-                &[5],
-            )
-            .is_err()
+            send_ios_packet_flow_batch(&outbound_tx, &counters, &[0x45, 0, 0, 20], &[5],).is_err()
         );
         assert!(outbound_rx.try_recv().is_err());
         assert_eq!(counters.snapshot(), MobileTunCounters::default());

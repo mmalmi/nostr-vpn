@@ -46,8 +46,9 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_packet_flow_start(
 }
 
 /// Sends one batch returned by `NEPacketTunnelFlow.readPackets` into the Rust
-/// mobile tunnel. The existing bounded channel accepts it immediately or the
-/// call fails so the provider can cancel without blocking tunnel shutdown.
+/// mobile tunnel. The bounded channel accepts it immediately or counts and
+/// drops an overloaded batch. A stopped channel fails without blocking
+/// tunnel shutdown.
 ///
 /// # Safety
 ///

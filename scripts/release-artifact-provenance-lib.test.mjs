@@ -408,6 +408,9 @@ test('component proof scopes desktop crates and Rust test modules', () => {
     'crates/nostr-vpn-cli/src/fips_private_mesh/linux_cleanup.rs',
     'crates/nostr-vpn-cli/src/fips_private_mesh/tests_network_cleanup.rs',
     'scripts/windows-vm-app-launch-smoke.sh',
+    'crates/nostr-vpn-app-core/src/mobile_tunnel/ios_packet_flow.rs',
+    'crates/nostr-vpn-app-core/src/c_abi/ios_packet_flow.rs',
+    'crates/nostr-vpn-app-core/src/mobile_tunnel.rs',
   ]
   try {
     git('init', '-q')
@@ -459,6 +462,9 @@ test('component proof scopes desktop crates and Rust test modules', () => {
     assertScope('linux-cleanup', [paths[13]], ['linux'])
     assertScope('linux-cleanup-tests', [paths[14]], [])
     assertScope('windows-installer-build-gate', [paths[15]], ['windows'])
+    assertScope('ios-packet-flow', paths.slice(16, 18), ['ios'])
+    assertScope('ios-packet-flow-inclusion-boundary', [paths[18]],
+      ['android', 'ios', 'linux', 'macos', 'windows'])
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

@@ -14,6 +14,8 @@ a signed roster.
 
 ### Fixed
 
+- Keep the iPhone VPN running during temporary outbound packet bursts instead
+  of treating a full packet queue as a fatal tunnel error.
 - Discover signed paid-exit offers automatically without first importing a
   provider, and use the selected seller's advertised connection addresses.
 - Show automatic paid exits as active only while the selected seller is
