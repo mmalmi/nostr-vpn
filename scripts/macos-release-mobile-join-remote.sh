@@ -381,9 +381,10 @@ run_manual_join_driver_hold() {
   launch_app
   run_driver_against_held_app release-manual-join "$1" "$2"
   echo "NVPN_RELEASE_JOIN_MARKER NVPN_MACOS_RELEASE_APP_HOLDING=1"
-  # The controller starts iOS after this marker: allow its existing 60-second
-  # launch budget plus setup. The delivery deadline starts only at approval.
-  local deadline=$((SECONDS + 60 + setup_wait))
+  # The controller first checks the retained iOS connection (up to 180 seconds),
+  # then launches XCTest (60 seconds) and drives approval. Keep those setup
+  # budgets outside the delivery deadline, which starts only at approval.
+  local deadline=$((SECONDS + 180 + 60 + setup_wait))
   while [[ ! -f "$APPROVAL_STARTED" && "$SECONDS" -lt "$deadline" ]]; do
     sleep 0.1
   done

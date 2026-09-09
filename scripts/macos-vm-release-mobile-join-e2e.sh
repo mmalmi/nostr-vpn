@@ -1024,10 +1024,11 @@ IOS_JOINER_ID="$(
   ios_marker_value_from "$ios_join_log" NVPN_RELEASE_JOIN_JOINER_ID
 )"
 release_join_valid_npub "$IOS_JOINER_ID"
-# Public entry and carrier authentication both precede the delivery clock.
+# Public entry, restoring transport settings, and carrier authentication are
+# separate setup stages. Let the trusted runner finish them before approval.
 release_join_ios_wait_marker \
   NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1 \
-  "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
+  "$((2 * RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
   || { echo "iPhone did not submit through shipped manual-join controls" >&2; exit 1; }
 remote carrier-ready >"$RESULT_DIR/macos/desktop-iphone-carrier-ready.log" 2>&1
 desktop_add_ios_log="$RESULT_DIR/macos/desktop-add-iphone.log"

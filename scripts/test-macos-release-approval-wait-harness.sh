@@ -41,7 +41,7 @@ run_case() (
     }
   else
     [[ "$status" -ne 0 && "$verified" -eq 0 \
-      && "$SECONDS" -le $((60 + NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS)) ]] || {
+      && "$SECONDS" -le $((180 + 60 + NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS)) ]] || {
       echo "Mac accepted without approval or waited beyond the setup budget" >&2
       exit 1
     }
@@ -51,10 +51,12 @@ run_case() (
 # The old 30-second holder failed while real iOS setup was still typing.
 run_case 61 accepted
 run_case 149 accepted
+run_case 241 accepted
+run_case 329 accepted
 run_case 0 rejected
-run_case 151 rejected
-run_case 62 accepted 3
-run_case 64 rejected 3
+run_case 331 rejected
+run_case 242 accepted 3
+run_case 244 rejected 3
 if ! grep -Fq 'NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS=%q' \
     "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh"; then
   echo "Controller does not forward its validated setup budget" >&2
