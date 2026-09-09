@@ -147,22 +147,29 @@ sync_and_import_candidates() {
     fi
   } >"$ARTIFACT_DIR/source-provenance.txt"
 
-  # The imported peer may precede harness-only commits in the Windows build.
-  # Prove its product inputs are unchanged without relabeling its source.
+  # Windows and Linux may have been built at different candidate revisions.
+  # Bind each artifact to the current candidate using its own platform inputs.
   node --input-type=module - "$ROOT" "${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}" \
     "$ARTIFACT_APP_SHA" "$ARTIFACT_APP_TREE" \
+    "$harness_sha" "$harness_tree" \
     >"$ARTIFACT_DIR/host-peer-component-proof.json" <<'JS'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
-const [root, peerRoot, candidateCommit, candidateTree] = process.argv.slice(2)
+const [root, peerRoot, windowsCommit, windowsTree, candidateCommit, candidateTree] = process.argv.slice(2)
 const { proveUnchangedPlatformInputs } = await import(
   pathToFileURL(`${root}/scripts/release-component-source.mjs`))
 const git = ref => execFileSync('git', ['-C', peerRoot, 'rev-parse', ref], { encoding: 'utf8' }).trim()
-console.log(JSON.stringify(proveUnchangedPlatformInputs({
-  candidateRoot: root, platform: 'linux',
-  receiptCommit: git('HEAD'), receiptTree: git('HEAD^{tree}'),
-  candidateCommit, candidateTree,
-}), null, 2))
+const candidate = { candidateRoot: root, candidateCommit, candidateTree }
+console.log(JSON.stringify({
+  windows: proveUnchangedPlatformInputs({
+    ...candidate, platform: 'windows',
+    receiptCommit: windowsCommit, receiptTree: windowsTree,
+  }),
+  linux: proveUnchangedPlatformInputs({
+    ...candidate, platform: 'linux',
+    receiptCommit: git('HEAD'), receiptTree: git('HEAD^{tree}'),
+  }),
+}, null, 2))
 JS
 
   env \
