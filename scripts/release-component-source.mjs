@@ -40,6 +40,7 @@ const harnessOnlyPaths = new Set([
   'scripts/e2e-windows-manual-join-ui.ps1',
   'scripts/run-windows-interactive-e2e.ps1',
   'scripts/ios_xctestrun.py',
+  'scripts/ios_packet_tunnel_processes.py',
   'scripts/ios-build',
   'scripts/ios_frozen_archive.py',
   'scripts/ios_frozen_gate.py',

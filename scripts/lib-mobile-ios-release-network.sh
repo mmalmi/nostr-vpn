@@ -1185,45 +1185,11 @@ ios_release_network_xctrunner_process_ids() {
 }
 
 ios_release_network_require_packet_tunnel_stopped() {
-  local device="$1" output="$2" timeout="${3:-90}" deadline remaining query_timeout
+  local device="$1" output="$2" timeout="${3:-90}"
   [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || return 2
-  deadline=$((SECONDS + timeout))
-  while ((SECONDS < deadline)); do
-    remaining=$((deadline - SECONDS))
-    # Allow CoreDevice time to reconnect after XCTest. Repeated five-second
-    # cancellations can prevent a valid inventory from ever completing.
-    ((remaining >= 5)) || break
-    query_timeout="$remaining"
-    ((query_timeout <= 30)) || query_timeout=30
-    rm -f "$output" || return 1
-    if ! xcrun devicectl device info processes \
-        --device "$device" --json-output "$output" \
-        --timeout "$query_timeout" --quiet >/dev/null
-    then
-      if jq -e '.info.outcome == "timeout"' "$output" >/dev/null 2>&1; then
-        sleep 0.25
-        continue
-      fi
-      echo "iOS cleanup could not inspect PacketTunnel processes within its deadline" >&2
-      return 1
-    fi
-    if ! jq -e '.result.runningProcesses | type == "array"' "$output" >/dev/null; then
-      echo "iOS cleanup could not inspect a valid PacketTunnel process inventory" >&2
-      return 1
-    fi
-    if jq -e '
-        [.result.runningProcesses[]
-          | select((.executable | gsub("%20"; " "))
-            | endswith("/Nostr VPN.app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"))]
-        | length == 0
-      ' "$output" >/dev/null
-    then
-      return 0
-    fi
-    sleep 0.25
-  done
-  echo "iOS cleanup could not verify PacketTunnel stopped within its deadline" >&2
-  return 1
+  # The OS trace service remains responsive while CoreDevice reconnects after
+  # XCTest. Query that authenticated process inventory within the same deadline.
+  python3 "$ROOT/scripts/ios_packet_tunnel_processes.py"     "$device" "$output" "$timeout"
 }
 
 ios_release_network_stop_forced_xctrunner() {
