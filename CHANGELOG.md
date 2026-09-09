@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.10 - 2026-09-08
+## 4.1.10 - 2026-09-09
 
 ### Release notes
 
