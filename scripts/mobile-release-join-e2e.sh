@@ -339,6 +339,7 @@ phase_android_admin_ios_qr() {
 
 phase_ios_admin_android_manual() {
   local admin_log ios_admin_relaunch_joiner submitted completed
+  local peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
   local accepted="$RESULT_DIR/iphone-admin-pixel-manual-accepted.ms"
   release_join_restart_ios_in_place
   release_join_android_open_network_setup
@@ -354,7 +355,8 @@ phase_ios_admin_android_manual() {
   release_join_ios_start_test \
     testManualAdminAddRequiresRosterProgress \
     "$admin_log" \
-    "NVPN_RELEASE_JOIN_JOINER_ID=$RELEASE_JOIN_ANDROID_JOINER_ID"
+    "NVPN_RELEASE_JOIN_JOINER_ID=$RELEASE_JOIN_ANDROID_JOINER_ID" \
+    "NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME=$peer_accepted_filename"
   release_join_ios_wait_marker \
     NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS= "$RELEASE_JOIN_IOS_SETUP_WAIT_SECS" \
     || fail "iPhone admin did not submit the manual approval"
@@ -366,6 +368,8 @@ phase_ios_admin_android_manual() {
     || fail "Pixel manual join never left its locally pending admin row"
   completed="$(<"$accepted")"
   assert_delivery_deadline "$submitted" "$completed" "iPhone-admin-to-Pixel-manual"
+  release_join_signal_ios_peer_accepted \
+    "$peer_accepted_filename" "$RELEASE_JOIN_ANDROID_JOINER_ID"
   release_join_android_relaunch_and_wait_accepted "$RELEASE_JOIN_IOS_ADMIN_ID" \
     || fail "Pixel manual join did not retain the signed roster across relaunch"
   release_join_ios_finish_test \

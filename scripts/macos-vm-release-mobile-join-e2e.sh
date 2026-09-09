@@ -1063,9 +1063,11 @@ then
   exit 1
 fi
 ios_admin_log="$(ios_log iphone-admin-macos-add)"
+ios_peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
 release_join_ios_start_test \
   testManualAdminAddRequiresRosterProgress "$ios_admin_log" \
-  "NVPN_RELEASE_JOIN_JOINER_ID=$DESKTOP_IOS_JOINER_ID"
+  "NVPN_RELEASE_JOIN_JOINER_ID=$DESKTOP_IOS_JOINER_ID" \
+  "NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME=$ios_peer_accepted_filename"
 ios_test_pid_owner="$(
   macos_mobile_direction_child_owner "$RELEASE_JOIN_IOS_TEST_PID"
 )"
@@ -1086,6 +1088,8 @@ wait_log_marker \
   "NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=$RELEASE_JOIN_IOS_ADMIN_ID" \
   "$RELEASE_JOIN_DELIVERY_WAIT_SECS"
 ios_admin_remote_completed_ms="$(release_join_now_ms)"
+release_join_signal_ios_peer_accepted \
+  "$ios_peer_accepted_filename" "$DESKTOP_IOS_JOINER_ID"
 release_join_ios_finish_test \
   || {
     echo "iPhone admin did not retain the exact macOS joiner" >&2

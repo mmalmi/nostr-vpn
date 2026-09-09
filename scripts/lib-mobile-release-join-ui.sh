@@ -746,6 +746,19 @@ release_join_stage_ios_qr_image() {
   done
 }
 
+release_join_signal_ios_peer_accepted() {
+  local filename="$1" joiner="$2" signal="$PRIVATE_DIR/ios-peer-accepted.txt"
+  [[ "$filename" == nvpn-peer-accepted-*.txt && "$filename" != */* ]] || return 1
+  release_join_valid_npub "$joiner" || return 1
+  printf '%s' "$joiner" >"$signal"
+  xcrun devicectl device copy to \
+    --device "$IOS_DEVICE" \
+    --domain-type appDataContainer \
+    --domain-identifier "${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}.UITests.xctrunner" \
+    --source "$signal" --destination "Documents/$filename" \
+    --timeout 15 --quiet >/dev/null
+}
+
 release_join_require_fresh_ios_pending_qr() {
   local deadline=$((SECONDS + 3)) heartbeat fresh
   while ((SECONDS < deadline)); do
@@ -915,6 +928,7 @@ release_join_ios_test_command() {
     "NVPN_RELEASE_JOIN_JOINER_ID="
     "NVPN_RELEASE_JOIN_NETWORK_ID="
     "NVPN_RELEASE_JOIN_NETWORK_NAME="
+    "NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME="
     "NVPN_RELEASE_JOIN_SETUP_WAIT_SECS="
     "NVPN_IOS_BUNDLE_ID="
     "NVPN_RELEASE_JOIN_BLACKBOX=1"

@@ -1043,6 +1043,10 @@ PY
     trace "ios-marker:$1"
   }
   release_join_ios_finish_test() { trace "ios-finish:$active_test"; }
+  release_join_signal_ios_peer_accepted() {
+    [[ "$1" == nvpn-peer-accepted-*.txt && "$2" == npub1androidjoiner ]]
+    trace ios-peer-accepted
+  }
   ios_marker_value_from() {
     case "$2" in
       NVPN_RELEASE_JOIN_JOINER_ID) printf '%s\n' npub1iosjoiner ;;
@@ -1127,6 +1131,13 @@ PY
   : >"$trace_file"
   phase_ios_admin_android_manual
   grep -Fxq android-manual-joiner "$trace_file"
+  accepted_line="$(grep -n -m1 '^android-manual-accepted:' "$trace_file" | cut -d: -f1)"
+  signal_line="$(grep -n -m1 '^ios-peer-accepted$' "$trace_file" | cut -d: -f1)"
+  relaunch_line="$(grep -n -m1 '^android-relaunch-accepted:' "$trace_file" | cut -d: -f1)"
+  ((accepted_line < signal_line && signal_line < relaunch_line)) || {
+    echo 'Admin relaunch was permitted before peer acceptance or after tearing down the peer' >&2
+    exit 1
+  }
   ready_line="$(grep -n -m1 '^android-devices-ready$' "$trace_file" | cut -d: -f1 || true)"
   approval_line="$(grep -n -m1 '^ios-test:' "$trace_file" | cut -d: -f1)"
   if [[ -z "$ready_line" || -z "$approval_line" ]] || ((ready_line >= approval_line)); then

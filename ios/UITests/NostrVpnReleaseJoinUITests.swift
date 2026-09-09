@@ -215,21 +215,43 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         if alias.exists {
             replaceText(alias, with: "Release gate phone")
         }
+        let submit = scrollTo("manual-admin-submit")
         emit("NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=\(millisecondsSinceEpoch())")
-        scrollTo("manual-admin-submit").tap()
+        submit.tap()
         openDevicesTab()
-        XCTAssertTrue(
-            element("roster-participant-accepted-\(joiner)")
-                .waitForExistence(timeout: deliveryTimeout),
-            "Manual admin add did not produce an exact roster row"
-        )
         try requireAcceptedRoster(
             joiner,
-            relaunch: true,
+            relaunch: false,
+            failureMessage: "Manual admin add did not produce an exact roster row"
+        )
+        // XCTest's bundle-wide terminate also kills PacketTunnel. The host
+        // first verifies delivery on the other device, then permits the
+        // independent durability check to interrupt this carrier.
+        try waitForPeerAcceptance(joiner)
+        try relaunchAndRequireAcceptedRoster(
+            joiner,
             failureMessage: "Manual admin add did not retain the joining device's signed roster"
         )
         emit("NVPN_RELEASE_JOIN_ADMIN_RELAUNCH_DURABLE=\(joiner)")
         emit("NVPN_RELEASE_JOIN_ADMIN_ACCEPTED=\(joiner)")
+    }
+
+    private func waitForPeerAcceptance(_ joiner: String) throws {
+        let filename = try required("NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME")
+        XCTAssertTrue(filename.hasPrefix("nvpn-peer-accepted-") && filename.hasSuffix(".txt"))
+        XCTAssertEqual(URL(fileURLWithPath: filename).lastPathComponent, filename)
+        let documents = try XCTUnwrap(
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        )
+        let signal = documents.appendingPathComponent(filename)
+        XCTAssertTrue(
+            waitUntil(timeout: setupTimeout) {
+                (try? String(contentsOf: signal, encoding: .utf8)) == joiner
+            },
+            "Peer acceptance was not verified before the admin relaunch"
+        )
+        try FileManager.default.removeItem(at: signal)
+        emit("NVPN_RELEASE_JOIN_PEER_ACCEPTED_BEFORE_RELAUNCH=\(joiner)")
     }
 
     func testReportJoinerPublicIdentity() throws {
@@ -514,12 +536,20 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         guard relaunch else {
             return
         }
+        try relaunchAndRequireAcceptedRoster(participant, failureMessage: failureMessage)
+    }
+
+    private func relaunchAndRequireAcceptedRoster(
+        _ participant: String,
+        failureMessage: String
+    ) throws {
         app.terminate()
         app.launch()
         try dismissSystemPromptsIfPresent()
         openDevicesTab()
         XCTAssertTrue(
-            element(identifier).waitForExistence(timeout: deliveryTimeout),
+            element("roster-participant-accepted-\(participant)")
+                .waitForExistence(timeout: deliveryTimeout),
             "\(failureMessage) after a real app relaunch"
         )
     }
