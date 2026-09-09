@@ -460,7 +460,7 @@ sampler.checkpoint_executor.shutdown(wait=False, cancel_futures=True)
 copied = []
 original_run = module.subprocess.run
 def record_copy(command, **kwargs):
-    source = pathlib.Path(command[command.index("--source") + 1])
+    source = pathlib.Path(command[command.index("--upload") + 1])
     copied.append((command, source.read_text(encoding="utf-8")))
     return type("Completed", (), {"returncode": 0})()
 module.subprocess.run = record_copy
@@ -473,11 +473,11 @@ assert sampler._write_runner_acknowledgement(
     "release_connected_direct_passed", "fixture-run"
 ) is None
 command, contents = copied[0]
-assert command[:5] == ["xcrun", "devicectl", "device", "copy", "to"]
-assert command[command.index("--destination") + 1] == (
+assert command[:4] == ["ios-deploy", "--id", "fixture-device", "--no-wifi"]
+assert command[command.index("--to") + 1] == (
     "Documents/nvpn-host-process-ack.log"
 )
-assert command[command.index("--domain-identifier") + 1] == "fixture.runner"
+assert command[command.index("--bundle_id") + 1] == "fixture.runner"
 assert contents == (
     "NVPN_XCUITEST_RUN_ID=fixture-run\n"
     "NVPN_IOS_HOST_PROCESS_OBSERVED=release_connected_direct_passed\n"
