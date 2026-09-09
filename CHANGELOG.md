@@ -57,8 +57,11 @@ a signed roster.
   grows, while reserving capacity for configured peers and handshakes.
 - Keep the public bootstrap pair connected by assigning one canonical dialer
   across both UDP and WebSocket, avoiding cross-connection replacement races.
-- Update the FIPS consumer chain to core and endpoint 0.4.75, TCP endpoint
-  0.2.11, and pubsub adapter 0.4.18 without changing any wire format.
+- Stop redundant mobile configuration writes and reduce Android idle polling.
+- Update the FIPS consumer chain to core and endpoint 0.4.78, TCP 0.2.2,
+  TCP endpoint 0.2.14, and pubsub adapter 0.5.1. These preserve wire formats
+  while yielding after persistent socket errors and recovering retained routes
+  and lost TCP traffic after an outage.
 - Retain the v4.1.9 Cashu paid-exit fixes for funding, automatic selection,
   routed health checks, DNS safety, billing, recovery, and seller settings.
 
