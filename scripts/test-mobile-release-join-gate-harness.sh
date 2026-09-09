@@ -31,6 +31,60 @@ assert runner.index('relaunch: false') < runner.index('waitForPeerAcceptance(adm
 assert 'NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME' in runner
 PY
 (
+  # Exercise the real USB copy adapter with an external fixture executable.
+  # Copying must neither launch the app nor depend on CoreDevice's active
+  # XCTest connection, and a transfer failure must reach the caller.
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  private="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-usb-copy.XXXXXX")"
+  trap 'rm -rf "$private"' EXIT
+  mkdir "$private/bin"
+  export PATH="$private/bin:$PATH"
+  export NVPN_TEST_IOS_COPY_DIR="$private"
+  IOS_DEVICE=fixture-device
+  cat >"$private/bin/ios-deploy" <<'PY'
+#!/usr/bin/env python3
+import os,pathlib,sys,time
+args=sys.argv[1:]
+root=pathlib.Path(os.environ['NVPN_TEST_IOS_COPY_DIR'])
+assert args[:5] == ['--id','fixture-device','--no-wifi','--bundle_id','fixture.runner']
+if os.environ.get('NVPN_TEST_IOS_COPY_FAIL') == '1':sys.exit(7)
+if os.environ.get('NVPN_TEST_IOS_COPY_FAIL') == 'timeout':
+    (root/'copy.pid').write_text(str(os.getpid()))
+    time.sleep(30)
+if '--upload' in args:
+    assert pathlib.Path(args[args.index('--upload')+1]).read_bytes() == b'fixture'
+    assert args[args.index('--to')+1] == 'Documents/fixture.txt'
+    (root/'uploaded').write_text('ok')
+else:
+    assert '--download=Documents/fixture.txt' in args
+    dest=pathlib.Path(args[args.index('--to')+1])/'Documents/fixture.txt'
+    dest.parent.mkdir(parents=True)
+    dest.write_bytes(b'fixture')
+PY
+  chmod +x "$private/bin/ios-deploy"
+  printf fixture >"$private/source"
+  release_join_ios_copy_test_file to fixture.runner "$private/source" Documents/fixture.txt
+  [[ -s "$private/uploaded" ]]
+  release_join_ios_copy_test_file from fixture.runner Documents/fixture.txt "$private/downloaded"
+  cmp "$private/source" "$private/downloaded"
+  export NVPN_TEST_IOS_COPY_FAIL=1
+  if release_join_ios_copy_test_file to fixture.runner "$private/source" Documents/fixture.txt; then
+    echo 'USB copy failure was ignored' >&2
+    exit 1
+  fi
+  export NVPN_TEST_IOS_COPY_FAIL=timeout
+  started=$SECONDS
+  if release_join_ios_copy_test_file to fixture.runner "$private/source" Documents/fixture.txt; then
+    echo 'USB copy did not enforce its transfer deadline' >&2
+    exit 1
+  fi
+  ((SECONDS - started < 19))
+  if kill -0 "$(cat "$private/copy.pid")" 2>/dev/null; then
+    echo 'Timed-out USB copy process was not reaped' >&2
+    exit 1
+  fi
+)
+(
   # A connection that is still closing the preceding XCTest session must
   # become ready before the next method's launch budget starts. A locked or
   # unavailable device must not start a test at all.
@@ -408,17 +462,10 @@ PY
 NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_QR_SCREENSHOT_FILENAME=nvpn-release-join-qr-ABC123.png
 NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_QR_SCREENSHOT_SHA256=$capture_sha
 EOF
-  xcrun() {
-    [[ "$*" == *"device copy from"* ]]
-    [[ "$*" == *"--domain-identifier fi.siriusbusiness.nvpn.UITests.xctrunner"* ]]
-    [[ "$*" == *"--source Documents/nvpn-release-join-qr-ABC123.png"* ]]
-    local argument destination="" previous=""
-    for argument in "$@"; do
-      [[ "$previous" != --destination ]] || destination="$argument"
-      previous="$argument"
-    done
-    [[ -n "$destination" ]]
-    cp "$captured" "$destination"
+  release_join_ios_copy_test_file() {
+    [[ "$1" == from && "$2" == fi.siriusbusiness.nvpn.UITests.xctrunner ]]
+    [[ "$3" == Documents/nvpn-release-join-qr-ABC123.png && -n "$4" ]]
+    cp "$captured" "$4"
   }
   release_join_capture_ios_qr "$private/qr.png"
   [[ "$(od -An -tx1 -N8 "$private/qr.png" | tr -d ' \n')" \
@@ -474,22 +521,16 @@ EOF
   IOS_DEVICE=fixture-device
   image="$private/fixture.png"
   printf '\211PNG\r\n\032\nfixture' >"$image"
-  xcrun() {
-    local argument bundle="" previous=""
-    printf '%s\n' "$*" >>"$private/xcrun.log"
-    [[ "$*" == *"device copy to"* ]]
-    for argument in "$@"; do
-      [[ "$previous" != --domain-identifier ]] || bundle="$argument"
-      previous="$argument"
-    done
-    [[ -n "$bundle" && "$*" == *"--source $image"* ]]
+  release_join_ios_copy_test_file() {
+    printf '%s\n' "$*" >>"$private/copy.log"
+    [[ "$1" == to && -n "$2" && "$3" == "$image" && "$4" == Documents/fixture.png ]]
   }
   release_join_stage_ios_qr_image "$image" fixture.png
-  [[ "$(grep -c 'device copy to' "$private/xcrun.log")" == 2 ]]
-  grep -Fq -- '--domain-identifier fi.siriusbusiness.nvpn ' "$private/xcrun.log"
+  [[ "$(grep -c '^to ' "$private/copy.log")" == 2 ]]
+  grep -Fq -- 'to fi.siriusbusiness.nvpn ' "$private/copy.log"
   grep -Fq -- \
-    '--domain-identifier fi.siriusbusiness.nvpn.UITests.xctrunner ' \
-    "$private/xcrun.log"
+    'to fi.siriusbusiness.nvpn.UITests.xctrunner ' \
+    "$private/copy.log"
 )
 python3 -B "$ROOT/scripts/macos_release_join_artifact.py" --help >/dev/null
 

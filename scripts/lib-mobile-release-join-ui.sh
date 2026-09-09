@@ -688,6 +688,41 @@ release_join_capture_android_qr() {
   }
 }
 
+release_join_ios_copy_test_file() {
+  # CoreDevice file access can block while XCTest waits for host input. AFC
+  # uses the existing USB pairing and leaves the runner session untouched.
+  python3 - "$IOS_DEVICE" "$@" <<'PY'
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+device, direction, bundle, source, destination = sys.argv[1:]
+command = ["ios-deploy", "--id", device, "--no-wifi", "--bundle_id", bundle]
+try:
+    if direction == "to":
+        subprocess.run(
+            command + ["--upload", source, "--to", destination],
+            capture_output=True, timeout=15, check=True,
+        )
+    elif direction == "from":
+        with tempfile.TemporaryDirectory(prefix="nvpn-ios-test-copy-") as directory:
+            subprocess.run(
+                command + ["--download=" + source, "--to", directory],
+                capture_output=True, timeout=15, check=True,
+            )
+            downloaded = pathlib.Path(directory) / source
+            if not downloaded.is_file() or downloaded.is_symlink():
+                raise ValueError("missing exact downloaded file")
+            shutil.copyfile(downloaded, destination)
+    else:
+        raise ValueError("invalid copy direction")
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    raise SystemExit(f"iOS USB test file copy failed ({type(error).__name__})") from None
+PY
+}
+
 release_join_capture_ios_qr() {
   local output="$1"
   local bundle filename expected_sha actual_sha
@@ -706,14 +741,8 @@ release_join_capture_ios_qr() {
   bundle="${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}.UITests.xctrunner"
   RELEASE_JOIN_IOS_CAPTURED_QR_FILENAME="$filename"
   export RELEASE_JOIN_IOS_CAPTURED_QR_FILENAME
-  xcrun devicectl device copy from \
-    --device "$IOS_DEVICE" \
-    --domain-type appDataContainer \
-    --domain-identifier "$bundle" \
-    --source "Documents/$filename" \
-    --destination "$output" \
-    --timeout 15 \
-    --quiet >/dev/null || {
+  release_join_ios_copy_test_file from "$bundle" \
+    "Documents/$filename" "$output" || {
     echo "Could not copy the XCTest QR screen capture from the iPhone" >&2
     return 1
   }
@@ -735,14 +764,8 @@ release_join_stage_ios_qr_image() {
   RELEASE_JOIN_IOS_STAGED_QR_FILENAME="$filename"
   export RELEASE_JOIN_IOS_STAGED_QR_FILENAME
   for bundle in "$app_bundle" "$runner_bundle"; do
-    xcrun devicectl device copy to \
-      --device "$IOS_DEVICE" \
-      --domain-type appDataContainer \
-      --domain-identifier "$bundle" \
-      --source "$image" \
-      --destination "Documents/$filename" \
-      --timeout 15 \
-      --quiet >/dev/null || return 1
+    release_join_ios_copy_test_file to "$bundle" \
+      "$image" "Documents/$filename" || return 1
   done
 }
 
@@ -751,12 +774,9 @@ release_join_signal_ios_peer_accepted() {
   [[ "$filename" == nvpn-peer-accepted-*.txt && "$filename" != */* ]] || return 1
   release_join_valid_npub "$joiner" || return 1
   printf '%s' "$joiner" >"$signal"
-  xcrun devicectl device copy to \
-    --device "$IOS_DEVICE" \
-    --domain-type appDataContainer \
-    --domain-identifier "${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}.UITests.xctrunner" \
-    --source "$signal" --destination "Documents/$filename" \
-    --timeout 15 --quiet >/dev/null
+  release_join_ios_copy_test_file to \
+    "${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}.UITests.xctrunner" \
+    "$signal" "Documents/$filename"
 }
 
 release_join_require_fresh_ios_pending_qr() {
