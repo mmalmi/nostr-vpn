@@ -633,7 +633,7 @@ release_join_android_scan_prepare() {
 }
 
 release_join_android_scan_submit() {
-  local joiner="$1" image="$2" filename after deadline
+  local joiner="$1" image="$2" filename after deadline point submitted_ms
   [[ "${RELEASE_JOIN_ANDROID_SCAN_BEFORE:-}" =~ ^[0-9]+$ ]] || {
     echo "Android QR image import was not prepared before approval" >&2
     return 1
@@ -654,10 +654,15 @@ release_join_android_scan_submit() {
   release_join_android_wait_query \
     description "Confirm adding scanned join request" \
     "${RELEASE_JOIN_IMPORT_WAIT_SECS:-15}"
-  release_join_require_fresh_ios_pending_qr
-  echo "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=$(release_join_now_ms)"
-  release_join_android_tap_center \
-    description "Confirm adding scanned join request"
+  point="$(release_join_android_query \
+    description "Confirm adding scanned join request" center)" || return 1
+  release_join_require_fresh_ios_pending_qr || return 1
+  # Accessibility lookup can wait for the animated image picker to settle.
+  # Start delivery timing only when the prepared approval is actually tapped.
+  submitted_ms="$(release_join_now_ms)"
+  # shellcheck disable=SC2086
+  "${ADB[@]}" shell input tap $point || return 1
+  echo "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=$submitted_ms"
   release_join_android_wait_through_system_prompts \
     resource "roster-participant-accepted-$joiner" 10 || {
       echo "Android admin transport permission did not complete" >&2

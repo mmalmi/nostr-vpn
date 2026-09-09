@@ -1869,3 +1869,55 @@ rm -rf "$external_fixture"
 
 bash "$ROOT/scripts/test-macos-join-late-observation-harness.sh"
 echo "Signed Release public-UI join gate contract passed"
+
+# QR approval must exclude image selection and accessibility lookup from delivery time.
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-qr-approval-clock.XXXXXX")"
+  trap 'rm -rf "$tmp"' EXIT
+  touch "$tmp/request.png"
+  printf 'image' >"$tmp/request.png"
+  RELEASE_JOIN_ANDROID_SCAN_BEFORE=1
+  RELEASE_JOIN_DELIVERY_WAIT_SECS=1
+  ADB=(qr_clock_adb)
+  qr_clock_adb() {
+    if [[ "$*" == 'shell input tap 120 240' ]]; then
+      printf 'tap\n' >>"$tmp/events"
+    fi
+  }
+  release_join_android_wait_query() { :; }
+  release_join_android_tap() { :; }
+  release_join_android_open_devices() { :; }
+  release_join_android_wait_through_system_prompts() { :; }
+  release_join_require_fresh_ios_pending_qr() { printf 'fresh\n' >>"$tmp/events"; }
+  release_join_android_query() {
+    case "$*" in
+      'description Confirm adding scanned join request center')
+        printf 'point\n' >>"$tmp/events"
+        [[ "${point_fails:-0}" == 0 ]] || return 1
+        printf '120 240\n'
+        ;;
+      'resource roster-participant-accepted-test-joiner center') : ;;
+      'resource-prefix roster-participant- count') printf '2\n' ;;
+      *) return 1 ;;
+    esac
+  }
+  release_join_now_ms() {
+    printf 'time\n' >>"$tmp/events"
+    printf '1234\n'
+  }
+  release_join_android_scan_submit test-joiner "$tmp/request.png" >"$tmp/submit"
+  grep -Fq 'NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=1234' "$tmp/submit"
+  [[ "$(<"$tmp/events")" == $'point\nfresh\ntime\ntap' ]] || {
+    echo 'QR delivery timing included setup or lost the fresh pending-QR check' >&2
+    exit 1
+  }
+  : >"$tmp/events"
+  point_fails=1
+  if release_join_android_scan_submit test-joiner "$tmp/request.png" >"$tmp/failed"; then
+    echo 'QR approval accepted a missing confirmation button' >&2
+    exit 1
+  fi
+  [[ "$(<"$tmp/events")" == point ]]
+  [[ ! -s "$tmp/failed" ]]
+)
