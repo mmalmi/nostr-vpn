@@ -752,12 +752,17 @@ for query_mode in recovers recovers-late unavailable; do
     xcrun() {
       local output
       output="$(xcrun_json_output_path "$@")" || return
-      [[ "$*" =~ --timeout[[:space:]]5[[:space:]] ]] \
-        || fail "process queries must respect devicectl's five-second minimum"
+      [[ "$*" =~ --timeout[[:space:]]([0-9]+)[[:space:]] ]] \
+        || fail "process queries must specify a timeout"
+      local query_timeout="${BASH_REMATCH[1]}"
+      ((query_timeout >= 5 && query_timeout <= 30)) \
+        || fail "process query timeout is outside the bounded connection window"
+      [[ "$query_attempts" -ne 0 || "$query_timeout" -eq 30 ]] \
+        || fail "first process inventory must allow CoreDevice time to reconnect"
       query_attempts=$((query_attempts + 1))
       if [[ "$query_mode" == unavailable || "$query_attempts" -eq 1 ]] \
-        || [[ "$query_mode" == recovers-late && "$query_attempts" -le 12 ]]; then
-        SECONDS=$((SECONDS + 5))
+        || [[ "$query_mode" == recovers-late && "$query_attempts" -le 2 ]]; then
+        SECONDS=$((SECONDS + query_timeout))
         printf '%s\n' '{"info":{"outcome":"timeout"}}' >"$output"
         return 2
       fi
@@ -768,11 +773,11 @@ for query_mode in recovers recovers-late unavailable; do
       if [[ "$query_mode" == recovers ]]; then
         [[ "$query_attempts" -eq 2 ]]
       else
-        [[ "$query_attempts" -eq 13 ]]
+        [[ "$query_attempts" -eq 3 ]]
       fi
     else
       ! ios_release_network_require_packet_tunnel_stopped fixture-device "$packet_processes"
-      [[ "$query_attempts" -ge 13 && "$query_attempts" -le 18 ]]
+      [[ "$query_attempts" -eq 3 ]]
     fi
   ) || fail "disconnect process inventory $query_mode did not respect its total budget"
 done
