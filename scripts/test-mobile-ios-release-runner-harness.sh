@@ -369,7 +369,7 @@ printf '%s\n' \
     fail "device marker success unexpectedly cleared the XCTest runner"
   }
   ios_release_network_run_bounded_xcode \
-    device-marker 5 1 NVPN_XCUITEST_STARTED=1 device-marker \
+    device-marker 5 2 NVPN_XCUITEST_STARTED=1 device-marker \
     "$TEMP_ROOT/device-marker.log.output" \
     "$TEMP_ROOT/device-marker-host-markers.tsv" \
     fixture-device "" \
@@ -729,7 +729,7 @@ for query_mode in recovers recovers-late unavailable; do
         || fail "process queries must respect devicectl's five-second minimum"
       query_attempts=$((query_attempts + 1))
       if [[ "$query_mode" == unavailable || "$query_attempts" -eq 1 ]] \
-        || [[ "$query_mode" == recovers-late && "$query_attempts" -le 3 ]]; then
+        || [[ "$query_mode" == recovers-late && "$query_attempts" -le 12 ]]; then
         SECONDS=$((SECONDS + 5))
         printf '%s\n' '{"info":{"outcome":"timeout"}}' >"$output"
         return 2
@@ -741,11 +741,11 @@ for query_mode in recovers recovers-late unavailable; do
       if [[ "$query_mode" == recovers ]]; then
         [[ "$query_attempts" -eq 2 ]]
       else
-        [[ "$query_attempts" -eq 4 ]]
+        [[ "$query_attempts" -eq 13 ]]
       fi
     else
       ! ios_release_network_require_packet_tunnel_stopped fixture-device "$packet_processes"
-      [[ "$query_attempts" -ge 2 && "$query_attempts" -le 6 ]]
+      [[ "$query_attempts" -ge 13 && "$query_attempts" -le 18 ]]
     fi
   ) || fail "disconnect process inventory $query_mode did not respect its total budget"
 done
