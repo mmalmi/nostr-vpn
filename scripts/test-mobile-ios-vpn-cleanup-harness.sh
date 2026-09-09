@@ -139,6 +139,14 @@ env PATH="$FIXTURE/bin:$PATH" NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
     "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; ios_release_network_require_unlocked test-device" \
   || fail "unlocked physical iOS device was rejected"
 
+: >"$FIXTURE/xcrun.log"
+env PATH="$FIXTURE/bin:$PATH" NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
+  bash -c \
+    "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; mktemp() { return 1; }; if ios_release_network_require_unlocked test-device; then exit 1; fi" \
+  || fail "lock check accepted a failed temporary-file allocation"
+[[ ! -s "$FIXTURE/xcrun.log" ]] \
+  || fail "failed lock-state allocation reached the device with an empty output path"
+
 watchdog_marker="$FIXTURE/watchdog-active"
 touch "$watchdog_marker"
 watchdog_started=$SECONDS

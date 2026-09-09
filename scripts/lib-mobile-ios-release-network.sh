@@ -1372,7 +1372,7 @@ ios_release_network_run_bounded_xcode() {
 ios_release_network_require_unlocked() {
   local device="$1"
   local lock_state
-  lock_state="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-lock-state.XXXXXX.json")"
+  lock_state="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-lock-state.XXXXXX")" || return 1
   # CoreDevice can stall before dispatching the query when it inherits the
   # release supervisor's session. Give it the same isolation as scoped XCTest;
   # retain the real lock-state check and CoreDevice's bounded deadline.
