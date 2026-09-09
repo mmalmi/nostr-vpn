@@ -165,6 +165,29 @@ test('resumed completion leaves no summary when a concrete receipt is missing', 
   }
 })
 
+test('a pending iOS seal does not hide invalid completed desktop evidence', () => {
+  const value = fixture()
+  try {
+    unlinkSync(value.platforms.ios.frozen_archive)
+    const path = value.platforms.windows.installer
+    const receipt = JSON.parse(readFileSync(path, 'utf8'))
+    receipt.installerInstalledAndLaunched = false
+    writeFileSync(path, JSON.stringify(receipt))
+    assert.throws(
+      () => completeReleaseGateFromReceipts({
+        commit,
+        tree,
+        releaseGateSummaryPath: value.releaseGateSummary,
+        platformReceiptPaths: value.platforms,
+      }),
+      /Windows exact installer gate receipt is incomplete/i,
+    )
+    assert.equal(existsSync(value.releaseGateSummary), false)
+  } finally {
+    rmSync(value.root, { recursive: true, force: true })
+  }
+})
+
 test('resumed completion leaves no summary when an artifact identity is wrong', () => {
   const value = fixture()
   try {

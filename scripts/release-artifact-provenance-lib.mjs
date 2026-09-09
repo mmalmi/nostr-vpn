@@ -1651,6 +1651,133 @@ function collectReleaseGateEvidence({
     )
   }
 
+  // Validate independent desktop evidence before waiting for iOS qualification.
+  for (const platform of ['linux', 'windows']) {
+    const artifact = readRequiredJson(
+      platformReceiptPaths[platform].artifact,
+      `${platform} exact desktop artifact receipt`,
+    )
+    const source = platformSource(
+      platform, artifact, `${platform} exact desktop artifact receipt`,
+    )
+    if (platform === 'linux') {
+      const packageInstall = readRequiredJson(
+        platformReceiptPaths.linux.package_install,
+        'Linux exact Debian package install receipt',
+      )
+      const deb = artifact.artifacts?.debianPackage
+      const app = artifact.artifacts?.app
+      const cli = artifact.artifacts?.cli
+      const muslCli = artifact.artifacts?.muslCli
+      const muslArchive = artifact.artifacts?.muslCliArchive
+      if (
+        artifact.schema !== 2
+        || !['local-docker', 'remote-native'].includes(artifact.builderMode)
+        || (
+          artifact.builderMode === 'local-docker'
+          && (
+            artifact.builtOnHostMac !== true
+            || artifact.builtOnRemoteVm !== false
+            || artifact.builderHostOs !== 'Darwin'
+            || !['arm64', 'x86_64'].includes(
+              artifact.builderHostArchitecture,
+            )
+          )
+        )
+        || (
+          artifact.builderMode === 'remote-native'
+          && (
+            artifact.builtOnHostMac !== false
+            || artifact.builtOnRemoteVm !== true
+            || artifact.builderHostOs !== 'Linux'
+            || artifact.builderHostArchitecture !== 'x86_64'
+          )
+        )
+        || !/^sha256:[0-9a-f]{64}$/.test(artifact.containerImageId ?? '')
+        || !/^[0-9a-f]{64}$/.test(artifact.dockerfileSha256 ?? '')
+        || !/^[0-9a-f]{64}$/.test(
+          artifact.containerPayloadSha256 ?? '',
+        )
+        || packageInstall.schema !== 2
+        || packageInstall.artifactType
+          !== 'exact Debian package installed on Ubuntu VM'
+        || packageInstall.appGitSha !== source.commit
+        || packageInstall.appGitTree !== source.tree
+        || packageInstall.fipsGitSha !== artifact.fipsGitSha
+        || packageInstall.fipsGitTree !== artifact.fipsGitTree
+        || packageInstall.builderMode !== artifact.builderMode
+        || packageInstall.builtOnHostMac !== artifact.builtOnHostMac
+        || packageInstall.builtOnRemoteVm !== artifact.builtOnRemoteVm
+        || packageInstall.builderHostOs !== artifact.builderHostOs
+        || packageInstall.builderHostArchitecture
+          !== artifact.builderHostArchitecture
+        || packageInstall.containerImageId !== artifact.containerImageId
+        || packageInstall.dockerfileSha256 !== artifact.dockerfileSha256
+        || packageInstall.containerPayloadSha256
+          !== artifact.containerPayloadSha256
+        || packageInstall.package !== 'nostr-vpn'
+        || packageInstall.packageArchitecture !== 'amd64'
+        || packageInstall.packageInstalledByDpkg !== true
+        || packageInstall.installedStatus !== 'installed'
+        || packageInstall.installedAppPath !== '/usr/bin/nostr-vpn'
+        || packageInstall.installedCliPath !== '/usr/bin/nvpn'
+        || packageInstall.debSha256 !== deb?.sha256
+        || packageInstall.debSize !== deb?.size
+        || packageInstall.installedAppSha256 !== app?.sha256
+        || packageInstall.installedCliSha256 !== cli?.sha256
+        || packageInstall.muslCliSha256 !== muslCli?.sha256
+        || packageInstall.muslArchiveSha256 !== muslArchive?.sha256
+        || packageInstall.bundleReceiptSha256
+          !== sha256FileSync(platformReceiptPaths.linux.artifact)
+        || packageInstall.packagePayloadVerifiedBeforeInstall !== true
+        || packageInstall.desktopEntryPresent !== true
+        || packageInstall.iconThemeAssetPresent !== true
+        || packageInstall.muslArchiveExtractedAndExecuted !== true
+      ) {
+        throw new Error(
+          'Linux exact Debian package was not installed and verified on the Ubuntu gate VM.',
+        )
+      }
+    } else {
+      const installer = readRequiredJson(
+        platformReceiptPaths.windows.installer,
+        'Windows exact installer gate receipt',
+      )
+      validateWindowsInstallerGateReceipt({
+        receipt: installer,
+        artifactReceipt: artifact,
+        commit: source.commit,
+        tree: source.tree,
+      })
+    }
+    const receipt = readRequiredJson(
+      platformReceiptPaths[platform].public_ui_join,
+      `${platform} / Pixel public-UI join receipt`,
+    )
+    requireDesktopMobileJoinReceipt({
+      receipt,
+      platform,
+      desktopArtifact: artifact,
+      desktopArtifactReceiptSha256: sha256FileSync(
+        platformReceiptPaths[platform].artifact,
+      ),
+      androidArtifact: android,
+      androidArtifactReceiptSha256: androidReceiptSha256,
+    })
+    const network = readRequiredJson(
+      platformReceiptPaths[platform].network,
+      `${platform} desktop network receipt`,
+    )
+    requireDesktopNetworkReceipt({
+      receipt: network,
+      platform,
+      commit: source.commit,
+      tree: source.tree,
+      artifactReceiptPath: platformReceiptPaths[platform].artifact,
+    })
+  }
+
+
   const ios = readRequiredJson(
     platformReceiptPaths.ios.frozen_archive,
     'Frozen iOS physical-gate seal',
@@ -1834,130 +1961,6 @@ function collectReleaseGateEvidence({
     )
   }
 
-  for (const platform of ['linux', 'windows']) {
-    const artifact = readRequiredJson(
-      platformReceiptPaths[platform].artifact,
-      `${platform} exact desktop artifact receipt`,
-    )
-    const source = platformSource(
-      platform, artifact, `${platform} exact desktop artifact receipt`,
-    )
-    if (platform === 'linux') {
-      const packageInstall = readRequiredJson(
-        platformReceiptPaths.linux.package_install,
-        'Linux exact Debian package install receipt',
-      )
-      const deb = artifact.artifacts?.debianPackage
-      const app = artifact.artifacts?.app
-      const cli = artifact.artifacts?.cli
-      const muslCli = artifact.artifacts?.muslCli
-      const muslArchive = artifact.artifacts?.muslCliArchive
-      if (
-        artifact.schema !== 2
-        || !['local-docker', 'remote-native'].includes(artifact.builderMode)
-        || (
-          artifact.builderMode === 'local-docker'
-          && (
-            artifact.builtOnHostMac !== true
-            || artifact.builtOnRemoteVm !== false
-            || artifact.builderHostOs !== 'Darwin'
-            || !['arm64', 'x86_64'].includes(
-              artifact.builderHostArchitecture,
-            )
-          )
-        )
-        || (
-          artifact.builderMode === 'remote-native'
-          && (
-            artifact.builtOnHostMac !== false
-            || artifact.builtOnRemoteVm !== true
-            || artifact.builderHostOs !== 'Linux'
-            || artifact.builderHostArchitecture !== 'x86_64'
-          )
-        )
-        || !/^sha256:[0-9a-f]{64}$/.test(artifact.containerImageId ?? '')
-        || !/^[0-9a-f]{64}$/.test(artifact.dockerfileSha256 ?? '')
-        || !/^[0-9a-f]{64}$/.test(
-          artifact.containerPayloadSha256 ?? '',
-        )
-        || packageInstall.schema !== 2
-        || packageInstall.artifactType
-          !== 'exact Debian package installed on Ubuntu VM'
-        || packageInstall.appGitSha !== source.commit
-        || packageInstall.appGitTree !== source.tree
-        || packageInstall.fipsGitSha !== artifact.fipsGitSha
-        || packageInstall.fipsGitTree !== artifact.fipsGitTree
-        || packageInstall.builderMode !== artifact.builderMode
-        || packageInstall.builtOnHostMac !== artifact.builtOnHostMac
-        || packageInstall.builtOnRemoteVm !== artifact.builtOnRemoteVm
-        || packageInstall.builderHostOs !== artifact.builderHostOs
-        || packageInstall.builderHostArchitecture
-          !== artifact.builderHostArchitecture
-        || packageInstall.containerImageId !== artifact.containerImageId
-        || packageInstall.dockerfileSha256 !== artifact.dockerfileSha256
-        || packageInstall.containerPayloadSha256
-          !== artifact.containerPayloadSha256
-        || packageInstall.package !== 'nostr-vpn'
-        || packageInstall.packageArchitecture !== 'amd64'
-        || packageInstall.packageInstalledByDpkg !== true
-        || packageInstall.installedStatus !== 'installed'
-        || packageInstall.installedAppPath !== '/usr/bin/nostr-vpn'
-        || packageInstall.installedCliPath !== '/usr/bin/nvpn'
-        || packageInstall.debSha256 !== deb?.sha256
-        || packageInstall.debSize !== deb?.size
-        || packageInstall.installedAppSha256 !== app?.sha256
-        || packageInstall.installedCliSha256 !== cli?.sha256
-        || packageInstall.muslCliSha256 !== muslCli?.sha256
-        || packageInstall.muslArchiveSha256 !== muslArchive?.sha256
-        || packageInstall.bundleReceiptSha256
-          !== sha256FileSync(platformReceiptPaths.linux.artifact)
-        || packageInstall.packagePayloadVerifiedBeforeInstall !== true
-        || packageInstall.desktopEntryPresent !== true
-        || packageInstall.iconThemeAssetPresent !== true
-        || packageInstall.muslArchiveExtractedAndExecuted !== true
-      ) {
-        throw new Error(
-          'Linux exact Debian package was not installed and verified on the Ubuntu gate VM.',
-        )
-      }
-    } else {
-      const installer = readRequiredJson(
-        platformReceiptPaths.windows.installer,
-        'Windows exact installer gate receipt',
-      )
-      validateWindowsInstallerGateReceipt({
-        receipt: installer,
-        artifactReceipt: artifact,
-        commit: source.commit,
-        tree: source.tree,
-      })
-    }
-    const receipt = readRequiredJson(
-      platformReceiptPaths[platform].public_ui_join,
-      `${platform} / Pixel public-UI join receipt`,
-    )
-    requireDesktopMobileJoinReceipt({
-      receipt,
-      platform,
-      desktopArtifact: artifact,
-      desktopArtifactReceiptSha256: sha256FileSync(
-        platformReceiptPaths[platform].artifact,
-      ),
-      androidArtifact: android,
-      androidArtifactReceiptSha256: androidReceiptSha256,
-    })
-    const network = readRequiredJson(
-      platformReceiptPaths[platform].network,
-      `${platform} desktop network receipt`,
-    )
-    requireDesktopNetworkReceipt({
-      receipt: network,
-      platform,
-      commit: source.commit,
-      tree: source.tree,
-      artifactReceiptPath: platformReceiptPaths[platform].artifact,
-    })
-  }
 
   const evidence = {
     platformGateReceipts: Object.fromEntries(
