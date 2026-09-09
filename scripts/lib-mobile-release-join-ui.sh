@@ -320,8 +320,8 @@ release_join_android_open_network_setup() {
         release_join_android_wait_query text 'This device' || return 1
       fi
       release_join_android_tap_center text '▾' || return 1
-      release_join_android_wait_query text 'Add network' || return 1
-      release_join_android_tap_center text 'Add network' || return 1
+      release_join_android_scroll_to text 'Add network' visible-center || return 1
+      release_join_android_tap_visible text 'Add network' || return 1
       release_join_android_wait_query description 'Create Network'
       return $?
     fi
