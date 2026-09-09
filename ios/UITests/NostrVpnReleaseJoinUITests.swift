@@ -194,6 +194,9 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
             XCTFail("Manual join did not dismiss Add Network with the expected pending admin")
             return
         }
+        // Configuring the pending roster precedes the asynchronous VPN start.
+        // Let the host approve only after the real carrier is authenticated.
+        try normalizeAndRequireJoinCarrier()
         emit("NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1")
 
         openDevicesTab()
