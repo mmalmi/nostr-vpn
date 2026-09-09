@@ -55,6 +55,79 @@ require(store.permitsAutomaticStart(), "explicit start blocked autoconnect resto
 print("iOS VPN desired-state tests passed")
 SWIFT
 
+cat >>"$TMP_DIR/main.swift" <<'SWIFT'
+@MainActor final class PacketTunnelController {
+    var status = 3
+    var installed = "old"
+    var responsive = true
+    var replacement = false
+    var starts = 0
+    static func routeState(in config: String) -> String? { config }
+    func statusRawValue() async -> Int? { status }
+    func installedRouteState() async -> String? { installed }
+    func replacementRestartRequired() -> Bool { replacement }
+    func providerIsResponsive() async -> Bool { responsive }
+    func start(state: Int, network: Int?, tunnelConfigJson: String,
+               providerOptionsConfigJson: String) async throws { starts += 1 }
+}
+@MainActor final class StartupCore {
+    func mobileTunnelProviderOptionsConfigJson() -> String { "desired" }
+    func mobileTunnelConfigJson() -> String { "desired" }
+}
+@MainActor final class AppModel {
+    enum PacketTunnelOperation { case syncConfig(reason: String, force: Bool) }
+    let vpnController = PacketTunnelController()
+    let core: StartupCore? = StartupCore()
+    let state = 0
+    let activeNetwork: Int? = nil
+    var statusMessage = ""
+    var allowed = true
+    var current = true
+    var queued = 0
+    static func packetTunnelNeedsStart(statusRawValue: Int?) -> Bool { statusRawValue != 3 }
+    func packetTunnelStartAllowed(reason: String) -> Bool { allowed }
+    func requireStartupTunnelReconciliation(_ generation: UInt64) throws {
+        if !current { throw CancellationError() }
+    }
+    func debugLog(_ message: String) {}
+    func enqueuePacketTunnelOperation(_ operation: PacketTunnelOperation) {
+        guard case .syncConfig(let reason, let force) = operation else { fatalError() }
+        require(reason == "startup" && force, "startup must use the receipt-aware config transaction")
+        queued += 1
+    }
+SWIFT
+# Execute the production startup decision, with only the OS/core boundaries replaced.
+sed -n '/^    private func reconcileStartupTunnelRoutes(/,/^    private func requireStartupTunnelReconciliation(/p' \
+  "$ROOT/ios/Sources/AppModelTunnelLifecycle.swift" | sed '$d' >>"$TMP_DIR/main.swift"
+cat >>"$TMP_DIR/main.swift" <<'SWIFT'
+    static func verifyStartup() async throws {
+        for scenario in ["changed", "matching", "unresponsive", "replacement", "disconnected", "blocked"] {
+            let app = AppModel()
+            app.vpnController.installed = scenario == "changed" ? "old" : "desired"
+            app.vpnController.responsive = scenario != "unresponsive"
+            app.vpnController.replacement = scenario == "replacement"
+            app.vpnController.status = scenario == "disconnected" ? 0 : 3
+            app.allowed = scenario != "blocked"
+            let reused = try await app.reconcileStartupTunnelRoutes(generation: 0)
+            let shouldQueue = scenario != "matching" && scenario != "blocked"
+            require(reused == (scenario == "matching"), "incorrect startup reuse: \(scenario)")
+            require(app.queued == (shouldQueue ? 1 : 0), "startup bypassed receipt-aware queue: \(scenario)")
+            require(app.vpnController.starts == 0, "startup restarted the carrier directly: \(scenario)")
+        }
+        let cancelled = AppModel()
+        cancelled.current = false
+        do {
+            _ = try await cancelled.reconcileStartupTunnelRoutes(generation: 0)
+            fatalError("cancelled startup was accepted")
+        } catch is CancellationError {}
+        require(cancelled.queued == 0 && cancelled.vpnController.starts == 0,
+                "cancelled startup changed the running carrier")
+        print("iOS startup receipt-aware route selection passed")
+    }
+}
+try await AppModel.verifyStartup()
+SWIFT
+
 xcrun swiftc -warnings-as-errors \
   "$ROOT/ios/Sources/Models.swift" \
   "$ROOT/ios/Sources/AppStorePolicy.swift" \

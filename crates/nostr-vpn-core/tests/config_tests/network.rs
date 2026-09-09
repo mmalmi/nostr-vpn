@@ -342,7 +342,10 @@ fn save_restricts_existing_secret_sidecar_permissions() {
         0o600
     );
     assert_eq!(
-        AppConfig::load(&path).expect("load config").nostr.secret_key,
+        AppConfig::load(&path)
+            .expect("load config")
+            .nostr
+            .secret_key,
         config.nostr.secret_key
     );
     fs::remove_dir_all(&dir).expect("remove temp dir");
@@ -367,7 +370,10 @@ fn save_does_not_overwrite_hardlinked_secret_sidecar_target() {
         "do-not-overwrite"
     );
     assert_eq!(
-        AppConfig::load(&path).expect("load config").nostr.secret_key,
+        AppConfig::load(&path)
+            .expect("load config")
+            .nostr
+            .secret_key,
         config.nostr.secret_key
     );
     fs::remove_dir_all(&dir).expect("remove temp dir");

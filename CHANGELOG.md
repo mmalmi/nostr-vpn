@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.10 - 2026-09-07
+## 4.1.10 - 2026-09-08
 
 ### Release notes
 
@@ -14,6 +14,15 @@ a signed roster.
 
 ### Fixed
 
+- Discover signed paid-exit offers automatically without first importing a
+  provider, and use the selected seller's advertised connection addresses.
+- Show automatic paid exits as active only while the selected seller is
+  connected, including the provider and verified exit IP.
+- Protect local keys, payment state, device rosters, and privileged daemon
+  files against unsafe filesystem links, and reject untrusted web origins.
+- Safely stage downloaded updates and app replacements without following
+  precreated filesystem links or misinterpreting installation paths.
+- Preserve pending iOS join receipts when restoring VPN routes after relaunch.
 - Recover encrypted sessions automatically after the other device's VPN
   restarts, so retained connections can deliver device approvals again.
 - Keep iOS Internet route changes visibly pending until the running VPN has
