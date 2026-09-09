@@ -1122,6 +1122,10 @@ PY
     echo "Pending QR check raced approval after staging the image" >&2
     exit 1
   }
+  ((stage_line < qr_approval_line)) || {
+    echo "QR image transfer competed with an active XCTest runner" >&2
+    exit 1
+  }
   ((clock_line < approval_line)) || {
     echo "QR delivery clock started after observing approval" >&2
     exit 1

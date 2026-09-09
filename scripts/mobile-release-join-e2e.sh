@@ -241,6 +241,13 @@ phase_ios_admin_android_qr() {
   release_join_android_background_foreground_pending_qr
   release_join_android_wait_vpn_connected
   release_join_capture_android_qr "$ANDROID_QR_CAPTURE"
+  # Stage before XCTest launches: CoreDevice file access can stall while the
+  # active runner waits for host input. Verify pending UI before approval can
+  # begin, then let the runner validate and import the exact captured image.
+  release_join_android_assert_pending_qr \
+    || fail "Pixel QR disappeared before the iPhone received its request image"
+  release_join_stage_ios_qr_image \
+    "$ANDROID_QR_CAPTURE" "$IOS_QR_STAGED_FILENAME"
   scan_log="$(ios_log ios-admin-android-qr)"
   release_join_ios_start_test \
     testImportJoinQrImageAndRequireAdminRosterProgress "$scan_log" \
@@ -250,12 +257,6 @@ phase_ios_admin_android_qr() {
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_IMPORT_READY=1 \
     "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
     || fail "iPhone did not open its shipped QR image importer"
-  # The runner cannot approve until this image is staged. Checking after decode
-  # races its confirmation tap and incorrectly rejects a fast successful join.
-  release_join_android_assert_pending_qr \
-    || fail "Pixel QR disappeared before the iPhone received its request image"
-  release_join_stage_ios_qr_image \
-    "$ANDROID_QR_CAPTURE" "$IOS_QR_STAGED_FILENAME"
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_IMAGE_SELECTED=1 \
     "$RELEASE_JOIN_UI_WAIT_SECS" \
     || fail "iPhone did not select the Pixel's captured QR image"
