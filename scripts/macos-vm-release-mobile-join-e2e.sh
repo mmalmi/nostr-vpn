@@ -959,10 +959,12 @@ DESKTOP_IOS_NETWORK_ID="$(
 release_join_valid_npub "$DESKTOP_IOS_ADMIN_ID"
 [[ -n "$DESKTOP_IOS_NETWORK_ID" ]]
 ios_join_log="$(ios_log macos-admin-iphone-join)"
+peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
 release_join_ios_start_test \
   testManualJoinAndRequireRosterCompletion "$ios_join_log" \
   "NVPN_RELEASE_JOIN_ADMIN_ID=$DESKTOP_IOS_ADMIN_ID" \
-  "NVPN_RELEASE_JOIN_NETWORK_ID=$DESKTOP_IOS_NETWORK_ID"
+  "NVPN_RELEASE_JOIN_NETWORK_ID=$DESKTOP_IOS_NETWORK_ID" \
+  "NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME=$peer_accepted_filename"
 ios_test_pid_owner="$(
   macos_mobile_direction_child_owner "$RELEASE_JOIN_IOS_TEST_PID"
 )"
@@ -1001,6 +1003,12 @@ assert_delivery_deadline \
 wait_log_marker \
   "$desktop_add_ios_log" "NVPN_RELEASE_JOIN_ADMIN_ACCEPTED=$IOS_JOINER_ID"
 wait_log_marker "$desktop_add_ios_log" NVPN_MACOS_RELEASE_APP_HOLDING=1
+remote require-delivery-log \
+  "$IOS_JOINER_ID" "$desktop_iphone_log_offset" \
+  >"$RESULT_DIR/macos/desktop-add-iphone-delivery.txt" \
+  2>"$RESULT_DIR/macos/desktop-add-iphone-daemon.log"
+release_join_signal_ios_peer_accepted \
+  "$peer_accepted_filename" "$DESKTOP_IOS_ADMIN_ID"
 release_join_ios_finish_test \
   || {
     echo "iPhone did not receive and retain the macOS signed roster" >&2
@@ -1016,10 +1024,6 @@ iphone_joiner_relaunch_admin="$(
     exit 1
   }
 DESKTOP_ADMIN_IPHONE_JOINER_RELAUNCH_DURABLE=1
-remote require-delivery-log \
-  "$IOS_JOINER_ID" "$desktop_iphone_log_offset" \
-  >"$RESULT_DIR/macos/desktop-add-iphone-delivery.txt" \
-  2>"$RESULT_DIR/macos/desktop-add-iphone-daemon.log"
 wait "$remote_pid"
 remote_pid=""
 remote_pid_owner=""

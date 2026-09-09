@@ -202,9 +202,18 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         openDevicesTab()
         try requireAcceptedRoster(
             admin,
-            relaunch: true,
+            relaunch: false,
             initialTimeout: setupTimeout,
             failureMessage: "Manual join did not receive and retain the admin's signed roster"
+        )
+        // A received roster precedes the administrator's durable receipt.
+        // Keep PacketTunnel alive until the host verifies that acknowledgment.
+        if let signal = environment["NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME"], !signal.isEmpty {
+            try waitForPeerAcceptance(admin)
+        }
+        try relaunchAndRequireAcceptedRoster(
+            admin,
+            failureMessage: "Manual join did not retain the admin's signed roster"
         )
         emit("NVPN_RELEASE_JOIN_MANUAL_COMPLETE=\(admin)")
         emit("NVPN_RELEASE_JOIN_RELAUNCH_DURABLE=\(admin)")
@@ -251,7 +260,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
             waitUntil(timeout: setupTimeout) {
                 (try? String(contentsOf: signal, encoding: .utf8)) == joiner
             },
-            "Peer acceptance was not verified before the admin relaunch"
+            "Peer acceptance was not verified before relaunch"
         )
         try FileManager.default.removeItem(at: signal)
         emit("NVPN_RELEASE_JOIN_PEER_ACCEPTED_BEFORE_RELAUNCH=\(joiner)")

@@ -19,6 +19,17 @@ FILES=(
 for file in "${FILES[@]}"; do
   bash -n "$file"
 done
+python3 - "$ROOT" <<'PY'
+import pathlib,sys
+root=pathlib.Path(sys.argv[1])
+host=(root/'scripts/macos-vm-release-mobile-join-e2e.sh').read_text()
+host=host.split('ios_join_log="$(ios_log macos-admin-iphone-join)"',1)[1].split('# Physical iPhone admin -> macOS joiner.',1)[0]
+assert host.index('remote require-delivery-log') < host.index('release_join_signal_ios_peer_accepted') < host.index('release_join_ios_finish_test')
+runner=(root/'ios/UITests/NostrVpnReleaseJoinUITests.swift').read_text()
+runner=runner.split('func testManualJoinAndRequireRosterCompletion()',1)[1].split('func testManualAdminAddRequiresRosterProgress()',1)[0]
+assert runner.index('relaunch: false') < runner.index('waitForPeerAcceptance(admin)') < runner.index('relaunchAndRequireAcceptedRoster')
+assert 'NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME' in runner
+PY
 (
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-snapshot.XXXXXX")"
