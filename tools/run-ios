@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/local-fips-workspace.sh"
 # Source release_common.sh so xcodegen can substitute NVPN_APP_VERSION_NAME /

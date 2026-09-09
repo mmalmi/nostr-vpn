@@ -66,6 +66,18 @@ ios_release_network_audit_rust_feature_surface() {
     echo "iOS Release Rust archive is missing" >&2
     return 1
   }
+  if ! python3 - "$ROOT" "${archive%.a}.d" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).resolve() / "crates/nostr-vpn-app-core/src/lib.rs"
+dependencies = pathlib.Path(sys.argv[2])
+if not dependencies.is_file() or str(source) not in dependencies.read_text().replace("\\ ", " "):
+    raise SystemExit("iOS Release Rust archive was not built from the selected app checkout")
+PY
+  then
+    return 1
+  fi
   grep -Fq -- '--no-default-features' "$ROOT/tools/run-ios" || {
     echo "iOS Release Rust build does not disable paid-exit/Cashu features" >&2
     return 1

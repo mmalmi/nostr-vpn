@@ -464,6 +464,7 @@ run_release_gate_static_preflight() {
   npm run build
   if [[ "$(uname -s)" == "Darwin" ]]; then
     ./scripts/test-ios-generated-project.sh
+    ./scripts/test-ios-rust-build-workspace.sh
     ./scripts/test-ios-qr-image-import-launch-environment.sh
     NVPN_IOS_RUST_PROFILE=release ./tools/run-ios xcframework
     ./scripts/test-ios-appstore-policy.sh
