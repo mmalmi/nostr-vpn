@@ -96,6 +96,7 @@ test('component proof retains only unchanged platform product inputs', () => {
       ...args, candidateCommit: verifierTest.commit, candidateTree: verifierTest.tree,
     }))
     for (const path of [
+      'CONTRIBUTING.md',
       'scripts/android-release-foreground-idle-receipt.mjs',
       'scripts/ios-upload-receipt.mjs',
       'scripts/publish-release-refs.mjs',

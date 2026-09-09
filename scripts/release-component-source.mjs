@@ -173,7 +173,7 @@ function isProductInput(path, platform) {
   return !(
     path.startsWith('.github/')
     || path.startsWith('docs/')
-    || ['AGENTS.md', 'CHANGELOG.md', 'README.md'].includes(path)
+    || ['AGENTS.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'README.md'].includes(path)
   )
 }
 
