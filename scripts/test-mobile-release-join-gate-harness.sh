@@ -64,6 +64,7 @@ done
   }
   release_join_android_wait_query() { trace "wait:$1:$2"; }
   release_join_android_tap_center() { trace "tap:$1:$2"; }
+  release_join_android_tap_visible() { trace "tap:$1:$2"; }
   release_join_android_scroll_to() { trace "scroll:$1:$2"; }
   release_join_android_query() {
     [[ "$1:$2" == 'text:This device' && "$scenario" == saved-direct ]]
@@ -89,6 +90,7 @@ done
         forbidden+='|Internet source This device'
       fi
       grep -Fxq 'tap:text:▾' "$tmp/calls"
+      grep -Fxq 'scroll:text:Add network' "$tmp/calls"
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
       grep -Fxq 'wait:description:Create Network' "$tmp/calls"
     else
@@ -1275,8 +1277,9 @@ PY
   RELEASE_JOIN_DELIVERY_WAIT_SECS=2
   RELEASE_JOIN_ANDROID_JOINER_ID=npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq
   snapshot=0
+  launches=0
 
-  release_join_android_launch() { :; }
+  release_join_android_launch() { launches=$((launches + 1)); }
   release_join_android_dump_ui() {
     snapshot=$((snapshot + 1))
   }
@@ -1312,6 +1315,10 @@ PY
     }
   [[ "$snapshot" == 2 ]] || {
     echo "Android QR join did not accept the first exact roster snapshot" >&2
+    exit 1
+  }
+  [[ "$launches" == 0 ]] || {
+    echo "Android QR delivery polling relaunched the foreground app" >&2
     exit 1
   }
 )

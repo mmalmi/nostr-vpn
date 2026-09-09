@@ -594,7 +594,8 @@ release_join_android_wait_qr_join_complete() {
   local admin="$1" deadline=$((SECONDS + RELEASE_JOIN_DELIVERY_WAIT_SECS))
   local description
   while ((SECONDS < deadline)); do
-    release_join_android_launch >/dev/null 2>&1 || true
+    # The pending QR is already foregrounded. Observe delivery without sending
+    # another activity intent on every poll or consuming its acceptance window.
     release_join_android_dump_ui || return 1
     if release_join_android_query_dumped \
         description "Join request QR code" center >/dev/null 2>&1; then
