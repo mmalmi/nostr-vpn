@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Network
 import NetworkExtension
+import os
 
 private let appGroupIdentifier: String = {
     guard let value = Bundle.main.object(
@@ -22,6 +23,7 @@ private enum UnderlayPathSource: Hashable {
 }
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
+    private static let handoffLog = Logger(subsystem: "fi.siriusbusiness.nvpn", category: "config-handoff")
     private static let appMessageChunkSize = 3_072
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
@@ -288,18 +290,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
             }
             guard let acknowledged else {
-                NSLog("nvpn-pkt: config handoff could not commit because the tunnel stopped")
+                Self.handoffLog.error("Config handoff could not commit because the tunnel stopped")
                 completionHandler?(nil)
                 return
             }
             let receiptsPending = withTunnelHandle { handle in
                 nostr_vpn_mobile_tunnel_has_pending_join_receipts(handle)
             }
-            NSLog(
-                "nvpn-pkt: config handoff acknowledged=%d joinReceiptsPending=%d",
-                acknowledged ? 1 : 0,
-                receiptsPending == true ? 1 : 0
-            )
+            Self.handoffLog.notice("Config handoff acknowledged=\(acknowledged, privacy: .public) joinReceiptsPending=\(receiptsPending == true, privacy: .public)")
             appMessageSnapshotLock.lock()
             if appConfigSnapshot == snapshot {
                 appConfigSnapshot.removeAll(keepingCapacity: false)
