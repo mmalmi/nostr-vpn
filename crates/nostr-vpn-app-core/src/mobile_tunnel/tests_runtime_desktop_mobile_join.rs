@@ -73,12 +73,15 @@
     }
 
     fn desktop_mobile_join_test_dir(label: &str) -> PathBuf {
+        static NEXT_DIR: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-{label}-{nonce}"));
-        fs::create_dir_all(&dir).expect("create desktop/mobile join test directory");
+        let sequence = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let dir = std::env::temp_dir().join(format!("nvpn-{label}-{pid}-{nonce}-{sequence}"));
+        fs::create_dir(&dir).expect("create desktop/mobile join test directory");
         dir
     }
 
