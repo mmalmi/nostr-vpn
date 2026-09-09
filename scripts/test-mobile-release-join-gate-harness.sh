@@ -1193,6 +1193,27 @@ PY
   [[ "$RELEASE_JOIN_ANDROID_PENDING_QR_LIFECYCLE_READY" == 1 ]]
 )
 (
+  # A local pre-pairing listener is not yet a live approval carrier.
+  listener_tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-macos-listener.XXXXXX")"
+  trap 'rm -rf "$listener_tmp"' EXIT
+  sed -n '/^assert_join_listener_ready() {/,/^}$/p' \
+    "$ROOT/scripts/macos-release-mobile-join-remote.sh" >"$listener_tmp/functions.sh"
+  source "$listener_tmp/functions.sh"
+  CLI=listener_status
+  CONFIG=fixture
+  peer_count=0
+  assert_service_ready() { :; }
+  listener_status() {
+    printf '{"expected_peer_count":0,"network_id":"fresh","daemon":{"running":true,"state":{"vpn_enabled":true,"vpn_active":false,"vpn_status":"Waiting for participants","fips_other_peer_count":%s}}}\n' "$peer_count"
+  }
+  sleep() { peer_count=2; }
+  assert_join_listener_ready >/dev/null
+  [[ "$peer_count" == 2 ]] || {
+    echo "macOS listener was accepted before a carrier peer authenticated" >&2
+    exit 1
+  }
+)
+(
   profile_tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-macos-profile-swap.XXXXXX")"
   trap 'find "$profile_tmp" -depth -delete' EXIT
   functions_file="$profile_tmp/functions.sh"

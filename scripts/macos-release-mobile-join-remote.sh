@@ -145,6 +145,7 @@ listener_ready = (
     and s.get("vpn_enabled") is True
     and s.get("vpn_active") is False
     and s.get("vpn_status") == "Waiting for participants"
+    and int(s.get("fips_other_peer_count", 0)) > 0
     and bool(v.get("network_id"))
 )
 assert d.get("running") is True and listener_ready
@@ -155,7 +156,7 @@ assert d.get("running") is True and listener_ready
     fi
     sleep 0.2
   done
-  echo "macOS Release join listener did not become ready" >&2
+  echo "macOS Release join listener did not authenticate a carrier peer" >&2
   printf '%s\n' "$runtime_json" >&2
   tail -n 120 "$DAEMON_LOG" >&2 2>/dev/null || true
   return 1
@@ -485,6 +486,10 @@ case "${1:-}" in
   service-preflight)
     [[ $# == 1 ]] || { echo "usage: $0 service-preflight" >&2; exit 2; }
     service_preflight
+    ;;
+  carrier-ready)
+    [[ $# == 1 ]] || { echo "usage: $0 carrier-ready" >&2; exit 2; }
+    assert_join_listener_ready
     ;;
   daemon-log-offset)
     [[ $# == 1 ]] || { echo "usage: $0 daemon-log-offset" >&2; exit 2; }

@@ -32,9 +32,9 @@ case "$ARTIFACT_ACTION" in
 esac
 MACOS_MOBILE_DIRECTIONS="${NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS:-all}"
 case "$MACOS_MOBILE_DIRECTIONS" in
-  all|pixel) ;;
+  all|pixel|macos-admin-iphone) ;;
   *)
-    echo "Unsupported NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS=$MACOS_MOBILE_DIRECTIONS (expected all or pixel)" >&2
+    echo "Unsupported NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS=$MACOS_MOBILE_DIRECTIONS (expected all, pixel, or macos-admin-iphone)" >&2
     exit 2
     ;;
 esac
@@ -673,7 +673,7 @@ if [[ "$ARTIFACT_ACTION" == "full" || "$ARTIFACT_ACTION" == "run-only" ]]; then
     echo "macOS/mobile Release join gate requires exact artifact reuse" >&2
     exit 2
   }
-  if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then
+  if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" ]]; then
     release_join_validate_reused_artifacts || {
       echo "macOS/mobile Release join gate rejected the exact mobile artifacts" >&2
       exit 1
@@ -796,6 +796,7 @@ DESKTOP_ADMIN_IPHONE_JOINER_RELAUNCH_DURABLE=0
 IPHONE_ADMIN_DESKTOP_JOINER_RELAUNCH_DURABLE=0
 
 # macOS admin -> physical Android joiner.
+if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" ]]; then
 set +e
 (
 set -euo pipefail
@@ -932,8 +933,9 @@ if ((android_admin_macos_status != 0)); then
   echo "Pixel admin -> macOS joiner failed; continuing independent Apple checks" >&2
 fi
 finish_macos_mobile_direction pixel-admin-macos-joiner
+fi
 
-if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then
+if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" ]]; then
 # macOS admin -> physical iPhone joiner. XCTest only drives the shipped
 # accessibility tree; the app receives no launch arguments or environment.
 set +e
@@ -976,6 +978,7 @@ release_join_ios_wait_marker \
   NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1 \
   "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
   || { echo "iPhone did not submit through shipped manual-join controls" >&2; exit 1; }
+remote carrier-ready >"$RESULT_DIR/macos/desktop-iphone-carrier-ready.log" 2>&1
 desktop_add_ios_log="$RESULT_DIR/macos/desktop-add-iphone.log"
 desktop_iphone_log_offset="$(remote daemon-log-offset)"
 remote admin-add "$IOS_JOINER_ID" ReleaseGateIphone \
@@ -1033,6 +1036,7 @@ fi
 finish_macos_mobile_direction macos-admin-iphone-joiner
 
 # Physical iPhone admin -> macOS joiner.
+if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then
 set +e
 (
 set -euo pipefail
@@ -1134,6 +1138,7 @@ else
   IPHONE_ADMIN_DESKTOP_JOINER_RELAUNCH_DURABLE=1
 fi
 finish_macos_mobile_direction iphone-admin-macos-joiner
+fi
 release_join_launch_ios_release
 release_join_assert_one_ios_process
 fi
@@ -1144,6 +1149,11 @@ if ((macos_admin_android_status != 0 \
   || ios_admin_macos_status != 0)); then
   echo "One or more macOS/mobile manual-join directions failed" >&2
   exit 1
+fi
+
+if [[ "$MACOS_MOBILE_DIRECTIONS" == "macos-admin-iphone" ]]; then
+  echo "MACOS_MOBILE_JOIN_DIAGNOSTIC_OK macos-admin-iphone"
+  exit 0
 fi
 
 if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then
