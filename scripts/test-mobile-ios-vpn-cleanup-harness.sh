@@ -56,6 +56,10 @@ if [[ "$rendered" == "devicectl device info details"* ]]; then
   exit 0
 fi
 if [[ "$rendered" == "devicectl device info lockState"* ]]; then
+  # CoreDevice can stall in the surrounding release supervisor's session.
+  # The real status query must own its process group, as scoped XCTest does.
+  pgid="$(ps -o pgid= -p "$$" | tr -d '[:space:]')"
+  [[ "$pgid" == "$$" ]] || exit 74
   destination=""
   previous=""
   for argument in "$@"; do

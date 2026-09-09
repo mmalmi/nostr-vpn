@@ -1373,11 +1373,29 @@ ios_release_network_require_unlocked() {
   local device="$1"
   local lock_state
   lock_state="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-lock-state.XXXXXX.json")"
-  if ! xcrun devicectl device info lockState \
-    --device "$device" \
-    --timeout 180 \
-    --json-output "$lock_state" \
-    --quiet >/dev/null
+  # CoreDevice can stall before dispatching the query when it inherits the
+  # release supervisor's session. Give it the same isolation as scoped XCTest;
+  # retain the real lock-state check and CoreDevice's bounded deadline.
+  if ! python3 - "$device" "$lock_state" <<'PY_QUERY'
+import signal
+import subprocess
+import sys
+
+process = subprocess.Popen(
+    ["xcrun", "devicectl", "device", "info", "lockState",
+     "--device", sys.argv[1], "--timeout", "180",
+     "--json-output", sys.argv[2], "--quiet"],
+    stdout=subprocess.DEVNULL,
+    start_new_session=True,
+)
+# Keep the isolated query owned by the caller when a gate is interrupted.
+def forward_signal(number, _frame):
+    process.send_signal(number)
+
+signal.signal(signal.SIGTERM, forward_signal)
+signal.signal(signal.SIGINT, forward_signal)
+raise SystemExit(process.wait())
+PY_QUERY
   then
     rm -f "$lock_state"
     echo "iOS Release gate could not verify that the selected phone is unlocked" >&2
