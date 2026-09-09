@@ -158,6 +158,7 @@ function isProductInput(path, platform) {
     return platform === 'windows'
   }
   const root = path.split('/')[0]
+  if (path === 'tools/run-ios') return platform === 'ios'
   if (sharedFiles.includes(path) || sharedRoots.includes(root)) return true
   if (platforms.includes(root)) {
     return root === platform && !/\/(?:UI)?Tests?\//.test(`/${path}/`)

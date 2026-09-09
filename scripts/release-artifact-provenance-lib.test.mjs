@@ -602,6 +602,41 @@ test('component proof treats the iOS physical gate as harness-only', () => {
   }
 })
 
+test('component proof scopes the iOS build driver to iOS', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-ios-build-scope-'))
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  try {
+    git('init', '-q')
+    git('config', 'user.name', 'Release Test')
+    git('config', 'user.email', 'release@example.invalid')
+    write(join(root, 'tools/run-ios'), 'base\n')
+    git('add', '.')
+    git('commit', '-qm', 'base')
+    const receiptCommit = git('rev-parse', 'HEAD')
+    const receiptTree = git('rev-parse', 'HEAD^{tree}')
+    write(join(root, 'tools/run-ios'), 'changed\n')
+    git('commit', '-qam', 'iOS driver correction')
+    const args = {
+      candidateRoot: root, receiptCommit, receiptTree,
+      candidateCommit: git('rev-parse', 'HEAD'),
+      candidateTree: git('rev-parse', 'HEAD^{tree}'),
+    }
+    for (const platform of ['android', 'linux', 'macos', 'windows']) {
+      assert.equal(proveUnchangedPlatformInputs({ ...args, platform }).platform, platform)
+    }
+    assert.throws(
+      () => proveUnchangedPlatformInputs({ ...args, platform: 'ios' }),
+      /changed product\/build input tools\/run-ios/,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('component proof separates iOS harness and profile build inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-release-script-scope-'))
   const git = (...args) => {
