@@ -102,11 +102,11 @@
                 .enable_all()
                 .build()
                 .expect("desktop/mobile join runtime")
-                .block_on(desktop_admin_to_mobile_joiner(false));
+                .block_on(desktop_admin_to_mobile_joiner(false, false));
         });
     }
 
-    async fn desktop_admin_to_mobile_joiner(routed: bool) {
+    async fn desktop_admin_to_mobile_joiner(routed: bool, receipt_backlog: bool) {
         let dir = desktop_mobile_join_test_dir("desktop-admin-mobile-joiner");
         let config_path = dir.join("mobile-config.toml");
         let (admin_app, joiner_app, queued, _admin_pubkey) =
@@ -127,6 +127,36 @@
             .expect("start desktop state control");
         let destination = PeerIdentity::from_npub(mobile.endpoint.npub())
             .expect("mobile endpoint identity");
+
+        if receipt_backlog {
+            // Retained phone state can contain receipts for administrators
+            // whose networks are no longer reachable. Start those retries
+            // before this new approval arrives.
+            for index in 0..8 {
+                let unreachable = PeerIdentity::from_npub(
+                    &Keys::generate().public_key().to_bech32().expect("old admin npub"),
+                )
+                .expect("old admin identity");
+                mobile.pending_join_roster_receipts
+                    .enqueue(format!("{index:064x}"), unreachable, true)
+                    .expect("retain old undelivered receipt");
+            }
+            tokio::time::timeout(Duration::from_secs(4), async {
+                loop {
+                    let retry_started = mobile.pending_join_roster_receipts.receipts
+                        .lock()
+                        .expect("pending receipts")
+                        .values()
+                        .any(|receipt| receipt.failed_attempts > 0);
+                    if retry_started {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("old unreachable receipts should enter retry");
+        }
 
         send_join_roster_with_receipt(
             &desktop_control.sender(),
@@ -329,7 +359,7 @@
                 .enable_all()
                 .build()
                 .expect("routed desktop/mobile runtime")
-                .block_on(desktop_admin_to_mobile_joiner(true));
+                .block_on(desktop_admin_to_mobile_joiner(true, false));
         });
     }
 
@@ -342,4 +372,55 @@
                 .expect("routed mobile/desktop runtime")
                 .block_on(mobile_admin_to_desktop_joiner(true));
         });
+    }
+
+    #[test]
+    fn desktop_mobile_manual_join_receipt_bypasses_unreachable_backlog() {
+        run_desktop_mobile_join_test("desktop-admin-receipt-backlog", || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("receipt backlog runtime")
+                .block_on(desktop_admin_to_mobile_joiner(true, true));
+        });
+    }
+
+    #[test]
+    fn expired_mobile_join_receipts_do_not_block_new_approval() {
+        let dir = desktop_mobile_join_test_dir("expired-join-receipts");
+        let path = dir.join("receipts.json");
+        let destination = PeerIdentity::from_npub(
+            &Keys::generate().public_key().to_bech32().expect("admin npub"),
+        )
+        .expect("admin identity");
+        let queue = PendingJoinRosterReceiptQueue::load(Some(path.clone()))
+            .expect("create persisted receipt queue");
+        for index in 0..MAX_PENDING_JOIN_ROSTER_RECEIPTS {
+            queue.enqueue(format!("{index:064x}"), destination, true)
+                .expect("persist retained receipt");
+        }
+        let mut stored: serde_json::Value = serde_json::from_slice(
+            &fs::read(&path).expect("read receipt sidecar"),
+        )
+        .expect("decode receipt sidecar");
+        for (index, receipt) in stored["receipts"]
+            .as_array_mut().expect("receipts").iter_mut().enumerate()
+        {
+            if index % 2 == 0 {
+                receipt["expiresAtUnix"] = serde_json::json!(1);
+            } else {
+                // Receipts from earlier app versions have no lifetime.
+                receipt.as_object_mut().expect("receipt").remove("expiresAtUnix");
+            }
+        }
+        fs::write(&path, serde_json::to_vec(&stored).expect("encode expired receipts"))
+            .expect("retain expired and legacy phone state");
+        let restored = PendingJoinRosterReceiptQueue::load(Some(path.clone()))
+            .expect("restore retained receipt queue");
+        restored.enqueue("f".repeat(64), destination, true)
+            .expect("expired receipts must not exhaust capacity for a new approval");
+        let receipts = restored.committed_snapshot().expect("live receipts");
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].0, "f".repeat(64));
+        fs::remove_dir_all(dir).expect("remove receipt fixture");
     }

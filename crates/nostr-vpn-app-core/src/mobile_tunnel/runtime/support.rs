@@ -246,13 +246,26 @@ async fn run_pending_join_roster_receipt_delivery(
             continue;
         }
 
-        let mut retry_needed = false;
+        // Each administrator has an independent connection. Retained receipts
+        // for unreachable administrators must not delay a new approval.
+        let mut sends = tokio::task::JoinSet::new();
         for (roster_event_id, destination) in receipts {
-            let frame = FipsControlFrame::JoinRosterAck {
-                roster_event_id: roster_event_id.clone(),
+            let state_control = state_control.clone();
+            sends.spawn(async move {
+                let frame = FipsControlFrame::JoinRosterAck {
+                    roster_event_id: roster_event_id.clone(),
+                };
+                let result =
+                    tokio::time::timeout(ATTEMPT_TIMEOUT, state_control.send(destination, &frame)).await;
+                (roster_event_id, destination, result)
+            });
+        }
+        let mut retry_needed = false;
+        while let Some(completed) = sends.join_next().await {
+            let Ok((roster_event_id, destination, result)) = completed else {
+                tracing::warn!("mobile: pending join receipt delivery task stopped unexpectedly");
+                return;
             };
-            let result =
-                tokio::time::timeout(ATTEMPT_TIMEOUT, state_control.send(destination, &frame)).await;
             match result {
                 Ok(Ok(_)) => {
                     if let Err(error) =

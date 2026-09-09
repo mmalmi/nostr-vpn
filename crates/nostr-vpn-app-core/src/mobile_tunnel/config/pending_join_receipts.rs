@@ -7,6 +7,7 @@ struct PendingJoinRosterReceipt {
     destination: PeerIdentity,
     committed: bool,
     failed_attempts: u64,
+    expires_at_unix: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -15,6 +16,8 @@ struct PersistedPendingJoinRosterReceipt {
     roster_event_id: String,
     destination_npub: String,
     committed: bool,
+    #[serde(default)]
+    expires_at_unix: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -125,6 +128,7 @@ impl PendingJoinRosterReceiptQueue {
                         destination,
                         committed: persisted_receipt.committed,
                         failed_attempts: 0,
+                        expires_at_unix: persisted_receipt.expires_at_unix,
                     },
                 )
                 .is_some()
@@ -134,12 +138,17 @@ impl PendingJoinRosterReceiptQueue {
                 ));
             }
         }
-        Ok(Self {
+        let queue = Self {
             path: Some(path),
             applying: Mutex::new(()),
             receipts: Mutex::new(receipts),
             changed: tokio::sync::Notify::new(),
-        })
+        };
+        // Legacy receipts have no lifetime and may name long-gone admins.
+        // An admin still awaiting delivery retries its signed roster, which
+        // recreates the receipt through the normal idempotent receive path.
+        queue.prune_expired()?;
+        Ok(queue)
     }
 
     fn enqueue(
@@ -148,6 +157,7 @@ impl PendingJoinRosterReceiptQueue {
         destination: PeerIdentity,
         committed: bool,
     ) -> Result<()> {
+        self.prune_expired()?;
         let mut receipts = self
             .receipts
             .lock()
@@ -162,6 +172,9 @@ impl PendingJoinRosterReceiptQueue {
                 destination,
                 committed,
                 failed_attempts: 0,
+                expires_at_unix: unix_timestamp().saturating_add(
+                    nostr_vpn_core::join_delivery::JOIN_ROSTER_OUTBOX_TTL_SECS,
+                ),
             });
         if updated != *receipts {
             self.persist(&updated)?;
@@ -199,6 +212,7 @@ impl PendingJoinRosterReceiptQueue {
     }
 
     fn committed_snapshot(&self) -> Result<Vec<(String, PeerIdentity)>> {
+        self.prune_expired()?;
         self.receipts
             .lock()
             .map_err(|_| anyhow!("mobile pending join receipt lock poisoned"))
@@ -209,6 +223,22 @@ impl PendingJoinRosterReceiptQueue {
                     .map(|(event_id, receipt)| (event_id.clone(), receipt.destination))
                     .collect()
             })
+    }
+
+    fn prune_expired(&self) -> Result<()> {
+        let mut receipts = self
+            .receipts
+            .lock()
+            .map_err(|_| anyhow!("mobile pending join receipt lock poisoned"))?;
+        let now = unix_timestamp();
+        if receipts.values().all(|receipt| receipt.expires_at_unix > now) {
+            return Ok(());
+        }
+        let mut updated = receipts.clone();
+        updated.retain(|_, receipt| receipt.expires_at_unix > now);
+        self.persist(&updated)?;
+        *receipts = updated;
+        Ok(())
     }
 
     fn record_failed_attempt(
@@ -279,6 +309,7 @@ impl PendingJoinRosterReceiptQueue {
                     roster_event_id: roster_event_id.clone(),
                     destination_npub: receipt.destination.npub(),
                     committed: receipt.committed,
+                    expires_at_unix: receipt.expires_at_unix,
                 },
             )
             .collect::<Vec<_>>();
