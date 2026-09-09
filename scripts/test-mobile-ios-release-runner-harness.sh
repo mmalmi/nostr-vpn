@@ -316,6 +316,21 @@ run_bounded success 5 2 FIRST \
 grep -Fxq FIRST "$TEMP_ROOT/success.log" \
   || fail "bounded runner did not retain command output"
 
+set +e
+run_bounded authorization 5 2 FIRST \
+  bash -c 'echo "Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while enabling automation mode.\""; exit 65' \
+  >"$TEMP_ROOT/authorization-diagnostic.log" 2>&1
+authorization_status=$?
+set -e
+[[ "$authorization_status" -eq 125 ]] \
+  || fail "pre-method Apple authorization failure did not fail closed"
+grep -Fq 'Apple UI Automation authorization timed out before any test method' \
+  "$TEMP_ROOT/authorization-diagnostic.log" \
+  || fail "pre-method Apple authorization failure was hidden by a generic launch error"
+grep -Fq 'Enter the automation PIN on the selected iPhone when prompted' \
+  "$TEMP_ROOT/authorization-diagnostic.log" \
+  || fail "Apple authorization diagnostic omitted the required on-device action"
+
 # The runner emits identical markers to stderr and its Documents file. Use the
 # captured stream after a successful test; file vending can hang independently.
 stream_log="$TEMP_ROOT/streamed-markers.log"

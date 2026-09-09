@@ -1383,7 +1383,11 @@ ios_release_network_run_bounded_xcode() {
   fi
   if [[ -n "$first_marker" && "$marker_seen" -eq 0 ]]
   then
-    echo "iOS $label exited before emitting its first test-method marker" >&2
+    if grep -Fq 'Timed out while enabling automation mode.' "$log"; then
+      echo "iOS $label: Apple UI Automation authorization timed out before any test method. Enter the automation PIN on the selected iPhone when prompted; unlocking alone does not authorize UI testing. Retain the installed runner; do not repeat unchanged retries." >&2
+    else
+      echo "iOS $label exited before emitting its first test-method marker" >&2
+    fi
     return 125
   fi
   return "$status"
