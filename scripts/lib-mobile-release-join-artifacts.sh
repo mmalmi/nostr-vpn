@@ -62,6 +62,7 @@ release_join_record_selected_devices() {
   }
   xcrun devicectl device info details \
     --device "$IOS_DEVICE" \
+    --timeout 180 \
     --json-output "$details" \
     --quiet >/dev/null
   android_manufacturer="$(

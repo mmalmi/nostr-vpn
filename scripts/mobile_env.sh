@@ -92,7 +92,7 @@ PY
   while IFS="$(printf '\t')" read -r wired candidate; do
     [[ -n "$candidate" ]] || continue
     if xcrun devicectl device info details \
-      --device "$candidate" >/dev/null 2>&1
+      --device "$candidate" --timeout 180 >/dev/null 2>&1
     then
       printf '%s\t%s\n' "$wired" "$candidate" >>"$ready_file"
     fi
@@ -130,7 +130,7 @@ select_physical_ios_device() {
   local status=0
 
   if [[ -n "$requested" ]]; then
-    if ! xcrun devicectl device info details --device "$requested" >/dev/null 2>&1; then
+    if ! xcrun devicectl device info details --device "$requested" --timeout 180 >/dev/null 2>&1; then
       printf 'Requested physical iOS device is not online\n' >&2
       return 1
     fi
@@ -186,6 +186,7 @@ resolve_physical_ios_udid() {
   details_file="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-device-details.XXXXXX")"
   if ! xcrun devicectl device info details \
     --device "$device" \
+    --timeout 180 \
     --json-output "$details_file" \
     --quiet >/dev/null
   then

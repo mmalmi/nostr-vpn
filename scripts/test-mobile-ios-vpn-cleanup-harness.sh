@@ -65,7 +65,9 @@ if [[ "$rendered" == "devicectl device info lockState"* ]]; then
     fi
     previous="$argument"
   done
-  if [[ "${NVPN_TEST_DEVICE_LOCKED:-0}" == "1" ]]; then
+  if [[ "${NVPN_TEST_DEVICE_LOCKED:-0}" == "unknown" ]]; then
+    printf '{"result":{}}\n' >"$destination"
+  elif [[ "${NVPN_TEST_DEVICE_LOCKED:-0}" == "1" ]]; then
     printf '{"result":{"passcodeRequired":true,"unlockedSinceBoot":true}}\n' \
       >"$destination"
   else
@@ -156,6 +158,18 @@ set -e
 [[ "$status" -ne 0 ]] || fail "locked physical iOS device was accepted"
 grep -Fq 'requires the selected phone to be unlocked' "$FIXTURE/locked.out" \
   || fail "locked physical iOS failure was not actionable"
+grep -Fq 'passcodeRequired=true unlockedSinceBoot=true' "$FIXTURE/locked.out" \
+  || fail "lock failure discarded the observed state"
+set +e
+env PATH="$FIXTURE/bin:$PATH" NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
+  NVPN_TEST_DEVICE_LOCKED=unknown bash -c \
+  "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; ios_release_network_require_unlocked test-device" \
+  >"$FIXTURE/unknown.out" 2>&1
+status=$?
+set -e
+[[ "$status" -ne 0 ]] || fail "unknown lock state was accepted"
+grep -Fq 'did not report a complete lock state' "$FIXTURE/unknown.out" \
+  || fail "unknown lock state was misreported as a locked phone"
 
 set +e
 env "${COMMON_ENV[@]}" "$ROOT/scripts/mobile-ios-smoke.sh" device --vpn-cycle \

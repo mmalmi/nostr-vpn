@@ -1383,19 +1383,37 @@ ios_release_network_require_unlocked() {
     echo "iOS Release gate could not verify that the selected phone is unlocked" >&2
     return 1
   fi
-  if ! python3 - "$lock_state" <<'PY'
+  local state_status=0
+  python3 - "$lock_state" <<'PY_LOCK' || state_status=$?
 import json
 import sys
 
-result = json.load(open(sys.argv[1], encoding="utf-8")).get("result", {})
-if result.get("unlockedSinceBoot") is not True:
+try:
+    result = json.load(open(sys.argv[1], encoding="utf-8")).get("result", {})
+    required = result.get("passcodeRequired")
+    unlocked = result.get("unlockedSinceBoot")
+except (ValueError, AttributeError):
+    raise SystemExit(2)
+required = required if type(required) is bool else None
+unlocked = unlocked if type(unlocked) is bool else None
+# Keep only the two booleans in the gate log, never device identity or auth data.
+print(
+    "iOS lock state: passcodeRequired=" + json.dumps(required)
+    + " unlockedSinceBoot=" + json.dumps(unlocked),
+    file=sys.stderr,
+)
+if type(required) is not bool or type(unlocked) is not bool:
+    raise SystemExit(2)
+if required or not unlocked:
     raise SystemExit(1)
-if result.get("passcodeRequired") is not False:
-    raise SystemExit(1)
-PY
-  then
+PY_LOCK
+  if [[ "$state_status" -ne 0 ]]; then
     rm -f "$lock_state"
-    echo "iOS Release gate requires the selected phone to be unlocked" >&2
+    if [[ "$state_status" -eq 1 ]]; then
+      echo "iOS Release gate requires the selected phone to be unlocked" >&2
+    else
+      echo "iOS Release gate did not report a complete lock state" >&2
+    fi
     return 1
   fi
   rm -f "$lock_state"

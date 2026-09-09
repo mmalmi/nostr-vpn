@@ -72,6 +72,7 @@ fi
 
 if [[ "${1:-}" == "devicectl" && "${2:-}" == "device" \
   && "${3:-}" == "info" && "${4:-}" == "details" ]]; then
+  [[ " $* " == *" --timeout 180 "* ]] || exit 74
   exit 0
 fi
 
@@ -183,5 +184,9 @@ selected="$(
 )"
 [[ "$selected" == "00000000-0000000000000002" ]] \
   || fail "iOS selection did not prefer the single wired physical device"
+
+selected="$(PATH="$tmp:$PATH" select_physical_ios_device "00000000-0000000000000002")"
+[[ "$selected" == "00000000-0000000000000002" ]] \
+  || fail "explicit iOS selection failed its bounded readiness check"
 
 printf 'mobile physical-device selection harness passed\n'
