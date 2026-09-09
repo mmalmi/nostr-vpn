@@ -946,7 +946,6 @@ ios_test_pid_owner=""
 acceptance_observer_pids=()
 trap macos_mobile_direction_cleanup EXIT
 prepare_macos_mobile_direction "$MACOS_MOBILE_DIRECTION_LABEL"
-release_join_restart_ios_in_place
 desktop_ios_admin_log="$RESULT_DIR/macos/desktop-ios-admin.log"
 remote create-admin "ReleaseMacIphoneAdmin" >"$desktop_ios_admin_log" 2>&1
 DESKTOP_IOS_ADMIN_ID="$(
@@ -972,8 +971,10 @@ IOS_JOINER_ID="$(
   ios_marker_value_from "$ios_join_log" NVPN_RELEASE_JOIN_JOINER_ID
 )"
 release_join_valid_npub "$IOS_JOINER_ID"
+# Public entry and carrier authentication both precede the delivery clock.
 release_join_ios_wait_marker \
-  NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1 "$RELEASE_JOIN_IOS_SETUP_WAIT_SECS" \
+  NVPN_RELEASE_JOIN_MANUAL_SUBMITTED=1 \
+  "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
   || { echo "iPhone did not submit through shipped manual-join controls" >&2; exit 1; }
 desktop_add_ios_log="$RESULT_DIR/macos/desktop-add-iphone.log"
 desktop_iphone_log_offset="$(remote daemon-log-offset)"
@@ -1042,7 +1043,6 @@ ios_test_pid_owner=""
 acceptance_observer_pids=()
 trap macos_mobile_direction_cleanup EXIT
 prepare_macos_mobile_direction "$MACOS_MOBILE_DIRECTION_LABEL"
-release_join_restart_ios_in_place
 ios_create_admin "Release iPhone macOS admin"
 desktop_ios_join_log="$RESULT_DIR/macos/iphone-admin-desktop-join.log"
 remote manual-join \

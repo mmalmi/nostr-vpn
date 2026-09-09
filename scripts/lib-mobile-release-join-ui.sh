@@ -973,9 +973,13 @@ release_join_ios_stop_runner() {
     ios_release_network_stop_forced_xctrunner "$device"
 }
 
+# XCTest setUp calls app.launch(), which terminates an existing app instance.
+# A preceding CoreDevice restart only repeats that launch and waits on teardown.
 release_join_ios_start_test() {
   local test_name="$1" log="$2"
   shift 2
+  release_join_require_device_mutation_allowed || return 1
+  RELEASE_JOIN_DEVICE_MUTATED=1
   local -a command=()
   local command_file pid pgid actual_pgid caller_pgid cleanup_status=0
   local monitor_was_enabled=0

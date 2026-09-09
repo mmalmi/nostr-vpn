@@ -977,24 +977,6 @@ PY
     "$team_hash" "$app_cert" "$derived" "$udid"
 }
 
-release_join_restart_ios_in_place() {
-  local bundle="${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}"
-  release_join_require_device_mutation_allowed || return 1
-  [[ -d "$RELEASE_JOIN_IOS_APP_PATH" ]] || {
-    echo "Exact iOS Release artifact is unavailable" >&2
-    return 1
-  }
-  RELEASE_JOIN_DEVICE_MUTATED=1
-  # Restart the installed binary in place while retaining its VPN approval and
-  # container. Each phase proves isolation by creating a fresh network ID;
-  # reinstalling cannot improve that isolation and triggers passcode UI.
-  xcrun devicectl device process launch \
-    --device "$IOS_DEVICE" \
-    --terminate-existing \
-    --no-activate \
-    "$bundle" >/dev/null
-}
-
 release_join_assert_one_ios_process() {
   local processes="$RESULT_DIR/ios-processes-final.json"
   xcrun devicectl device info processes \

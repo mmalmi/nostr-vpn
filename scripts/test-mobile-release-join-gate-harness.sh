@@ -857,6 +857,7 @@ PY
   set -u
   # A failed concurrent phase must reap the whole host process group and stop
   # only the retained runner process on-device, without uninstalling it.
+  source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   # shellcheck disable=SC1091
@@ -875,6 +876,13 @@ PY
     printf '%s\0' bash -c \
       'printf "%s\n" "Test Case '\''-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests fixture]'\'' started."; sleep 30 & wait'
   }
+  if release_join_ios_start_test fixture "$private/fixture.log"; then
+    echo "iOS join test started before device mutation was armed" >&2
+    exit 1
+  fi
+  [[ ! -e "$private/fixture.log" ]]
+  RELEASE_JOIN_ARTIFACTS_VALIDATED=1
+  RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
   release_join_ios_start_test fixture "$private/fixture.log"
   pgid="$RELEASE_JOIN_IOS_TEST_PGID"
   release_join_ios_abort_test
@@ -889,6 +897,9 @@ PY
 (
   # Even a failed isolation check must reap both the command's descendants and
   # any separately reported process group before returning.
+  source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
+  RELEASE_JOIN_ARTIFACTS_VALIDATED=1
+  RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   # shellcheck disable=SC1091
@@ -1002,7 +1013,6 @@ PY
     trace "delivered:$3"
   }
   release_join_valid_npub() { [[ "$1" == npub1* ]]; }
-  release_join_restart_ios_in_place() { trace restart-ios; }
   release_join_android_open_network_setup() { trace network-setup-android; }
   ios_create_admin() {
     RELEASE_JOIN_IOS_ADMIN_ID=npub1iosadmin
