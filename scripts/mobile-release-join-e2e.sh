@@ -465,10 +465,17 @@ esac
 
 rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
 
-carrier_preflight_log="$(ios_log ios-carrier-preflight)"
-release_join_ios_run_test \
-  testNormalizeRetainedJoinCarrierSettings "$carrier_preflight_log" \
-  || fail "iPhone join carrier preflight did not restore and authenticate public bootstrap"
+# Admin creation and manual joining already restore the carrier and verify
+# authenticated bootstrap in their first XCTest. Only the QR-only iPhone
+# joiner and desktop-only entry points need a separate normalization session.
+case "$RELEASE_JOIN_PHASE_SELECTION" in
+  pixel-admin-iphone-qr-only|desktop-only)
+    carrier_preflight_log="$(ios_log ios-carrier-preflight)"
+    release_join_ios_run_test \
+      testNormalizeRetainedJoinCarrierSettings "$carrier_preflight_log" \
+      || fail "iPhone join carrier preflight did not restore and authenticate public bootstrap"
+    ;;
+esac
 
 case "$RELEASE_JOIN_PHASE_SELECTION" in
   full)

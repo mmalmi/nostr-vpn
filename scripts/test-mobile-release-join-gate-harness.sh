@@ -31,6 +31,42 @@ assert runner.index('relaunch: false') < runner.index('waitForPeerAcceptance(adm
 assert 'NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME' in runner
 PY
 (
+  # A connection that is still closing the preceding XCTest session must
+  # become ready before the next method's launch budget starts. A locked or
+  # unavailable device must not start a test at all.
+  source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  private="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-join-readiness.XXXXXX")"
+  trap 'rm -rf "$private"' EXIT
+  PRIVATE_DIR="$private"
+  IOS_DEVICE=fixture-device
+  RELEASE_JOIN_ARTIFACTS_VALIDATED=1
+  RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
+  ios_release_network_require_unlocked() {
+    [[ "$1" == fixture-device ]]
+    printf 'ready\n' >>"$private/readiness"
+    return "$ready_status"
+  }
+  release_join_ios_stop_runner() { :; }
+  release_join_ios_test_command() {
+    printf 'command\n' >>"$private/commands"
+    printf '%s\0' bash -c \
+      'printf "%s\n" "Test Case '\''-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests fixture]'\'' started."; sleep 1'
+  }
+  ready_status=1
+  if release_join_ios_run_test fixture "$private/denied.log"; then
+    echo 'iOS join started while the selected device was unavailable' >&2
+    exit 1
+  fi
+  [[ ! -e "$private/commands" && ! -e "$private/denied.log" ]]
+  [[ $(wc -l <"$private/readiness" | tr -d ' ') == 1 ]]
+  ready_status=0
+  release_join_ios_run_test fixture "$private/ready.log"
+  [[ $(wc -l <"$private/readiness" | tr -d ' ') == 2 ]]
+  [[ $(wc -l <"$private/commands" | tr -d ' ') == 1 ]]
+)
+(
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   PRIVATE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-snapshot.XXXXXX")"
   trap 'rm -rf "$PRIVATE_DIR"' EXIT
@@ -878,6 +914,7 @@ PY
   PRIVATE_DIR="$private"
   IOS_DEVICE="fixture-device"
   unset IOS_BUNDLE_ID
+  ios_release_network_require_unlocked() { [[ "$1" == "$IOS_DEVICE" ]]; }
   audit="$private/runner-audit"
   ios_release_network_stop_forced_xctrunner() {
     [[ "$IOS_BUNDLE_ID" == "fi.siriusbusiness.nvpn" ]]
@@ -920,6 +957,7 @@ PY
   PRIVATE_DIR="$private"
   IOS_DEVICE="fixture-device"
   child_file="$private/child.pid"
+  ios_release_network_require_unlocked() { [[ "$1" == "$IOS_DEVICE" ]]; }
   set -m
   (exec sleep 30) &
   unexpected_pgid=$!

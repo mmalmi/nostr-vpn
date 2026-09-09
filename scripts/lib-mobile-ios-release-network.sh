@@ -1375,6 +1375,7 @@ ios_release_network_require_unlocked() {
   lock_state="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-lock-state.XXXXXX.json")"
   if ! xcrun devicectl device info lockState \
     --device "$device" \
+    --timeout 180 \
     --json-output "$lock_state" \
     --quiet >/dev/null
   then
