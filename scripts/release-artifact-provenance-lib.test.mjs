@@ -18,6 +18,7 @@ import {
   collectReleaseGateReceipts,
   startosExactPackageValidator,
   validateExactZipMembers,
+  validateMacosPixelJoinReceipt,
 } from './release-artifact-provenance-lib.mjs'
 import { proveUnchangedPlatformInputs } from './release-component-source.mjs'
 
@@ -1738,6 +1739,78 @@ test('release receipt collection requires exact source and strict public UI gate
       Object.keys(evidence.platformGateReceipts).sort(),
       ['android', 'ios', 'linux', 'macos', 'windows'],
     )
+
+    const fullMacosText = readFileSync(paths.macos.public_ui_join, 'utf8')
+    const pixelReceipt = JSON.parse(fullMacosText)
+    pixelReceipt.selectedDirections = 'pixel'
+    for (const key of [
+      'desktopAdminIphoneJoiner', 'iphoneAdminDesktopJoiner',
+      'desktopAdminIphoneJoinerRelaunchDurable',
+      'iphoneAdminDesktopJoinerRelaunchDurable',
+    ]) pixelReceipt[key] = false
+    delete pixelReceipt.artifact.ios
+    delete pixelReceipt.deliveryMilliseconds['macOS-admin-to-iPhone-manual']
+    delete pixelReceipt.deliveryMilliseconds['iPhone-admin-to-macOS-manual']
+    const pixelArgs = {
+      receipt: pixelReceipt,
+      artifactReceipt: JSON.parse(readFileSync(paths.macos.artifact, 'utf8')),
+      artifactReceiptSha256: sha256(readFileSync(paths.macos.artifact)),
+      androidArtifact: JSON.parse(readFileSync(paths.android.physical, 'utf8')),
+      androidArtifactReceiptSha256: sha256(readFileSync(paths.android.physical)),
+      androidInstallReceiptSha256: pixelReceipt.artifact.android.installReceiptSha256,
+      androidInstallReceiptSize: pixelReceipt.artifact.android.installReceiptSize,
+    }
+    assert.deepEqual(validateMacosPixelJoinReceipt(pixelArgs), pixelReceipt.deliveryMilliseconds)
+    for (const mutate of [
+      (r) => { r.pixelRelaunchDurability = false },
+      (r) => { r.desktopAdminIphoneJoiner = true },
+      (r) => { r.selectedDirections = 'all' },
+      (r) => { r.publicUiOnly = false },
+      (r) => { r.deliveryMilliseconds['macOS-admin-to-Android-manual'] = 15_001 },
+      (r) => { delete r.deliveryMilliseconds['Android-admin-to-macOS-manual'] },
+      (r) => { r.artifact.appExecutableSha256 = '0'.repeat(64) },
+      (r) => { r.artifact.android.installedApkSha256 = '0'.repeat(64) },
+      (r) => { r.artifact.android.installReceiptSha256 = '0'.repeat(64) },
+      (r) => { r.artifact.android.installReceiptSize += 1 },
+    ]) {
+      const receipt = structuredClone(pixelReceipt)
+      mutate(receipt)
+      assert.throws(() => validateMacosPixelJoinReceipt({ ...pixelArgs, receipt }))
+    }
+    // A retained Pixel receipt alone must never satisfy the full release gate.
+    writeFileSync(paths.macos.public_ui_join, JSON.stringify(pixelReceipt))
+    assert.throws(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }), /macOS\/mobile public-UI join receipt is incomplete/)
+    writeFileSync(paths.macos.public_ui_join, fullMacosText)
+    const hostSource = readFileSync(join(process.cwd(),
+      'scripts/macos-vm-release-mobile-join-e2e.sh'), 'utf8')
+    assert.ok(hostSource.includes('reuse_pixel_coverage() {'))
+    const reuseFunction = 'reuse_pixel_coverage() {' + hostSource
+      .split('reuse_pixel_coverage() {')[1].split('\nwrite_component_proof()')[0]
+    assert.match(hostSource, /&& -z "\$REUSED_PIXEL_RECEIPT_SHA256" \]\]; then/)
+    const retainedPath = join(root, 'retained-pixel.json')
+    const reuseOutput = join(root, 'resume-macos')
+    pixelReceipt.artifact.android.installReceiptSha256 = sha256(readFileSync(paths.android.install))
+    pixelReceipt.artifact.android.installReceiptSize = readFileSync(paths.android.install).length
+    write(retainedPath, JSON.stringify(pixelReceipt))
+    write(join(reuseOutput, 'macos/artifact.json'), readFileSync(paths.macos.artifact))
+    const reuse = () => spawnSync('bash', ['-euo', 'pipefail', '-c', `${reuseFunction}\nreuse_pixel_coverage`], {
+      encoding: 'utf8',
+      env: {
+        ...process.env, ROOT: process.cwd(), REUSE_PIXEL_RECEIPT: retainedPath,
+        RESULT_DIR: reuseOutput, ANDROID_ARTIFACT_RECEIPT: paths.android.physical,
+        ANDROID_INSTALL_RECEIPT: paths.android.install,
+      },
+    })
+    const reused = reuse()
+    assert.equal(reused.status, 0, reused.stderr)
+    assert.equal(reused.stdout.trim(), sha256(readFileSync(retainedPath)))
+    assert.deepEqual(readFileSync(join(reuseOutput, 'macos/reused-pixel-summary.json')),
+      readFileSync(retainedPath))
+    assert.equal(readFileSync(join(reuseOutput, 'macos/delivery-times.tsv'), 'utf8'),
+      Object.entries(pixelReceipt.deliveryMilliseconds).map(([label, ms]) => `${label}\t${ms}\n`).join(''))
+    assert.notEqual(reuse().status, 0, 'a rerun must preserve the retained evidence')
 
     const wireguardText = readFileSync(paths.android.wireguard_dns, 'utf8')
     const combinedWireguard = JSON.parse(wireguardText)

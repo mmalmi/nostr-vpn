@@ -35,7 +35,7 @@ if "remote cleanup" not in cleanup or "remote_app_ownership_armed" not in cleanu
 
 for required in (
     'NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS:-all',
-    'all|pixel)',
+    'all|pixel|macos-admin-iphone)',
     'if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then',
     "release_join_validate_reused_android_only",
     '"selectedDirections": selected',
@@ -202,6 +202,8 @@ run_cleanup_case() {
   remote_pid=""
   remote_app_ownership_armed=1
   remote_harness_install_attempted=0
+  RESULT_DIR="$tmp"
+  release_join_android_capture_failure_log() { :; }
   PRIVATE_DIR="$tmp/private-$primary_status-$remote_status"
   mkdir -p "$PRIVATE_DIR"
   remote() {

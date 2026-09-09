@@ -702,6 +702,7 @@ function requireMacosJoinReceipt({
   iosJoinVariantReceiptSha256,
   commit,
   tree,
+  includeIphone = true,
 }) {
   requirePublicUiJoinReceipt(
     receipt,
@@ -728,18 +729,18 @@ function requireMacosJoinReceipt({
     receipt.appLaunchArgumentsOrEnvironment !== false
     || receipt.desktopAdminAndroidJoiner !== true
     || receipt.androidAdminDesktopJoiner !== true
-    || receipt.desktopAdminIphoneJoiner !== true
-    || receipt.iphoneAdminDesktopJoiner !== true
+    || receipt.desktopAdminIphoneJoiner !== includeIphone
+    || receipt.iphoneAdminDesktopJoiner !== includeIphone
     || receipt.exactRosterOnBothSides !== true
     || receipt.acceptedRosterRetainedAcrossRelaunch !== true
-    || receipt.desktopAdminIphoneJoinerRelaunchDurable !== true
-    || receipt.iphoneAdminDesktopJoinerRelaunchDurable !== true
+    || receipt.desktopAdminIphoneJoinerRelaunchDurable !== includeIphone
+    || receipt.iphoneAdminDesktopJoinerRelaunchDurable !== includeIphone
     || receipt.artifact?.artifactReceiptSha256 !== artifactReceiptSha256
     || receipt.artifact?.appExecutableSha256
       !== artifactReceipt.appExecutableSha256
     || android?.artifactReceiptSha256 !== androidArtifactReceiptSha256
-    || receipt.artifact?.ios?.artifactReceiptSha256
-      !== iosJoinVariantReceiptSha256
+    || (includeIphone && receipt.artifact?.ios?.artifactReceiptSha256
+      !== iosJoinVariantReceiptSha256)
   ) {
     throw new Error('macOS/mobile public-UI join receipt is incomplete.')
   }
@@ -758,34 +759,60 @@ function requireMacosJoinReceipt({
     ],
     'macOS/Android join artifact',
   )
-  requireIdentityFieldsMatch(
-    receipt.artifact.ios,
-    iosJoinVariant,
-    [
-      'appGitSha',
-      'appGitTree',
-      'fipsGitSha',
-      'fipsGitTree',
-      'appBundleTreeSha256',
-      'appCodeDirectoryHash',
-      'packetTunnelCodeDirectoryHash',
-      'appExecutableSha256',
-      'packetTunnelExecutableSha256',
-      'signerCertificateSha256',
-      'installedBundleIdentifier',
-    ],
-    'macOS/iOS join artifact',
-  )
+  if (includeIphone) {
+    requireIdentityFieldsMatch(
+      receipt.artifact.ios,
+      iosJoinVariant,
+      [
+        'appGitSha',
+        'appGitTree',
+        'fipsGitSha',
+        'fipsGitTree',
+        'appBundleTreeSha256',
+        'appCodeDirectoryHash',
+        'packetTunnelCodeDirectoryHash',
+        'appExecutableSha256',
+        'packetTunnelExecutableSha256',
+        'signerCertificateSha256',
+        'installedBundleIdentifier',
+      ],
+      'macOS/iOS join artifact',
+    )
+  }
   requireExactDeliveryTimings(
     receipt,
     [
       'macOS-admin-to-Android-manual',
       'Android-admin-to-macOS-manual',
-      'macOS-admin-to-iPhone-manual',
-      'iPhone-admin-to-macOS-manual',
+      ...(includeIphone ? [
+        'macOS-admin-to-iPhone-manual',
+        'iPhone-admin-to-macOS-manual',
+      ] : []),
     ],
     'macOS/mobile public-UI join receipt',
   )
+}
+
+export function validateMacosPixelJoinReceipt(args) {
+  const {
+    receipt, artifactReceipt,
+    androidInstallReceiptSha256, androidInstallReceiptSize,
+  } = args
+  if (
+    receipt.selectedDirections !== 'pixel'
+    || receipt.artifact?.ios !== undefined
+    || receipt.artifact?.android?.installReceiptSha256 !== androidInstallReceiptSha256
+    || receipt.artifact?.android?.installReceiptSize !== androidInstallReceiptSize
+  ) {
+    throw new Error('Retained macOS/Pixel receipt differs from the selected coverage or install receipt.')
+  }
+  requireMacosJoinReceipt({
+    ...args,
+    commit: artifactReceipt.appGitSha,
+    tree: artifactReceipt.appGitTree,
+    includeIphone: false,
+  })
+  return { ...receipt.deliveryMilliseconds }
 }
 
 function requireDesktopMobileJoinReceipt({

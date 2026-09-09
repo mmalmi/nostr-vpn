@@ -38,6 +38,12 @@ case "$MACOS_MOBILE_DIRECTIONS" in
     exit 2
     ;;
 esac
+REUSE_PIXEL_RECEIPT="${NVPN_MACOS_RELEASE_REUSE_PIXEL_RECEIPT:-}"
+if [[ -n "$REUSE_PIXEL_RECEIPT" \
+  && ( "$MACOS_MOBILE_DIRECTIONS" != "all" || "$ARTIFACT_ACTION" != "run-only" ) ]]; then
+  echo "Retained Mac/Pixel coverage requires all directions with run-only artifacts" >&2
+  exit 2
+fi
 MACOS_RUST_PROFILE="${NVPN_MACOS_RUST_PROFILE:-release}"
 MACOS_XCODE_CONFIGURATION="${NVPN_MACOS_XCODE_CONFIGURATION:-Release}"
 if [[ "$MACOS_RUST_PROFILE" != "release" \
@@ -504,6 +510,41 @@ print(json.load(open(sys.argv[1])).get("artifactReceiptSha256", ""))
   }
 }
 
+reuse_pixel_coverage() {
+  node --input-type=module - \
+    "$ROOT" "$REUSE_PIXEL_RECEIPT" "$RESULT_DIR/macos/artifact.json" \
+    "$ANDROID_ARTIFACT_RECEIPT" "$ANDROID_INSTALL_RECEIPT" \
+    "$RESULT_DIR/macos" <<'JS'
+import { createHash } from 'node:crypto'
+import { lstatSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+const [root, source, artifactPath, androidPath, installPath, output] = process.argv.slice(2)
+const { readRequiredJson, validateMacosPixelJoinReceipt } = await import(
+  pathToFileURL(join(root, 'scripts/release-artifact-provenance-lib.mjs'))
+)
+if (!lstatSync(source).isFile() || lstatSync(source).isSymbolicLink()) {
+  throw new Error('Retained Mac/Pixel receipt must be a regular file.')
+}
+const bytes = readFileSync(source)
+const hash = (value) => createHash('sha256').update(value).digest('hex')
+const timings = validateMacosPixelJoinReceipt({
+  receipt: JSON.parse(bytes),
+  artifactReceipt: readRequiredJson(artifactPath, 'Selected macOS artifact'),
+  artifactReceiptSha256: hash(readFileSync(artifactPath)),
+  androidArtifact: readRequiredJson(androidPath, 'Selected Android artifact'),
+  androidArtifactReceiptSha256: hash(readFileSync(androidPath)),
+  androidInstallReceiptSha256: hash(readFileSync(installPath)),
+  androidInstallReceiptSize: readFileSync(installPath).length,
+})
+writeFileSync(join(output, 'reused-pixel-summary.json'), bytes, { flag: 'wx' })
+writeFileSync(join(output, 'delivery-times.tsv'),
+  Object.entries(timings).map(([label, elapsed]) => `${label}\t${elapsed}\n`).join(''),
+  { flag: 'wx' })
+console.log(hash(bytes))
+JS
+}
+
 write_component_proof() {
   node --input-type=module - \
     "$ROOT" "$1" "$2" "$APP_GIT_SHA" "$APP_GIT_TREE" <<'JS'
@@ -768,6 +809,14 @@ if [[ "$ARTIFACT_ACTION" != "full" && "$ARTIFACT_ACTION" != "run-only" ]]; then
   exit 0
 fi
 
+REUSED_PIXEL_RECEIPT_SHA256=""
+if [[ -n "$REUSE_PIXEL_RECEIPT" ]]; then
+  REUSED_PIXEL_RECEIPT_SHA256="$(reuse_pixel_coverage)"
+  [[ "$REUSED_PIXEL_RECEIPT_SHA256" =~ ^[0-9a-f]{64}$ ]]
+  echo "Retained exact Mac/Pixel pairing and relaunch evidence; running both iPhone directions"
+else
+  rm -f "$RESULT_DIR/macos/delivery-times.tsv"
+fi
 remote_app_ownership_armed=1
 
 ANDROID_REQUESTED="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
@@ -787,7 +836,6 @@ release_join_assert_one_android_package || {
 }
 RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
 export RELEASE_JOIN_DEVICE_MUTATION_ALLOWED
-rm -f "$RESULT_DIR/macos/delivery-times.tsv"
 macos_admin_android_status=0
 android_admin_macos_status=0
 macos_admin_ios_status=0
@@ -796,7 +844,8 @@ DESKTOP_ADMIN_IPHONE_JOINER_RELAUNCH_DURABLE=0
 IPHONE_ADMIN_DESKTOP_JOINER_RELAUNCH_DURABLE=0
 
 # macOS admin -> physical Android joiner.
-if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" ]]; then
+if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" \
+  && -z "$REUSED_PIXEL_RECEIPT_SHA256" ]]; then
 set +e
 (
 set -euo pipefail
@@ -1180,7 +1229,7 @@ python3 - \
   "$APP_GIT_TREE" \
   "$ANDROID_ARTIFACT_RECEIPT" \
   "$ANDROID_INSTALL_RECEIPT" \
-  "$MACOS_MOBILE_DIRECTIONS" <<'PY'
+  "$MACOS_MOBILE_DIRECTIONS" "$REUSED_PIXEL_RECEIPT_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -1201,6 +1250,14 @@ pixel_timings = {
     "Android-admin-to-macOS-manual",
 }
 selected = sys.argv[11]
+reused_pixel_sha256 = sys.argv[12]
+if reused_pixel_sha256 and (
+    selected != "all"
+    or hashlib.sha256(
+        pathlib.Path(sys.argv[1]).with_name("reused-pixel-summary.json").read_bytes()
+    ).hexdigest() != reused_pixel_sha256
+):
+    raise SystemExit("Retained Mac/Pixel evidence changed during the iPhone run")
 expected_timings = all_timings if selected == "all" else pixel_timings
 if set(timings) != expected_timings or any(
     elapsed < 0 or elapsed > 15_000 for elapsed in timings.values()
@@ -1328,6 +1385,8 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
             "fixtureInvoked": False,
             "acceptedSelectorSemantics": "participant-state-not-pending",
             "selectedDirections": selected,
+            **({"reusedPixelReceiptSha256": reused_pixel_sha256}
+               if reused_pixel_sha256 else {}),
             "desktopAdminAndroidJoiner": True,
             "androidAdminDesktopJoiner": True,
             "desktopAdminIphoneJoiner": selected == "all",
