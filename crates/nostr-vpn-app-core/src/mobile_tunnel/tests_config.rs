@@ -1,4 +1,34 @@
     #[test]
+    fn reading_mobile_tunnel_config_does_not_rewrite_app_config() {
+        let dir = desktop_mobile_join_test_dir("mobile-config-read");
+        let data_dir = dir.to_str().expect("data directory");
+        let path = native_config_path(data_dir);
+        MobileTunnelConfig::from_data_dir(data_dir).expect("initialize missing config");
+        let original = std::fs::read(&path).expect("created config");
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
+        std::fs::File::open(&path)
+            .expect("config file")
+            .set_times(std::fs::FileTimes::new().set_modified(old))
+            .expect("fixed modification time");
+
+        for _ in 0..3 {
+            MobileTunnelConfig::from_data_dir(data_dir).expect("read current tunnel config");
+            assert_eq!(std::fs::read(&path).expect("existing config"), original);
+            assert_eq!(
+                std::fs::metadata(&path).expect("config metadata").modified().expect("modified"),
+                old,
+                "observing config must not emit another file change and trigger a refresh loop"
+            );
+        }
+        let mut app = AppConfig::load(&path).expect("load app");
+        app.node_name = "changed mobile name".to_string();
+        app.save(&path).expect("external settings change");
+        let refreshed = MobileTunnelConfig::from_data_dir(data_dir).expect("read changed config");
+        assert_eq!(refreshed.node_name, "changed mobile name");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn mobile_endpoint_send_run_batches_consecutive_resolved_peer() {
         let participant = Keys::generate().public_key().to_hex();
         let participant_key = mobile_participant_pubkey_bytes(&participant).expect("participant");

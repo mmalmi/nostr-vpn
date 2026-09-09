@@ -368,9 +368,7 @@ impl MobileTunnelConfig {
             generated.save(&config_path)?;
             generated
         };
-        app.ensure_defaults();
         maybe_autoconfigure_node(&mut app);
-        app.save(&config_path)?;
         Self::from_app_with_config_path(&app, &config_path)
     }
 
