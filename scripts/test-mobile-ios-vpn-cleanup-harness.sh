@@ -55,31 +55,6 @@ if [[ "$rendered" == "devicectl device info details"* ]]; then
   fi
   exit 0
 fi
-if [[ "$rendered" == "devicectl device info lockState"* ]]; then
-  # CoreDevice can stall in the surrounding release supervisor's session.
-  # The real status query must own its process group, as scoped XCTest does.
-  pgid="$(ps -o pgid= -p "$$" | tr -d '[:space:]')"
-  [[ "$pgid" == "$$" ]] || exit 74
-  destination=""
-  previous=""
-  for argument in "$@"; do
-    if [[ "$previous" == "--json-output" ]]; then
-      destination="$argument"
-      break
-    fi
-    previous="$argument"
-  done
-  if [[ "${NVPN_TEST_DEVICE_LOCKED:-0}" == "unknown" ]]; then
-    printf '{"result":{}}\n' >"$destination"
-  elif [[ "${NVPN_TEST_DEVICE_LOCKED:-0}" == "1" ]]; then
-    printf '{"result":{"passcodeRequired":true,"unlockedSinceBoot":true}}\n' \
-      >"$destination"
-  else
-    printf '{"result":{"passcodeRequired":false,"unlockedSinceBoot":true}}\n' \
-      >"$destination"
-  fi
-  exit 0
-fi
 if [[ "$rendered" == "devicectl device info apps"* ]]; then
   [[ "${NVPN_TEST_APP_INSTALLED:-0}" == "1" ]] \
     && printf 'Nostr VPN fi.siriusbusiness.nvpn 4.1.4 4001004\n'
@@ -134,19 +109,6 @@ resolved_udid="$(
 [[ "$resolved_udid" == "test-hardware-udid" ]] \
   || fail "physical iOS name did not resolve to its hardware UDID"
 
-env PATH="$FIXTURE/bin:$PATH" NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
-  bash -c \
-    "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; ios_release_network_require_unlocked test-device" \
-  || fail "unlocked physical iOS device was rejected"
-
-: >"$FIXTURE/xcrun.log"
-env PATH="$FIXTURE/bin:$PATH" NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
-  bash -c \
-    "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; mktemp() { return 1; }; if ios_release_network_require_unlocked test-device; then exit 1; fi" \
-  || fail "lock check accepted a failed temporary-file allocation"
-[[ ! -s "$FIXTURE/xcrun.log" ]] \
-  || fail "failed lock-state allocation reached the device with an empty output path"
-
 watchdog_marker="$FIXTURE/watchdog-active"
 touch "$watchdog_marker"
 watchdog_started=$SECONDS
@@ -158,31 +120,6 @@ rm -f "$watchdog_marker"
 wait "$watchdog_pid" || fail "cancelled cleanup watchdog failed"
 ((SECONDS - watchdog_started < 2)) \
   || fail "cancelled cleanup watchdog waited for its full deadline"
-set +e
-env PATH="$FIXTURE/bin:$PATH" \
-  NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
-  NVPN_TEST_DEVICE_LOCKED=1 \
-  bash -c \
-    "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; ios_release_network_require_unlocked test-device" \
-  >"$FIXTURE/locked.out" 2>&1
-status=$?
-set -e
-[[ "$status" -ne 0 ]] || fail "locked physical iOS device was accepted"
-grep -Fq 'requires the selected phone to be unlocked' "$FIXTURE/locked.out" \
-  || fail "locked physical iOS failure was not actionable"
-grep -Fq 'passcodeRequired=true unlockedSinceBoot=true' "$FIXTURE/locked.out" \
-  || fail "lock failure discarded the observed state"
-set +e
-env PATH="$FIXTURE/bin:$PATH" NVPN_TEST_XCRUN_LOG="$FIXTURE/xcrun.log" \
-  NVPN_TEST_DEVICE_LOCKED=unknown bash -c \
-  "source '$ROOT/scripts/lib-mobile-ios-release-network.sh'; ios_release_network_require_unlocked test-device" \
-  >"$FIXTURE/unknown.out" 2>&1
-status=$?
-set -e
-[[ "$status" -ne 0 ]] || fail "unknown lock state was accepted"
-grep -Fq 'did not report a complete lock state' "$FIXTURE/unknown.out" \
-  || fail "unknown lock state was misreported as a locked phone"
-
 set +e
 env "${COMMON_ENV[@]}" "$ROOT/scripts/mobile-ios-smoke.sh" device --vpn-cycle \
   >"$FIXTURE/failure.out" 2>&1

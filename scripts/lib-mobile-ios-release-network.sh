@@ -1369,74 +1369,6 @@ ios_release_network_run_bounded_xcode() {
   return "$status"
 }
 
-ios_release_network_require_unlocked() {
-  local device="$1"
-  local lock_state
-  lock_state="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-lock-state.XXXXXX")" || return 1
-  # CoreDevice can stall before dispatching the query when it inherits the
-  # release supervisor's session. Give it the same isolation as scoped XCTest;
-  # retain the real lock-state check and CoreDevice's bounded deadline.
-  if ! python3 - "$device" "$lock_state" <<'PY_QUERY'
-import signal
-import subprocess
-import sys
-
-process = subprocess.Popen(
-    ["xcrun", "devicectl", "device", "info", "lockState",
-     "--device", sys.argv[1], "--timeout", "180",
-     "--json-output", sys.argv[2], "--quiet"],
-    stdout=subprocess.DEVNULL,
-    start_new_session=True,
-)
-# Keep the isolated query owned by the caller when a gate is interrupted.
-def forward_signal(number, _frame):
-    process.send_signal(number)
-
-signal.signal(signal.SIGTERM, forward_signal)
-signal.signal(signal.SIGINT, forward_signal)
-raise SystemExit(process.wait())
-PY_QUERY
-  then
-    rm -f "$lock_state"
-    echo "iOS Release gate could not verify that the selected phone is unlocked" >&2
-    return 1
-  fi
-  local state_status=0
-  python3 - "$lock_state" <<'PY_LOCK' || state_status=$?
-import json
-import sys
-
-try:
-    result = json.load(open(sys.argv[1], encoding="utf-8")).get("result", {})
-    required = result.get("passcodeRequired")
-    unlocked = result.get("unlockedSinceBoot")
-except (ValueError, AttributeError):
-    raise SystemExit(2)
-required = required if type(required) is bool else None
-unlocked = unlocked if type(unlocked) is bool else None
-# Keep only the two booleans in the gate log, never device identity or auth data.
-print(
-    "iOS lock state: passcodeRequired=" + json.dumps(required)
-    + " unlockedSinceBoot=" + json.dumps(unlocked),
-    file=sys.stderr,
-)
-if type(required) is not bool or type(unlocked) is not bool:
-    raise SystemExit(2)
-if required or not unlocked:
-    raise SystemExit(1)
-PY_LOCK
-  if [[ "$state_status" -ne 0 ]]; then
-    rm -f "$lock_state"
-    if [[ "$state_status" -eq 1 ]]; then
-      echo "iOS Release gate requires the selected phone to be unlocked" >&2
-    else
-      echo "iOS Release gate did not report a complete lock state" >&2
-    fi
-    return 1
-  fi
-  rm -f "$lock_state"
-}
-
 ios_release_network_collect_markers() {
   local log="$1" run_id="$2" destination="$3"
   # PhysicalGateMarker emits each run ID/marker pair to stderr atomically as
@@ -1610,7 +1542,6 @@ run_ios_release_network_case() {
   fi
 
   local -a command=()
-  ios_release_network_require_unlocked "$IOS_RELEASE_NETWORK_DEVICE" || return 1
   ios_release_network_prepare_xctestrun \
     "$label" "$spec_base64" "$run_id" || return 1
   ios_release_network_test_command "$IOS_RELEASE_NETWORK_CASE_XCTESTRUN" \
@@ -1773,7 +1704,6 @@ ios_release_network_disconnect_cleanup_inner() {
   rm -f "$log" "$host_markers" "$markers" \
     "${xcresult%.xcresult}-xcresult-summary.json" \
     "${xcresult%.xcresult}-diagnostic-redaction.json"
-  ios_release_network_require_unlocked "$IOS_RELEASE_NETWORK_DEVICE" || return 1
   ios_release_network_delete_private_test_products || return 1
   ios_release_network_prepare_xctestrun \
     cleanup "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" "$cleanup_run_id" \

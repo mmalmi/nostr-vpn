@@ -85,9 +85,8 @@ PY
   fi
 )
 (
-  # A connection that is still closing the preceding XCTest session must
-  # become ready before the next method's launch budget starts. A locked or
-  # unavailable device must not start a test at all.
+  # XCTest can run while CoreDevice's redundant lock query is unavailable.
+  # A real authorization failure must still fail before any method starts.
   source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
@@ -98,27 +97,25 @@ PY
   RELEASE_JOIN_ARTIFACTS_VALIDATED=1
   RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
   ios_release_network_require_unlocked() {
-    [[ "$1" == fixture-device ]]
-    printf 'ready\n' >>"$private/readiness"
-    return "$ready_status"
+    printf 'unexpected status query\n' >"$private/status-query"
+    return 1
   }
   release_join_ios_stop_runner() { :; }
   release_join_ios_test_command() {
-    printf 'command\n' >>"$private/commands"
-    printf '%s\0' bash -c \
-      'printf "%s\n" "Test Case '\''-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests fixture]'\'' started."; sleep 1'
+    if [[ "$1" == denied ]]; then
+      printf '%s\0' bash -c 'echo "Timed out while enabling automation mode."; exit 65'
+    else
+      printf '%s\0' bash -c \
+        'printf "%s\n" "Test Case '\''-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests fixture]'\'' started."; sleep 1'
+    fi
   }
-  ready_status=1
-  if release_join_ios_run_test fixture "$private/denied.log"; then
-    echo 'iOS join started while the selected device was unavailable' >&2
+  release_join_ios_run_test fixture "$private/ready.log"
+  if release_join_ios_run_test denied "$private/denied.log"; then
+    echo 'iOS join accepted a pre-method authorization failure' >&2
     exit 1
   fi
-  [[ ! -e "$private/commands" && ! -e "$private/denied.log" ]]
-  [[ $(wc -l <"$private/readiness" | tr -d ' ') == 1 ]]
-  ready_status=0
-  release_join_ios_run_test fixture "$private/ready.log"
-  [[ $(wc -l <"$private/readiness" | tr -d ' ') == 2 ]]
-  [[ $(wc -l <"$private/commands" | tr -d ' ') == 1 ]]
+  [[ ! -e "$private/status-query" ]]
+
 )
 (
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
@@ -955,7 +952,6 @@ PY
   PRIVATE_DIR="$private"
   IOS_DEVICE="fixture-device"
   unset IOS_BUNDLE_ID
-  ios_release_network_require_unlocked() { [[ "$1" == "$IOS_DEVICE" ]]; }
   audit="$private/runner-audit"
   ios_release_network_stop_forced_xctrunner() {
     [[ "$IOS_BUNDLE_ID" == "fi.siriusbusiness.nvpn" ]]
@@ -998,7 +994,6 @@ PY
   PRIVATE_DIR="$private"
   IOS_DEVICE="fixture-device"
   child_file="$private/child.pid"
-  ios_release_network_require_unlocked() { [[ "$1" == "$IOS_DEVICE" ]]; }
   set -m
   (exec sleep 30) &
   unexpected_pgid=$!

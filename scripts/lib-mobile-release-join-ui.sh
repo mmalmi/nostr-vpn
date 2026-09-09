@@ -1004,10 +1004,9 @@ release_join_ios_start_test() {
   local test_name="$1" log="$2"
   shift 2
   release_join_require_device_mutation_allowed || return 1
-  # CoreDevice may still be releasing the preceding XCTest session. Complete
-  # its bounded connection/lock check before starting the method launch clock.
-  ios_release_network_require_unlocked \
-    "${RELEASE_JOIN_IOS_UDID:-$IOS_DEVICE}" || return 1
+  # XCTest itself must reach the selected test method on the authorized phone.
+  # A separate CoreDevice lock query can stall acquiring its connection before
+  # it even reads lock state; retain the bounded first-method check instead.
   RELEASE_JOIN_DEVICE_MUTATED=1
   local -a command=()
   local command_file pid pgid actual_pgid caller_pgid cleanup_status=0
