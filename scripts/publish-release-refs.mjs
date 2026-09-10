@@ -28,7 +28,7 @@ function defaultCommand(command, args, options = {}) {
     cwd: options.cwd ?? repoRoot,
     encoding: 'utf8',
     env: options.env ?? process.env,
-    stdio: 'pipe',
+    stdio: options.stdio ?? 'pipe',
   })
 }
 
@@ -613,8 +613,11 @@ export function publishReleaseRefs(options, dependencies = {}) {
         '--repo',
         repository,
         '--exit-status',
+        '--interval',
+        '30',
       ],
-      { cwd: repoRoot },
+      // Long CI runs must not fill spawnSync's captured-output buffer.
+      { cwd: repoRoot, stdio: 'inherit' },
     )
     if (watched.status !== 0) {
       fail(
