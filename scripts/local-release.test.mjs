@@ -2553,22 +2553,12 @@ test('hosted release retains Rust and Docker verification without duplicate nati
   assert.doesNotMatch(workflow, /^  build-linux-app:/m)
 })
 
-test('hosted release verification disables every private Windows lane', () => {
+test('hosted release selects the portable gate instead of maintaining fleet skip flags', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
-  const verifyStart = workflow.indexOf('  verify:')
-  const verifyEnd = workflow.indexOf('  macos-sdk-compat:', verifyStart)
-  const verifyJob = workflow.slice(verifyStart, verifyEnd)
-
-  assert.ok(verifyStart >= 0 && verifyEnd > verifyStart)
-  for (const lane of [
-    'NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE',
-    'NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E',
-    'NVPN_RELEASE_GATE_WINDOWS_DNS_UI_E2E',
-    'NVPN_RELEASE_GATE_WINDOWS_MANUAL_JOIN_UI_E2E',
-    'NVPN_RELEASE_GATE_WINDOWS_SERVICE_TOGGLE_E2E',
-  ]) {
-    assert.match(verifyJob, new RegExp(`${lane}: '0'`))
-  }
+  const verifyJob = workflow.slice(workflow.indexOf('  verify:'), workflow.indexOf('  macos-sdk-compat:'))
+  assert.match(verifyJob, /run: \.\/scripts\/release-gate\.sh --hosted/)
+  assert.match(verifyJob, /uses: pnpm\/action-setup@v4/)
+  assert.doesNotMatch(verifyJob, /NVPN_RELEASE_GATE_(?:WINDOWS|MACOS|MOBILE|LINUX_ARM64)_/)
 })
 
 test('dispatched release notes contain no build provenance text', () => {

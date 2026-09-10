@@ -2176,7 +2176,9 @@ build_release_gate_docker_images() {
   # These builds share BuildKit's Cargo registry cache. Keep them in one lane
   # so the wider release gate stays parallel without corrupting that cache.
   build_release_gate_docker_node_image
-  build_release_gate_paid_exit_image
+  if [[ "${1:-}" != --hosted ]]; then
+    build_release_gate_paid_exit_image
+  fi
   build_release_gate_web_image
 }
 
@@ -2293,6 +2295,12 @@ run_docker_isolated_functional_gates() {
   release_gate_parallel_start "Umbrel authenticated requester join" \
     run_umbrel_release_gate
   lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+
+  if [[ "${1:-}" == --hosted ]]; then
+    # Paid-exit mint fixtures require the separate local release checkouts.
+    release_gate_parallel_wait_group "${lanes[@]}"
+    return
+  fi
 
   release_gate_parallel_start "Docker Spilman paid exit" \
     env \
@@ -2412,7 +2420,36 @@ release_gate_cleanup() {
   exit "$status"
 }
 
+run_hosted_release_gate() {
+  # The immutable bundle carries the mandatory native/fleet receipts. Hosted
+  # runners independently check public source and self-contained Docker paths;
+  # they cannot recreate devices, private VMs, or sibling mint repositories.
+  release_gate_timing_run "Hosted static and Rust validation" run_host_validation_lane
+  release_gate_timing_run "Local FIPS public transit" run_local_fips_transit_gate
+  export NVPN_E2E_NODE_IMAGE="${NVPN_RELEASE_GATE_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}"
+  export NVPN_EXIT_NODE_E2E_IMAGE="$NVPN_E2E_NODE_IMAGE"
+  release_gate_timing_run "Hosted Docker image builds" build_release_gate_docker_images --hosted
+  export NVPN_E2E_SKIP_NODE_BUILD=1
+  export NVPN_EXIT_NODE_E2E_SKIP_BUILD=1
+  export NVPN_WEB_STARTOS_JOIN_IMAGE_READY=1
+  export NVPN_UMBREL_WEB_E2E_SKIP_BUILD=1
+  release_gate_timing_run "Docker routed continuity and roaming" run_docker_signal_gates
+  release_gate_timing_run "Hosted Docker functional gates" run_docker_isolated_functional_gates --hosted
+}
+
 main() {
+  local mode=full
+  if (( $# > 0 )); then
+    if [[ "$#" != 1 || "$1" != --hosted ]]; then
+      echo "Usage: scripts/release-gate.sh [--hosted]" >&2
+      return 2
+    fi
+    mode=hosted
+    if ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}"; then
+      echo "Hosted verification cannot replace the complete physical/VM release gate." >&2
+      return 2
+    fi
+  fi
   RELEASE_GATE_STARTED_AT="$(date +%s)"
   local log_dir="${NVPN_RELEASE_GATE_LOG_DIR:-$ROOT_DIR/artifacts/release-gate-logs/$(date -u +%Y%m%dT%H%M%SZ)}"
   release_gate_state_init "$ROOT_DIR"
@@ -2466,6 +2503,12 @@ main() {
     release_gate_timing_run \
       "Docker base image preflight" \
       ensure_release_gate_docker_prerequisites
+  fi
+
+  if [[ "$mode" == hosted ]]; then
+    run_hosted_release_gate
+    echo "Hosted source and Docker verification passed; native release receipts remain required."
+    return
   fi
 
   local windows_platform_requested_for_gate=0

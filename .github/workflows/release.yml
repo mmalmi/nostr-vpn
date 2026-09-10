@@ -103,44 +103,28 @@ jobs:
             mv "${script}.next" "${script}"
           done
 
-      - name: Run release gate
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.2
+
+      - name: Prepare browser fixtures before concurrent Docker checks
+        run: |
+          pnpm --dir web/control-panel install --frozen-lockfile
+          pnpm --dir web/control-panel exec playwright install --with-deps chromium
+
+      - name: Run hosted release verification
         env:
-          # Exact native packages and UI flows are checked by the mandatory
-          # local fleet gate; hosted CI retains the independent Rust/Docker gate.
-          NVPN_RELEASE_GATE_LINUX_GUI_SMOKE: '0'
-          NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
-          NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
-          NVPN_RELEASE_GATE_WINDOWS_DNS_UI_E2E: '0'
-          NVPN_RELEASE_GATE_WINDOWS_UNDERLAY_NETWORK_CHANGE_E2E: '0'
-          NVPN_RELEASE_GATE_WINDOWS_MOBILE_JOIN_E2E: '0'
-          # The signed local release gate requires the real private desktop
-          # VMs and records their UI/elevation evidence before this tag is
-          # pushed. Hosted runners cannot reach those machines.
-          NVPN_RELEASE_GATE_WINDOWS_MANUAL_JOIN_UI_E2E: '0'
-          NVPN_RELEASE_GATE_WINDOWS_SERVICE_TOGGLE_E2E: '0'
-          NVPN_RELEASE_GATE_MACOS_MANUAL_JOIN_UI_E2E: '0'
-          NVPN_RELEASE_GATE_MACOS_SERVICE_TOGGLE_E2E: '0'
-          NVPN_RELEASE_GATE_MACOS_WG_EXIT_E2E: '0'
-          NVPN_RELEASE_GATE_MACOS_GUI_SMOKE: '0'
-          NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU: '0'
-          NVPN_RELEASE_GATE_LINUX_MANUAL_JOIN_UI_E2E: '0'
-          NVPN_RELEASE_GATE_LINUX_SERVICE_TOGGLE_E2E: '0'
-          NVPN_RELEASE_GATE_LINUX_UNDERLAY_NETWORK_CHANGE_E2E: '0'
-          NVPN_RELEASE_GATE_LINUX_MOBILE_JOIN_E2E: '0'
-          NVPN_RELEASE_GATE_MOBILE_GUI_SMOKE: '0'
-          NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E: '0'
-          NVPN_RELEASE_GATE_MOBILE_UNDERLAY_E2E: '0'
-          NVPN_RELEASE_GATE_MOBILE_JOIN_E2E: '0'
-          NVPN_RELEASE_GATE_ANDROID_LEGACY_REPLACEMENT_E2E: '0'
-          NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU: '0'
-          NVPN_RELEASE_IOS_FROZEN_ARCHIVE: '0'
-          # Hosted runners have no stable latency baseline. The mandatory local
-          # release gate measures these and the Docker perf regression after
-          # contention-sensitive joins on calibrated hardware.
-          NVPN_RELEASE_GATE_QR_JOIN_LATENCY: '0'
+          # Hardware and calibrated timing checks remain mandatory in the
+          # artifact-bound local gate. This job checks portable source/Docker.
+          NVPN_RELEASE_GATE_IDLE_CPU: '0'
           NVPN_E2E_ROAMING_LOADED_LATENCY: '0'
-          NVPN_RELEASE_GATE_PERF_E2E: '0'
-        run: ./scripts/release-gate.sh
+        run: ./scripts/release-gate.sh --hosted
 
   # Native packages already passed the mandatory exact-artifact local gate.
   # Rebuilding different bytes here cannot strengthen those package receipts.

@@ -18,6 +18,7 @@ do
 done
 
 node --test scripts/release-gate-state.test.mjs
+node --test scripts/release-gate-hosted.test.mjs
 node --test scripts/windows-manual-join-preparation.test.mjs
 node --test scripts/github-release-publication.test.mjs
 scripts/test-release-gate-parallel-harness.sh
