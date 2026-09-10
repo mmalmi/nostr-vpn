@@ -158,9 +158,8 @@ jobs:
 
   release:
     name: Verify exact locally gated assets (no publication)
-    needs:
-      - verify
-      - macos-sdk-compat
+    # Importing the immutable bundle is independent of the source checks.
+    # Local publication still requires the entire workflow to succeed.
     runs-on: ubuntu-latest
     permissions:
       contents: read
