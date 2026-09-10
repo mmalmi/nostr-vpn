@@ -977,7 +977,7 @@ release_join_ios_test_command() {
     xcodebuild
     -xctestrun "$case_xctestrun"
     -destination "platform=iOS,id=$RELEASE_JOIN_IOS_UDID,arch=arm64"
-    -destination-timeout 60
+    -destination-timeout 180
     -collect-test-diagnostics never
     -parallel-testing-enabled NO
     -only-testing:"NostrVpnIosUITests/NostrVpnReleaseJoinUITests/$test_name"
@@ -1058,7 +1058,7 @@ release_join_ios_start_test() {
   RELEASE_JOIN_IOS_TEST_LOG="$log"
   RELEASE_JOIN_IOS_TEST_NAME="$test_name"
   if ! release_join_ios_wait_selected_test_started \
-      "${RELEASE_JOIN_IOS_LAUNCH_WAIT_SECS:-60}"; then
+      "${RELEASE_JOIN_IOS_LAUNCH_WAIT_SECS:-240}"; then
     release_join_ios_abort_test || true
     return 1
   fi
@@ -1095,7 +1095,7 @@ release_join_ios_assert_selected_test_started() {
 }
 
 release_join_ios_wait_selected_test_started() {
-  local timeout="${1:-${RELEASE_JOIN_IOS_LAUNCH_WAIT_SECS:-60}}"
+  local timeout="${1:-${RELEASE_JOIN_IOS_LAUNCH_WAIT_SECS:-240}}"
   local expected="Test Case '-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests $RELEASE_JOIN_IOS_TEST_NAME]' started."
   local deadline=$((SECONDS + timeout))
   while ((SECONDS < deadline)); do

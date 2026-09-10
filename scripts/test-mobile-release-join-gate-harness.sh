@@ -724,9 +724,10 @@ PY
 )
 
 (
-  # Real devicectl inventory shape uses a CoreDevice UUID unrelated to the UDID.
+  # App replacement retains the trusted runner and verifies USB inventories.
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
+  source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-ios-noinstall.XXXXXX")"
   trap 'rm -rf "$tmp"' EXIT
   app="$tmp/Nostr VPN.app"
@@ -742,27 +743,10 @@ for path, bundle, build, version in (
         plistlib.dump({"CFBundleIdentifier": bundle, "CFBundleVersion": build,
                        "CFBundleShortVersionString": version}, f)
 PY
+  : >"$tmp/devicectl.log"
   xcrun() {
     printf '%s\n' "$*" >>"$tmp/devicectl.log"
-    if [[ "$*" == *"device install app"* ]]; then
-      [[ "${ALLOW_APP_INSTALL:-0}" == 1 && "$*" == *" $app --quiet" ]]
-      return
-    fi
-    local output="" previous=""
-    for argument in "$@"; do
-      [[ "$previous" != --json-output ]] || output="$argument"
-      previous="$argument"
-    done
-    [[ -n "$output" ]] || return 0
-    python3 - "$output" "${FAKE_IOS_RUNNER_VERSION:-1.0}" <<'PY'
-import json, sys
-json.dump({"info": {"outcome": "success"}, "result": {
-    "deviceIdentifier": "coredevice-uuid-not-hardware-udid", "apps": [
-        {"bundleIdentifier": "example.unrelated", "bundleVersion": "9", "version": "9"},
-        {"bundleIdentifier": "fi.siriusbusiness.nvpn", "bundleVersion": "4001008", "version": "4.1.5"},
-        {"bundleIdentifier": "fi.siriusbusiness.nvpn.UITests.xctrunner", "bundleVersion": "1", "version": sys.argv[2]},
-    ]}}, open(sys.argv[1], "w"))
-PY
+    [[ "$*" == *"device install app"* && "${ALLOW_APP_INSTALL:-0}" == 1 && "$*" == *" $app --quiet" ]]
   }
   mkdir -p "$tmp/bin"
   cat >"$tmp/bin/ios-deploy" <<'USB_FIXTURE'

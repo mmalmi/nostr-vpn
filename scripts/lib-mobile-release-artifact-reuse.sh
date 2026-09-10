@@ -227,7 +227,7 @@ release_join_validate_ios_reuse() {
     echo "Reused iOS Release artifact has no CodeDirectory hashes" >&2
     return 1
   }
-  udid="$(resolve_physical_ios_udid "$IOS_DEVICE")"
+  udid="$(ios_release_network_resolve_device "$IOS_DEVICE")" || return 1
   device_identifier_sha="$(
     printf '%s' "$udid" | shasum -a 256 | awk '{print $1}'
   )"

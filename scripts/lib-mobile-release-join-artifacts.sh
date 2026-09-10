@@ -560,6 +560,7 @@ release_join_install_ios_release() {
   local team_hash="$5" app_cert="$6" derived="$7" udid="$8"
   local bundle="${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}"
   local installed_json="$RESULT_DIR/ios-installed-apps.json"
+  local runner_inventory="$RESULT_DIR/ios-installed-runner.json"
   local installed_receipt="$RESULT_DIR/ios-release-install.json"
   local runner="$derived/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
   local runner_tree
@@ -614,16 +615,16 @@ release_join_install_ios_release() {
       return 1
     }
   fi
-  if ! xcrun devicectl device info apps \
-      --device "$IOS_DEVICE" \
-      --json-output "$installed_json" \
-      --quiet
+  if ! IOS_RELEASE_NETWORK_DEVICE="$udid" \
+      ios_release_network_installed_identity "$bundle" "$installed_json" >/dev/null \
+    || ! IOS_RELEASE_NETWORK_DEVICE="$udid" \
+      ios_release_network_installed_identity "$bundle.UITests.xctrunner" "$runner_inventory" >/dev/null
   then
-    echo "Installed iOS app/runner inventory failed" >&2
+    echo "Installed iOS app/runner USB inventory failed" >&2
     return 1
   fi
   if ! python3 - \
-    "$installed_json" "$installed_receipt" "$bundle" "$manifest_sha" \
+    "$installed_json" "$runner_inventory" "$installed_receipt" "$bundle" "$manifest_sha" \
     "$app_sha" "$app_tree" "$RELEASE_JOIN_FIPS_SHA" \
     "$RELEASE_JOIN_FIPS_TREE" "$RELEASE_JOIN_FIPS_VERSION" \
     "$team_hash" "$app_cert" "$app_path/Info.plist" \
@@ -636,6 +637,7 @@ import sys
 
 (
     source,
+    runner_source,
     output,
     bundle,
     manifest,
@@ -653,22 +655,14 @@ import sys
     udid,
     runner_tree,
 ) = sys.argv[1:]
-payload = json.load(open(source, encoding="utf-8"))
-apps = []
-
-
-def visit(value):
-    if isinstance(value, dict):
-        if isinstance(value.get("bundleIdentifier"), str):
-            apps.append(value)
-        for child in value.values():
-            visit(child)
-    elif isinstance(value, list):
-        for child in value:
-            visit(child)
-
-
-visit(payload)
+apps = [json.load(open(path, encoding="utf-8")) for path in (source, runner_source)]
+for item in apps:
+    if (
+        item.get("provider") != "apple-installation-proxy-usb"
+        or item.get("selectedPhysicalDeviceIdentifierSha256")
+        != hashlib.sha256(udid.encode()).hexdigest()
+    ):
+        raise SystemExit("installed iOS USB inventory belongs to another device or provider")
 
 def exact_installed(identifier, plist_path):
     matches = [item for item in apps if item.get("bundleIdentifier") == identifier]

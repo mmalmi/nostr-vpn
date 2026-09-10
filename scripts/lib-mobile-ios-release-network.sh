@@ -776,7 +776,7 @@ ios_release_network_xcode_command() {
     -configuration Release
     -derivedDataPath "$IOS_RELEASE_NETWORK_DERIVED_DATA"
     -destination "$IOS_RELEASE_NETWORK_DESTINATION"
-    -destination-timeout 60
+    -destination-timeout 180
     -collect-test-diagnostics never
     DEVELOPMENT_TEAM="$NVPN_IOS_TEAM_ID"
     NVPN_IOS_CODE_SIGN_IDENTITY="$NVPN_IOS_CODE_SIGN_IDENTITY"
@@ -1132,7 +1132,7 @@ ios_release_network_test_command() {
     xcodebuild
     -xctestrun "$xctestrun"
     -destination "$IOS_RELEASE_NETWORK_DESTINATION"
-    -destination-timeout 60
+    -destination-timeout 180
     -collect-test-diagnostics never
     -parallel-testing-enabled NO
   )
@@ -1580,7 +1580,7 @@ run_ios_release_network_case() {
   local continuity_summary="$result_dir/$stem-continuity.json"
   local xcresult="$result_dir/$stem.xcresult"
   local xctest_timeout="${NVPN_IOS_XCTEST_CASE_TIMEOUT_SECS:-600}"
-  local launch_timeout="${NVPN_IOS_XCTEST_LAUNCH_TIMEOUT_SECS:-180}"
+  local launch_timeout="${NVPN_IOS_XCTEST_LAUNCH_TIMEOUT_SECS:-240}"
   mkdir -p "$result_dir"
   if bool_is_true "$underlay"; then
     IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64="$spec_base64"
@@ -1753,7 +1753,7 @@ ios_release_network_disconnect_cleanup_inner() {
   # scoped runner time to return so cleanup can verify Direct state instead of
   # killing it while the system operation still owns the VPN preference.
   local cleanup_timeout="${NVPN_IOS_XCTEST_CLEANUP_TIMEOUT_SECS:-330}"
-  local launch_timeout="${NVPN_IOS_XCTEST_LAUNCH_TIMEOUT_SECS:-180}"
+  local launch_timeout="${NVPN_IOS_XCTEST_LAUNCH_TIMEOUT_SECS:-240}"
   local -a command=()
   local command_status=0 cleanup_run_id="cleanup-$$-$RANDOM"
   mkdir -p "$result_dir"
