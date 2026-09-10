@@ -528,6 +528,7 @@ function inspectPublishedImage({ digest, imageRepo, platforms, tag }) {
     }
     for (const name of [
       'BUILDX_CONFIG',
+      'BUILDX_BUILDER',
       'DOCKER_AUTH_CONFIG',
       'REGISTRY_AUTH_FILE',
     ]) {
