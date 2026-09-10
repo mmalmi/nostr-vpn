@@ -58,13 +58,14 @@ fi
 [[ ! -e "$masked_failure_marker" ]] \
   || fail "timed function continued after its first failure"
 
-grep -Eq '^serial\tsuccess\t[0-9]+\t[0-9]+\t[0-9]+\t0$' \
+# Expand tabs in Bash; GNU and BSD grep interpret backslash escapes differently.
+grep -Eq $'^serial\tsuccess\t[0-9]+\t[0-9]+\t[0-9]+\t0$' \
   "$RELEASE_GATE_TIMING_FILE" \
   || fail "successful serial phase was not recorded"
-grep -Eq '^serial\tfailure\t[0-9]+\t[0-9]+\t[0-9]+\t7$' \
+grep -Eq $'^serial\tfailure\t[0-9]+\t[0-9]+\t[0-9]+\t7$' \
   "$tmp/failure-logs/release-gate-timings.tsv" \
   || fail "failed serial phase was not recorded"
-grep -Eq '^serial\tfail-fast-function\t[0-9]+\t[0-9]+\t[0-9]+\t1$' \
+grep -Eq $'^serial\tfail-fast-function\t[0-9]+\t[0-9]+\t[0-9]+\t1$' \
   "$tmp/fail-fast-logs/release-gate-timings.tsv" \
   || fail "fail-fast function phase was not recorded"
 
@@ -73,7 +74,7 @@ release_gate_parallel_start "parallel success" true
 parallel_index="$RELEASE_GATE_PARALLEL_LAST_INDEX"
 release_gate_parallel_wait "$parallel_index" >/dev/null \
   || fail "successful parallel phase was rejected"
-grep -Eq '^parallel\tparallel success\t[0-9]+\t[0-9]+\t[0-9]+\t0$' \
+grep -Eq $'^parallel\tparallel success\t[0-9]+\t[0-9]+\t[0-9]+\t0$' \
   "$RELEASE_GATE_TIMING_FILE" \
   || fail "successful parallel phase was not recorded"
 
@@ -120,7 +121,7 @@ const { readFileSync } = require('node:fs')
 const value = JSON.parse(readFileSync(process.argv[2], 'utf8'))
 if (value.outcome !== 'failed' || value.exitStatus !== 2) process.exit(1)
 NODE
-grep -Eq '^serial\tComplete release mode preflight\t[0-9]+\t[0-9]+\t[0-9]+\t2$' \
+grep -Eq $'^serial\tComplete release mode preflight\t[0-9]+\t[0-9]+\t[0-9]+\t2$' \
   "$failed_run_dir/release-gate-timings.tsv" \
   || fail "failed release preflight was not written to the timing ledger"
 
