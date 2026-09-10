@@ -8,7 +8,9 @@ export default defineConfig({
   fullyParallel: false,
   workers: Number.isFinite(workers) && workers > 0 ? workers : 1,
   forbidOnly: Boolean(process.env.CI),
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  reporter: process.env.CI
+    ? [['list'], ['html', { open: 'never', outputFolder: '../../artifacts/playwright-report/control-panel' }]]
+    : 'list',
   use: {
     baseURL,
     headless: true,

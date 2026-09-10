@@ -87,7 +87,7 @@ jobs:
         continue-on-error: true
         with:
           cache-bin: false
-          save-if: false
+          save-if: true
 
       - name: Use the contention-safe release scripts for v4.1.3 retries
         if: ${{ github.event.inputs.tag == 'v4.1.3' }}
@@ -125,6 +125,12 @@ jobs:
           NVPN_RELEASE_GATE_IDLE_CPU: '0'
           NVPN_E2E_ROAMING_LOADED_LATENCY: '0'
         run: ./scripts/release-gate.sh --hosted
+
+      - name: Show checkout changes after failed verification
+        if: failure()
+        run: |
+          git status --short
+          git diff --stat
 
   # Native packages already passed the mandatory exact-artifact local gate.
   # Rebuilding different bytes here cannot strengthen those package receipts.
