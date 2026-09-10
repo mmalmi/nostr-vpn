@@ -77,7 +77,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config ripgrep
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends jq libdbus-1-dev pkg-config ripgrep
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -157,6 +157,11 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
         run: ./scripts/check-macos-swift-sdk-compat.sh
+
+      - name: Verify iOS release artifact orchestration without devices
+        run: |
+          ./scripts/test-mobile-release-join-gate-harness.sh
+          ./scripts/test-mobile-ios-release-runner-harness.sh
 
   release:
     name: Verify exact locally gated assets (no publication)

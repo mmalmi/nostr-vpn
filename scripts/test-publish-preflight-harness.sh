@@ -115,4 +115,75 @@ fi
 grep -Fq 'Cargo could not resolve crates.io credentials' "$tmp_dir/missing.out" \
   || fail "missing credential error is not actionable"
 
+# Exercise the production preflight with an unpublished dependent. A normal
+# package verification would resolve an older registry dependency here.
+awk '
+  /^verify_dependent_dry_run\(\) \{/ { emit = 1 }
+  /^publish_tier\(\) \{/ { exit }
+  emit { print }
+' "$PUBLISHER" >"$tmp_dir/dependent-function.sh"
+awk '
+  /^if \[\[ "\$PREFLIGHT_ONLY" -eq 1 \]\]; then/ { emit = 1 }
+  emit { print }
+  emit && /^fi$/ { exit }
+' "$PUBLISHER" >"$tmp_dir/package-preflight.sh"
+[[ -s "$tmp_dir/package-preflight.sh" ]] || fail "could not extract package preflight"
+
+cat >"$tmp_dir/bin/cargo" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >>"$NVPN_TEST_CARGO_LOG"
+case "$*" in
+  'package --locked -p nostr-vpn-core'|'package --locked -p nostr-vpn-wintun') ;;
+  'package --locked -p nvpn --list')
+    [[ "$NVPN_TEST_CARGO_MODE" != package-failure ]] || exit 71
+    ;;
+  'check --locked -p nvpn')
+    [[ "$NVPN_TEST_CARGO_MODE" != build-failure ]] || exit 72
+    ;;
+  *)
+    echo "dependent registry package is unavailable before its dependency is published" >&2
+    exit 73
+    ;;
+esac
+EOF
+chmod +x "$tmp_dir/bin/cargo"
+
+run_package_preflight() {
+  env PATH="$tmp_dir/bin:/usr/bin:/bin" \
+    NVPN_TEST_CARGO_LOG="$tmp_dir/package-cargo.log" \
+    NVPN_TEST_CARGO_MODE="$1" \
+    bash -c '
+      set -euo pipefail
+      source "$1"
+      PREFLIGHT_ONLY=1
+      DRY_RUN=""
+      FAILED_CRATES=()
+      TIER_1_CRATES=(nostr-vpn-core nostr-vpn-wintun)
+      TIER_2_CRATES=(nvpn)
+      preflight_crates_io_credentials() { :; }
+      verify_exact_release_source() { :; }
+      package_crate_and_bind_digest() { cargo package --locked -p "$1"; }
+      source "$2"
+    ' bash "$tmp_dir/dependent-function.sh" "$tmp_dir/package-preflight.sh"
+}
+
+: >"$tmp_dir/package-cargo.log"
+run_package_preflight success \
+  || fail "preflight tried to package a dependent before its registry dependency exists"
+for command in \
+  'package --locked -p nostr-vpn-core' \
+  'package --locked -p nostr-vpn-wintun' \
+  'package --locked -p nvpn --list' \
+  'check --locked -p nvpn'
+do
+  grep -Fxq "$command" "$tmp_dir/package-cargo.log" \
+    || fail "package preflight omitted $command"
+done
+for mode in package-failure build-failure; do
+  if run_package_preflight "$mode" >"$tmp_dir/$mode.out" 2>&1; then
+    fail "package preflight accepted $mode"
+  fi
+done
+
 printf 'publish preflight harness passed\n'

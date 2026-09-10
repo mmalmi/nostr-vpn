@@ -22,9 +22,12 @@ node --test scripts/windows-manual-join-preparation.test.mjs
 node --test scripts/github-release-publication.test.mjs
 scripts/test-release-gate-parallel-harness.sh
 scripts/test-release-gate-timing-harness.sh
-scripts/test-mobile-release-join-gate-harness.sh
 scripts/test-desktop-network-handoff-harness.sh
-scripts/test-mobile-ios-release-runner-harness.sh
+if [[ "$(uname -s)" == Darwin ]]; then
+  # These artifact fixtures require Apple's plist tools, but no devices.
+  scripts/test-mobile-release-join-gate-harness.sh
+  scripts/test-mobile-ios-release-runner-harness.sh
+fi
 
 python3 - scripts/e2e-umbrel-auth-join-docker.sh <<'PY'
 import pathlib

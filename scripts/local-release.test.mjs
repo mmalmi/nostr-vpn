@@ -2348,6 +2348,13 @@ test('every mutating Apple distribution entry point requires the canonical exact
   )
 })
 
+test('Cargo preflight handles unpublished dependencies and rejects package or build failures', () => {
+  const result = spawnSync('bash', [
+    join(process.cwd(), 'scripts/test-publish-preflight-harness.sh'),
+  ], { encoding: 'utf8', timeout: 15_000 })
+  assert.equal(result.status, 0, result.stderr || result.stdout)
+})
+
 test('crates publication has no dirty bypass and replays exact source immediately before publish', () => {
   const publisher = readFileSync(
     join(process.cwd(), 'scripts/publish.sh'),
@@ -2378,7 +2385,7 @@ test('crates publication has no dirty bypass and replays exact source immediatel
   )
   assert.match(
     publisher,
-    /for crate in "\$\{TIER_2_CRATES\[@\]\}"; do[\s\S]*cargo package --locked -p "\$crate" >\/dev\/null/,
+    /for crate in "\$\{TIER_2_CRATES\[@\]\}"; do[\s\S]*verify_dependent_dry_run "\$crate"/,
   )
   assert.match(
     publisher,

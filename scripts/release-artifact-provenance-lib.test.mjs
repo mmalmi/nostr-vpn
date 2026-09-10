@@ -212,6 +212,7 @@ for (const [helper, nearbyHelper] of [
   ['docker-replace-nvpn-binary', 'docker-replace-nvpn-image'],
   ['verify.sh', 'verify-build.sh'],
   ['startos-release.mjs', 'startos-release-helper.mjs'],
+  ['publish.sh', 'publish-build.sh'],
 ]) {
   test(`component proof treats only ${helper} as harness-only`, () => {
     const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))

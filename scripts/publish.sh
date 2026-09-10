@@ -13,6 +13,10 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/release_common.sh"
 
+# Package verification needs neither debug symbols nor incremental build caches.
+export CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG:-0}"
+export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
 DRY_RUN=""
 PLAN_ONLY=0
 PREFLIGHT_ONLY=0
@@ -342,10 +346,13 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
         verify_exact_release_source
     done
     for crate in "${TIER_2_CRATES[@]}"; do
-        cargo package --locked -p "$crate" >/dev/null
+        # Registry package verification follows Tier 1 publication; before
+        # that, validate package contents and the intended local dependency.
+        verify_dependent_dry_run "$crate"
         verify_exact_release_source
     done
-    echo "[ok] crates.io credentials and exact packages are ready."
+    [[ ${#FAILED_CRATES[@]} -eq 0 ]] || exit 1
+    echo "[ok] credentials, independent packages and local dependent builds are ready."
     exit 0
 fi
 
