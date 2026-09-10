@@ -86,6 +86,9 @@ const harnessOnlyPaths = new Set([
   'scripts/release-source-verification.mjs',
   'scripts/release_common.sh',
   'scripts/umbrel-release.mjs',
+  // StartOS packages are inspected separately; this does not build or package
+  // any of the five native platform artifacts governed by this classifier.
+  'scripts/startos-release.mjs',
   'web/control-panel/e2e/umbrel-web.spec.ts',
   'scripts/ubuntu-vm-release-mobile-join-e2e.sh',
   'scripts/validate-mobile-underlay-continuity.py',

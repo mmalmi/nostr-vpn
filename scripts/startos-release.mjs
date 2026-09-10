@@ -211,6 +211,7 @@ export function inspectStartosReleasePackage({
   revision,
   quiet = false,
 }) {
+  validateStartosCliVersion(run('start-cli', ['--version'], { capture: true, quiet }))
   const sourceVersion = readStartosSourceVersion(
     readFileSync(startosVersionPath, 'utf8'),
   )

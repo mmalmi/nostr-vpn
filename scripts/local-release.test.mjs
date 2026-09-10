@@ -1373,6 +1373,10 @@ esac
     startCli,
     `#!/bin/sh
 set -eu
+if [ "$1" = --version ]; then
+  printf 'start-cli 1.1.0\\n'
+  exit 0
+fi
 case "$3" in
   *-startos-aarch64.s9pk) arch=aarch64 ;;
   *-startos-x86_64.s9pk) arch=x86_64 ;;

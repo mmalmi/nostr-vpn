@@ -1,5 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import {
   expectedStartosVersion,
@@ -17,6 +21,38 @@ test('validateStartosCliVersion requires the builder that preserves virtual netw
     () => validateStartosCliVersion('start-cli 0.4.0-beta.9'),
     /expected start-cli 1\.1\.0/,
   )
+})
+
+test('reused package inspection rejects an old CLI before reading its manifest', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'nvpn-startos-inspection-'))
+  const invocationLog = join(directory, 'invocations')
+  const executable = join(directory, 'start-cli')
+  const sourceVersion = readStartosSourceVersion(readFileSync(
+    new URL('../startos/versions/current.ts', import.meta.url), 'utf8',
+  ))
+  try {
+    writeFileSync(executable, `#!/bin/sh
+printf '%s\\n' "$*" >> "$STARTOS_INSPECTION_LOG"
+if [ "$1" = --version ]; then
+  printf 'start-cli 0.4.0-beta.9\\n'
+else
+  printf '{"id":"nostr-vpn","version":"${sourceVersion}","virtualNetworking":true,"images":[{"id":"app","arch":["x86_64"]}]}\\n'
+fi
+`)
+    chmodSync(executable, 0o755)
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+      import { inspectStartosReleasePackage } from ${JSON.stringify(new URL('./startos-release.mjs', import.meta.url).href)};
+      inspectStartosReleasePackage({packagePath: 'fixture.s9pk', arch: 'x86_64', tag: ${JSON.stringify(`v${sourceVersion.split(':')[0]}`)}});
+    `], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, STARTOS_INSPECTION_LOG: invocationLog },
+    })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /expected start-cli 1\.1\.0/)
+    assert.equal(readFileSync(invocationLog, 'utf8'), '--version\n')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })
 
 test('resolveStartosTarget accepts make targets and architecture names', () => {
