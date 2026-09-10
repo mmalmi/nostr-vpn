@@ -591,14 +591,21 @@ release_join_android_relaunch_and_wait_accepted() {
 }
 
 release_join_android_wait_qr_join_complete() {
-  local admin="$1" deadline=$((SECONDS + RELEASE_JOIN_DELIVERY_WAIT_SECS))
-  local description
-  while ((SECONDS < deadline)); do
+  local admin="$1" deadline_ms="${2:-$(( $(release_join_now_ms) + RELEASE_JOIN_DELIVERY_WAIT_SECS * 1000 ))}"
+  local observations="${3:-}" description snapshot_ms
+  [[ "$deadline_ms" =~ ^[0-9]+$ ]] || return 2
+  while (( $(release_join_now_ms) < deadline_ms )); do
     # The pending QR is already foregrounded. Observe delivery without sending
     # another activity intent on every poll or consuming its acceptance window.
     release_join_android_dump_ui || return 1
+    snapshot_ms="$(release_join_now_ms)"
+    if ((snapshot_ms > deadline_ms)); then
+      [[ -z "$observations" ]] || printf '%s\tdeadline-exceeded\n' "$snapshot_ms" >>"$observations"
+      return 1
+    fi
     if release_join_android_query_dumped \
         description "Join request QR code" center >/dev/null 2>&1; then
+      [[ -z "$observations" ]] || printf '%s\tpending\n' "$snapshot_ms" >>"$observations"
       description="$(
         release_join_android_query_dumped \
           description-prefix 'Joiner Device ID value: ' description
@@ -614,6 +621,8 @@ release_join_android_wait_qr_join_complete() {
       echo "Android join QR disappeared before the exact accepted admin roster was visible" >&2
       return 1
     fi
+    [[ -z "$observations" ]] || printf '%s\taccepted\n' "$snapshot_ms" >>"$observations"
+    printf '%s\n' "$snapshot_ms"
     return 0
   done
   return 1

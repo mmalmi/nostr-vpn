@@ -19,6 +19,17 @@ FILES=(
 for file in "${FILES[@]}"; do
   bash -n "$file"
 done
+(
+  dispatch="$(sed -n '/^case "$RELEASE_JOIN_PHASE_SELECTION" in$/,/^esac$/p' "$ROOT/scripts/mobile-release-join-e2e.sh")"
+  RELEASE_JOIN_PHASE_SELECTION=qr-only
+  phase_ios_admin_android_qr() { echo iphone-qr; }
+  phase_android_admin_ios_qr() { echo pixel-qr; }
+  release_join_ios_run_test() { echo unexpected-normalization; return 1; }
+  [[ "$(eval "$dispatch")" == $'iphone-qr\npixel-qr' ]] || {
+    echo 'QR-only dispatch did not select exactly both QR directions' >&2
+    exit 1
+  }
+)
 python3 - "$ROOT" <<'PY'
 import pathlib,sys
 root=pathlib.Path(sys.argv[1])
@@ -1148,7 +1159,7 @@ PY
   ios_marker_value_from() {
     case "$2" in
       NVPN_RELEASE_JOIN_JOINER_ID) printf '%s\n' npub1iosjoiner ;;
-      NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS) printf '900\n' ;;
+      NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS) trace approval-clock; printf '900\n' ;;
       NVPN_RELEASE_JOIN_ROSTER_APPLIED_MS) printf '1000\n' ;;
       NVPN_RELEASE_JOIN_QR_RELAUNCH_DURABLE) printf '%s\n' "$RELEASE_JOIN_ANDROID_ADMIN_ID" ;;
       NVPN_RELEASE_JOIN_QR_CONTENT_WIDTH_BPS) printf '9900\n' ;;
@@ -1158,7 +1169,11 @@ PY
     esac
   }
   release_join_android_assert_pending_qr() { trace android-qr-pending; }
-  release_join_android_wait_qr_join_complete() { trace "android-qr-accepted:$1"; }
+  release_join_android_wait_qr_join_complete() {
+    [[ "$2" == 1900 && "$3" == "$RESULT_DIR/iphone-admin-pixel-qr-observations.tsv" ]]
+    trace "android-qr-accepted:$1"
+    printf '1000\n'
+  }
   release_join_android_relaunch_and_wait_accepted() { trace "android-relaunch-accepted:$1"; }
   release_join_android_scan_prepare() { trace android-scan-ready; }
   release_join_android_scan_submit() {
@@ -1204,7 +1219,7 @@ PY
   grep -Fxq stage-ios-qr "$trace_file"
   pending_line="$(grep -n -m1 '^android-qr-pending$' "$trace_file" | cut -d: -f1)"
   stage_line="$(grep -n -m1 '^stage-ios-qr$' "$trace_file" | cut -d: -f1)"
-  clock_line="$(grep -n -m1 '^clock$' "$trace_file" | cut -d: -f1)"
+  clock_line="$(grep -n -m1 '^approval-clock$' "$trace_file" | cut -d: -f1)"
   approval_line="$(grep -n -m1 '^ios-marker:NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS=$' "$trace_file" | cut -d: -f1)"
   ((pending_line < stage_line)) || {
     echo "Pending QR check raced approval after staging the image" >&2
@@ -1214,8 +1229,8 @@ PY
     echo "QR image transfer competed with an active XCTest runner" >&2
     exit 1
   }
-  ((clock_line < approval_line)) || {
-    echo "QR delivery clock started after observing approval" >&2
+  ((approval_line < clock_line)) || {
+    echo "QR delivery clock did not use the actual approval marker" >&2
     exit 1
   }
   grep -Fxq 'android-qr-accepted:npub1iosadmin' "$trace_file"
@@ -1404,6 +1419,19 @@ PY
     echo "Android QR join kept polling after the QR disappeared without its roster" >&2
     exit 1
   }
+)
+
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  RELEASE_JOIN_DELIVERY_WAIT_SECS=1
+  now=1000
+  release_join_now_ms() { printf '%s\n' "$now"; }
+  release_join_android_dump_ui() { now=2001; }
+  release_join_android_query_dumped() { [[ "$1" == resource ]]; }
+  if release_join_android_wait_qr_join_complete npub1admin 2000 >/dev/null; then
+    echo "QR acceptance observed after the approval deadline incorrectly passed" >&2
+    exit 1
+  fi
 )
 
 (

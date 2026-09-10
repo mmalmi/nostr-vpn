@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class InventoryTest(unittest.TestCase):
-    def run_case(self, mode, baseline=False):
+    def run_case(self, mode, baseline=False, app=False):
         with tempfile.TemporaryDirectory(prefix="nvpn-ios-process-test-") as directory:
             root = Path(directory)
             tool = root / "idevicesyslog"
@@ -32,6 +32,8 @@ print('1 launchd\\n2 SpringBoard')
 if mode == 'malformed': print('not-a-process')
 if mode == 'duplicate': print('2 another-app')
 if mode == 'live' or (mode == 'stopping' and attempt == 1): print('7 Nostr VPN Tunnel')
+if mode in {'app-live', 'app-duplicate'}: print('7 Nostr VPN')
+if mode == 'app-duplicate': print('8 Nostr VPN')
 ''')
             tool.chmod(0o755)
             output = root / "receipt.json"
@@ -48,6 +50,12 @@ if mode == 'live' or (mode == 'stopping' and attempt == 1): print('7 Nostr VPN T
             )
             if baseline:
                 output = root / "mobile-ios-release-baseline-packet-tunnel-processes.json"
+            if app:
+                output = root / "ios-processes-final.json"
+                operation = (
+                    'source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"; '
+                    'IOS_DEVICE=fixture-device; RESULT_DIR="$3"; release_join_assert_one_ios_process'
+                )
             result = subprocess.run([
                 "bash", "-c",
                 'ROOT="$1"; source "$ROOT/scripts/lib-mobile-ios-release-network.sh"; '
@@ -83,6 +91,16 @@ if mode == 'live' or (mode == 'stopping' and attempt == 1): print('7 Nostr VPN T
                 result, _, _ = self.run_case(mode, baseline=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("cleanup-required", result.stderr)
+
+    def test_app_singleton_requires_one_process_from_complete_inventory(self):
+        result, receipt, _ = self.run_case("app-live", app=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(receipt["appProcessIdentifier"], 7)
+        for mode in ["absent", "app-duplicate", "unavailable"]:
+            with self.subTest(mode=mode):
+                result, receipt, _ = self.run_case(mode, app=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(receipt)
 
 
 if __name__ == "__main__":

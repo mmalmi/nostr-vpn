@@ -73,7 +73,7 @@ fail() {
 
 RELEASE_JOIN_PHASE_SELECTION="${NVPN_RELEASE_JOIN_PHASES:-full}"
 case "$RELEASE_JOIN_PHASE_SELECTION" in
-  full|manual-only|iphone-admin-pixel-manual-only|pixel-admin-iphone-manual-only|iphone-admin-pixel-qr-only|pixel-admin-iphone-qr-only|desktop-only) ;;
+  full|manual-only|qr-only|iphone-admin-pixel-manual-only|pixel-admin-iphone-manual-only|iphone-admin-pixel-qr-only|pixel-admin-iphone-qr-only|desktop-only) ;;
   *)
     fail "unsupported NVPN_RELEASE_JOIN_PHASES=$RELEASE_JOIN_PHASE_SELECTION"
     ;;
@@ -263,14 +263,17 @@ phase_ios_admin_android_qr() {
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_QR_IMAGE_IMPORTED=1 \
     "$((RELEASE_JOIN_IMPORT_WAIT_SECS + 5))" \
     || fail "iPhone did not decode the Pixel's captured QR image"
-  # Start before observing approval so polling never discounts delivery time.
-  submitted="$(release_join_now_ms)"
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS= \
     "$RELEASE_JOIN_IOS_SETUP_WAIT_SECS" \
     || fail "iPhone did not submit the decoded Pixel join request"
-  release_join_android_wait_qr_join_complete "$RELEASE_JOIN_IOS_ADMIN_ID" \
+  # Use the runner's approval timestamp, including time spent observing it.
+  submitted="$(ios_marker_value_from "$scan_log" NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS)"
+  [[ "$submitted" =~ ^[0-9]+$ ]] || fail "iPhone QR approval timestamp is missing"
+  completed="$(release_join_android_wait_qr_join_complete \
+    "$RELEASE_JOIN_IOS_ADMIN_ID" \
+    "$((submitted + RELEASE_JOIN_DELIVERY_WAIT_SECS * 1000))" \
+    "$RESULT_DIR/iphone-admin-pixel-qr-observations.tsv")" \
     || fail "Pixel stayed on QR view or lacked the exact iPhone admin roster row"
-  completed="$(release_join_now_ms)"
   assert_delivery_deadline "$submitted" "$completed" "iPhone-admin-to-Pixel-QR"
   release_join_ios_finish_test \
     || fail "iPhone admin did not accept the exact Pixel joiner"
@@ -487,6 +490,10 @@ case "$RELEASE_JOIN_PHASE_SELECTION" in
   manual-only)
     phase_ios_admin_android_manual
     phase_android_admin_ios_manual
+    ;;
+  qr-only)
+    phase_ios_admin_android_qr
+    phase_android_admin_ios_qr
     ;;
   iphone-admin-pixel-manual-only) phase_ios_admin_android_manual ;;
   pixel-admin-iphone-manual-only) phase_android_admin_ios_manual ;;

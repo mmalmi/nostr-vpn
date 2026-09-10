@@ -974,31 +974,29 @@ PY
 
 release_join_assert_one_ios_process() {
   local processes="$RESULT_DIR/ios-processes-final.json"
-  xcrun devicectl device info processes \
-    --device "$IOS_DEVICE" \
-    --json-output "$processes" \
-    --quiet
-  python3 - "$processes" <<'PY'
+  python3 - "$ROOT/scripts" "$IOS_DEVICE" "$processes" <<'PY'
+import hashlib
 import json
+from pathlib import Path
+import subprocess
 import sys
-
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-matches = []
-
-def visit(value):
-    if isinstance(value, dict):
-        executable = str(value.get("executable", ""))
-        if executable.endswith("/Nostr%20VPN.app/Nostr%20VPN") or executable.endswith("/Nostr VPN.app/Nostr VPN"):
-            matches.append(value)
-        for child in value.values():
-            visit(child)
-    elif isinstance(value, list):
-        for child in value:
-            visit(child)
-
-visit(payload)
+sys.path.insert(0, sys.argv[1])
+from ios_packet_tunnel_processes import read_process_inventory
+device, output = sys.argv[2:]
+Path(output).unlink(missing_ok=True)
+try:
+    processes, inventory_sha = read_process_inventory(device, 5)
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    raise SystemExit(f"iOS app process inventory failed ({type(error).__name__})") from None
+matches = [pid for pid, name in processes.items() if name == "Nostr VPN"]
 if len(matches) != 1:
     raise SystemExit(f"expected one iOS Nostr VPN app process, found {len(matches)}")
+Path(output).write_text(json.dumps({
+    "provider": "apple-os-trace-relay-pidlist",
+    "selectedPhysicalDeviceIdentifierSha256": hashlib.sha256(device.encode()).hexdigest(),
+    "inventorySha256": inventory_sha, "appProcessIdentifier": matches[0],
+    "processCount": len(processes),
+}, indent=2) + "\n")
 PY
 }
 
@@ -1006,6 +1004,7 @@ release_join_launch_ios_release() {
   local bundle="${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}"
   xcrun devicectl device process launch \
     --device "$IOS_DEVICE" \
+    --timeout 180 \
     --activate \
     "$bundle" >/dev/null
   sleep 1

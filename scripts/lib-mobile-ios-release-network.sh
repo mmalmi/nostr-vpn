@@ -1221,31 +1221,21 @@ ios_release_network_xctrunner_installed() {
 
 ios_release_network_xctrunner_process_ids() {
   local device="$1"
-  local process_json status=0
-  process_json="$(
-    mktemp "${TMPDIR:-/tmp}/nvpn-ios-runner-processes.XXXXXX"
-  )" || return 1
-  if xcrun devicectl device info processes \
-      --device "$device" --json-output "$process_json" --quiet \
-      >/dev/null \
-    && jq -r '
-      .result.runningProcesses[]?
-      | select(
-          .executable
-          | endswith(
-              "/NostrVpnIosUITests-Runner.app/NostrVpnIosUITests-Runner"
-            )
-        )
-      | .processIdentifier
-      | select(type == "number")
-    ' "$process_json"
-  then
-    status=0
-  else
-    status=$?
-  fi
-  rm -f "$process_json" || status=1
-  return "$status"
+  python3 - "$ROOT/scripts" "$device" <<'PY'
+import subprocess
+import sys
+sys.path.insert(0, sys.argv[1])
+from ios_packet_tunnel_processes import read_process_inventory
+try:
+    processes, _ = read_process_inventory(sys.argv[2], 5)
+except (OSError, ValueError, subprocess.SubprocessError) as error:
+    raise SystemExit(f"iOS runner inventory failed ({type(error).__name__})") from None
+matches = [pid for pid, name in processes.items() if name == "NostrVpnIosUITests-Runner"]
+if len(matches) > 1:
+    raise SystemExit("iOS runner inventory is ambiguous")
+for pid in matches:
+    print(pid)
+PY
 }
 
 ios_release_network_require_packet_tunnel_stopped() {
@@ -1278,7 +1268,7 @@ ios_release_network_stop_forced_xctrunner() {
   while IFS= read -r process_id; do
     [[ "$process_id" =~ ^[1-9][0-9]*$ ]] || continue
     xcrun devicectl device process terminate \
-      --device "$device" --pid "$process_id" --quiet >/dev/null 2>&1 \
+      --device "$device" --pid "$process_id" --timeout "$timeout" --quiet >/dev/null 2>&1 \
       || return 1
   done <<<"$process_ids"
   deadline=$((SECONDS + timeout))
