@@ -89,7 +89,7 @@ import os
 import sys
 assert sys.argv[1:3] == ["--id", "fixture-device"]
 assert "--list_bundle_id" in sys.argv and "--json" in sys.argv
-assert "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString" in sys.argv
+assert "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString,ApplicationType,ProfileValidated,SignerIdentity,NVPNBuildGitSha" in sys.argv
 with open(os.environ["NVPN_TEST_USB_INVENTORY_LOG"], "a") as log:
     log.write(" ".join(sys.argv[1:]) + "\n")
 apps = {}
@@ -757,6 +757,8 @@ then
   fail "disconnect cleanup accepted conflicting Wi-Fi restoration markers"
 fi
 python3 "$ROOT/scripts/test-ios-packet-tunnel-processes.py"   || fail "disconnect process inventory regression failed"
+python3 "$ROOT/scripts/test-mobile-ios-artifact-readback.py" \
+  || fail "installed artifact USB identity regression failed"
 if sed -n '/ios_release_network_test_command()/,/^}/p' "$RUNNER" \
   | grep -Fq -- '-quiet'
 then

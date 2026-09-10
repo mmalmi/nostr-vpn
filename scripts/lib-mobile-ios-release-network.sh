@@ -178,7 +178,7 @@ try:
     Path(output).unlink(missing_ok=True)
     result = subprocess.run(
         ["ios-deploy", "--id", device, "--list_bundle_id", "--json",
-         "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString",
+         "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString,ApplicationType,ProfileValidated,SignerIdentity,NVPNBuildGitSha",
          "--timeout", "10"],
         capture_output=True, text=True, timeout=15, check=True,
     )
@@ -199,6 +199,13 @@ try:
         "bundleIdentifier": bundle,
         "bundleVersion": values[0],
         "version": values[1],
+        "applicationType": app.get("ApplicationType"),
+        "profileValidated": app.get("ProfileValidated"),
+        "appGitSha": app.get("NVPNBuildGitSha"),
+        "signerIdentitySha256": (
+            hashlib.sha256(app["SignerIdentity"].encode()).hexdigest()
+            if isinstance(app.get("SignerIdentity"), str) and app["SignerIdentity"] else None
+        ),
     }
     Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:

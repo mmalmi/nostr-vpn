@@ -290,31 +290,22 @@ import sys
     fips_metadata_path_sha,
     fips_checkout_path_sha,
     signer_sha,
+    signer_identity_sha,
 ) = sys.argv[1:]
 app_info = plistlib.load(open(app_info_path, "rb"))
-installed_payload = json.load(open(installed_apps_path, encoding="utf-8"))
-installed = []
-
-
-def visit(value):
-    if isinstance(value, dict):
-        if value.get("bundleIdentifier") == expected_bundle_id:
-            installed.append(value)
-        for child in value.values():
-            visit(child)
-    elif isinstance(value, list):
-        for child in value:
-            visit(child)
-
-
-visit(installed_payload)
-if len(installed) != 1:
-    raise SystemExit(f"expected one installed Release app, observed {len(installed)}")
-installed_app = installed[0]
-if installed_app.get("builtByDeveloper") is not True:
-    raise SystemExit("installed iOS Release app is not a developer-supplied artifact")
-if installed_app.get("removable") is not True:
-    raise SystemExit("installed iOS Release app is not the removable tested artifact")
+installed_app = json.load(open(installed_apps_path, encoding="utf-8"))
+if (not isinstance(installed_app, dict)
+    or installed_app.get("provider") != "apple-installation-proxy-usb"
+    or installed_app.get("bundleIdentifier") != expected_bundle_id):
+    raise SystemExit("installed iOS Release app has no authenticated USB identity")
+if (installed_app.get("applicationType") != "User"
+    or installed_app.get("profileValidated") is not True):
+    raise SystemExit("installed iOS Release app is not a validated user application")
+if installed_app.get("signerIdentitySha256") != signer_identity_sha:
+    raise SystemExit("installed iOS Release signer differs from the audited certificate")
+if (installed_app.get("appGitSha") != app_git_sha
+    or app_info.get("NVPNBuildGitSha") != app_git_sha):
+    raise SystemExit("installed iOS Release source differs from the built app")
 if str(installed_app.get("version")) != str(
     app_info["CFBundleShortVersionString"]
 ):
@@ -329,6 +320,8 @@ selected_device = json.load(
 device_identifier_sha = selected_device.get("deviceIdentifierSha256")
 if not isinstance(device_identifier_sha, str) or len(device_identifier_sha) != 64:
     raise SystemExit("selected iOS device receipt has no identifier hash")
+if installed_app.get("selectedPhysicalDeviceIdentifierSha256") != device_identifier_sha:
+    raise SystemExit("installed iOS Release app was read from a different device")
 test_products_path = os.path.join(derived_data_path, "Build", "Products")
 app_profile_path = os.path.join(app_path, "embedded.mobileprovision")
 tunnel_profile_path = os.path.join(
@@ -390,6 +383,8 @@ with open(path, "w", encoding="utf-8") as handle:
             "installedBundleIdentifier": expected_bundle_id,
             "installedBuildNumber": str(installed_app["bundleVersion"]),
             "installedMarketingVersion": str(installed_app["version"]),
+            "installedIdentityProvider": installed_app["provider"],
+            "installedSignerIdentitySha256": signer_identity_sha,
         },
         handle,
         indent=2,
@@ -422,7 +417,7 @@ ios_release_network_audit_artifact() {
 
   local audit_dir app_details tunnel_details app_profile tunnel_profile
   local installed_apps app_entitlements tunnel_entitlements certificate_prefix
-  local tunnel_certificate_prefix signer_sha_path signer_sha
+  local tunnel_certificate_prefix signer_sha_path signer_sha signer_identity_sha extra
   audit_dir="$(
     mktemp -d "$IOS_RELEASE_NETWORK_SIGNING_DIR/artifact-audit.XXXXXX"
   )" \
@@ -456,12 +451,8 @@ ios_release_network_audit_artifact() {
     echo "iOS Release signing artifact extraction failed" >&2
     return 1
   fi
-  if ! xcrun devicectl device info apps \
-    --device "$IOS_RELEASE_NETWORK_DEVICE" \
-    --bundle-id "$IOS_BUNDLE_ID" \
-    --columns '*' \
-    --json-output "$installed_apps" \
-    --quiet >/dev/null
+  if ! ios_release_network_installed_identity \
+    "$IOS_BUNDLE_ID" "$installed_apps" >/dev/null
   then
     rm -rf "$audit_dir"
     echo "iOS Release installed-app readback failed" >&2
@@ -566,14 +557,19 @@ for entitlements, bundle_id in (
 if not tunnel_entitlements.get("com.apple.developer.networking.networkextension"):
     raise SystemExit("Packet Tunnel entitlement is missing")
 with open(signer_sha_path, "w", encoding="ascii") as handle:
-    handle.write(actual_signer_sha + "\n")
+    common_names = certificate.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+    if len(common_names) != 1:
+        raise SystemExit("Release signer has no unique certificate identity")
+    signer_identity_sha = hashlib.sha256(common_names[0].value.encode()).hexdigest()
+    handle.write(actual_signer_sha + "\t" + signer_identity_sha + "\n")
 PY
   then
     rm -rf "$audit_dir"
     return 1
   fi
-  signer_sha="$(<"$signer_sha_path")"
-  [[ "$signer_sha" =~ ^[0-9a-f]{64}$ ]] || {
+  IFS=$'\t' read -r signer_sha signer_identity_sha extra <"$signer_sha_path"
+  [[ "$signer_sha" =~ ^[0-9a-f]{64}$ \
+    && "$signer_identity_sha" =~ ^[0-9a-f]{64}$ && -z "$extra" ]] || {
     rm -rf "$audit_dir"
     echo "iOS Release signer audit produced no certificate receipt" >&2
     return 1
@@ -668,7 +664,7 @@ PY
     "$IOS_RELEASE_NETWORK_DERIVED_DATA" "$IOS_RELEASE_NETWORK_XCTESTRUN" \
     "$IOS_RELEASE_NETWORK_FIPS_TREE" "$NVPN_EXPECTED_FIPS_VERSION" \
     "$fips_metadata_sha" "$fips_metadata_path_sha" \
-    "$fips_checkout_path_sha" "$signer_sha"
+    "$fips_checkout_path_sha" "$signer_sha" "$signer_identity_sha"
   then
     rm -f "$receipt"
     rm -rf "$audit_dir"
