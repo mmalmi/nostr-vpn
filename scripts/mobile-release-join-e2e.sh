@@ -235,8 +235,9 @@ assert_delivery_deadline() {
 
 phase_ios_admin_android_qr() {
   local scan_log submitted completed
-  release_join_android_open_network_setup
+  # Request iOS automation while the operator is ready, before Android setup.
   ios_create_admin "Release QR iPhone admin"
+  release_join_android_open_network_setup
   release_join_android_show_qr
   release_join_android_background_foreground_pending_qr
   release_join_android_wait_vpn_connected
