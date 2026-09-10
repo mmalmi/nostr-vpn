@@ -9,6 +9,22 @@ import subprocess
 import time
 
 
+def read_process_inventory(device, timeout):
+    result = subprocess.run(
+        ["idevicesyslog", "-u", device, "pidlist"],
+        capture_output=True, text=True, timeout=timeout, check=True,
+    )
+    processes = {}
+    for line in result.stdout.splitlines():
+        pid, name = line.split(maxsplit=1)
+        if not pid.isdecimal() or int(pid) <= 0 or int(pid) in processes:
+            raise ValueError("invalid or duplicate process identifier")
+        processes[int(pid)] = name
+    if processes.get(1) != "launchd" or "SpringBoard" not in processes.values():
+        raise ValueError("missing system processes in inventory")
+    return processes, hashlib.sha256(result.stdout.encode()).hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("device")
@@ -21,21 +37,9 @@ def main():
     args.output.unlink(missing_ok=True)
     while time.monotonic() < deadline:
         try:
-            result = subprocess.run(
-                ["idevicesyslog", "-u", args.device, "pidlist"],
-                capture_output=True,
-                text=True,
-                timeout=min(15, deadline - time.monotonic()),
-                check=True,
+            processes, inventory_sha = read_process_inventory(
+                args.device, min(15, deadline - time.monotonic())
             )
-            processes = {}
-            for line in result.stdout.splitlines():
-                pid, name = line.split(maxsplit=1)
-                if not pid.isdecimal() or int(pid) <= 0 or int(pid) in processes:
-                    raise ValueError("invalid or duplicate process identifier")
-                processes[int(pid)] = name
-            if processes.get(1) != "launchd" or "SpringBoard" not in processes.values():
-                raise ValueError("missing system processes in inventory")
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             raise SystemExit(
                 f"iOS cleanup could not inspect the process inventory ({type(error).__name__})"
@@ -51,7 +55,7 @@ def main():
             "provider": "apple-os-trace-relay-pidlist",
             "sampledAtUnixMs": time.time_ns() // 1_000_000,
             "processCount": len(processes),
-            "inventorySha256": hashlib.sha256(result.stdout.encode()).hexdigest(),
+            "inventorySha256": inventory_sha,
             "packetTunnelProcesses": tunnels,
         }, indent=2) + "\n")
         if not tunnels:

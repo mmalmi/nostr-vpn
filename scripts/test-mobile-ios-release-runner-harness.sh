@@ -81,6 +81,63 @@ for fragment in required_ios_fragments:
         )
 PY
 
+mkdir -p "$TEMP_ROOT/bin"
+cat >"$TEMP_ROOT/bin/ios-deploy" <<'USB_FIXTURE'
+#!/usr/bin/env python3
+import json
+import os
+import sys
+assert sys.argv[1:3] == ["--id", "fixture-device"]
+assert "--list_bundle_id" in sys.argv and "--json" in sys.argv
+assert "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString" in sys.argv
+with open(os.environ["NVPN_TEST_USB_INVENTORY_LOG"], "a") as log:
+    log.write(" ".join(sys.argv[1:]) + "\n")
+apps = {}
+for bundle, build, version in (
+    ("fi.siriusbusiness.nvpn", "4001008", "4.1.5"),
+    ("fi.siriusbusiness.nvpn.UITests.xctrunner", "1", os.environ.get("NVPN_TEST_USB_RUNNER_VERSION", "1.0")),
+):
+    apps[bundle] = {"CFBundleIdentifier": bundle, "CFBundleVersion": build, "CFBundleShortVersionString": version}
+print(json.dumps({"Event": "ListBundleId", "Apps": apps}))
+USB_FIXTURE
+chmod +x "$TEMP_ROOT/bin/ios-deploy"
+export PATH="$TEMP_ROOT/bin:$PATH"
+export NVPN_TEST_USB_INVENTORY_LOG="$TEMP_ROOT/usb-inventory.log"
+
+cat >"$TEMP_ROOT/bin/ideviceinfo" <<'DEVICE_FIXTURE'
+#!/usr/bin/env python3
+import os
+import plistlib
+import sys
+assert sys.argv[1] == "-u" and sys.argv[3] == "-x"
+sys.stdout.buffer.write(plistlib.dumps({
+    "UniqueDeviceID": os.environ.get("NVPN_TEST_USB_DEVICE_ID", sys.argv[2]),
+    "DeviceClass": os.environ.get("NVPN_TEST_USB_DEVICE_CLASS", "iPhone"),
+    "DeviceName": "Fixture Phone",
+}))
+DEVICE_FIXTURE
+chmod +x "$TEMP_ROOT/bin/ideviceinfo"
+(
+  device=00000001-0000000000000001
+  export NVPN_IOS_EXPECTED_DEVICE_NAME='Fixture Phone'
+  [[ "$(ios_release_network_resolve_device "$device")" == "$device" ]]
+  resolve_physical_ios_udid() { [[ "$1" == fixture-alias ]]; printf '%s\n' "$device"; }
+  [[ "$(ios_release_network_resolve_device fixture-alias)" == "$device" ]]
+  for invalid in wrong-device wrong-class wrong-name; do
+    unset NVPN_TEST_USB_DEVICE_ID NVPN_TEST_USB_DEVICE_CLASS
+    export NVPN_IOS_EXPECTED_DEVICE_NAME='Fixture Phone'
+    case "$invalid" in
+      wrong-device) export NVPN_TEST_USB_DEVICE_ID=another-device ;;
+      wrong-class) export NVPN_TEST_USB_DEVICE_CLASS=Mac ;;
+      wrong-name) export NVPN_IOS_EXPECTED_DEVICE_NAME='Another Phone' ;;
+    esac
+    if ios_release_network_resolve_device "$device" >"$TEMP_ROOT/$invalid.out" 2>/dev/null; then
+      fail "USB physical-device readback accepted $invalid"
+    fi
+    [[ ! -s "$TEMP_ROOT/$invalid.out" ]]
+  done
+) || fail "USB physical-device selection did not preserve exact identity"
+
 runner_root="$TEMP_ROOT/runner-derived/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
 runner_install_log="$TEMP_ROOT/runner-install.log"
 mkdir -p "$runner_root"
@@ -92,9 +149,6 @@ plutil -insert CFBundleIdentifier \
   IOS_RELEASE_NETWORK_DEVICE=fixture-device
   xcrun() {
     printf '%s\n' "$*" >>"$runner_install_log"
-    if [[ "$*" == "devicectl device info apps"* ]]; then
-      printf '%s\n' "$IOS_BUNDLE_ID.UITests.xctrunner"
-    fi
   }
   ios_release_network_install_exact_runner
   ios_release_network_test_command "$TEMP_ROOT/runner-derived/exact.xctestrun"
@@ -105,8 +159,8 @@ grep -Fxq \
   "$runner_install_log" \
   || fail "exact signed iOS runner path was not installed before XCTest"
 grep -Fq \
-  "device info apps --device fixture-device --bundle-id $IOS_BUNDLE_ID.UITests.xctrunner" \
-  "$runner_install_log" \
+  -- '--id fixture-device --list_bundle_id --json' \
+  "$NVPN_TEST_USB_INVENTORY_LOG" \
   || fail "installed iOS runner bundle identity was not read back"
 if grep -Fq "device uninstall app" "$runner_install_log"; then
   fail "exact iOS runner replacement revoked development trust"
@@ -173,37 +227,8 @@ run_installed_reuse_readback() (
   local runner_version="$1"
   IOS_RELEASE_NETWORK_SIGNING_DIR="$TEMP_ROOT/reuse"
   IOS_RELEASE_NETWORK_DEVICE=fixture-device
-  xcrun() {
-    local bundle="" output="" previous=""
-    printf '%s\n' "$*" >>"$reuse_inventory_log"
-    for argument in "$@"; do
-      case "$previous" in
-        --bundle-id) bundle="$argument" ;;
-        --json-output) output="$argument" ;;
-      esac
-      previous="$argument"
-    done
-    [[ -n "$bundle" && -n "$output" ]] || return 1
-    python3 - "$output" "$bundle" "$runner_version" <<'PY'
-import json
-import sys
-
-path, bundle, runner_version = sys.argv[1:]
-is_runner = bundle.endswith(".UITests.xctrunner")
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump({
-        "info": {"outcome": "success"},
-        "result": {
-            "deviceIdentifier": "fixture-coredevice-uuid-not-hardware-udid",
-            "apps": [{
-                "bundleIdentifier": bundle,
-                "bundleVersion": "1" if is_runner else "4001008",
-                "version": runner_version if is_runner else "4.1.5",
-            }],
-        },
-    }, handle)
-PY
-  }
+  export NVPN_TEST_USB_RUNNER_VERSION="$runner_version"
+  export NVPN_TEST_USB_INVENTORY_LOG="$reuse_inventory_log"
   ios_release_network_require_installed_reuse \
     "$reuse_app" "$reuse_runner" "$reuse_receipt" \
     "$reuse_runner_receipt" "$reuse_runner_tree" "$reuse_device_sha" \

@@ -379,9 +379,35 @@ import pathlib
 import sys
 from contextlib import redirect_stderr
 
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]).parent))
 spec = importlib.util.spec_from_file_location("ios_capture", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+
+# Active-session observations must use the same complete USB inventory as
+# shutdown verification, even when CoreDevice cannot answer a process query.
+original_inventory = module.read_process_inventory
+original_run = module.subprocess.run
+inventory = {1: "launchd", 2: "SpringBoard", 111: "Nostr VPN", 211: "Nostr VPN Tunnel", 311: "Other Nostr VPN"}
+def usb_inventory(device, timeout):
+    assert device == "fixture-device" and timeout == 5
+    return inventory, "a" * 64
+def unexpected_coredevice(*args, **kwargs):
+    raise AssertionError("process sampler contacted CoreDevice")
+module.read_process_inventory = usb_inventory
+module.subprocess.run = unexpected_coredevice
+sampled = module.ProcessSampler("fixture-device", pathlib.Path(sys.argv[2], "usb-sample.json"))
+assert sampled._sample("active-session-begin")
+assert sampled.samples[-1]["appPids"] == [111]
+assert sampled.samples[-1]["packetTunnelPids"] == [211]
+assert sampled.samples[-1]["provider"] == "apple-os-trace-relay-pidlist"
+assert sampled.samples[-1]["inventorySha256"] == "a" * 64
+del inventory[211]
+assert not sampled._sample("active-session-end")
+assert sampled.samples[-1]["packetTunnelPids"] == []
+sampled.checkpoint_executor.shutdown(wait=False, cancel_futures=True)
+module.read_process_inventory = original_inventory
+module.subprocess.run = original_run
 
 class FinishedThread:
     def join(self, timeout=None):

@@ -764,6 +764,25 @@ json.dump({"info": {"outcome": "success"}, "result": {
     ]}}, open(sys.argv[1], "w"))
 PY
   }
+  mkdir -p "$tmp/bin"
+  cat >"$tmp/bin/ios-deploy" <<'USB_FIXTURE'
+#!/usr/bin/env python3
+import json
+import os
+import sys
+assert sys.argv[1:3] == ["--id", "fixture-hardware-udid"]
+assert "--list_bundle_id" in sys.argv and "--json" in sys.argv
+apps = {}
+for bundle, build, version in (
+    ("fi.siriusbusiness.nvpn", "4001008", "4.1.5"),
+    ("fi.siriusbusiness.nvpn.UITests.xctrunner", "1", os.environ.get("FAKE_IOS_RUNNER_VERSION", "1.0")),
+):
+    apps[bundle] = {"CFBundleIdentifier": bundle, "CFBundleVersion": build, "CFBundleShortVersionString": version}
+print(json.dumps({"Event": "ListBundleId", "Apps": apps}))
+USB_FIXTURE
+  chmod +x "$tmp/bin/ios-deploy"
+  export PATH="$tmp/bin:$PATH"
+  export FAKE_IOS_RUNNER_VERSION=1.0
   RESULT_DIR="$tmp/result"
   IOS_DEVICE=fixture-hardware-udid
   RELEASE_JOIN_ARTIFACTS_VALIDATED=1

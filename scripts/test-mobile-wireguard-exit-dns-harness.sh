@@ -170,7 +170,7 @@ cat >"$MOCK_ROOT/scripts/mobile_env.sh" <<'SH'
 #!/usr/bin/env bash
 load_mobile_env() { :; }
 select_physical_android_serial() { printf '%s\n' "${2:-android-physical}"; }
-select_physical_ios_device() { printf '%s\n' "$1"; }
+ios_release_network_resolve_device() { printf '%s\n' "$1"; }
 SH
 
 cat >"$MOCK_ROOT/scripts/lib-mobile-underlay-change.sh" <<'SH'

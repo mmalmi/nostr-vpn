@@ -843,7 +843,7 @@ if has_platform ios; then
     exit 1
   fi
   IOS_DEVICE_SELECTED="$(
-    select_physical_ios_device "${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
+    ios_release_network_resolve_device "${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
   )" || {
     echo "iOS WireGuard exit gate could not select the required physical phone" >&2
     exit 1

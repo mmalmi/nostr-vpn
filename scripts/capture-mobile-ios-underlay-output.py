@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from ios_packet_tunnel_processes import read_process_inventory
+
 
 MARKER = re.compile(
     r"NVPN_IOS_UNDERLAY_SWITCH_(?P<cycle>1)_"
@@ -62,31 +64,13 @@ def valid_process_sample(sample: dict[str, object]) -> bool:
     )
 
 
-def process_ids(payload: object) -> tuple[list[int], list[int]]:
-    app: set[int] = set()
-    tunnel: set[int] = set()
-
-    def visit(value: object) -> None:
-        if isinstance(value, dict):
-            executable = str(value.get("executable", ""))
-            process_id = value.get("processIdentifier")
-            if isinstance(process_id, int):
-                normalized = executable.replace("%20", " ")
-                if normalized.endswith(
-                    "/Nostr VPN.app/PlugIns/Nostr VPN Tunnel.appex/"
-                    "Nostr VPN Tunnel"
-                ):
-                    tunnel.add(process_id)
-                elif normalized.endswith("/Nostr VPN.app/Nostr VPN"):
-                    app.add(process_id)
-            for child in value.values():
-                visit(child)
-        elif isinstance(value, list):
-            for child in value:
-                visit(child)
-
-    visit(payload)
-    return sorted(app), sorted(tunnel)
+def process_ids(processes: dict[int, str]) -> tuple[list[int], list[int]]:
+    # The signed app and extension use these exact executable names. Require
+    # one of each from a complete authenticated OS-trace process inventory.
+    return (
+        sorted(pid for pid, name in processes.items() if name == "Nostr VPN"),
+        sorted(pid for pid, name in processes.items() if name == "Nostr VPN Tunnel"),
+    )
 
 
 class ProcessSampler:
@@ -402,39 +386,18 @@ class ProcessSampler:
             "checkpoint": checkpoint,
             "observedAtMilliseconds": timestamp_ms,
         }
-        with tempfile.NamedTemporaryFile(suffix=".json") as output:
-            try:
-                completed = subprocess.run(
-                    [
-                        "xcrun",
-                        "devicectl",
-                        "device",
-                        "info",
-                        "processes",
-                        "--device",
-                        self.device,
-                        "--json-output",
-                        output.name,
-                        "--quiet",
-                    ],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=timeout,
-                    check=False,
-                )
-                if completed.returncode != 0:
-                    sample["error"] = (
-                        "devicectl process query failed "
-                        f"with status {completed.returncode}"
-                    )
-                else:
-                    payload = json.loads(Path(output.name).read_text())
-                    app, tunnel = process_ids(payload)
-                    sample["appPids"] = app
-                    sample["packetTunnelPids"] = tunnel
-            except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
-                sample["error"] = type(error).__name__
+        try:
+            processes, inventory_sha = read_process_inventory(self.device, timeout)
+            app, tunnel = process_ids(processes)
+            sample.update({
+                "appPids": app,
+                "packetTunnelPids": tunnel,
+                "provider": "apple-os-trace-relay-pidlist",
+                "inventorySha256": inventory_sha,
+                "processCount": len(processes),
+            })
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            sample["error"] = type(error).__name__
         with self.samples_lock:
             self.samples.append(sample)
         return valid_process_sample(sample)

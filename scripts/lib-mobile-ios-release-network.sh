@@ -130,25 +130,81 @@ ios_release_network_install_mode() {
   esac
 }
 
+ios_release_network_resolve_device() {
+  local device="$1"
+  # Keep name/alias selection compatible; exact hardware identifiers go
+  # directly through the authenticated USB service used by physical gates.
+  if ! [[ "$device" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}$ \
+    || "$device" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+    device="$(resolve_physical_ios_udid "$device")" || return 1
+  fi
+  python3 - "$device" "${NVPN_IOS_EXPECTED_DEVICE_NAME:-}" <<'PY_DEVICE'
+import plistlib
+import subprocess
+import sys
+
+device, expected_name = sys.argv[1:]
+try:
+    result = subprocess.run(
+        ["ideviceinfo", "-u", device, "-x"],
+        capture_output=True, timeout=15, check=True,
+    )
+    values = plistlib.loads(result.stdout)
+    if not isinstance(values, dict):
+        raise ValueError("invalid device identity")
+    if values.get("UniqueDeviceID") != device or values.get("DeviceClass") not in {"iPhone", "iPad"}:
+        raise ValueError("unexpected physical device")
+    if expected_name and values.get("DeviceName") != expected_name:
+        raise ValueError("unexpected device name")
+except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+    raise SystemExit(f"iOS USB physical-device verification failed ({type(error).__name__})") from None
+print(device)
+PY_DEVICE
+}
+
 ios_release_network_installed_identity() {
   local bundle="$1" inventory="$2"
-  if ! xcrun devicectl device info apps \
-      --device "$IOS_RELEASE_NETWORK_DEVICE" --bundle-id "$bundle" \
-      --columns '*' --json-output "$inventory" --quiet >/dev/null
-  then
-    echo "iOS exact installed-artifact readback failed: $bundle" >&2
-    return 1
-  fi
-  jq -er --arg bundle "$bundle" '
-    select(.info.outcome == "success")
-    | .result
-    | [.apps[] | select(.bundleIdentifier == $bundle)]
-    | select(length == 1)
-    | .[0]
-    | [.bundleVersion, .version]
-    | select(all(.[]; type == "string" and length > 0))
-    | @tsv
-  ' "$inventory"
+  # Installation Proxy uses the already-paired USB connection. CoreDevice can
+  # spend minutes reacquiring a connection after each successful XCTest.
+  python3 - "$IOS_RELEASE_NETWORK_DEVICE" "$bundle" "$inventory" <<'PY_USB'
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+device, bundle, output = sys.argv[1:]
+try:
+    Path(output).unlink(missing_ok=True)
+    result = subprocess.run(
+        ["ios-deploy", "--id", device, "--list_bundle_id", "--json",
+         "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString",
+         "--timeout", "10"],
+        capture_output=True, text=True, timeout=15, check=True,
+    )
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict) or payload.get("Event") != "ListBundleId":
+        raise ValueError("unexpected inventory event")
+    app = payload["Apps"][bundle]
+    if not isinstance(app, dict) or app.get("CFBundleIdentifier") != bundle:
+        raise ValueError("unexpected bundle identity")
+    values = [app[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")]
+    if not all(isinstance(value, str) and value and not any(c in value for c in "\t\r\n") for value in values):
+        raise ValueError("incomplete installed version")
+    receipt = {
+        "receiptSchema": 1,
+        "provider": "apple-installation-proxy-usb",
+        "selectedPhysicalDeviceIdentifierSha256": hashlib.sha256(device.encode()).hexdigest(),
+        "inventorySha256": hashlib.sha256(result.stdout.encode()).hexdigest(),
+        "bundleIdentifier": bundle,
+        "bundleVersion": values[0],
+        "version": values[1],
+    }
+    Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+    raise SystemExit(f"iOS USB installed-artifact readback failed ({type(error).__name__})") from None
+print("\t".join(values))
+PY_USB
 }
 
 ios_release_network_require_installed_reuse() {
@@ -255,7 +311,7 @@ ios_release_network_prepare_reuse() {
     python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" \
       tree-sha "$derived/Build/Products"
   )" || return 1
-  device_udid="$(resolve_physical_ios_udid "$device")" || return 1
+  device_udid="$(ios_release_network_resolve_device "$device")" || return 1
   device_sha="$(printf %s "$device_udid" | shasum -a 256 | awk '{print $1}')"
   umask 077
   IOS_RELEASE_NETWORK_SIGNING_DIR="$(
@@ -1147,12 +1203,13 @@ ios_release_network_first_marker_observed() {
 }
 
 ios_release_network_xctrunner_installed() {
-  local device="$1" bundle="$IOS_BUNDLE_ID.UITests.xctrunner" apps
-  apps="$(
-    xcrun devicectl device info apps \
-      --device "$device" --bundle-id "$bundle" --hide-headers 2>/dev/null
-  )" || return 2
-  [[ -n "${apps//[[:space:]]/}" ]]
+  local device="$1" bundle="$IOS_BUNDLE_ID.UITests.xctrunner" inventory status=0
+  inventory="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-installed-runner.XXXXXX")" || return 2
+  IOS_RELEASE_NETWORK_DEVICE="$device" \
+    ios_release_network_installed_identity "$bundle" "$inventory" >/dev/null \
+    || status=2
+  rm -f "$inventory" || status=2
+  return "$status"
 }
 
 ios_release_network_xctrunner_process_ids() {
