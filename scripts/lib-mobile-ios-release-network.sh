@@ -1833,6 +1833,19 @@ ios_release_network_disconnect_cleanup() {
     local timeout="${NVPN_IOS_DISCONNECT_CLEANUP_TOTAL_TIMEOUT_SECS:-$((cleanup_timeout + 30))}"
     local grace="${NVPN_IOS_XCTEST_TERM_GRACE_SECS:-5}"
     local result_dir="${NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR:-$ROOT/artifacts/mobile-ios}"
+    mkdir -p "$result_dir" || return 1
+    # An already stopped tunnel gives the initial counter baseline directly.
+    # Avoid opening an unnecessary Apple automation session and its teardown.
+    # Final cleanup must still restore the shipped UI and underlay settings.
+    if [[ "$preserve_prepared" == 1 && "$cleanup_failed" == 0 \
+      && -z "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" ]] \
+      && ios_release_network_require_packet_tunnel_stopped \
+        "$IOS_RELEASE_NETWORK_DEVICE" \
+        "$result_dir/mobile-ios-release-baseline-packet-tunnel-processes.json" 5
+    then
+      echo "iOS initial counter baseline verified: packet tunnel already stopped"
+      return 0
+    fi
     local stem="mobile-ios-release-cleanup-$$-$RANDOM"
     local xcresult="$result_dir/$stem.xcresult"
     local marker pid watchdog status=0 monitor_was_enabled=0 actual_pgid

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 class InventoryTest(unittest.TestCase):
-    def run_case(self, mode):
+    def run_case(self, mode, baseline=False):
         with tempfile.TemporaryDirectory(prefix="nvpn-ios-process-test-") as directory:
             root = Path(directory)
             tool = root / "idevicesyslog"
@@ -38,12 +38,22 @@ if mode == 'live' or (mode == 'stopping' and attempt == 1): print('7 Nostr VPN T
             env = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
                    "INVENTORY_TEST_MODE": mode, "INVENTORY_TEST_COUNTER": str(root / "count")}
             started = time.monotonic()
+            operation = (
+                'IOS_RELEASE_NETWORK_PREPARED=1; IOS_RELEASE_NETWORK_DEVICE=fixture-device; '
+                'NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$3"; '
+                'ios_release_network_disconnect_cleanup_inner() { echo cleanup-required >&2; return 9; }; '
+                'ios_release_network_disconnect_cleanup 1'
+                if baseline else
+                'ios_release_network_require_packet_tunnel_stopped fixture-device "$2" 1'
+            )
+            if baseline:
+                output = root / "mobile-ios-release-baseline-packet-tunnel-processes.json"
             result = subprocess.run([
                 "bash", "-c",
                 'ROOT="$1"; source "$ROOT/scripts/lib-mobile-ios-release-network.sh"; '
-                'ios_release_network_require_packet_tunnel_stopped fixture-device "$2" 1',
-                "inventory-test", str(ROOT), str(output),
-            ], env=env, capture_output=True, text=True, timeout=4)
+                + operation,
+                "inventory-test", str(ROOT), str(output), str(root),
+            ], env=env, capture_output=True, text=True, timeout=9 if baseline else 4)
             receipt = json.loads(output.read_text()) if output.exists() else None
             return result, receipt, time.monotonic() - started
 
@@ -62,6 +72,17 @@ if mode == 'live' or (mode == 'stopping' and attempt == 1): print('7 Nostr VPN T
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("iOS cleanup could not", result.stderr)
                 self.assertLess(elapsed, 3)
+
+    def test_baseline_avoids_automation_only_with_fresh_stopped_proof(self):
+        result, receipt, _ = self.run_case("absent", baseline=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(receipt["packetTunnelProcesses"], [])
+        self.assertNotIn("cleanup-required", result.stderr)
+        for mode in ["live", "unavailable"]:
+            with self.subTest(mode=mode):
+                result, _, _ = self.run_case(mode, baseline=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("cleanup-required", result.stderr)
 
 
 if __name__ == "__main__":
