@@ -138,6 +138,7 @@ if ios_release_network_prepare selected >"$TMP_ROOT/ios-fips.log" 2>&1; then
 fi
 grep -Fq 'requires an exact FIPS Git SHA pin' "$TMP_ROOT/ios-fips.log"
 
+app_head="$(git -C "$APP_ROOT" rev-parse HEAD)"
 receipt="$TMP_ROOT/receipt.json"
 info="$TMP_ROOT/Info.plist"
 installed="$TMP_ROOT/installed.json"
@@ -154,18 +155,19 @@ printf 'tunnel profile\n' \
 printf 'app executable\n' >"$receipt_app/Nostr VPN"
 printf 'tunnel executable\n' \
   >"$receipt_app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"
-python3 - "$info" "$installed" "$device" "$receipt_xctestrun" <<'PY'
+python3 - "$info" "$installed" "$device" "$receipt_xctestrun" "$app_head" <<'PY'
 import json
 import plistlib
 import sys
 
-info, installed, device, xctestrun = sys.argv[1:]
+info, installed, device, xctestrun, app_head = sys.argv[1:]
 with open(info, "wb") as handle:
     plistlib.dump(
         {
             "CFBundleIdentifier": "fi.siriusbusiness.nvpn",
             "CFBundleShortVersionString": "4.1.5",
             "CFBundleVersion": "415",
+            "NVPNBuildGitSha": app_head,
         },
         handle,
     )
@@ -197,7 +199,6 @@ with open(xctestrun, "wb") as handle:
 PY
 cp "$info" "$receipt_app/Info.plist"
 hash64=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-app_head="$(git -C "$APP_ROOT" rev-parse HEAD)"
 app_tree="$(git -C "$APP_ROOT" rev-parse HEAD^{tree})"
 fips_head="$(git -C "$FIPS_ROOT" rev-parse HEAD)"
 fips_tree="$(git -C "$FIPS_ROOT" rev-parse HEAD^{tree})"
@@ -254,14 +255,14 @@ if ios_release_network_write_artifact_receipt \
   "$app_head" "$app_tree" "$fips_head" "$info" "$installed" fi.siriusbusiness.nvpn \
   "$device" "$receipt_app" "$receipt_derived" "$receipt_xctestrun" \
   "$fips_tree" 1.2.3 "$metadata_sha" "$metadata_path_sha" \
-  "$fips_path_sha" "$hash64" >/dev/null 2>&1
+  "$fips_path_sha" "$hash64" "$hash64" >/dev/null 2>&1
 then
   echo "iOS artifact receipt accepted a missing installed app" >&2
   exit 1
 fi
 [[ ! -e "$receipt" ]]
 
-python3 - "$installed" <<'PY'
+python3 - "$installed" "$app_head" "$hash64" <<'PY'
 import json
 import sys
 
@@ -269,8 +270,12 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(
         {
             "bundleIdentifier": "fi.siriusbusiness.nvpn",
-            "builtByDeveloper": True,
-            "removable": True,
+            "provider": "apple-installation-proxy-usb",
+            "applicationType": "User",
+            "profileValidated": True,
+            "appGitSha": sys.argv[2],
+            "signerIdentitySha256": sys.argv[3],
+            "selectedPhysicalDeviceIdentifierSha256": sys.argv[3],
             "version": "4.1.5",
             "bundleVersion": "415",
         },
@@ -283,7 +288,7 @@ ios_release_network_write_artifact_receipt \
   "$app_head" "$app_tree" "$fips_head" "$info" "$installed" fi.siriusbusiness.nvpn \
   "$device" "$receipt_app" "$receipt_derived" "$receipt_xctestrun" \
   "$fips_tree" 1.2.3 "$metadata_sha" "$metadata_path_sha" \
-  "$fips_path_sha" "$hash64"
+  "$fips_path_sha" "$hash64" "$hash64"
 python3 - "$receipt" "$hash64" <<'PY'
 import json
 import sys
@@ -291,6 +296,10 @@ import sys
 receipt = json.load(open(sys.argv[1], encoding="utf-8"))
 if receipt.get("signerCertificateSha256") != sys.argv[2]:
     raise SystemExit("iOS artifact receipt omitted the signer certificate pin")
+if receipt.get("installedIdentityProvider") != "apple-installation-proxy-usb":
+    raise SystemExit("iOS artifact receipt omitted the USB identity provider")
+if receipt.get("installedSignerIdentitySha256") != sys.argv[2]:
+    raise SystemExit("iOS artifact receipt omitted the installed signer identity")
 if receipt.get("cashuAndPaidExitCompiled") is not False:
     raise SystemExit("iOS artifact receipt omitted Cashu/paid-exit exclusion")
 if receipt.get("paidExitWalletWorkerCompiled") is not False:

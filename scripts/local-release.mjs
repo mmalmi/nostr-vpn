@@ -3,6 +3,7 @@
 import { spawnSync } from 'node:child_process'
 import { createHash, X509Certificate } from 'node:crypto'
 import {
+  constants,
   cpSync,
   copyFileSync,
   existsSync,
@@ -1916,7 +1917,7 @@ function stageRelease({
   const stagedAssetPaths = []
   for (const assetPath of assetPaths) {
     const stagedPath = join(stageDir, 'assets', basename(assetPath))
-    copyFileSync(assetPath, stagedPath)
+    copyFileSync(assetPath, stagedPath, constants.COPYFILE_FICLONE)
     stagedAssetPaths.push(stagedPath)
   }
 
@@ -2080,6 +2081,8 @@ function promoteStagedDraft({
   const finalStageDir = join(finalStageParent, 'stage')
   try {
     cpSync(stageDir, finalStageDir, {
+      // Independent copies can share storage on filesystems with reflinks.
+      mode: constants.COPYFILE_FICLONE,
       recursive: true,
       errorOnExist: true,
       force: false,
