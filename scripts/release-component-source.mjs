@@ -51,6 +51,9 @@ const harnessOnlyPaths = new Set([
   'scripts/lib-mobile-android-release-gate.sh',
   'scripts/lib-mobile-android-underlay.sh',
   'scripts/lib-mobile-ios-release-network.sh',
+  // Reads existing binaries, signatures, provenance and installed identity;
+  // it neither builds nor modifies the app or its provisioning profiles.
+  'scripts/lib-mobile-ios-release-artifact.sh',
   'scripts/lib-mobile-release-artifact-reuse.sh',
   'scripts/lib-mobile-release-join-artifacts.sh',
   'scripts/lib-mobile-release-join-ui.sh',
@@ -101,7 +104,6 @@ const buildScripts = {
   ios: [
     /scripts\/ios-profiles$/,
     /scripts\/ios_profile_certificate\.py$/,
-    /lib-mobile-ios-release-artifact/,
   ],
   linux: [/build-host-linux-/, /build-nvpn-linux-musl$/, /host-linux-native-builder-/, /host_linux_package_content/, /lib-host-linux-/],
   macos: [/build-.*macos/, /scripts\/macos-build$/, /lib-macos-release-app-ownership/, /verify-macos-release-publication-artifacts/],

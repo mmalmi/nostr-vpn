@@ -662,6 +662,7 @@ test('component proof separates iOS harness and profile build inputs', () => {
     'scripts/ios_frozen_archive.py',
     'scripts/ios_frozen_gate.py',
     'scripts/lib-ubuntu-vm-imported-release.sh',
+    'scripts/lib-mobile-ios-release-artifact.sh',
     'scripts/lib-mobile-release-artifact-reuse.sh',
     'scripts/lib-mobile-release-join-artifacts.sh',
     'scripts/lib-macos-release-app-ownership.sh',
