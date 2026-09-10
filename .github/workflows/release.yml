@@ -219,8 +219,21 @@ jobs:
             echo "::error::Locally gated commit does not match the checked-out release tag."
             exit 1
           fi
-          htree get "${LOCALLY_GATED_RELEASE_CID}" \
-            --output locally-gated-release
+          # Keep fetched chunks on this runner for one incomplete-download retry.
+          # Every successful import still passes the exact bundle verifier below.
+          for download_attempt in 1 2; do
+            download_log="${RUNNER_TEMP}/release-download-${download_attempt}.stderr"
+            if htree get "${LOCALLY_GATED_RELEASE_CID}" \
+              --output locally-gated-release 2>"${download_log}"; then
+              cat "${download_log}" >&2
+              break
+            fi
+            cat "${download_log}" >&2
+            if [[ "${download_attempt}" == 2 ]] \
+              || ! grep -Eq '^Error: Failed to stream file chunk: Missing chunk: [0-9a-f]{64}$' "${download_log}"; then
+              exit 1
+            fi
+          done
           node scripts/verify-release-publication-bundle.mjs \
             --stage-dir locally-gated-release \
             --tag "${RELEASE_TAG}" \

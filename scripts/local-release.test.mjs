@@ -2818,6 +2818,57 @@ test('GitHub release inspects the exact gated StartOS packages without a signing
   assert.doesNotMatch(releaseJob, /--built-line/)
 })
 
+test('GitHub bundle import resumes an incomplete fetch once and stops on other failures', () => {
+  const workflow = readFileSync('.github/workflows/release.yml', 'utf8')
+  const check = workflow.indexOf('Locally gated commit does not match the checked-out release tag.')
+  const start = workflow.indexOf('\n          fi\n', check) + '\n          fi\n'.length
+  const end = workflow.indexOf('          node scripts/verify-release-publication-bundle.mjs', start)
+  assert.ok(check >= 0 && start > check && end > start)
+  const download = workflow.slice(start, end).replace(/^          /gm, '')
+  for (const [scenario, expectedCalls, expectedStatus] of [
+    ['transient', 2, 0], ['persistent', 2, 1], ['invalid', 1, 1],
+  ]) {
+    const root = mkdtempSync(join(tmpdir(), 'nvpn-download-recovery-'))
+    try {
+      const bin = join(root, 'bin')
+      mkdirSync(bin)
+      const htree = join(bin, 'htree')
+      writeFileSync(htree, `#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == get && "$2" == "$LOCALLY_GATED_RELEASE_CID" && "$3" == --output ]]
+printf 'get\\n' >> "$CALLS"
+mkdir -p "$4"
+if [[ -f "$4/cached-chunk" && "$SCENARIO" == transient ]]; then
+  printf 'complete\\n' > "$4/complete"
+  exit 0
+fi
+printf 'preserved\\n' > "$4/cached-chunk"
+if [[ "$SCENARIO" == invalid ]]; then
+  echo 'Error: Refusing an invalid destination' >&2
+else
+  echo 'Error: Failed to stream file chunk: Missing chunk: ${'a'.repeat(64)}' >&2
+fi
+exit 1
+`)
+      chmodSync(htree, 0o755)
+      const result = spawnSync('bash', ['-c', `set -euo pipefail\n${download}`], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, RUNNER_TEMP: root,
+          LOCALLY_GATED_RELEASE_CID: 'immutable-test-cid', CALLS: join(root, 'calls'), SCENARIO: scenario },
+      })
+      assert.equal(result.status, expectedStatus, `${scenario}: ${result.stderr}`)
+      assert.equal(readFileSync(join(root, 'calls'), 'utf8').trim().split('\n').length, expectedCalls)
+      assert.equal(readFileSync(join(root, 'locally-gated-release', 'cached-chunk'), 'utf8'), 'preserved\n')
+      if (scenario === 'transient') {
+        assert.equal(readFileSync(join(root, 'locally-gated-release', 'complete'), 'utf8'), 'complete\n')
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+})
+
 test('corrected GitHub release is explicitly promoted as latest', () => {
   const publisher = readFileSync(
     join(process.cwd(), 'scripts/github-release-publication.mjs'),
