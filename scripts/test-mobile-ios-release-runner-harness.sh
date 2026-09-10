@@ -344,13 +344,16 @@ grep -Fxq FIRST "$TEMP_ROOT/success.log" \
   || fail "bounded runner did not retain command output"
 
 set +e
-run_bounded authorization 5 2 FIRST \
-  bash -c 'echo "Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while enabling automation mode.\""; exit 65' \
+authorization_started=$SECONDS
+run_bounded authorization 10 8 FIRST \
+  bash -c 'echo "Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while enabling automation mode.\""; sleep 30' \
   >"$TEMP_ROOT/authorization-diagnostic.log" 2>&1
 authorization_status=$?
 set -e
 [[ "$authorization_status" -eq 125 ]] \
   || fail "pre-method Apple authorization failure did not fail closed"
+((SECONDS - authorization_started < 5)) \
+  || fail "bounded runner waited after Apple had already denied automation"
 grep -Fq 'Apple UI Automation authorization timed out before any test method' \
   "$TEMP_ROOT/authorization-diagnostic.log" \
   || fail "pre-method Apple authorization failure was hidden by a generic launch error"

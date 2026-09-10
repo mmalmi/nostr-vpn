@@ -116,7 +116,7 @@ PY
   release_join_ios_stop_runner() { :; }
   release_join_ios_test_command() {
     if [[ "$1" == denied ]]; then
-      printf '%s\0' bash -c 'echo "Timed out while enabling automation mode."; exit 65'
+      printf '%s\0' bash -c 'echo "Timed out while enabling automation mode."; sleep 30'
     else
       printf '%s\0' bash -c \
         'printf "%s\n" "Test Case '\''-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests fixture]'\'' started."; sleep 1'
@@ -129,10 +129,15 @@ PY
   [[ ! -e "$private/ready.log" && "$RELEASE_JOIN_DEVICE_MUTATED" == 0 ]]
   lock_available=1
   release_join_ios_run_test fixture "$private/ready.log"
+  authorization_started=$SECONDS
   if release_join_ios_run_test denied "$private/denied.log"; then
     echo 'iOS join accepted a pre-method authorization failure' >&2
     exit 1
   fi
+  ((SECONDS - authorization_started < 5)) || {
+    echo 'iOS join waited after Apple had already denied automation' >&2
+    exit 1
+  }
   [[ $(wc -l <"$private/status-query" | tr -d ' ') == 3 ]]
 
 )

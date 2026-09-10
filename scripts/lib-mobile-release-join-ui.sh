@@ -1118,6 +1118,11 @@ release_join_ios_wait_selected_test_started() {
     if grep -Fq "$expected" "$RELEASE_JOIN_IOS_TEST_LOG" 2>/dev/null; then
       return 0
     fi
+    if grep -Fq 'Timed out while enabling automation mode.' \
+        "$RELEASE_JOIN_IOS_TEST_LOG" 2>/dev/null; then
+      echo "Apple UI Automation authentication failed before the test started. Unlocking alone does not authorize UI testing; retain the runner and wait for on-device approval before retrying." >&2
+      return 75
+    fi
     if [[ -n "$RELEASE_JOIN_IOS_TEST_PID" ]] \
         && ! kill -0 "$RELEASE_JOIN_IOS_TEST_PID" 2>/dev/null; then
       echo "iOS join test exited before XCTest started: $RELEASE_JOIN_IOS_TEST_NAME" >&2
