@@ -79,6 +79,7 @@ jobs:
         with:
           # Keep ordinary CI on the compiler verified by the release gate.
           toolchain: 1.95.0
+          components: rustfmt, clippy
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

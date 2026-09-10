@@ -2785,8 +2785,9 @@ test('GitHub release verifies the gated bytes without rebuilding unused platform
   const releaseJob = workflow.slice(releaseJobStart)
 
   assert.ok(releaseJobStart >= 0)
-  assert.match(releaseJob, /needs:\n      - verify/)
-  assert.match(releaseJob, /- macos-sdk-compat/)
+  assert.doesNotMatch(releaseJob, /^    needs:/m)
+  assert.match(workflow, /^  verify:/m)
+  assert.match(workflow, /^  macos-sdk-compat:/m)
   assert.match(workflow, /run: \.\/scripts\/release-gate\.sh/)
   assert.match(releaseJob, /verify-release-publication-bundle\.mjs/)
   assert.match(releaseJob, /--require-draft/)
