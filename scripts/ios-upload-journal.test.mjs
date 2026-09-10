@@ -602,6 +602,7 @@ function installFakeAppleBoundary(fixture) {
   const visible = join(fixture.repoRoot, 'asc-visible.json')
   const uploadLog = join(fixture.repoRoot, 'upload.log')
   const barrierLog = join(fixture.repoRoot, 'preflight-barrier.log')
+  const preflightLog = join(fixture.repoRoot, 'asc-preflight.log')
   const transporter = join(fixture.repoRoot, 'iTMSTransporter')
   const absent = {
     ...fixture.testflight,
@@ -615,6 +616,7 @@ function installFakeAppleBoundary(fixture) {
   writeFileSync(visible, `${JSON.stringify(fixture.testflight)}\n`)
   writeFileSync(uploadLog, '')
   writeFileSync(barrierLog, '')
+  writeFileSync(preflightLog, '')
   writeExecutable(transporter, '#!/bin/sh\nexit 0\n')
   writeExecutable(
     join(scripts, 'ios-build'),
@@ -644,6 +646,7 @@ function installFakeAppleBoundary(fixture) {
 set -eu
 case "$1" in
   preflight)
+    printf 'read\\n' >> "$FAKE_ASC_PREFLIGHT_LOG"
     if [ "\${FAKE_PREFLIGHT_BARRIER:-false}" = true ] &&
        ! grep -q '"buildPresent":true' "$FAKE_ASC_STATE"; then
       printf 'ready\\n' >> "$FAKE_PREFLIGHT_BARRIER_LOG"
@@ -696,16 +699,68 @@ esac
       FAKE_ASC_VISIBLE: visible,
       FAKE_UPLOAD_LOG: uploadLog,
       FAKE_PREFLIGHT_BARRIER_LOG: barrierLog,
+      FAKE_ASC_PREFLIGHT_LOG: preflightLog,
+      NVPN_TESTFLIGHT_REVIEW_NOTES: 'Complete beta reviewer instructions.',
+      NVPN_APPSTORE_REVIEW_NOTES: 'Complete App Review instructions.',
       NVPN_ITMS_TRANSPORTER: transporter,
     },
     state,
     uploadLog,
+    preflightLog,
   }
 }
 
 function uploadCount(path) {
   return readFileSync(path, 'utf8').split('\n').filter(Boolean).length
 }
+
+test('publication rejects missing review material before Apple contact or upload intent', () => {
+  for (const missing of [
+    ['NVPN_TESTFLIGHT_REVIEW_NOTES'],
+    ['NVPN_APPSTORE_REVIEW_NOTES'],
+    ['NVPN_TESTFLIGHT_REVIEW_NOTES', 'NVPN_APPSTORE_REVIEW_NOTES'],
+  ]) {
+    const fixture = createJournalFixture()
+    const fake = installFakeAppleBoundary(fixture)
+    const mutationEnv = { ...fake.mutationEnv }
+    for (const name of missing) mutationEnv[name] = '  '
+    assert.throws(
+      () => preflightIosPublication({
+        repoRoot: fixture.repoRoot,
+        stagedManifest: fixture.stagedManifest,
+        mutationEnv,
+      }),
+      /reviewer WireGuard configuration or complete.*review notes/i,
+    )
+    assert.equal(readFileSync(fake.preflightLog, 'utf8'), '')
+    assert.equal(uploadCount(fake.uploadLog), 0)
+    assert.equal(existsSync(iosUploadReceiptPaths({
+      repoRoot: fixture.repoRoot,
+      mutationEnv,
+    }).intent), false)
+  }
+})
+
+test('publication accepts either both review notes or a shared reviewer configuration', () => {
+  for (const config of [false, true]) {
+    const fixture = createJournalFixture()
+    const fake = installFakeAppleBoundary(fixture)
+    const mutationEnv = { ...fake.mutationEnv }
+    if (config) {
+      delete mutationEnv.NVPN_TESTFLIGHT_REVIEW_NOTES
+      delete mutationEnv.NVPN_APPSTORE_REVIEW_NOTES
+      mutationEnv.NVPN_APPSTORE_REVIEW_WIREGUARD_CONFIG = '[Interface]\nAddress = 10.0.0.2/32'
+    }
+    const preflight = preflightIosPublication({
+      repoRoot: fixture.repoRoot,
+      stagedManifest: fixture.stagedManifest,
+      mutationEnv,
+    })
+    assert.equal(preflight.uploadAction, 'create-intent')
+    assert.equal(readFileSync(fake.preflightLog, 'utf8'), 'read\n')
+    assert.equal(uploadCount(fake.uploadLog), 0)
+  }
+})
 
 test('local upload validation fails before creating an immutable intent', () => {
   const fixture = createJournalFixture()

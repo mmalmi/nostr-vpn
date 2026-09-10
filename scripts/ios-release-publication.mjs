@@ -206,6 +206,18 @@ export function preflightIosPublication({
   if (dryRun) {
     return { ...frozen, buildPresent: false, dryRun: true }
   }
+  if (!String(mutationEnv.NVPN_APPSTORE_REVIEW_WIREGUARD_CONFIG ?? '').trim()) {
+    for (const name of [
+      'NVPN_TESTFLIGHT_REVIEW_NOTES',
+      'NVPN_APPSTORE_REVIEW_NOTES',
+    ]) {
+      if (!String(mutationEnv[name] ?? '').trim()) {
+        throw new Error(
+          `iOS publication requires a reviewer WireGuard configuration or complete review notes (${name}).`,
+        )
+      }
+    }
+  }
   const transporter =
     mutationEnv.NVPN_ITMS_TRANSPORTER
     || '/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter'
