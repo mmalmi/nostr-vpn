@@ -174,8 +174,16 @@ jobs:
         with:
           toolchain: ${{ env.RELEASE_RUST_TOOLCHAIN }}
 
+      - name: Install htree native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
       - name: Install pinned htree client
         run: cargo install hashtree-cli --version 0.2.114 --locked --bin htree
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
 
       - name: Install pinned StartOS package inspector
         shell: bash
