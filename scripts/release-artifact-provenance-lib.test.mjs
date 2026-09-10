@@ -667,6 +667,7 @@ test('component proof separates iOS harness and profile build inputs', () => {
     'scripts/lib-mobile-release-join-artifacts.sh',
     'scripts/lib-macos-release-app-ownership.sh',
     'scripts/linux-release-mobile-join-remote.sh',
+    'scripts/mobile-test-kit.sh',
     'scripts/mobile-underlay-local-timestamp.py',
     'scripts/release-network-evidence.py',
     'scripts/ubuntu-vm-release-mobile-join-e2e.sh',

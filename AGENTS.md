@@ -26,6 +26,7 @@
 - Windows: run build/test checks from the configured Windows dev VM checkout; do not use local macOS/Linux `dotnet` as the verification path. Check `dotnet build windows\NostrVpn.Windows\NostrVpn.Windows.csproj -p:EnableWindowsTargeting=true` there.
 - Mobile-sensitive: `just mobile-test-kit`; sim/device packet paths: `just mobile-test-kit-sim` / `just mobile-test-kit-device`.
 - Physical iOS XCTest: reuse the trusted destination runner; after one verified pre-method `XCTFuture Code=1000` stall, recycle only the exact `testmanagerd` PID once and retry the same `UseDestinationArtifacts` plan; never reboot, broadly restart, prime, reinstall, or uninstall; one Apple UI Automation passcode may still be required.
+- Run simulator UI checks without physical devices. Before physical UI automation, require a bounded fresh unlocked-state check. A failed startup that never touched the app must not trigger another UI automation session for cleanup when fresh USB evidence preserves its stopped baseline. Keep completed artifact-bound device receipts when resuming.
 - FIPS protocol/routing/session/reconnect tests live in `fips`; Android/iOS VPN, FFI/JNI/C ABI, permissions, physical packet checks live here.
 - Do not commit hostnames, device IDs, signing details, or local paths; use env vars.
 

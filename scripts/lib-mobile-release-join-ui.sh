@@ -1013,9 +1013,10 @@ release_join_ios_start_test() {
   local test_name="$1" log="$2"
   shift 2
   release_join_require_device_mutation_allowed || return 1
-  # XCTest itself must reach the selected test method on the authorized phone.
-  # A separate CoreDevice lock query can stall acquiring its connection before
-  # it even reads lock state; retain the bounded first-method check instead.
+  if ! ios_release_network_require_unlocked "${IOS_DEVICE:-$RELEASE_JOIN_IOS_UDID}"; then
+    RELEASE_JOIN_IOS_STARTUP_FAILED=1
+    return 75
+  fi
   RELEASE_JOIN_DEVICE_MUTATED=1
   local -a command=()
   local command_file pid pgid actual_pgid caller_pgid cleanup_status=0
@@ -1068,13 +1069,19 @@ release_join_ios_start_test() {
   RELEASE_JOIN_IOS_TEST_NAME="$test_name"
   if ! release_join_ios_wait_selected_test_started \
       "${RELEASE_JOIN_IOS_LAUNCH_WAIT_SECS:-240}"; then
+    RELEASE_JOIN_IOS_STARTUP_FAILED=1
     release_join_ios_abort_test || true
     return 1
   fi
+  RELEASE_JOIN_IOS_METHOD_STARTED=1
 }
 
 release_join_ios_abort_test() {
   local status=0 pid="$RELEASE_JOIN_IOS_TEST_PID" pgid="$RELEASE_JOIN_IOS_TEST_PGID"
+  if [[ -n "$RELEASE_JOIN_IOS_TEST_NAME" && -s "$RELEASE_JOIN_IOS_TEST_LOG" ]] \
+      && release_join_ios_assert_selected_test_started >/dev/null 2>&1; then
+    RELEASE_JOIN_IOS_METHOD_STARTED=1
+  fi
   if [[ "$pgid" =~ ^[1-9][0-9]*$ ]]; then
     ios_release_network_terminate_process_group "$pgid" || status=1
   elif [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then

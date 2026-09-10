@@ -61,6 +61,8 @@ const harnessOnlyPaths = new Set([
   'scripts/lib-macos-release-app-ownership.sh',
   'scripts/linux-release-mobile-join-remote.sh',
   'scripts/mobile-android-smoke.sh',
+  // Test orchestration only; each product's actual build scripts stay inputs.
+  'scripts/mobile-test-kit.sh',
   'scripts/mobile_release_artifact_receipt.py',
   'scripts/mobile-underlay-local-timestamp.py',
   'scripts/mobile-release-join-ui-query.py',

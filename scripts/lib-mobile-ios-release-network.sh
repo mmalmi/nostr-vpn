@@ -33,6 +33,33 @@ IOS_RELEASE_NETWORK_PENDING_LOG=""
 IOS_RELEASE_NETWORK_PENDING_XCRESULT=""
 IOS_RELEASE_NETWORK_EXACT_RUNNER_READY=0
 
+ios_release_network_require_unlocked() {
+  local device="$1"
+  python3 - "$device" <<'PY'
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+try:
+    with tempfile.TemporaryDirectory(prefix="nvpn-ios-lock-") as directory:
+        output = Path(directory) / "state.json"
+        subprocess.run(
+            ["xcrun", "devicectl", "--timeout", "5", "device", "info",
+             "lockState", "--device", sys.argv[1], "--json-output", str(output)],
+            capture_output=True, timeout=8, check=True,
+        )
+        locked = json.loads(output.read_text()).get("result", {}).get("passcodeRequired")
+        if locked is True:
+            raise SystemExit("iPhone requires a physical unlock; no UI automation session started.")
+        if locked is not False:
+            raise ValueError("missing lock state")
+except (OSError, ValueError, subprocess.SubprocessError):
+    raise SystemExit("iPhone lock state unavailable within the bounded preflight; no UI automation session started.") from None
+PY
+}
+
 ios_release_network_cleanup_private_artifacts() {
   local cleanup_failed=0 signing_removed=1
   ios_release_network_abort_active_run || cleanup_failed=1
@@ -1311,6 +1338,7 @@ ios_release_network_run_bounded_xcode() {
     echo "iOS $label has no xcodebuild command" >&2
     return 2
   }
+  [[ -z "$device" ]] || ios_release_network_require_unlocked "$device" || return 75
   local -a capture_command=(
     python3 "$ROOT/scripts/capture-mobile-ios-underlay-output.py"
     "$log" "$host_markers"

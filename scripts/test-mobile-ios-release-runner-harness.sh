@@ -40,6 +40,8 @@ fail() {
 
 # shellcheck disable=SC1090
 source "$RUNNER"
+# Lock-state command behavior has its own subprocess regression below.
+ios_release_network_require_unlocked() { :; }
 NVPN_IOS_XCTEST_TERM_GRACE_SECS=1
 IOS_BUNDLE_ID=fi.siriusbusiness.nvpn
 
@@ -732,3 +734,5 @@ if grep -Eq 'test_entitlements|"testBundleDebuggable": true' <<<"$diagnostics"; 
 fi
 
 echo "MOBILE_IOS_RELEASE_RUNNER_HARNESS_OK"
+
+bash "$ROOT/scripts/test-mobile-ios-unattended-harness.sh"

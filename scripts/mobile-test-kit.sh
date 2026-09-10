@@ -12,7 +12,7 @@ usage: scripts/mobile-test-kit.sh [rust|fast|simulator|device|exit]
 Modes:
   rust       Run shared Rust mobile/core tests only.
   fast       Run Rust tests plus Android and iOS debug builds.
-  simulator  Run fast checks, then iOS simulator and Android adb launch smokes.
+  simulator  Build and test iOS simulator UI without any physical device.
   device     Run opt-in local physical-device VPN/TUN smokes.
   exit       Run physical Android/iOS WireGuard exit, DNS, and Direct restore e2e.
 
@@ -85,9 +85,7 @@ case "$mode" in
     run_fast
     ;;
   simulator|sim)
-    run_fast
     "$ROOT/scripts/mobile-ios-smoke.sh" simulator
-    "$ROOT/scripts/mobile-android-smoke.sh" --no-build
     ;;
   device)
     "$ROOT/scripts/mobile-android-smoke.sh" --create-network --accept-vpn-dialog --vpn-cycle

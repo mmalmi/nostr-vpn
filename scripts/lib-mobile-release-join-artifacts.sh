@@ -8,6 +8,9 @@ RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=0
 RELEASE_JOIN_DEVICE_MUTATED=0
 RELEASE_JOIN_ANDROID_MUTATED=0
 RELEASE_JOIN_IOS_CLEANUP_ARMED=0
+RELEASE_JOIN_IOS_BASELINE_STOPPED=0
+RELEASE_JOIN_IOS_METHOD_STARTED=0
+RELEASE_JOIN_IOS_STARTUP_FAILED=0
 RELEASE_JOIN_IOS_CLEANUP_BUNDLE_ID=""
 RELEASE_JOIN_INSTALL_ANDROID=1
 RELEASE_JOIN_INSTALL_IOS=1
@@ -772,11 +775,25 @@ release_join_arm_ios_disconnect_cleanup() {
   NVPN_MOBILE_IOS_RELEASE_APP_PATH="$app"
   export NVPN_MOBILE_IOS_RELEASE_APP_PATH
   RELEASE_JOIN_IOS_CLEANUP_ARMED=1
+  if ios_release_network_require_packet_tunnel_stopped "$udid" \
+      "$RESULT_DIR/ios-before-automation-packet-tunnel-processes.json" 5; then
+    RELEASE_JOIN_IOS_BASELINE_STOPPED=1
+  fi
 }
 
 release_join_cleanup_ios_network_state() {
   local quarantine="${RELEASE_JOIN_IOS_QUARANTINE:?missing iOS quarantine path}"
   [[ "$RELEASE_JOIN_IOS_CLEANUP_ARMED" -eq 1 ]] || return 0
+  if [[ "$RELEASE_JOIN_IOS_BASELINE_STOPPED" == 1 \
+      && "$RELEASE_JOIN_IOS_METHOD_STARTED" == 0 \
+      && "$RELEASE_JOIN_IOS_STARTUP_FAILED" == 1 ]] \
+      && ios_release_network_require_packet_tunnel_stopped \
+        "$IOS_RELEASE_NETWORK_DEVICE" \
+        "$RESULT_DIR/ios-no-method-packet-tunnel-processes.json" 5; then
+    echo "iOS test never touched the app; stopped baseline verified without UI cleanup"
+    rm -f "$quarantine"
+    return 0
+  fi
   if IOS_BUNDLE_ID="${RELEASE_JOIN_IOS_CLEANUP_BUNDLE_ID:?missing scoped iOS cleanup bundle}" \
       ios_release_network_disconnect_cleanup; then
     rm -f "$quarantine"

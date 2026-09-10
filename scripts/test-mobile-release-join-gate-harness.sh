@@ -96,20 +96,22 @@ PY
   fi
 )
 (
-  # XCTest can run while CoreDevice's redundant lock query is unavailable.
-  # A real authorization failure must still fail before any method starts.
+  # A bounded unavailable/locked preflight must not launch XCTest. Once the
+  # device is unlocked, method selection and authorization are still checked.
   source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  ios_release_network_require_unlocked() { :; }
   private="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-join-readiness.XXXXXX")"
   trap 'rm -rf "$private"' EXIT
   PRIVATE_DIR="$private"
   IOS_DEVICE=fixture-device
   RELEASE_JOIN_ARTIFACTS_VALIDATED=1
   RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
+  lock_available=0
   ios_release_network_require_unlocked() {
-    printf 'unexpected status query\n' >"$private/status-query"
-    return 1
+    printf 'checked\n' >>"$private/status-query"
+    [[ "$lock_available" == 1 ]]
   }
   release_join_ios_stop_runner() { :; }
   release_join_ios_test_command() {
@@ -120,12 +122,18 @@ PY
         'printf "%s\n" "Test Case '\''-[NostrVpnIosUITests.NostrVpnReleaseJoinUITests fixture]'\'' started."; sleep 1'
     fi
   }
+  if release_join_ios_run_test fixture "$private/ready.log"; then
+    echo 'Unavailable lock preflight launched a test' >&2
+    exit 1
+  fi
+  [[ ! -e "$private/ready.log" && "$RELEASE_JOIN_DEVICE_MUTATED" == 0 ]]
+  lock_available=1
   release_join_ios_run_test fixture "$private/ready.log"
   if release_join_ios_run_test denied "$private/denied.log"; then
     echo 'iOS join accepted a pre-method authorization failure' >&2
     exit 1
   fi
-  [[ ! -e "$private/status-query" ]]
+  [[ $(wc -l <"$private/status-query" | tr -d ' ') == 3 ]]
 
 )
 (
@@ -601,6 +609,7 @@ PY
   ios_release_network_disconnect_cleanup() {
     [[ "$IOS_BUNDLE_ID" == "$NVPN_DEFAULT_IOS_BUNDLE_ID" ]]
   }
+  ios_release_network_require_packet_tunnel_stopped() { return 1; }
   release_join_arm_ios_disconnect_cleanup \
     "$private/Nostr VPN.app" "$private/derived" fixture-device
   release_join_cleanup_ios_network_state
@@ -739,6 +748,7 @@ PY
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-release-join-artifacts.sh"
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  ios_release_network_require_unlocked() { :; }
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-ios-noinstall.XXXXXX")"
   trap 'rm -rf "$tmp"' EXIT
   app="$tmp/Nostr VPN.app"
@@ -885,6 +895,7 @@ PY
 
   # Switching to the separately signed QR variant must retain a proven runner.
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  ios_release_network_require_unlocked() { :; }
   plutil -replace CFBundleShortVersionString -string 1.0 "$runner/Info.plist"
   # The join path owns its bundle selection, not the packet-gate caller's globals.
   IOS_BUNDLE_ID=unrelated.native.app
@@ -930,6 +941,7 @@ PY
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  ios_release_network_require_unlocked() { :; }
   log="$(mktemp "${TMPDIR:-/tmp}/nvpn-ios-join-selection.XXXXXX")"
   trap 'rm -f "$log"' EXIT
   RELEASE_JOIN_IOS_TEST_LOG="$log"
@@ -961,6 +973,7 @@ PY
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  ios_release_network_require_unlocked() { :; }
   private="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-join-abort.XXXXXX")"
   trap 'rm -rf "$private"' EXIT
   PRIVATE_DIR="$private"
@@ -1003,6 +1016,7 @@ PY
   source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
   # shellcheck disable=SC1091
   source "$ROOT/scripts/lib-mobile-ios-release-network.sh"
+  ios_release_network_require_unlocked() { :; }
   private="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-join-isolation.XXXXXX")"
   trap 'rm -rf "$private"' EXIT
   PRIVATE_DIR="$private"
