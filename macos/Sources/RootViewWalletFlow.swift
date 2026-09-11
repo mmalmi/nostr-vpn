@@ -131,7 +131,7 @@ extension RootView {
         .padding(22)
         .frame(width: 520)
         .onChange(of: paidRouteWalletSelectedMint) { _, _ in
-            paidRouteWalletShowsResult = false
+            paidRouteWalletShowsResult = flow == .receive && canResumePaidRouteInvoice(wallet.lastAction)
             paidRouteWalletFlowError = ""
         }
         .sheet(isPresented: $showingWalletTokenScanner) {
@@ -146,9 +146,16 @@ extension RootView {
 
     func openPaidRouteWalletFlow(_ flow: PaidRouteWalletFlow, wallet: NativePaidRouteWalletState) {
         paidRouteWalletSelectedMint = wallet.defaultMint
-        paidRouteWalletShowsResult = false
+        paidRouteWalletShowsResult = flow == .receive && canResumePaidRouteInvoice(wallet.lastAction)
         paidRouteWalletFlowError = ""
         paidRouteWalletFlow = flow
+    }
+
+    func canResumePaidRouteInvoice(_ action: NativePaidRouteWalletActionState) -> Bool {
+        action.kind == "topup"
+            && action.mintUrl == paidRouteWalletSelectedMint
+            && !action.paymentRequest.isEmpty
+            && (action.expiresAtUnix == 0 || Double(action.expiresAtUnix) > Date().timeIntervalSince1970)
     }
 
     func runPaidRouteWalletAction(_ action: NativeAppAction, status: String) {

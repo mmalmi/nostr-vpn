@@ -501,7 +501,7 @@ extension AppManager {
                         paymentRequest: "lnbc1000n1pdemoexamplepaidroutewalletinvoice",
                         token: "",
                         operationId: "",
-                        expiresAtUnix: 1_780_653_600,
+                        expiresAtUnix: UInt64(Date().timeIntervalSince1970) + 3_600,
                         preimage: "",
                         tokenState: "",
                         tokenRedeemable: false,
