@@ -14,6 +14,26 @@ use super::{
 };
 use crate::helper::CashuSentPayment;
 
+/// A local funding shortfall, distinct from a mint/network failure. The required
+/// amount is a lower bound when CDK cannot select proofs including all fees.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CashuInsufficientFunds {
+    pub available_sat: u64,
+    pub required_sat: u64,
+}
+
+impl std::fmt::Display for CashuInsufficientFunds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Insufficient funds including mint fees: {} sat available, at least {} sat required",
+            self.available_sat, self.required_sat
+        )
+    }
+}
+
+impl std::error::Error for CashuInsufficientFunds {}
+
 pub async fn send_payment_token(
     data_dir: &Path,
     mint_url: &str,
@@ -66,6 +86,15 @@ impl CashuWalletService {
             .await
             .context("Failed to recover Cashu wallet state before sending payment")?;
 
+        let available_sat = wallet.total_balance().await?.to_u64();
+        if available_sat < amount_sat {
+            return Err(CashuInsufficientFunds {
+                available_sat,
+                required_sat: amount_sat,
+            }
+            .into());
+        }
+
         if let Some(required_keyset_id) = required_keyset_id {
             // The Spilman keyset was fetched directly from the mint immediately
             // before this call. Refresh the wallet metadata too: a cached active
@@ -99,6 +128,7 @@ impl CashuWalletService {
             }
         }
 
+        let available_sat = wallet.total_balance().await?.to_u64();
         let prepared = wallet
             .prepare_send(
                 Amount::from(amount_sat),
@@ -108,6 +138,16 @@ impl CashuWalletService {
                 },
             )
             .await
+            .map_err(|error| {
+                if matches!(error, cdk::Error::InsufficientFunds) {
+                    anyhow::Error::new(CashuInsufficientFunds {
+                        available_sat,
+                        required_sat: amount_sat.max(available_sat.saturating_add(1)),
+                    })
+                } else {
+                    anyhow::Error::new(error)
+                }
+            })
             .context("Failed to prepare Cashu payment token")?;
         if let Some(required_keyset_id) = required_keyset_id {
             if proofs_require_keyset_consolidation(&prepared.proofs(), required_keyset_id) {

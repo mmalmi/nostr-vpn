@@ -296,6 +296,13 @@
         assert!(pending.exit_node_blocked);
         assert_eq!(pending.exit_node_status_text,
             "Automatic paid exit · Blocked · Payment unavailable · mint.example · Retrying");
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.record_buyer_session_funding_shortfall(&session.session_id, 12)?;
+            store.upsert_wallet_mint("https://mint.example", "Mint", Some(10_000), now);
+            Ok(())
+        }).unwrap();
+        assert_eq!(runtime.state().exit_node_status_text,
+            "Automatic paid exit · Blocked · More funds needed · mint.example");
         runtime.config.exit_node_leak_protection = false;
         assert!(!runtime.state().exit_node_blocked);
         runtime.config.set_internet_source(InternetSource::Direct);

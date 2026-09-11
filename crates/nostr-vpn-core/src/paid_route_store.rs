@@ -185,6 +185,9 @@ pub enum PaidRouteLifecycleStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteSessionRecord {
+    /// Fee-inclusive lower bound observed by the wallet when funding failed.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub funding_required_balance_sat: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub funding_started_unix: u64,
     #[serde(default, skip_serializing_if = "is_zero")]

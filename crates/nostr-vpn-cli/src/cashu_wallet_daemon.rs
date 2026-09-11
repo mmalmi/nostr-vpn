@@ -98,6 +98,8 @@ struct DaemonCashuWalletResponse {
     error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry_after_secs: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    insufficient_funds: Option<cashu_service::CashuInsufficientFunds>,
 }
 
 pub(crate) struct DaemonCashuWallet {
@@ -140,7 +142,9 @@ impl DaemonCashuWallet {
             }
         }
         prepare_ipc_directories(config_path)?;
-        Ok(Self { service })
+        let wallet = Self { service };
+        wallet.sync_balances(config_path).await?;
+        Ok(wallet)
     }
 
     pub(crate) async fn handle_pending_requests(&self, config_path: &Path) -> Result<usize> {
@@ -186,12 +190,13 @@ impl DaemonCashuWallet {
                 let _ = fs::remove_file(&request_path);
                 continue;
             }
-            let response = match self.execute(request.command).await {
+            let response = match self.execute_and_sync(config_path, request.command).await {
                 Ok(result) => DaemonCashuWalletResponse {
                     id: request.id.clone(),
                     result: Some(result),
                     error: None,
                     retry_after_secs: None,
+                    insufficient_funds: None,
                 },
                 Err(error) => DaemonCashuWalletResponse {
                     id: request.id.clone(),
@@ -200,6 +205,9 @@ impl DaemonCashuWallet {
                     retry_after_secs: error
                         .downcast_ref::<cashu_service::MintRetryAfter>()
                         .map(|delay| delay.0),
+                    insufficient_funds: error
+                        .downcast_ref::<cashu_service::CashuInsufficientFunds>()
+                        .cloned(),
                 },
             };
             write_wallet_response(config_path, &response)?;
@@ -325,6 +333,43 @@ impl DaemonCashuWallet {
             )?,
         };
         Ok(value)
+    }
+
+    async fn execute_and_sync(
+        &self,
+        config_path: &Path,
+        command: DaemonCashuWalletCommand,
+    ) -> Result<Value> {
+        let changes_balance = !matches!(
+            command,
+            DaemonCashuWalletCommand::Activity
+                | DaemonCashuWalletCommand::CreateTopupQuote { .. }
+                | DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: false
+                }
+        );
+        let result = self.execute(command).await;
+        // A failed opening can still have spent swap fees or recovered funds.
+        // Never replace a committed operation's outcome with a metadata error.
+        if changes_balance && let Err(error) = self.sync_balances(config_path).await {
+            eprintln!("cashu-wallet: failed to synchronize wallet balances: {error:#}");
+        }
+        result
+    }
+
+    async fn sync_balances(&self, config_path: &Path) -> Result<()> {
+        let overview = self.service.load_wallet_overview(false).await?;
+        nostr_vpn_core::paid_route_store::update_paid_route_store(
+            &nostr_vpn_core::paid_route_store::paid_route_store_file_path(config_path),
+            |store| {
+                crate::sync_paid_exit_wallet_store_from_cashu(
+                    store,
+                    &overview,
+                    cashu_wallet_now_unix(),
+                );
+                Ok(())
+            },
+        )
     }
 }
 
@@ -697,6 +742,10 @@ pub(crate) async fn request_daemon_cashu_wallet_worker(
             }
             return match (response.result, response.error) {
                 (Some(result), None) => Ok(result),
+                (_, Some(error)) if response.insufficient_funds.is_some() => Err(
+                    anyhow::Error::new(response.insufficient_funds.expect("checked shortfall"))
+                        .context(error),
+                ),
                 (_, Some(error)) => Err(match response.retry_after_secs {
                     Some(seconds) => {
                         anyhow::Error::new(cashu_service::MintRetryAfter(seconds)).context(error)

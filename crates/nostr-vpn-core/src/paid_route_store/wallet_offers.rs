@@ -235,6 +235,7 @@ impl PaidRouteStore {
             return false;
         }
         let record = PaidRouteSessionRecord {
+            funding_required_balance_sat: 0,
             funding_started_unix: 0,
             last_successful_probe_unix: 0,
             session,

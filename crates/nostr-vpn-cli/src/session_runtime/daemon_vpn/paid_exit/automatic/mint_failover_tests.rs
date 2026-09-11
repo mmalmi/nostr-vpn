@@ -204,3 +204,37 @@ fn mint_failover_waits_without_rejecting_seller_when_all_mints_cooling_down() {
     assert!(!candidate.failed);
     assert_eq!(candidate.selection.mint_url, PRIMARY);
 }
+
+#[test]
+fn mint_fee_shortfall_selects_other_funds_and_preserves_existing_credit() {
+    let (dir, mut app, mut automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let session_id = automatic.candidate.as_ref().unwrap().session_id.clone();
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        store.buyer_mint_retries.clear();
+        store.upsert_wallet_mint(PRIMARY, "primary", Some(3000), now);
+        store.record_buyer_session_funding_shortfall(&session_id, 5000)
+    })
+    .unwrap();
+    reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 1).unwrap();
+    assert_eq!(
+        automatic.candidate.as_ref().unwrap().selection.mint_url,
+        ALTERNATIVE
+    );
+    let mut store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    assert!(store.buyer_mint_retries.is_empty());
+    store
+        .sessions
+        .get_mut(&session_id)
+        .unwrap()
+        .session
+        .payment
+        .cashu_spilman_payment = Some(CashuSpilmanPayment {
+        channel_id: "funded-channel".into(),
+        balance: 1,
+        signature: "signed".into(),
+        params: Some("{}".into()),
+        funding_proofs: Some("[]".into()),
+    });
+    assert_eq!(store.buyer_session_funding_retry_at(&session_id), 0);
+}

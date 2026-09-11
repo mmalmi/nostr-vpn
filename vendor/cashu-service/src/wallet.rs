@@ -29,7 +29,7 @@ mod runtime;
 pub use runtime::*;
 
 mod send;
-pub use send::send_payment_token;
+pub use send::{CashuInsufficientFunds, send_payment_token};
 #[cfg(test)]
 use send::{proofs_require_keyset_consolidation, refresh_active_keyset_id};
 

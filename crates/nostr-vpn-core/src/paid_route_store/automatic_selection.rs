@@ -145,6 +145,10 @@ impl PaidRouteStore {
         let target = recommended_capacity_sat(offer, None)?;
         wallet_mints.sort_by_key(|mint| {
             (
+                self.buyer_mint_needs_funds(
+                    &mint.url,
+                    recommended_capacity_sat(offer, mint.balance_msat).unwrap_or(target),
+                ),
                 self.buyer_mint_failure_retry_at(&mint.url) > now_unix,
                 mint.balance_msat
                     .is_none_or(|balance| balance / 1_000 < target),

@@ -9,6 +9,41 @@ pub struct PaidRouteMintRetry {
 }
 
 impl PaidRouteStore {
+    pub fn buyer_mint_needs_funds(&self, mint_url: &str, capacity_sat: u64) -> bool {
+        let Ok(mint) = normalize_paid_route_mint_url(mint_url) else {
+            return false;
+        };
+        let balance = self
+            .wallet
+            .mints
+            .iter()
+            .find(|entry| entry.url.trim_end_matches('/') == mint)
+            .and_then(|entry| entry.balance_msat)
+            .unwrap_or(0)
+            / 1_000;
+        self.sessions.values().any(|record| {
+            record.funding_required_balance_sat > balance
+                && record.session.payment.capacity_sat <= capacity_sat
+                && self
+                    .channels
+                    .get(&record.session.payment.channel_id)
+                    .is_some_and(|channel| channel.mint_url.trim_end_matches('/') == mint)
+        })
+    }
+
+    pub fn record_buyer_session_funding_shortfall(
+        &mut self,
+        session_id: &str,
+        required_sat: u64,
+    ) -> Result<()> {
+        let record = self
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| anyhow!("paid route session {session_id} does not exist"))?;
+        record.funding_required_balance_sat = required_sat;
+        Ok(())
+    }
+
     pub fn buyer_mint_retry_at(&self, mint_url: &str) -> u64 {
         normalize_paid_route_mint_url(mint_url)
             .ok()
@@ -35,7 +70,11 @@ impl PaidRouteStore {
             })
             .and_then(|record| self.channels.get(&record.session.payment.channel_id))
             .map_or(0, |channel| {
-                self.buyer_mint_failure_retry_at(&channel.mint_url)
+                if self.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
+                    u64::MAX
+                } else {
+                    self.buyer_mint_failure_retry_at(&channel.mint_url)
+                }
             })
     }
 

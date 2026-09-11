@@ -43,6 +43,11 @@ pub(crate) async fn fund_paid_exit_session(
         .cloned()
         .ok_or_else(|| anyhow!("automatic paid exit session has no quote"))?;
     let retry_at = store.buyer_session_funding_retry_at(session_id);
+    if retry_at == u64::MAX {
+        return Err(anyhow!(
+            "More wallet funds are needed to cover channel credit and mint fees"
+        ));
+    }
     if now_unix < retry_at {
         return Err(
             anyhow::Error::new(cashu_service::MintRetryAfter(retry_at - now_unix))
@@ -75,6 +80,14 @@ pub(crate) async fn fund_paid_exit_session(
         Ok(value) => value,
         Err(error) => {
             update_paid_route_store(&store_path, |store| {
+                if let Some(shortfall) =
+                    error.downcast_ref::<cashu_service::CashuInsufficientFunds>()
+                {
+                    return store.record_buyer_session_funding_shortfall(
+                        session_id,
+                        shortfall.required_sat,
+                    );
+                }
                 store.defer_buyer_mint_retry(
                     &mint_url,
                     unix_timestamp(),

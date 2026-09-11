@@ -90,7 +90,9 @@ impl NativeAppRuntime {
             .ok()
             .and_then(|url| url.host_str().map(str::to_owned))
             .unwrap_or_else(|| "payment service".to_string());
-        Some(if channel.error.is_empty() {
+        Some(if store.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
+            format!("More funds needed · {mint}")
+        } else if channel.error.is_empty() {
             format!("Setting up payment · {mint}")
         } else {
             format!("Payment unavailable · {mint} · Retrying")
