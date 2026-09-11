@@ -443,6 +443,18 @@ pub fn validate_streaming_route_cashu_payment_claim(
     }
 
     let unit = StreamingRouteCashuUnit::parse(unit)?;
+    if let Some(params) = &payment.params {
+        let funding_unit = params
+            .get("unit")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Cashu Spilman funding parameters are missing unit".to_string())?;
+        if StreamingRouteCashuUnit::parse(funding_unit)? != unit {
+            return Err(format!(
+                "paid route unit {} does not match Cashu Spilman funding unit {funding_unit}",
+                unit.as_str()
+            ));
+        }
+    }
     let paid_msat = unit.balance_to_msat(payment.balance);
     if paid_msat != claimed_paid_msat {
         return Err(format!(

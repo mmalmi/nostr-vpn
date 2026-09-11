@@ -2,6 +2,7 @@
 .cargo-docker/
 .buildx-cache/
 **/target/
+/vendor/*/Cargo.lock
 node_modules/
 **/node_modules/
 dist/

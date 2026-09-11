@@ -8,7 +8,7 @@ members = [
   "crates/nostr-vpn-web",
   "crates/nostr-vpn-wintun",
 ]
-exclude = ["linux", "vendor/cashu-service"]
+exclude = ["linux", "vendor/cashu-service", "vendor/cdk-spilman"]
 resolver = "2"
 
 [workspace.package]
@@ -26,7 +26,7 @@ axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 boringtun = "0.7"
 cashu-service = { version = "0.4.8", default-features = false }
-cashu = { version = "=0.17.3", default-features = false }
+cashu = { version = "=0.17.6", default-features = false }
 cdk-spilman = "=0.17.6"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
@@ -78,3 +78,4 @@ unsafe_code = "forbid"
 
 [patch.crates-io]
 cashu-service = { path = "vendor/cashu-service" }
+cdk-spilman = { path = "vendor/cdk-spilman" }

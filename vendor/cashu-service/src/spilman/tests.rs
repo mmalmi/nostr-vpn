@@ -367,7 +367,7 @@ fn route_cashu_payment_claim_validation_matches_signed_balance() {
         channel_id: "channel-1".to_string(),
         balance: 2,
         signature: "sig-2".to_string(),
-        params: Some(serde_json::json!({"ok": true})),
+        params: Some(serde_json::json!({"unit": "sat"})),
         funding_proofs: Some(serde_json::json!([])),
     };
     let validated =
@@ -404,12 +404,39 @@ fn route_cashu_payment_claim_validation_rejects_mismatches() {
 }
 
 #[test]
+fn route_cashu_payment_claim_rejects_denomination_inflation() {
+    let payment = CashuSpilmanPayment {
+        channel_id: "channel-msat".to_string(),
+        balance: 2,
+        signature: "signature".to_string(),
+        params: Some(serde_json::json!({"unit": "msat"})),
+        funding_proofs: Some(serde_json::json!([])),
+    };
+
+    let error = validate_streaming_route_cashu_payment_claim(
+        &payment,
+        "channel-msat",
+        "sat",
+        2_000,
+        10,
+        true,
+    )
+    .expect_err("a 2 msat balance must not provide 2,000 msat of route credit");
+    assert!(error.contains("unit"));
+
+    let valid =
+        validate_streaming_route_cashu_payment_claim(&payment, "channel-msat", "msat", 2, 10, true)
+            .unwrap();
+    assert_eq!(valid.paid_msat, 2);
+}
+
+#[test]
 fn route_cashu_payment_receiver_validation_combines_claim_and_receiver_result() {
     let payment = CashuSpilmanPayment {
         channel_id: "channel-1".to_string(),
         balance: 2,
         signature: "sig-2".to_string(),
-        params: Some(serde_json::json!({"ok": true})),
+        params: Some(serde_json::json!({"unit": "sat"})),
         funding_proofs: Some(serde_json::json!([])),
     };
     let receiver = FakeReceiver {
@@ -479,7 +506,7 @@ fn route_cashu_payment_receiver_validation_rejects_receiver_mismatch() {
         channel_id: "channel-1".to_string(),
         balance: 2,
         signature: "sig-2".to_string(),
-        params: Some(serde_json::json!({"ok": true})),
+        params: Some(serde_json::json!({"unit": "sat"})),
         funding_proofs: Some(serde_json::json!([])),
     };
     let receiver = FakeReceiver {

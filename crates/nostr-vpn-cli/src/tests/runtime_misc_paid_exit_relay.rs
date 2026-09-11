@@ -767,7 +767,7 @@ async fn paid_exit_create_payment_command_updates_buyer_session() {
             channel_id: channel_id.to_string(),
             balance,
             signature: format!("signature-{channel_id}-{balance}"),
-            params: Some(json!({"channel": channel_id})),
+            params: Some(json!({"channel": channel_id, "unit": "sat"})),
             funding_proofs: Some(json!({"proofs": []})),
         }
     }

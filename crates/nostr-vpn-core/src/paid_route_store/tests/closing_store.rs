@@ -813,7 +813,7 @@ fn automatic_offer_selection_reuses_a_funded_channel_when_wallet_balance_is_lock
         channel_id: opened.channel_id.clone(),
         balance: 1,
         signature: "signed-balance".to_string(),
-        params: Some(json!({"channel": opened.channel_id})),
+        params: Some(json!({"channel": opened.channel_id, "unit": "sat"})),
         funding_proofs: Some(json!({"proofs": []})),
     };
     store

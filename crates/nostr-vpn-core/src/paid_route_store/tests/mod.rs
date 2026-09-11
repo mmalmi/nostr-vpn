@@ -158,8 +158,25 @@ fn seller_payment_envelope(
     buyer_npub: &str,
     seller_npub: &str,
     sent_at_unix: u64,
-    payload: StreamingRoutePaymentPayload,
+    mut payload: StreamingRoutePaymentPayload,
 ) -> StreamingRoutePaymentEnvelope {
+    if let StreamingRoutePaymentPayload::ChannelOpen(open) = &mut payload {
+        if let Some(params) = open
+            .payment
+            .params
+            .as_mut()
+            .and_then(|value| value.as_object_mut())
+        {
+            for (field, value) in [
+                ("mint", json!(open.mint_url)),
+                ("capacity", json!(open.capacity)),
+                ("expiry_timestamp", json!(open.expires_unix)),
+                ("receiver_pubkey", json!(open.receiver_pubkey_hex)),
+            ] {
+                params.entry(field).or_insert(value);
+            }
+        }
+    }
     StreamingRoutePaymentEnvelope::new(
         service_id,
         lease_id,
@@ -175,7 +192,7 @@ fn sample_spilman_payment(channel_id: &str, balance: u64) -> CashuSpilmanPayment
         channel_id: channel_id.to_string(),
         balance,
         signature: format!("signature-{channel_id}-{balance}"),
-        params: Some(json!({"channel": channel_id})),
+        params: Some(json!({"channel": channel_id, "unit": "sat"})),
         funding_proofs: Some(json!({"proofs": []})),
     }
 }
@@ -196,7 +213,7 @@ impl CashuSpilmanPaymentSigner for FakePaymentSigner {
                 "signed-{channel_id}-{}",
                 if include_funding { "funding" } else { "update" }
             ),
-            params: include_funding.then(|| json!({"channel": channel_id})),
+            params: include_funding.then(|| json!({"channel": channel_id, "unit": "sat"})),
             funding_proofs: include_funding.then(|| json!({"proofs": []})),
         })
     }

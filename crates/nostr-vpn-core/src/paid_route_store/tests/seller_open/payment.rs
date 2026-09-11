@@ -200,6 +200,142 @@ fn seller_payment_channel_open_requires_spilman_funding_without_mutating_store()
 }
 
 #[test]
+fn seller_payment_channel_open_binds_funding_terms_before_acceptance() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().unwrap();
+    let buyer_npub = buyer.public_key().to_bech32().unwrap();
+    let mut config = sample_config();
+    config.channel.accepted_mints.push("https://other-mint.example".to_string());
+    let envelope = seller_payment_envelope(
+        "internet-exit",
+        "lease-1",
+        &buyer_npub,
+        &seller_npub,
+        100,
+        StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
+            mint_url: "https://mint.minibits.cash/Bitcoin".to_string(),
+            unit: "sat".to_string(),
+            capacity: 10,
+            expires_unix: 500,
+            receiver_pubkey_hex: seller.public_key().to_hex(),
+            paid_msat: 0,
+            payment: sample_spilman_payment("channel-1", 0),
+        }),
+    );
+
+    for field in ["expiry", "default expiry", "mint", "capacity", "receiver"] {
+        let mut changed = envelope.clone();
+        let StreamingRoutePaymentPayload::ChannelOpen(open) = &mut changed.payload else {
+            unreachable!();
+        };
+        match field {
+            "expiry" => open.expires_unix = 501,
+            "default expiry" => open.expires_unix = 0,
+            "mint" => open.mint_url = "https://other-mint.example".to_string(),
+            "capacity" => open.capacity = 11,
+            "receiver" => open.receiver_pubkey_hex = buyer.public_key().to_hex(),
+            _ => unreachable!(),
+        }
+        let mut store = PaidRouteStore::default();
+        let before = store.clone();
+        let receiver = FakeSpilmanReceiver::new("channel-1", 0);
+        let error = store
+            .apply_seller_payment_with_spilman_receiver(
+                ApplyPaidRouteSellerPaymentRequest {
+                    envelope: changed,
+                    seller_npub: seller_npub.clone(),
+                    config: config.clone(),
+                    now_unix: 100,
+                },
+                &receiver,
+                &(),
+            )
+            .expect_err("route terms must be bound to the funded channel");
+        assert!(error.to_string().contains("funding"), "{field}: {error}");
+        assert_eq!(store, before, "{field}: rejection mutated the store");
+        assert_eq!(receiver.process_calls.get(), 0, "{field}: recorded payment");
+    }
+
+    let mut shorter_lease = envelope;
+    let StreamingRoutePaymentPayload::ChannelOpen(open) = &mut shorter_lease.payload else {
+        unreachable!();
+    };
+    open.expires_unix = 400;
+    let mut store = PaidRouteStore::default();
+    store
+        .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
+            envelope: shorter_lease,
+            seller_npub,
+            config,
+            now_unix: 100,
+        })
+        .expect("a lease may expire before its funding");
+    assert_eq!(store.channels["channel-1"].expires_at_unix, 400);
+}
+
+#[test]
+fn seller_payment_channel_open_compares_canonical_funding_identifiers() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().unwrap();
+    let buyer_npub = buyer.public_key().to_bech32().unwrap();
+    for (prefix, mint_url, funding_mint, accepted) in [
+        ("02", "https://mint.example/Bitcoin", "https://mint.example/Bitcoin", true),
+        ("03", "https://mint.example/Bitcoin", "https://mint.example/Bitcoin", false),
+        ("02", "https://mint.example/Bitcoin", "https://MINT.EXAMPLE/Bitcoin/", true),
+        ("02", "https://mint.example/Bitcoin", "https://mint.example/bitcoin", false),
+    ] {
+        let mut config = sample_config();
+        config.channel.accepted_mints = vec![mint_url.to_string()];
+        let mut envelope = seller_payment_envelope(
+            "internet-exit",
+            "lease-1",
+            &buyer_npub,
+            &seller_npub,
+            100,
+            StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
+                mint_url: mint_url.to_string(),
+                unit: "sat".to_string(),
+                capacity: 10,
+                expires_unix: 500,
+                receiver_pubkey_hex: seller.public_key().to_hex(),
+                paid_msat: 0,
+                payment: sample_spilman_payment("channel-1", 0),
+            }),
+        );
+        let StreamingRoutePaymentPayload::ChannelOpen(open) = &mut envelope.payload else {
+            unreachable!();
+        };
+        let params = open.payment.params.as_mut().unwrap();
+        params["receiver_pubkey"] = json!(format!("{prefix}{}", seller.public_key().to_hex()));
+        params["mint"] = json!(funding_mint);
+        let mut store = PaidRouteStore::default();
+        let before = store.clone();
+        let receiver = FakeSpilmanReceiver::new("channel-1", 0);
+        let result = store.apply_seller_payment_with_spilman_receiver(
+            ApplyPaidRouteSellerPaymentRequest {
+                envelope,
+                seller_npub: seller_npub.clone(),
+                config,
+                now_unix: 100,
+            },
+            &receiver,
+            &(),
+        );
+        if accepted {
+            result.expect("equivalent funding identifiers must be accepted");
+            assert_eq!(receiver.process_calls.get(), 1);
+        } else {
+            let error = result.expect_err("different receiver parity or mint path must be rejected");
+            assert!(error.to_string().contains("funding"), "{error}");
+            assert_eq!(receiver.process_calls.get(), 0);
+            assert_eq!(store, before);
+        }
+    }
+}
+
+#[test]
 fn seller_payment_with_spilman_receiver_validates_and_applies_channel_open() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
@@ -244,8 +380,12 @@ fn seller_payment_with_spilman_receiver_validates_and_applies_channel_open() {
     assert_eq!(result.payload_type, "channel_open");
     assert_eq!(result.state, PaidRouteAccessState::FreeProbe);
     assert_eq!(
-        store.channels["channel-1"].payment.cashu_spilman_payment,
-        Some(sample_spilman_payment("channel-1", 0))
+        store.channels["channel-1"]
+            .payment
+            .cashu_spilman_payment
+            .as_ref()
+            .map(|payment| (payment.channel_id.as_str(), payment.balance)),
+        Some(("channel-1", 0))
     );
     assert_eq!(receiver.validate_calls.get(), 0);
     assert_eq!(receiver.process_calls.get(), 1);
