@@ -25,6 +25,20 @@ impl PaidRouteStore {
             .map_or(0, |retry| retry.retry_at_unix)
     }
 
+    /// Replaying an existing payment is local and must remain available during an outage.
+    pub fn buyer_session_funding_retry_at(&self, session_id: &str) -> u64 {
+        self.sessions
+            .get(session_id)
+            .filter(|record| {
+                record.session.payment.cashu_spilman_payment.is_none()
+                    && record.session.payment.cashu_token_lease.is_none()
+            })
+            .and_then(|record| self.channels.get(&record.session.payment.channel_id))
+            .map_or(0, |channel| {
+                self.buyer_mint_failure_retry_at(&channel.mint_url)
+            })
+    }
+
     pub fn defer_buyer_mint_retry(
         &mut self,
         mint_url: &str,

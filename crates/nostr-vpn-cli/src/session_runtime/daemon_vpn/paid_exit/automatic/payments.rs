@@ -42,7 +42,7 @@ pub(crate) async fn fund_paid_exit_session(
         .get(&lease.lease.quote_id)
         .cloned()
         .ok_or_else(|| anyhow!("automatic paid exit session has no quote"))?;
-    let retry_at = store.buyer_mint_failure_retry_at(&channel.mint_url);
+    let retry_at = store.buyer_session_funding_retry_at(session_id);
     if now_unix < retry_at {
         return Err(
             anyhow::Error::new(cashu_service::MintRetryAfter(retry_at - now_unix))

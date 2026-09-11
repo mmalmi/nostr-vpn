@@ -422,3 +422,33 @@
         );
         fs::remove_dir_all(directory).unwrap();
     }
+
+    #[test]
+    fn funded_channel_reconnect_ignores_mint_cooldown_but_new_funding_waits() {
+        let mut store = recoverable_unfunded_route_store(10_000);
+        store
+            .defer_buyer_mint_retry("https://mint.example/Bitcoin", 1000, true, Some(1800))
+            .unwrap();
+        assert_eq!(store.buyer_session_funding_retry_at("session-1"), 2801);
+        store
+            .sessions
+            .get_mut("session-1")
+            .unwrap()
+            .session
+            .payment
+            .cashu_spilman_payment = Some(cashu_service::CashuSpilmanPayment {
+            channel_id: "route-channel".to_string(),
+            balance: 1,
+            signature: "signed-update".to_string(),
+            params: None,
+            funding_proofs: None,
+        });
+        let restored: nostr_vpn_core::paid_route_store::PaidRouteStore =
+            serde_json::from_slice(&serde_json::to_vec(&store).unwrap()).unwrap();
+        assert_eq!(restored.buyer_session_funding_retry_at("session-1"), 0);
+        assert_eq!(
+            restored.buyer_mint_failure_retry_at("https://mint.example/Bitcoin"),
+            2801,
+            "local payment replay must preserve the mint's cooldown for network operations"
+        );
+    }

@@ -202,11 +202,7 @@ pub(crate) async fn update_manual_paid_exit(
     if manual.funding.is_none()
         && !manual.funding_satisfied
         && now_unix >= manual.funding_retry_after
-        && store
-            .sessions
-            .get(&session_id)
-            .and_then(|session| store.channels.get(&session.session.payment.channel_id))
-            .is_none_or(|channel| now_unix >= store.buyer_mint_failure_retry_at(&channel.mint_url))
+        && now_unix >= store.buyer_session_funding_retry_at(&session_id)
     {
         let funding_app = app.clone();
         let funding_config_path = config_path.to_path_buf();
