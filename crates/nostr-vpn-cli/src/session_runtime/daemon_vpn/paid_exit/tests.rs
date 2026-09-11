@@ -139,6 +139,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let seller_npub = app.nostr_keys().unwrap().public_key().to_bech32().unwrap();
     let first = Keys::generate();
     let second = Keys::generate();
+    let third = Keys::generate();
     let open = |lease: &str| PaidRouteSessionOpen {
         version: nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_VERSION.into(),
         service_id: "internet-exit".into(),
@@ -193,12 +194,13 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     .unwrap();
     assert_eq!(result.applied_count, 1);
     // An authenticated relay connection is not evidence of the buyer's IP.
+    peer.npub = third.public_key().to_bech32().unwrap();
     peer.transport_type = Some("websocket".into());
     peer.transport_addr = Some("203.0.113.10:443".into());
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(second.public_key().to_hex(), open("relay"))],
+        vec![(third.public_key().to_hex(), open("relay"))],
         &[peer.clone()],
     )
     .unwrap();
@@ -208,7 +210,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(second.public_key().to_hex(), open("other-hop"))],
+        vec![(third.public_key().to_hex(), open("other-hop"))],
         &[peer],
     )
     .unwrap();

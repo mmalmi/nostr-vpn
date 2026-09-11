@@ -61,16 +61,18 @@ mod paid_exit {
         fn price_text_uses_one_fixed_gigabyte_denominator() {
             assert_eq!(
                 paid_route_price_text(25_000),
-                "25000 msat/GB"
+                "25 sat/GB"
             );
             assert_eq!(paid_route_price_text(0), "free");
+            assert_eq!(paid_route_price_text(1_250), "1.25 sat/GB");
+            assert_eq!(paid_route_price_text(1), "0.001 sat/GB");
             assert_eq!(
                 paid_route_price_text_with_fiat(25_000, Some(80_000.0), "EUR", false),
-                "25000 msat/GB · ≈ 0.02 EUR/GB"
+                "25 sat/GB · ≈ 0.02 EUR/GB"
             );
             assert_eq!(
                 paid_route_price_text_with_fiat(25_000, Some(80_000.0), "EUR", true),
-                "25000 msat/GB"
+                "25 sat/GB"
             );
         }
 

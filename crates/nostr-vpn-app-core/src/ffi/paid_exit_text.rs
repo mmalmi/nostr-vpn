@@ -20,7 +20,14 @@ fn paid_route_price_text(price_msat_per_gb: u64) -> String {
     if price_msat_per_gb == 0 {
         "free".to_string()
     } else {
-        format!("{price_msat_per_gb} msat/GB")
+        let whole = price_msat_per_gb / 1_000;
+        let remainder = price_msat_per_gb % 1_000;
+        if remainder == 0 {
+            format!("{whole} sat/GB")
+        } else {
+            let fraction = format!("{remainder:03}");
+            format!("{whole}.{} sat/GB", fraction.trim_end_matches('0'))
+        }
     }
 }
 

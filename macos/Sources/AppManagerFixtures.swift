@@ -321,7 +321,7 @@ extension AppManager {
             exitNodeActive: !sellerScreenshot,
             exitNodeBlocked: false,
             exitNodeStatusText: automaticExit
-                ? "Automatic paid exit · FI · 2500000 msat/GB · 2500 sat/GB · 198.51.100.42 · Active"
+                ? "Automatic paid exit · FI · 2500 sat/GB · 198.51.100.42 · Active"
                 : sellerScreenshot ? "" : "Using paid internet: FI",
             exitDnsMode: "automatic",
             exitDnsDohProvider: "cloudflare",
@@ -355,7 +355,7 @@ extension AppManager {
                 privateVpnAccess: "denied",
                 internetText: "My internet",
                 publicIpText: "203.0.113.8",
-                priceText: "2500000 msat/GB · 2500 sat/GB",
+                priceText: "2500 sat/GB",
                 priceMsatPerGb: 2_500_000,
                 acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
                 maxChannelCapacitySat: 250,
@@ -533,7 +533,7 @@ extension AppManager {
                         offerId: "internet-exit",
                         sellerNpub: "npub1paidexitfinlanddemo",
                         statusText: "FI - 42 ms - seen 2m ago",
-                        priceText: "2500000 msat/GB · 2500 sat/GB",
+                        priceText: "2500 sat/GB",
                         priceMsatPerGb: 2_500_000,
                         acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
                         maxChannelCapacitySat: 250,
@@ -567,7 +567,7 @@ extension AppManager {
                         offerId: "internet-exit",
                         sellerNpub: "npub1paidexitgermanydemo",
                         statusText: "DE - 18 ms - seen 5m ago",
-                        priceText: "800000 msat/GB · 800 sat/GB",
+                        priceText: "800 sat/GB",
                         priceMsatPerGb: 800_000,
                         acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
                         maxChannelCapacitySat: 500,

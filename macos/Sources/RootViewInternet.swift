@@ -12,6 +12,7 @@ extension RootView {
     func internetSection(_ network: NativeNetworkState, search: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             internetChoiceSettings
+            paidExitUsageSummary
             trustedDeviceInternetSettings(network, search: search)
             shareInternetSettings
             wireGuardUpstreamSettings
