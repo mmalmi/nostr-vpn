@@ -455,7 +455,7 @@ extension AppManager {
                 manualProviderStatusText: "",
                 storePath: "/Users/demo/Library/Application Support/nvpn/paid-routes.json",
                 wallet: NativePaidRouteWalletState(
-                    defaultMint: "https://mint.minibits.cash/Bitcoin",
+                    defaultMint: "https://mint.coinos.io",
                     balanceKnown: true,
                     totalBalanceMsat: 123_000,
                     totalBalanceText: "123 sat",
@@ -471,12 +471,21 @@ extension AppManager {
                     exchangeRateUpdatedAtUnix: 1_780_650_000,
                     mints: [
                         NativePaidRouteWalletMintState(
-                            url: "https://mint.minibits.cash/Bitcoin",
-                            label: "Minibits",
+                            url: "https://mint.coinos.io",
+                            label: "Coinos",
                             isDefault: true,
                             balanceKnown: true,
-                            balanceMsat: 123_000,
-                            balanceText: "123 sat",
+                            balanceMsat: 3_000,
+                            balanceText: "3 sat",
+                            lastCheckedUnix: 1_780_650_000
+                        ),
+                        NativePaidRouteWalletMintState(
+                            url: "https://mint.minibits.cash/Bitcoin",
+                            label: "Minibits",
+                            isDefault: false,
+                            balanceKnown: true,
+                            balanceMsat: 120_000,
+                            balanceText: "120 sat",
                             lastCheckedUnix: 1_780_650_000
                         )
                     ],

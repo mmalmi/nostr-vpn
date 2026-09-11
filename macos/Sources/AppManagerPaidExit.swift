@@ -154,14 +154,6 @@ extension AppManager {
         dispatch(.refreshPaidRouteWallet(refresh: true), status: "Refreshing wallet")
     }
 
-    func topUpPaidRouteWallet(mintUrl: String?, amountSat: String) {
-        guard let amount = Self.parsePositiveUInt64(amountSat) else { return }
-        dispatch(
-            .topUpPaidRouteWallet(mintUrl: Self.optionalTrimmed(mintUrl), amountSat: amount),
-            status: "Creating invoice"
-        )
-    }
-
     func receivePaidRouteWalletToken(_ token: String) {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -172,26 +164,6 @@ extension AppManager {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         dispatch(.previewPaidRouteWalletToken(token: trimmed), status: "Checking token")
-    }
-
-    func sendPaidRouteWalletToken(mintUrl: String?, amountSat: String) {
-        guard let amount = Self.parsePositiveUInt64(amountSat) else { return }
-        dispatch(
-            .sendPaidRouteWalletToken(mintUrl: Self.optionalTrimmed(mintUrl), amountSat: amount),
-            status: "Creating token"
-        )
-    }
-
-    func withdrawPaidRouteWalletLightning(mintUrl: String?, invoice: String) {
-        let trimmedInvoice = invoice.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedInvoice.isEmpty else { return }
-        dispatch(
-            .withdrawPaidRouteWalletLightning(
-                mintUrl: Self.optionalTrimmed(mintUrl),
-                invoice: trimmedInvoice
-            ),
-            status: "Paying invoice"
-        )
     }
 
     func buyPaidRouteOffer(_ offer: NativePaidRouteOfferState) {
