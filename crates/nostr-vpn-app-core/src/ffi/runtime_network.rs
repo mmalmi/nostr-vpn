@@ -13,6 +13,7 @@ impl NativeAppRuntime {
         vpn_active: bool,
         daemon_state: Option<&DaemonRuntimeState>,
         active_network: &NetworkConfig,
+        paid_route_market: &NativePaidRouteMarketState,
     ) -> ExitNodeUiStatus {
         let selected_exit_node = self.config.exit_node.trim();
         if !selected_exit_node.is_empty() {
@@ -22,7 +23,6 @@ impl NativeAppRuntime {
                 InternetSource::WireGuard => "WireGuard exit",
                 InternetSource::Direct | InternetSource::PrivateVpn => "Private exit",
             };
-            let name = exit_node_display_name(&self.config, active_network, selected_exit_node);
             let selected_peer = daemon_state.and_then(|state| {
                 state
                     .peers
@@ -33,6 +33,11 @@ impl NativeAppRuntime {
                 self.config.internet_source,
                 InternetSource::PaidAutomatic | InternetSource::PaidManual
             );
+            let name = if paid_exit {
+                paid_exit_provider_display_name(paid_route_market, selected_exit_node)
+            } else {
+                exit_node_display_name(&self.config, active_network, selected_exit_node)
+            };
             let active_paid_exit_ip = paid_exit
                 .then(|| self.active_paid_route_exit_ip(selected_exit_node))
                 .flatten();

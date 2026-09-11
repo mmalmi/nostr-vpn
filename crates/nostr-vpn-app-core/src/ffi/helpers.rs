@@ -481,6 +481,22 @@ fn non_empty(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+fn paid_exit_provider_display_name(market: &NativePaidRouteMarketState, pubkey_hex: &str) -> String {
+    let Some(offer) = market
+        .offers
+        .iter()
+        .filter(|offer| normalize_nostr_pubkey(&offer.seller_npub).ok().as_deref() == Some(pubkey_hex))
+        .max_by_key(|offer| offer.last_seen_unix)
+    else {
+        return "Paid provider".to_string();
+    };
+    let country = non_empty(&offer.country_code).unwrap_or_else(|| "Unknown country".to_string());
+    match non_empty(&offer.price_text) {
+        Some(price) => format!("{country} · {price}"),
+        None => country,
+    }
+}
+
 fn exit_node_display_name(
     config: &AppConfig,
     active_network: &NetworkConfig,

@@ -219,6 +219,8 @@
         let seller_npub = seller.public_key().to_bech32().unwrap();
         let now = unix_timestamp();
         let mut offer_config = PaidExitConfig { enabled: true, ..PaidExitConfig::default() };
+        offer_config.location.country_code = "IE".to_string();
+        offer_config.pricing.price_msat_per_gb = 25_000;
         offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
         offer_config.channel.free_probe_units = 1_048_576;
         let signed = signed_paid_exit_offer_from_config(
@@ -237,7 +239,7 @@
             })
         }).unwrap();
         runtime.config.select_public_paid_exit_node(&seller_npub).unwrap();
-        let provider_name = short_pubkey(&seller_hex);
+        let provider_name = "IE · 25000 msat/GB";
         let connecting = runtime.state();
         assert!(!connecting.exit_node_active);
         assert_eq!(connecting.exit_node_status_text,

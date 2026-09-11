@@ -321,7 +321,7 @@ extension AppManager {
             exitNodeActive: !sellerScreenshot,
             exitNodeBlocked: false,
             exitNodeStatusText: automaticExit
-                ? "Automatic paid exit · a14c…9b82 · 198.51.100.42 · Active"
+                ? "Automatic paid exit · FI · 2500000 msat/GB · 2500 sat/GB · 198.51.100.42 · Active"
                 : sellerScreenshot ? "" : "Using paid internet: FI",
             exitDnsMode: "automatic",
             exitDnsDohProvider: "cloudflare",

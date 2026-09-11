@@ -222,12 +222,31 @@ impl NativeAppRuntime {
         let port_mapping = daemon_state
             .map(|state| native_port_mapping_status(&state.port_mapping))
             .unwrap_or_default();
+        let config_for_paid = (!config_unavailable).then_some(&self.config);
+        let raw_port_mapping = daemon_state.map(|state| &state.port_mapping);
+        if !config_unavailable && self.config.wallet_fiat_enabled {
+            let _ = self.exchange_rate_service.refresh_if_due();
+        }
+        let mut paid_route_market = self.paid_route_market_state(config_for_paid);
+        if !config_unavailable && self.config.wallet_fiat_enabled {
+            apply_exchange_rate(
+                &mut paid_route_market.wallet,
+                &self.exchange_rate_service.snapshot(),
+            );
+        }
+
         let exit_node_status = if network_setup_required {
             ExitNodeUiStatus::default()
         } else {
             active_network
                 .map(|network| {
-                    self.exit_node_ui_status(vpn_enabled, vpn_active, daemon_state, network)
+                    self.exit_node_ui_status(
+                        vpn_enabled,
+                        vpn_active,
+                        daemon_state,
+                        network,
+                        &paid_route_market,
+                    )
                 })
                 .unwrap_or_default()
         };
@@ -248,18 +267,6 @@ impl NativeAppRuntime {
             } else {
                 self.service_binary_version.clone()
             };
-        let config_for_paid = (!config_unavailable).then_some(&self.config);
-        let raw_port_mapping = daemon_state.map(|state| &state.port_mapping);
-        if !config_unavailable && self.config.wallet_fiat_enabled {
-            let _ = self.exchange_rate_service.refresh_if_due();
-        }
-        let mut paid_route_market = self.paid_route_market_state(config_for_paid);
-        if !config_unavailable && self.config.wallet_fiat_enabled {
-            apply_exchange_rate(
-                &mut paid_route_market.wallet,
-                &self.exchange_rate_service.snapshot(),
-            );
-        }
 
         NativeAppState {
             rev: self.rev,
