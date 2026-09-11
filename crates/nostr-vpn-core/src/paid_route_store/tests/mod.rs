@@ -44,6 +44,7 @@ impl Drop for ScratchDir {
 }
 
 mod buyer;
+mod buyer_funding;
 mod closing_store;
 mod credit_window;
 mod renewal;

@@ -35,9 +35,10 @@ impl PaidRouteStore {
         let before = self.clone();
         self.selected_buyer_session_id = session_id.clone();
         self.buyer_session_open_attempts.clear();
-        if !self
-            .buyer_session_admissions
-            .contains_key(&session.session.lease_id)
+        if session.funding_started_unix == 0
+            && !self
+                .buyer_session_admissions
+                .contains_key(&session.session.lease_id)
         {
             self.buyer_session_open_attempts
                 .insert(session_id.clone(), now_unix.max(1));
@@ -160,6 +161,10 @@ impl PaidRouteStore {
             };
             let lease_id = session.session.lease_id.clone();
             let channel_id = session.session.payment.channel_id.clone();
+            if session.funding_started_unix != 0 {
+                self.buyer_session_open_attempts.remove(&session_id);
+                continue;
+            }
             if self.buyer_session_admissions.contains_key(&lease_id) {
                 self.buyer_session_open_attempts.remove(&session_id);
                 continue;
@@ -362,6 +367,27 @@ impl PaidRouteStore {
 
     pub fn buyer_has_seller_admission(&self, seller_pubkey: &str, now_unix: u64) -> Result<bool> {
         let seller_pubkey = normalize_nostr_pubkey(seller_pubkey)?;
+        // An older admission must not restore the trial route while the
+        // selected session is waiting for its mint. Renewal still uses the
+        // selected, paid session until the successor is ready.
+        if self
+            .sessions
+            .get(&self.selected_buyer_session_id)
+            .is_some_and(|session| {
+                session.funding_started_unix != 0
+                    && self
+                        .channels
+                        .get(&session.session.payment.channel_id)
+                        .is_some_and(|channel| {
+                            normalize_nostr_pubkey(&channel.counterparty_npub)
+                                .ok()
+                                .as_deref()
+                                == Some(seller_pubkey.as_str())
+                        })
+            })
+        {
+            return Ok(false);
+        }
         Ok(self.sessions.values().any(|session| {
             let Some(lease) = self.leases.get(&session.session.lease_id) else {
                 return false;
@@ -373,6 +399,7 @@ impl PaidRouteStore {
                 return false;
             };
             channel.role == PaidRouteChannelRole::Buyer
+                && session.funding_started_unix == 0
                 && paid_route_lifecycle_allows_routing(lease.status)
                 && paid_route_lifecycle_allows_routing(channel.status)
                 && session.session.routing_decision(terms).allow_routing
@@ -452,6 +479,7 @@ impl PaidRouteStore {
                 return Ok(None);
             };
             let selected_matches = channel.role == PaidRouteChannelRole::Buyer
+                && session.funding_started_unix == 0
                 && normalize_nostr_pubkey(&channel.counterparty_npub)
                     .ok()
                     .as_deref()
@@ -477,7 +505,8 @@ impl PaidRouteStore {
             .filter_map(|session| {
                 let lease = self.leases.get(&session.session.lease_id)?;
                 let channel = self.channels.get(&session.session.payment.channel_id)?;
-                if channel.role != PaidRouteChannelRole::Buyer
+                if session.funding_started_unix != 0
+                    || channel.role != PaidRouteChannelRole::Buyer
                     || normalize_nostr_pubkey(&channel.counterparty_npub)
                         .ok()
                         .as_deref()

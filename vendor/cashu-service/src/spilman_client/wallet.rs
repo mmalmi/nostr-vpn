@@ -53,9 +53,12 @@ pub async fn fetch_spilman_keyset_ids(mint_url: &str, unit: &str) -> Result<Vec<
     let mint_url = mint_url.trim_end_matches('/');
     let response: serde_json::Value = reqwest::Client::new()
         .get(format!("{mint_url}/v1/keysets"))
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("failed to fetch Cashu mint keysets: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Cashu mint keysets request failed: {error}"))?
         .json()
         .await
         .map_err(|error| format!("failed to decode Cashu mint keysets: {error}"))?;
@@ -90,9 +93,12 @@ pub async fn fetch_spilman_keyset_info_json(
     let keysets_url = format!("{mint_url}/v1/keysets");
     let keysets_response: serde_json::Value = client
         .get(keysets_url)
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("failed to fetch Cashu mint keysets: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Cashu mint keysets request failed: {error}"))?
         .json()
         .await
         .map_err(|error| format!("failed to decode Cashu mint keysets: {error}"))?;
@@ -121,9 +127,12 @@ pub async fn fetch_spilman_keyset_info_json(
     let keys_url = format!("{mint_url}/v1/keys/{selected_id}");
     let keys_response: serde_json::Value = client
         .get(keys_url)
+        .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
         .map_err(|error| format!("failed to fetch Cashu mint keys: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Cashu mint keys request failed: {error}"))?
         .json()
         .await
         .map_err(|error| format!("failed to decode Cashu mint keys: {error}"))?;

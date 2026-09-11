@@ -11,7 +11,8 @@ pub(crate) struct PaidExitAutomaticBuyer {
     pub(super) candidate: Option<PaidExitAutomaticCandidate>,
     pub(super) rejected_offers: HashMap<String, u64>,
     pub(super) probe: Option<PaidExitAutomaticProbe>,
-    pub(super) renewal_funding: Option<tokio::task::JoinHandle<Result<()>>>,
+    pub(super) funding: Option<tokio::task::JoinHandle<Result<()>>>,
+    pub(super) funding_retry_at: u64,
     pub(super) renewal_retry_at: u64,
 }
 
@@ -101,6 +102,7 @@ impl PaidExitAutomaticCandidate {
 
     pub(super) fn ready_to_probe(&self, seller_admitted: bool, now_unix: u64) -> bool {
         seller_admitted
+            && (!self.funding_attempted || self.funded)
             && (self.probe_started_at.is_none()
                 || (self.funded
                     && self.probe_succeeded
@@ -114,9 +116,10 @@ impl PaidExitAutomaticCandidate {
 
     pub(super) fn ready_to_fund(&self, now_unix: u64) -> bool {
         !self.failed
-            && !self.funding_attempted
+            && !self.funded
             && (self.health_evidence_fresh(now_unix)
-                || (self.selection.previously_verified
+                || ((self.selection.previously_verified
+                    || (self.funding_attempted && self.probe_succeeded))
                     && self.last_authenticated_at.is_some_and(|seen| {
                         now_unix.saturating_sub(seen) <= PAID_EXIT_AUTO_HEALTH_TTL_SECS
                     })))
@@ -125,6 +128,10 @@ impl PaidExitAutomaticCandidate {
     pub(super) fn should_failover(&self, now_unix: u64) -> bool {
         if self.failed {
             return true;
+        }
+        if self.funding_attempted && !self.funded {
+            return now_unix.saturating_sub(self.last_authenticated_at.unwrap_or(self.selected_at))
+                >= PAID_EXIT_AUTO_FAILOVER_SECS;
         }
         if !self.probe_succeeded
             && now_unix.saturating_sub(self.probe_started_at.unwrap_or(self.selected_at))
@@ -163,7 +170,8 @@ impl PaidExitAutomaticBuyer {
         self.candidate = None;
         // Funding already in progress must finish persisting its wallet result.
         // Dropping the handle detaches it; aborting could lose funded state.
-        self.renewal_funding.take();
+        self.funding.take();
+        self.funding_retry_at = 0;
         self.renewal_retry_at = 0;
         self.rejected_offers.clear();
     }
@@ -239,7 +247,8 @@ impl PaidExitAutomaticBuyer {
         self.candidate = None;
         // Funding already in progress must finish persisting its wallet result.
         // Dropping the handle detaches it; aborting could lose funded state.
-        self.renewal_funding.take();
+        self.funding.take();
+        self.funding_retry_at = 0;
         self.renewal_retry_at = 0;
     }
 }

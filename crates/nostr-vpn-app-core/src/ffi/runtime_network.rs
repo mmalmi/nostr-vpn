@@ -15,6 +15,21 @@ impl NativeAppRuntime {
         active_network: &NetworkConfig,
         paid_route_market: &NativePaidRouteMarketState,
     ) -> ExitNodeUiStatus {
+        if vpn_enabled
+            && self.config.internet_source == InternetSource::PaidAutomatic
+            && let Some(payment_status) = self.pending_paid_route_funding_status()
+        {
+            let blocked = self.config.exit_node_leak_protection;
+            return ExitNodeUiStatus {
+                active: false,
+                blocked,
+                text: if blocked {
+                    format!("Automatic paid exit · Blocked · {payment_status}")
+                } else {
+                    format!("Automatic paid exit · {payment_status}")
+                },
+            };
+        }
         let selected_exit_node = self.config.exit_node.trim();
         if !selected_exit_node.is_empty() {
             let source = match self.config.internet_source {

@@ -67,6 +67,7 @@ pub(crate) async fn fund_paid_exit_session(
             .await?,
         )
         .context("daemon wallet returned an invalid opened Cashu channel")?;
+    let now_unix = unix_timestamp().max(now_unix);
     let buyer_npub = app
         .nostr_keys()?
         .public_key()

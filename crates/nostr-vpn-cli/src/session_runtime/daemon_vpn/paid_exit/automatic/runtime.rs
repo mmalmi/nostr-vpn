@@ -140,39 +140,7 @@ pub(crate) async fn update_automatic_paid_exit(
         }
     }
 
-    let fund = automatic
-        .candidate
-        .as_ref()
-        .is_some_and(|candidate| candidate.ready_to_fund(now_unix));
-    if fund {
-        let session_id = automatic
-            .candidate
-            .as_ref()
-            .map(|candidate| candidate.session_id.clone())
-            .expect("funding candidate exists");
-        if let Some(candidate) = automatic.candidate.as_mut() {
-            candidate.funding_attempted = true;
-        }
-        match fund_automatic_paid_exit(app, config_path, &session_id, now_unix).await {
-            Ok(envelope) => {
-                if let Some(candidate) = automatic.candidate.as_mut() {
-                    candidate.funded = true;
-                }
-                if let Err(error) = queue_paid_exit_payment(app, config_path, &envelope) {
-                    eprintln!("paid-exit: automatic channel-open queue failed: {error}");
-                    if let Some(candidate) = automatic.candidate.as_mut() {
-                        candidate.failed = true;
-                    }
-                }
-            }
-            Err(error) => {
-                eprintln!("paid-exit: automatic funding failed: {error}");
-                if let Some(candidate) = automatic.candidate.as_mut() {
-                    candidate.failed = true;
-                }
-            }
-        }
-    }
+    let funding_changed = funding::update_funding(automatic, app, config_path, now_unix).await?;
 
     renewal::renew_automatic_paid_exit(automatic, runtime, app, config_path, now_unix).await?;
 
@@ -191,7 +159,7 @@ pub(crate) async fn update_automatic_paid_exit(
         return Ok(true);
     }
 
-    Ok(false)
+    Ok(funding_changed)
 }
 
 pub(crate) fn record_paid_exit_probe(

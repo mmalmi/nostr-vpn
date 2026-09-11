@@ -440,6 +440,35 @@ fn test_candidate(seller_pubkey: &str) -> PaidExitAutomaticCandidate {
     }
 }
 
+#[test]
+fn mint_outage_keeps_authenticated_provider_and_allows_payment_retry() {
+    let seller = Keys::generate();
+    let pubkey = seller.public_key().to_hex();
+    let mut candidate = test_candidate(&pubkey);
+    candidate.selection.previously_verified = true;
+    candidate.probe_started_at = None;
+    candidate.funding_attempted = true;
+    for now in [131, 200, 500] {
+        candidate.observe_presence(&[test_peer_status(&pubkey, now)], now);
+        assert!(
+            !candidate.should_failover(now),
+            "mint outage is not a provider failure"
+        );
+        assert!(
+            candidate.ready_to_fund(now),
+            "retry the same session without another trial"
+        );
+        assert!(
+            !candidate.ready_to_probe(true, now),
+            "funding must not reuse trial admission"
+        );
+    }
+    assert!(
+        candidate.should_failover(561),
+        "an unreachable provider must still fail over"
+    );
+}
+
 fn test_peer_status(pubkey: &str, now: u64) -> MeshPeerStatus {
     MeshPeerStatus {
         pubkey: pubkey.to_string(),

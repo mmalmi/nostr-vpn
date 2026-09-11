@@ -50,21 +50,6 @@ pub(super) async fn renew_automatic_paid_exit(
         }
     }
 
-    if automatic
-        .renewal_funding
-        .as_ref()
-        .is_some_and(|task| task.is_finished())
-    {
-        let result = automatic
-            .renewal_funding
-            .take()
-            .expect("finished renewal funding")
-            .await?;
-        if let Err(error) = result {
-            eprintln!("paid-exit: channel renewal funding will retry: {error}");
-            automatic.renewal_retry_at = now_unix.saturating_add(5);
-        }
-    }
     let store = load_paid_route_store(&store_path)?;
     if !store.buyer_session_renewals.contains_key(&session_id)
         && !store.buyer_session_needs_renewal(&session_id, now_unix)?
@@ -82,16 +67,7 @@ pub(super) async fn renew_automatic_paid_exit(
         .as_ref()
         .is_some_and(CashuSpilmanPayment::has_funding);
     if !funded {
-        if automatic.renewal_funding.is_none() && now_unix >= automatic.renewal_retry_at {
-            let app = app.clone();
-            let config_path = config_path.to_path_buf();
-            automatic.renewal_funding = Some(tokio::spawn(async move {
-                let envelope =
-                    fund_automatic_paid_exit(&app, &config_path, &next, now_unix).await?;
-                queue_paid_exit_payment(&app, &config_path, &envelope)?;
-                Ok(())
-            }));
-        }
+        funding::start_funding(automatic, app, config_path, &next, now_unix)?;
         return Ok(());
     }
     if store.buyer_session_is_seller_admitted(&next)? {

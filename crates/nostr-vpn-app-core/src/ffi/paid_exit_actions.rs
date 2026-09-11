@@ -79,6 +79,24 @@ impl NativeAppRuntime {
         paid_route_store_file_path(&self.config_path)
     }
 
+    pub(super) fn pending_paid_route_funding_status(&self) -> Option<String> {
+        let store = load_paid_route_store(&self.paid_route_store_path()).ok()?;
+        let session = store.sessions.get(&store.selected_buyer_session_id)?;
+        let channel = store.channels.get(&session.session.payment.channel_id)?;
+        if session.funding_started_unix == 0 || channel.expires_at_unix <= unix_timestamp() {
+            return None;
+        }
+        let mint = nostr_sdk::prelude::Url::parse(&channel.mint_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .unwrap_or_else(|| "payment service".to_string());
+        Some(if channel.error.is_empty() {
+            format!("Setting up payment · {mint}")
+        } else {
+            format!("Payment unavailable · {mint} · Retrying")
+        })
+    }
+
     pub(super) fn active_paid_route_exit_ip(&self, selected_exit_node: &str) -> Option<String> {
         let selected_exit_node = normalize_nostr_pubkey(selected_exit_node).ok()?;
         let store = load_paid_route_store(&self.paid_route_store_path()).ok()?;

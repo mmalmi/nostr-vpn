@@ -44,6 +44,7 @@ PAID_EXIT_SPILMAN_WALLET_TOPUP_SAT="${NVPN_EXIT_NODE_E2E_SPILMAN_WALLET_TOPUP_SA
 PAID_EXIT_SPILMAN_FREE_PROBE_UNITS="${NVPN_EXIT_NODE_E2E_SPILMAN_FREE_PROBE_UNITS:-0}"
 PAID_EXIT_SPILMAN_GRACE_UNITS="${NVPN_EXIT_NODE_E2E_SPILMAN_GRACE_UNITS:-65536}"
 PAID_EXIT_PROBE_PORT="${NVPN_EXIT_NODE_E2E_PROBE_PORT:-8080}"
+PAID_EXIT_MINT_OUTAGE="${NVPN_EXIT_NODE_E2E_MINT_OUTAGE:-0}"
 FIXTURE_READY_DEADLINE_SECS=30
 FIXTURE_CONNECT_TIMEOUT_SECS=2
 PAID_EXIT_SESSION_ID=""
@@ -232,6 +233,9 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == '/ip':
             self.send_json({'ip': EXIT_IP})
+            return
+        if parsed.path == '/source-ip':
+            self.send_json({'ip': self.client_address[0]})
             return
         if parsed.path.startswith('/geoip/'):
             self.send_json({'country_code': COUNTRY, 'asn': ASN})
@@ -941,9 +945,21 @@ if truthy "$PAID_EXIT_MODE"; then
       echo "exit-node docker e2e failed: automatic buyer must begin without imported offers" >&2
       exit 1
     }
+    if truthy "$PAID_EXIT_MINT_OUTAGE"; then
+      "${COMPOSE[@]}" pause cashu-mint
+    fi
     "${COMPOSE[@]}" exec -T node-b nvpn set \
       --config "$CONFIG_PATH" \
       --internet-source paid_automatic >/dev/null
+    if truthy "$PAID_EXIT_MINT_OUTAGE"; then
+      "${COMPOSE[@]}" exec -T node-b python3 - outage \
+        "http://$PUBLIC_INTERNET_TARGET:$PAID_EXIT_PROBE_PORT" "$NAT_B_PUBLIC_IP" \
+        < "$ROOT_DIR/scripts/e2e-paid-exit-mint-outage.py"
+      "${COMPOSE[@]}" unpause cashu-mint
+      "${COMPOSE[@]}" exec -T node-b python3 - recovered \
+        "http://$PUBLIC_INTERNET_TARGET:$PAID_EXIT_PROBE_PORT" "$NODE_A_PUBLIC_IP" \
+        < "$ROOT_DIR/scripts/e2e-paid-exit-mint-outage.py"
+    fi
   else
     BUY_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit buy \
       --config "$CONFIG_PATH" \

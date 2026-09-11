@@ -358,6 +358,10 @@ impl NativeAppRuntime {
         }
     }
 
+    fn pending_paid_route_funding_status(&self) -> Option<String> {
+        None
+    }
+
     fn active_paid_route_exit_ip(&self, _selected_exit_node: &str) -> Option<String> {
         let _ = self;
         None

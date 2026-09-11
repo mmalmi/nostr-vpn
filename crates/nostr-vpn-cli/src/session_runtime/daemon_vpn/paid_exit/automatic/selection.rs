@@ -66,7 +66,15 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         if funded {
             queue_recovered_paid_exit_channel_open(app, config_path, &session_id, now_unix)?;
         }
+        let pending_funding = store.sessions[&session_id].funding_started_unix != 0;
         automatic.start_candidate(selection, seller_pubkey, session_id, funded, now_unix);
+        if pending_funding {
+            automatic
+                .candidate
+                .as_mut()
+                .expect("recovered candidate")
+                .funding_attempted = true;
+        }
         return Ok(route_changed || endpoints_changed);
     }
 

@@ -183,6 +183,8 @@ pub enum PaidRouteLifecycleStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteSessionRecord {
     #[serde(default, skip_serializing_if = "is_zero")]
+    pub funding_started_unix: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub last_successful_probe_unix: u64,
     pub session: PaidRouteSession,
     pub created_at_unix: u64,
@@ -563,6 +565,7 @@ pub struct PaidRouteSellerCollectionState {
 }
 
 mod automatic_selection;
+mod buyer_funding;
 mod buyer_payment;
 mod buyer_renewal;
 mod buyer_session;

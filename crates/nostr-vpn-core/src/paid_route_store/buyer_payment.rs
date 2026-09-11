@@ -81,9 +81,19 @@ impl PaidRouteStore {
         channel.status = status;
         channel.payment = payment.clone();
         channel.updated_at_unix = request.now_unix;
+        if session_record.funding_started_unix != 0 {
+            channel.error.clear();
+            self.buyer_session_admissions
+                .remove(&session_record.session.lease_id);
+            if self.selected_buyer_session_id == session_id {
+                self.buyer_session_open_attempts
+                    .insert(session_id.clone(), request.now_unix);
+            }
+        }
         self.channels.insert(channel_id.to_string(), channel);
 
         let mut session = session_record;
+        session.funding_started_unix = 0;
         session.session.payment = payment;
         session.updated_at_unix = request.now_unix;
         self.sessions.insert(session_id.clone(), session);

@@ -1,6 +1,8 @@
 use super::*;
 use nostr_vpn_core::paid_routes::PaidRouteUsage;
 
+#[path = "automatic/funding.rs"]
+mod funding;
 #[path = "automatic/payments.rs"]
 mod payments;
 #[path = "automatic/renewal.rs"]

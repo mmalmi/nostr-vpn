@@ -189,7 +189,7 @@ impl PaidRouteStore {
             .lease
             .expires_at_unix
             .min(channel.expires_at_unix);
-        if expires_at_unix <= now_unix {
+        if record.funding_started_unix != 0 || expires_at_unix <= now_unix {
             return Ok(false);
         }
         let offer = self.buyer_offer_for_session(lease_record, channel)?;
