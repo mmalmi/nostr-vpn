@@ -93,6 +93,10 @@ impl NativeAppRuntime {
             };
         }
 
+        self.unselected_exit_ui_status(vpn_enabled, vpn_active, daemon_state)
+    }
+
+    fn unselected_exit_ui_status(&self, vpn_enabled: bool, vpn_active: bool, daemon_state: Option<&DaemonRuntimeState>) -> ExitNodeUiStatus {
         let pending_source = match self.config.internet_source {
             InternetSource::PrivateVpn => Some("Private exit"),
             InternetSource::PaidAutomatic => Some("Automatic paid exit"),
@@ -115,32 +119,28 @@ impl NativeAppRuntime {
         }
 
         if self.config.internet_source == InternetSource::WireGuard {
-            return self.wireguard_exit_ui_status(vpn_enabled, vpn_active, daemon_state);
+            let wireguard_exit_active = vpn_active
+                && self.config.wireguard_exit.configured()
+                && daemon_state.is_some_and(|state| state.wireguard_exit_ready);
+            let blocked =
+                self.config.exit_node_leak_protection && vpn_enabled && !wireguard_exit_active;
+            let text = if blocked {
+                "WireGuard exit · Blocked".to_string()
+            } else if wireguard_exit_active {
+                "WireGuard exit · Connected".to_string()
+            } else {
+                "WireGuard exit · Pending".to_string()
+            };
+            return ExitNodeUiStatus {
+                active: wireguard_exit_active,
+                blocked,
+                text,
+            };
         }
 
         ExitNodeUiStatus {
             text: "Direct internet".to_string(),
             ..ExitNodeUiStatus::default()
-        }
-    }
-
-    fn wireguard_exit_ui_status(&self, vpn_enabled: bool, vpn_active: bool, daemon_state: Option<&DaemonRuntimeState>) -> ExitNodeUiStatus {
-        let wireguard_exit_active = vpn_active
-            && self.config.wireguard_exit.configured()
-            && daemon_state.is_some_and(|state| state.wireguard_exit_ready);
-        let blocked =
-            self.config.exit_node_leak_protection && vpn_enabled && !wireguard_exit_active;
-        let text = if blocked {
-            "WireGuard exit · Blocked".to_string()
-        } else if wireguard_exit_active {
-            "WireGuard exit · Connected".to_string()
-        } else {
-            "WireGuard exit · Pending".to_string()
-        };
-        ExitNodeUiStatus {
-            active: wireguard_exit_active,
-            blocked,
-            text,
         }
     }
 
