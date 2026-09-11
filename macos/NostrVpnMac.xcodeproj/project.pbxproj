@@ -12,6 +12,7 @@
 		24F51F364CF81844292B7541 /* AppManagerActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49EBD2111DA9043D1B847714 /* AppManagerActions.swift */; };
 		2A52081BD20BF3F95ACDE97D /* RootViewWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D65211FBB441FA40EBA3E0C /* RootViewWallet.swift */; };
 		2B872AF5953978062DBB9BCF /* RootViewPaidSeller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84816A1BA75599C5E1AC796B /* RootViewPaidSeller.swift */; };
+		48DB3C27D3908AC7847825A8 /* PaidExitUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DC1C557B51E16C0467B4A4 /* PaidExitUsage.swift */; };
 		4D7D864A20FB82CA270FF92B /* NostrVpnAppCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD28FC1F1336837C61955C1 /* NostrVpnAppCore.swift */; };
 		54C1ED7C65A81D2C9913CDA3 /* AppManagerPaidExit.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD6774B2EC877F13F2ADD52 /* AppManagerPaidExit.swift */; };
 		55C3E09CEE0D29423EA8D4EF /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CC8FC9828A2278F1616EE497 /* Security.framework */; };
@@ -33,6 +34,7 @@
 		D8298A41C095805F2410F1E2 /* .gitkeep in Resources */ = {isa = PBXBuildFile; fileRef = 3F1160699FA7E0B240102124 /* .gitkeep */; };
 		DBBFA25AF9505FC4BB9541E8 /* NostrVpnAppCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 15E39397BF43B7A318613026 /* NostrVpnAppCore.xcframework */; };
 		E4C95A432A0BA971C1DEE23B /* RootViewDevices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491D74DB56359B486F076A4E /* RootViewDevices.swift */; };
+		E8BD91360A4C272C64FDB91B /* RootViewPaidUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2424A65BBB219CB4A0CC31A /* RootViewPaidUsage.swift */; };
 		F2B4EFEAA95D80F5CF15D4A3 /* AppManagerSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCD6910223D0C0D4A5BADA3 /* AppManagerSettings.swift */; };
 /* End PBXBuildFile section */
 
@@ -54,6 +56,7 @@
 		A4DF3348C5364BEE0DB53D00 /* NostrVpnMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NostrVpnMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AABBE014E9003A7A9F1F86AF /* RootViewPaidMarket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewPaidMarket.swift; sourceTree = "<group>"; };
 		BA47FE871505F802D17559E0 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		C0DC1C557B51E16C0467B4A4 /* PaidExitUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaidExitUsage.swift; sourceTree = "<group>"; };
 		C6130D91DC91E5C3A2E4CB1D /* RootViewSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewSettings.swift; sourceTree = "<group>"; };
 		C9F13C4142EE24AF3AC701CD /* AppManagerUpdateSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerUpdateSupport.swift; sourceTree = "<group>"; };
 		CB5956B2DC39CF6AF9008CA2 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -63,6 +66,7 @@
 		DDD28FC1F1336837C61955C1 /* NostrVpnAppCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnAppCore.swift; sourceTree = "<group>"; };
 		E52A10F7ADC2CC102F340C60 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
 		EFD6774B2EC877F13F2ADD52 /* AppManagerPaidExit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerPaidExit.swift; sourceTree = "<group>"; };
+		F2424A65BBB219CB4A0CC31A /* RootViewPaidUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewPaidUsage.swift; sourceTree = "<group>"; };
 		F725886845BC471D591A69CC /* AppManagerUpdates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerUpdates.swift; sourceTree = "<group>"; };
 		F8CDAF07303212D906DCCAA8 /* AppManagerFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerFixtures.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -113,6 +117,7 @@
 				F725886845BC471D591A69CC /* AppManagerUpdates.swift */,
 				C9F13C4142EE24AF3AC701CD /* AppManagerUpdateSupport.swift */,
 				D52F97412C0CE07E04C2D8E1 /* NostrVpnMacApp.swift */,
+				C0DC1C557B51E16C0467B4A4 /* PaidExitUsage.swift */,
 				1B65CF013122BCA745902824 /* PrivilegedCommandRunner.swift */,
 				70F9EAC8173DD49E1B488249 /* QRCodeScannerView.swift */,
 				CB5956B2DC39CF6AF9008CA2 /* RootView.swift */,
@@ -120,6 +125,7 @@
 				D7B7F3AA932CCD30A5382B64 /* RootViewInternet.swift */,
 				AABBE014E9003A7A9F1F86AF /* RootViewPaidMarket.swift */,
 				84816A1BA75599C5E1AC796B /* RootViewPaidSeller.swift */,
+				F2424A65BBB219CB4A0CC31A /* RootViewPaidUsage.swift */,
 				C6130D91DC91E5C3A2E4CB1D /* RootViewSettings.swift */,
 				0791EAB555478D1EA135707E /* RootViewSupport.swift */,
 				4D65211FBB441FA40EBA3E0C /* RootViewWallet.swift */,
@@ -246,6 +252,7 @@
 				1C56DFDCE237C5B7E0D2C7B2 /* AppManagerUpdates.swift in Sources */,
 				4D7D864A20FB82CA270FF92B /* NostrVpnAppCore.swift in Sources */,
 				BB8824C1B11E41396D5245D7 /* NostrVpnMacApp.swift in Sources */,
+				48DB3C27D3908AC7847825A8 /* PaidExitUsage.swift in Sources */,
 				BFB6F13D5CD6038E015EE882 /* PrivilegedCommandRunner.swift in Sources */,
 				5CE5ACBB50FA30430340AB02 /* QRCodeScannerView.swift in Sources */,
 				A6FE74EA26F6B11DB0807665 /* RootView.swift in Sources */,
@@ -253,6 +260,7 @@
 				1980FDDACB1543C7FE5629A9 /* RootViewInternet.swift in Sources */,
 				703B3FB6AD815B06CB5F6804 /* RootViewPaidMarket.swift in Sources */,
 				2B872AF5953978062DBB9BCF /* RootViewPaidSeller.swift in Sources */,
+				E8BD91360A4C272C64FDB91B /* RootViewPaidUsage.swift in Sources */,
 				7069DCC8153F231D6CCEA556 /* RootViewSettings.swift in Sources */,
 				A05F3A0BDBB27DF709ACFFFB /* RootViewSupport.swift in Sources */,
 				2A52081BD20BF3F95ACDE97D /* RootViewWallet.swift in Sources */,
