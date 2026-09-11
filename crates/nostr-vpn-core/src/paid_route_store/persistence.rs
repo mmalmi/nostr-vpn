@@ -910,11 +910,13 @@ pub(super) fn apply_usage_delta(usage: &mut PaidRouteUsage, delta: &PaidRouteUsa
 pub(super) fn paid_route_buyer_session_id_suffix(
     offer_key: &str,
     offer_id: &str,
+    mint_url: &str,
     now_unix: u64,
 ) -> String {
     let mut hasher = DefaultHasher::new();
     offer_key.hash(&mut hasher);
     offer_id.hash(&mut hasher);
+    mint_url.hash(&mut hasher);
     now_unix.hash(&mut hasher);
     let readable = sanitize_id_component(offer_id);
     format!("{readable}-{now_unix}-{:016x}", hasher.finish())

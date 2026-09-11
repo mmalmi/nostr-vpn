@@ -161,21 +161,20 @@ fn seller_payment_envelope(
     sent_at_unix: u64,
     mut payload: StreamingRoutePaymentPayload,
 ) -> StreamingRoutePaymentEnvelope {
-    if let StreamingRoutePaymentPayload::ChannelOpen(open) = &mut payload {
-        if let Some(params) = open
+    if let StreamingRoutePaymentPayload::ChannelOpen(open) = &mut payload
+        && let Some(params) = open
             .payment
             .params
             .as_mut()
             .and_then(|value| value.as_object_mut())
-        {
-            for (field, value) in [
-                ("mint", json!(open.mint_url)),
-                ("capacity", json!(open.capacity)),
-                ("expiry_timestamp", json!(open.expires_unix)),
-                ("receiver_pubkey", json!(open.receiver_pubkey_hex)),
-            ] {
-                params.entry(field).or_insert(value);
-            }
+    {
+        for (field, value) in [
+            ("mint", json!(open.mint_url)),
+            ("capacity", json!(open.capacity)),
+            ("expiry_timestamp", json!(open.expires_unix)),
+            ("receiver_pubkey", json!(open.receiver_pubkey_hex)),
+        ] {
+            params.entry(field).or_insert(value);
         }
     }
     StreamingRoutePaymentEnvelope::new(

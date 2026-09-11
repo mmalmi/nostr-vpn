@@ -22,7 +22,8 @@ impl PaidRouteStore {
         let seller_pubkey = PublicKey::parse(&offer.seller_npub)
             .map_err(|error| anyhow!("invalid paid route seller npub: {error}"))?;
         let receiver_pubkey_hex = paid_route_offer_receiver_pubkey_hex(&offer, &seller_pubkey)?;
-        let id_suffix = paid_route_buyer_session_id_suffix(&offer_key, &offer.offer_id, now_unix);
+        let id_suffix =
+            paid_route_buyer_session_id_suffix(&offer_key, &offer.offer_id, &mint_url, now_unix);
         let quote_id = format!("quote-{id_suffix}");
         let lease_id = format!("lease-{id_suffix}");
         let channel_id = format!("channel-{id_suffix}");

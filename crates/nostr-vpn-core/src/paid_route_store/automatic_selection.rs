@@ -146,9 +146,8 @@ impl PaidRouteStore {
         wallet_mints.sort_by_key(|mint| {
             (
                 self.buyer_mint_failure_retry_at(&mint.url) > now_unix,
-                !mint
-                    .balance_msat
-                    .is_some_and(|balance| balance / 1_000 >= target),
+                mint.balance_msat
+                    .is_none_or(|balance| balance / 1_000 < target),
                 mint.url.trim() != default,
                 mint.url.trim(),
             )

@@ -3,8 +3,25 @@ use super::*;
 const PRIMARY: &str = "https://primary.example";
 const ALTERNATIVE: &str = "https://alternative.example";
 
-fn fixture() -> (tempfile::TempDir, AppConfig, PaidExitAutomaticBuyer, u64) {
-    let dir = tempfile::tempdir().unwrap();
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn fixture() -> (TestDirectory, AppConfig, PaidExitAutomaticBuyer, u64) {
+    let dir = TestDirectory(
+        std::env::temp_dir().join(format!("nvpn-mint-failover-{}", uuid::Uuid::new_v4())),
+    );
+    std::fs::create_dir_all(dir.path()).unwrap();
     let path = dir.path().join("config.toml");
     let now = unix_timestamp();
     let mut app = AppConfig::generated();
@@ -111,6 +128,21 @@ fn mint_failover_restart_does_not_recover_session_for_wrong_mint() {
         .channel_id];
     assert_eq!(candidate.selection.mint_url, ALTERNATIVE);
     assert_eq!(channel.mint_url, ALTERNATIVE);
+}
+
+#[test]
+fn mint_failover_within_same_second_preserves_original_session_identity() {
+    let (dir, mut app, mut automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let original = automatic.candidate.as_ref().unwrap().session_id.clone();
+    reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now).unwrap();
+    let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    assert_ne!(store.selected_buyer_session_id, original);
+    assert_eq!(store.sessions.len(), 2);
+    assert_eq!(
+        store.channels[&store.sessions[&original].session.payment.channel_id].mint_url,
+        PRIMARY
+    );
 }
 
 #[tokio::test]
