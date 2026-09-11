@@ -765,6 +765,8 @@ pub(crate) struct FipsPrivateTunnelConfig {
     /// route is pending. This keeps roster MagicDNS alive during exit setup.
     secure_dns_requested: bool,
     public_paid_exit_waiting_for_admission: bool,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) magic_dns_suffix: String,
     pub(crate) magic_dns_records: HashMap<String, Ipv4Addr>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fips_host: Option<FipsHostTunnelConfig>,

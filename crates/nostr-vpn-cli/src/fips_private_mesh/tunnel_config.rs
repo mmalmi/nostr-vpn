@@ -502,6 +502,8 @@ impl FipsPrivateTunnelConfig {
                 && (!local_identity_confirmation_pending
                     || app.internet_source == InternetSource::WireGuard),
             public_paid_exit_waiting_for_admission: false,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            magic_dns_suffix: app.magic_dns_suffix.clone(),
             magic_dns_records: if local_identity_confirmation_pending {
                 HashMap::new()
             } else {
@@ -645,6 +647,13 @@ impl FipsPrivateTunnelConfig {
         ips.sort();
         ips.dedup();
         ips
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn pending_paid_exit_split_dns_required(&self) -> bool {
+        self.client_dataplane_enabled
+            && self.public_paid_exit_waiting_for_admission
+            && !self.exit_node_leak_protection
     }
 
     fn secure_dns_required(&self) -> bool {
@@ -849,6 +858,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     state_control: FipsControlTcpRuntime,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
+    pending_paid_exit_dns: Option<crate::ConnectMagicDnsRuntime>,
     manages_secure_dns: bool,
     config: FipsPrivateTunnelConfig,
     cleanup_journal_config_path: std::path::PathBuf,

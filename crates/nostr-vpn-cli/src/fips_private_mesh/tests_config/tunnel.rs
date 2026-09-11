@@ -355,6 +355,30 @@
             !config.secure_dns_required(),
             "an unadmitted paid exit must not blackhole ordinary DNS"
         );
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            assert!(
+                config.pending_paid_exit_split_dns_required(),
+                "private names must remain resolvable while payment is pending"
+            );
+            assert!(!config.magic_dns_records.is_empty());
+            assert_eq!(config.magic_dns_suffix, app.magic_dns_suffix);
+
+            config.require_public_paid_exit_admission(true);
+            assert!(config.secure_dns_required());
+            assert!(!config.pending_paid_exit_split_dns_required());
+
+            config.require_public_paid_exit_admission(false);
+            assert!(!config.secure_dns_required());
+            assert!(config.pending_paid_exit_split_dns_required());
+
+            config.exit_node_leak_protection = true;
+            assert!(config.secure_dns_required());
+            assert!(!config.pending_paid_exit_split_dns_required());
+
+            config.disable_client_dataplane();
+            assert!(!config.pending_paid_exit_split_dns_required());
+        }
     }
 
     #[test]

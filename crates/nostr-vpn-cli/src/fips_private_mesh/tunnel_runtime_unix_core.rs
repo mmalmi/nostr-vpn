@@ -90,6 +90,7 @@ impl FipsPrivateTunnelRuntime {
             control_pubsub,
             state_control,
             secure_dns: None,
+            pending_paid_exit_dns: None,
             manages_secure_dns: true,
             config: config.clone(),
             cleanup_journal_config_path: cleanup_journal_config_path.to_path_buf(),
@@ -332,6 +333,7 @@ impl FipsPrivateTunnelRuntime {
                 runtime.wg_upstream.take();
             }
         }
+        runtime.pending_paid_exit_dns.take();
         let dns_cleanup = if let Some(secure_dns) = runtime.secure_dns.as_mut() {
             secure_dns.stop().await
         } else {
@@ -408,6 +410,11 @@ impl FipsPrivateTunnelRuntime {
         // dispatch an in-flight Cloudflare query before finish_secure_dns
         // restores the profile resolver.
         let wireguard_active = self.wireguard_exit_active();
+        // The private-name responder must release the shared port and resolver
+        // file before secure exit DNS takes ownership after seller admission.
+        if !self.manages_secure_dns || !config.pending_paid_exit_split_dns_required() {
+            self.pending_paid_exit_dns.take();
+        }
         if self.manages_secure_dns && config.secure_dns_required() && self.secure_dns.is_none() {
             crate::secure_dns_runtime::SecureDnsRuntime::start_into(
                 &mut self.secure_dns,
@@ -454,6 +461,22 @@ impl FipsPrivateTunnelRuntime {
         {
             secure_dns.stop().await?;
             self.secure_dns.take();
+        }
+        if self.manages_secure_dns && config.pending_paid_exit_split_dns_required() {
+            if self.pending_paid_exit_dns.as_ref().is_some_and(|dns| {
+                dns.suffix
+                    != config.magic_dns_suffix.trim().trim_matches('.').to_ascii_lowercase()
+            }) {
+                self.pending_paid_exit_dns.take();
+            }
+            if let Some(dns) = self.pending_paid_exit_dns.as_ref() {
+                dns.update_records(config.magic_dns_records.clone());
+            } else {
+                self.pending_paid_exit_dns = crate::ConnectMagicDnsRuntime::start_records(
+                    &config.magic_dns_suffix,
+                    config.magic_dns_records.clone(),
+                );
+            }
         }
         Ok(())
     }

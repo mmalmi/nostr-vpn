@@ -299,7 +299,10 @@ fn split_magic_dns_bind_fallback_port() -> Option<u16> {
 
 impl ConnectMagicDnsRuntime {
     fn start(app: &AppConfig) -> Option<Self> {
-        let records = build_magic_dns_records(app);
+        Self::start_records(&app.magic_dns_suffix, build_magic_dns_records(app))
+    }
+
+    fn start_records(suffix: &str, records: HashMap<String, Ipv4Addr>) -> Option<Self> {
         if records.is_empty() {
             println!("magicdns: skipped (no configured alias records)");
             return None;
@@ -334,11 +337,7 @@ impl ConnectMagicDnsRuntime {
         };
         let local_addr = server.local_addr();
 
-        let suffix = app
-            .magic_dns_suffix
-            .trim()
-            .trim_matches('.')
-            .to_ascii_lowercase();
+        let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
         if suffix.is_empty() {
             println!(
                 "magicdns: local dns running on {local_addr} (system split-dns disabled; empty suffix)"
@@ -412,7 +411,10 @@ impl ConnectMagicDnsRuntime {
     /// join approval, FIPS roster event, or peer-alias rename) returns
     /// NXDOMAIN until the daemon is restarted.
     fn refresh_records(&self, app: &AppConfig) {
-        let records = build_magic_dns_records(app);
+        self.update_records(build_magic_dns_records(app));
+    }
+
+    fn update_records(&self, records: HashMap<String, Ipv4Addr>) {
         #[cfg(target_os = "linux")]
         if !self.suffix.is_empty()
             && let Err(error) = nostr_vpn_core::magic_dns::refresh_linux_hosts_fallback_if_active(
