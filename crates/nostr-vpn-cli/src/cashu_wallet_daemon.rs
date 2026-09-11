@@ -788,6 +788,9 @@ fn write_wallet_response(config_path: &Path, response: &DaemonCashuWalletRespons
 }
 
 #[cfg(test)]
+mod funding_balance_tests;
+
+#[cfg(test)]
 mod tests {
     include!("cashu_wallet_daemon/tests.rs");
 }

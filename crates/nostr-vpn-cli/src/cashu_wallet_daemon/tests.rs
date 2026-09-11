@@ -45,7 +45,7 @@
         }
     }
 
-    fn recoverable_unfunded_route_store(
+    pub(super) fn recoverable_unfunded_route_store(
         expires_at_unix: u64,
     ) -> nostr_vpn_core::paid_route_store::PaidRouteStore {
         use nostr_vpn_core::paid_route_store::{
