@@ -36,6 +36,22 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
             return Ok(false);
         }
     };
+    let changing_mint = automatic.candidate.as_ref().is_some_and(|candidate| {
+        !candidate.funded
+            && candidate.selection.offer_key == selection.offer_key
+            && candidate.selection.mint_url != selection.mint_url
+    });
+    if changing_mint {
+        // A wallet operation may already be committing funds. Consume its
+        // result before deciding whether a replacement channel is necessary.
+        if automatic.funding.is_some() {
+            return Ok(false);
+        }
+        // Keep the signed provider and its successful probe history. The old
+        // session remains available for recovery; its mint/request identity
+        // must never be rewritten underneath a wallet operation.
+        automatic.cancel_candidate(false, now_unix);
+    }
     if let Some(candidate) = automatic.candidate.as_mut() {
         candidate.reconcile_selection(selection);
         return Ok(false);
@@ -75,7 +91,7 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 .expect("recovered candidate")
                 .funding_attempted = true;
         }
-        return Ok(route_changed || endpoints_changed);
+        return Ok(changing_mint || route_changed || endpoints_changed);
     }
 
     let buyer_npub = app
@@ -138,6 +154,7 @@ fn recover_automatic_paid_exit_session(
             (channel.role == PaidRouteChannelRole::Buyer
                 && channel.offer_id == offer.offer_id
                 && channel.counterparty_npub == offer.seller_npub
+                && channel.mint_url == selection.mint_url
                 && channel.expires_at_unix > now_unix
                 && lease.lease.expires_at_unix > now_unix
                 && matches!(

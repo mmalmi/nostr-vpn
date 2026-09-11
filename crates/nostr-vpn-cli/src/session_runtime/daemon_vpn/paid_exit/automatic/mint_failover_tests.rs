@@ -12,6 +12,9 @@ fn fixture() -> (tempfile::TempDir, AppConfig, PaidExitAutomaticBuyer, u64) {
     let seller = Keys::generate();
     let config = PaidExitConfig {
         enabled: true,
+        pricing: PaidRoutePricing {
+            price_msat_per_gb: 20_000,
+        },
         channel: PaidRouteChannelTerms {
             accepted_mints: vec![PRIMARY.into(), ALTERNATIVE.into()],
             max_channel_capacity_sat: 20,
@@ -52,6 +55,17 @@ fn fixture() -> (tempfile::TempDir, AppConfig, PaidExitAutomaticBuyer, u64) {
     })
     .unwrap();
     (dir, app, automatic, now)
+}
+
+#[test]
+fn mint_failover_prefers_smaller_usable_balance_over_blocked_default() {
+    let (dir, _, _, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let mut store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    store.upsert_wallet_mint(ALTERNATIVE, "alternative", Some(1_000), now);
+    let selection = store.select_automatic_offer(now + 1).unwrap();
+    assert_eq!(selection.mint_url, ALTERNATIVE);
+    assert_eq!(selection.channel_capacity_sat, 1);
 }
 
 #[test]

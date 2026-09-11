@@ -142,16 +142,17 @@ impl PaidRouteStore {
             .iter()
             .filter(|mint| accepted.iter().any(|url| url == mint.url.trim()))
             .collect::<Vec<_>>();
-        wallet_mints.sort_by_key(|mint| (mint.url.trim() != default, mint.url.trim()));
         let target = recommended_capacity_sat(offer, None)?;
-
-        if let Some(mint) = wallet_mints.iter().find(|mint| {
-            mint.balance_msat
-                .is_some_and(|balance| balance / 1_000 >= target)
-        }) {
-            return Some((mint.url.trim().to_string(), target));
-        }
-
+        wallet_mints.sort_by_key(|mint| {
+            (
+                self.buyer_mint_failure_retry_at(&mint.url) > now_unix,
+                !mint
+                    .balance_msat
+                    .is_some_and(|balance| balance / 1_000 >= target),
+                mint.url.trim() != default,
+                mint.url.trim(),
+            )
+        });
         wallet_mints.into_iter().find_map(|mint| {
             recommended_capacity_sat(offer, mint.balance_msat)
                 .map(|capacity| (mint.url.trim().to_string(), capacity))
