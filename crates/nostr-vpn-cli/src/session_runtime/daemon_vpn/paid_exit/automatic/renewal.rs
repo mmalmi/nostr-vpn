@@ -107,6 +107,11 @@ pub(super) async fn renew_automatic_paid_exit(
         eprintln!("paid-exit: renewed channel with the current provider");
         return Ok(());
     }
+    if !store.buyer_session_renewal_starts.contains_key(&session_id)
+        && !store.buyer_session_ready_to_handover(&session_id, now_unix)?
+    {
+        return Ok(());
+    }
     // Replay the durable signed open too: the process may have stopped between
     // wallet funding and queuing it. The wallet and receiver are idempotent.
     if now_unix >= automatic.renewal_retry_at {
@@ -121,6 +126,12 @@ pub(super) async fn renew_automatic_paid_exit(
             &tunnel_ip,
             now_unix,
         )?;
+        if !store.buyer_session_renewal_starts.contains_key(&session_id) {
+            payments::drain_paid_exit_buyer_usage(runtime, config_path, &seller_pubkey, now_unix)?;
+            update_paid_route_store(&store_path, |store| {
+                store.start_buyer_session_renewal_handover(&session_id, now_unix)
+            })?;
+        }
         runtime
             .send_paid_route_session_open(&seller_pubkey, open)
             .await?;

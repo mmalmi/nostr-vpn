@@ -50,6 +50,8 @@ pub struct PaidRouteStore {
     pub buyer_session_admissions: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_renewals: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buyer_session_renewal_starts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub selected_buyer_session_id: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -72,6 +74,7 @@ impl Default for PaidRouteStore {
             sessions: BTreeMap::new(),
             buyer_session_admissions: BTreeMap::new(),
             buyer_session_renewals: BTreeMap::new(),
+            buyer_session_renewal_starts: BTreeMap::new(),
             selected_buyer_session_id: String::new(),
             buyer_session_open_attempts: BTreeMap::new(),
             seller_session_tunnel_ips: BTreeMap::new(),

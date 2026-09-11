@@ -848,7 +848,7 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     assert_eq!(due.len(), 1);
     assert_eq!(due[0].session_id, session.session_id);
     assert_eq!(due[0].delivered_units, 110);
-    assert_eq!(due[0].target_paid_msat, 1_000);
+    assert_eq!(due[0].target_paid_msat, 2_000);
 
     let result =
         paid_exit_stream_payment_updates_with_signer(PaidExitStreamPaymentUpdatesRequest {
@@ -868,18 +868,18 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     assert!(result.errors.is_empty());
     assert_eq!(
         result.signed[0]["due"]["target_paid_msat"].as_u64(),
-        Some(1_000)
+        Some(2_000)
     );
     assert_eq!(
         result.signed[0]["payment"]["paid_msat"].as_u64(),
-        Some(1_000)
+        Some(2_000)
     );
     assert_eq!(result.signed[0]["persisted"].as_bool(), Some(true));
 
     let record = &store.sessions[&session.session_id];
     assert_eq!(record.session.usage.rx_bytes, 60);
     assert_eq!(record.session.usage.tx_bytes, 50);
-    assert_eq!(record.session.payment.paid_msat, 1_000);
+    assert_eq!(record.session.payment.paid_msat, 2_000);
     assert_eq!(
         record
             .session
@@ -887,7 +887,7 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
             .cashu_spilman_payment
             .as_ref()
             .map(|payment| payment.balance),
-        Some(1)
+        Some(2)
     );
     assert!(
         store

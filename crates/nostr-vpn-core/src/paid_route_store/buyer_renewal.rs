@@ -24,6 +24,50 @@ impl PaidRouteStore {
                     <= now_unix.saturating_add(60)))
     }
 
+    /// Funding starts early; routing/accounting handover waits until the old
+    /// channel has just one sat of traffic credit remaining.
+    pub fn buyer_session_ready_to_handover(&self, session_id: &str, now_unix: u64) -> Result<bool> {
+        let session = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| anyhow!("missing buyer session"))?;
+        let channel = self
+            .channels
+            .get(&session.session.payment.channel_id)
+            .ok_or_else(|| anyhow!("missing buyer channel"))?;
+        let lease = self
+            .leases
+            .get(&session.session.lease_id)
+            .ok_or_else(|| anyhow!("missing buyer lease"))?;
+        let terms = accepted_channel_terms(channel, PaidRouteChannelRole::Buyer)?;
+        let capacity_msat = channel.payment.capacity_sat.saturating_mul(1_000);
+        Ok(terms.amount_due_msat(&session.session.usage)
+            >= capacity_msat
+                .saturating_sub(1_000)
+                .max(capacity_msat.div_ceil(2))
+            || lease.lease.expires_at_unix.min(channel.expires_at_unix)
+                <= now_unix.saturating_add(15))
+    }
+
+    /// Start charging the replacement before sending its open request. Waiting
+    /// for the acknowledgment lets the seller bill the new channel while the
+    /// buyer still bills the old one, eventually stranding the next payment.
+    pub fn start_buyer_session_renewal_handover(
+        &mut self,
+        session_id: &str,
+        now_unix: u64,
+    ) -> Result<()> {
+        if self.selected_buyer_session_id != session_id
+            || !self.buyer_session_renewals.contains_key(session_id)
+        {
+            return Err(anyhow!("missing selected buyer renewal"));
+        }
+        self.buyer_session_renewal_starts
+            .entry(session_id.to_string())
+            .or_insert(now_unix);
+        Ok(())
+    }
+
     /// Persist the replacement before asking the wallet to fund it, so retries
     /// and restarts reuse the same idempotent wallet request.
     pub fn prepare_buyer_session_renewal(
@@ -97,6 +141,7 @@ impl PaidRouteStore {
         replacement.session.realized_exit_ip = previous.session.realized_exit_ip;
         replacement.updated_at_unix = now_unix;
         self.selected_buyer_session_id = next.clone();
+        self.buyer_session_renewal_starts.remove(session_id);
         Ok(next)
     }
 }

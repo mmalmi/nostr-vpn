@@ -142,8 +142,8 @@ fn buyer_payment_updates_due_reports_signable_balance_updates() {
     assert_eq!(due[0].delivered_units, 110);
     assert_eq!(due[0].amount_due_msat, 1_100);
     assert_eq!(due[0].paid_msat, 1_000);
-    assert_eq!(due[0].target_paid_msat, 2_000);
-    assert_eq!(due[0].payment_increment_msat, 1_000);
+    assert_eq!(due[0].target_paid_msat, 3_000);
+    assert_eq!(due[0].payment_increment_msat, 2_000);
     assert_eq!(due[0].remaining_unpaid_msat, 0);
     assert!(!due[0].capacity_exhausted);
 
@@ -152,7 +152,7 @@ fn buyer_payment_updates_due_reports_signable_balance_updates() {
         .expect("sign due update");
 
     assert_eq!(signed.due, due[0]);
-    assert_eq!(signed.payment.paid_msat, 2_000);
+    assert_eq!(signed.payment.paid_msat, 3_000);
     store = signed.store;
     assert!(
         store

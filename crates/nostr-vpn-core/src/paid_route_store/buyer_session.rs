@@ -396,10 +396,18 @@ impl PaidRouteStore {
             let config = PaidExitConfig::from_paid_route_offer(&offer);
             let decision = record.session.routing_decision(&config);
             let capacity_msat = record.session.payment.capacity_sat.saturating_mul(1_000);
-            let raw_target_paid_msat = if capacity_msat == 0 {
-                decision.amount_due_msat
+            // Pay ahead of the byte counter. Waiting until the current credit
+            // is exhausted can leave the seller paused before the buyer sees
+            // enough received bytes to trigger its next payment.
+            let prepaid_target = if decision.amount_due_msat > 0 {
+                decision.amount_due_msat.saturating_add(1_000)
             } else {
-                decision.amount_due_msat.min(capacity_msat)
+                0
+            };
+            let raw_target_paid_msat = if capacity_msat == 0 {
+                prepaid_target
+            } else {
+                prepaid_target.min(capacity_msat)
             };
             let unit = paid_route_payment_cashu_unit(&record.session.payment);
             let Ok(target_paid_msat) = cashu_payment_target_msat(&unit, raw_target_paid_msat)

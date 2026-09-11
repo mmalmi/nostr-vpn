@@ -108,6 +108,45 @@ fn renewal_preserves_route_and_usage_until_replacement_is_admitted_across_reload
         "funding a newer channel must not steal accounting"
     );
     assert_eq!(store.sessions[&next].session.usage.billable_bytes, 0);
+    assert!(
+        !store
+            .buyer_session_ready_to_handover(&original, 132)
+            .unwrap()
+    );
+    store
+        .sessions
+        .get_mut(&original)
+        .unwrap()
+        .session
+        .usage
+        .billable_bytes = 905;
+    assert!(
+        store
+            .buyer_session_ready_to_handover(&original, 132)
+            .unwrap()
+    );
+    store
+        .start_buyer_session_renewal_handover(&original, 132)
+        .unwrap();
+    let usage = store
+        .record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
+            seller_pubkey: seller.public_key().to_hex(),
+            usage_delta: PaidRouteUsage {
+                billable_bytes: 11,
+                ..Default::default()
+            },
+            now_unix: 133,
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        usage.session_id, next,
+        "account for traffic before acknowledgment, avoiding underpayment on handover"
+    );
+    assert_eq!(
+        store.selected_buyer_session_id, original,
+        "keep the admitted route selected until acknowledgment"
+    );
     let lease_id = store.sessions[&next].session.lease_id.clone();
     store
         .acknowledge_buyer_session_open(&seller.public_key().to_hex(), &lease_id, 133)
@@ -130,8 +169,8 @@ fn renewal_preserves_route_and_usage_until_replacement_is_admitted_across_reload
         .unwrap()
         .unwrap();
     assert_eq!(usage.session_id, next);
-    assert_eq!(store.sessions[&original].session.usage.billable_bytes, 505);
-    assert_eq!(store.sessions[&next].session.usage.billable_bytes, 7);
+    assert_eq!(store.sessions[&original].session.usage.billable_bytes, 905);
+    assert_eq!(store.sessions[&next].session.usage.billable_bytes, 18);
     assert!(!store.buyer_session_needs_renewal(&next, 135).unwrap());
     assert!(
         store.buyer_session_needs_renewal(&next, 680).unwrap(),

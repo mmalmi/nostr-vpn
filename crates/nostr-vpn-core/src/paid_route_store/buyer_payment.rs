@@ -588,12 +588,20 @@ impl PaidRouteStore {
         now_unix: u64,
     ) -> Option<PaidRouteBuyerUsageSession> {
         let mut best = None::<(u64, PaidRouteBuyerUsageSession)>;
+        let accounting_session = if self
+            .buyer_session_renewal_starts
+            .contains_key(&self.selected_buyer_session_id)
+        {
+            self.buyer_session_renewals
+                .get(&self.selected_buyer_session_id)
+                .unwrap_or(&self.selected_buyer_session_id)
+        } else {
+            &self.selected_buyer_session_id
+        };
         for record in self.sessions.values() {
             // Preparing a newer channel must not divert accounting away from
             // the route that is still selected and carrying the traffic.
-            if !self.selected_buyer_session_id.is_empty()
-                && record.session.session_id != self.selected_buyer_session_id
-            {
+            if !accounting_session.is_empty() && record.session.session_id != *accounting_session {
                 continue;
             }
             let Some(lease_record) = self.leases.get(&record.session.lease_id) else {
