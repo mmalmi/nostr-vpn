@@ -329,8 +329,13 @@
         let own_pubkey = keys.public_key().to_hex();
         let mut app = AppConfig::default();
         app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+        app.nostr.public_key = own_pubkey.clone();
         app.networks[0].enabled = true;
         app.networks[0].network_id = "pending-paid-manual".to_string();
+        app.networks[0].admins = vec![own_pubkey.clone()];
+        let peer = Keys::generate().public_key().to_hex();
+        app.networks[0].devices = vec![peer.clone()];
+        app.set_peer_alias(&peer, "home-server").expect("peer alias");
         app.exit_node_leak_protection = false;
         app.set_internet_source(InternetSource::PaidManual);
 
@@ -361,8 +366,30 @@
                 config.pending_paid_exit_split_dns_required(),
                 "private names must remain resolvable while payment is pending"
             );
-            assert!(!config.magic_dns_records.is_empty());
+            let expected_ip = config.magic_dns_records["home-server.nvpn"];
             assert_eq!(config.magic_dns_suffix, app.magic_dns_suffix);
+            let server = crate::MagicDnsServer::start(
+                "127.0.0.1:0".parse().expect("DNS bind address"),
+                config.magic_dns_records.clone(),
+            ).expect("private DNS listener");
+            let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("DNS client");
+            socket.set_read_timeout(Some(Duration::from_secs(2))).expect("DNS timeout");
+            let mut query = hickory_proto::op::Message::new(
+                7, hickory_proto::op::MessageType::Query, hickory_proto::op::OpCode::Query,
+            );
+            query.add_query(hickory_proto::op::Query::query(
+                hickory_proto::rr::Name::from_ascii("home-server.nvpn").expect("peer DNS name"),
+                hickory_proto::rr::RecordType::A,
+            ));
+            socket.send_to(&query.to_vec().expect("DNS query"), server.local_addr()).expect("send query");
+            let mut response = [0_u8; 512];
+            let len = socket.recv(&mut response).expect("private peer response while payment pending");
+            let response = hickory_proto::op::Message::from_vec(&response[..len]).expect("DNS response");
+            assert_eq!(
+                response.answers[0].data,
+                hickory_proto::rr::RData::A(hickory_proto::rr::rdata::A(expected_ip))
+            );
+            drop(server);
 
             config.require_public_paid_exit_admission(true);
             assert!(config.secure_dns_required());
