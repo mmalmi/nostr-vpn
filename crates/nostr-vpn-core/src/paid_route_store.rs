@@ -37,6 +37,8 @@ pub struct PaidRouteStore {
     #[serde(default)]
     pub wallet: PaidRouteWalletState,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buyer_mint_retries: BTreeMap<String, PaidRouteMintRetry>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub offers: BTreeMap<String, PaidRouteOfferRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub quotes: BTreeMap<String, PaidRouteQuoteRecord>,
@@ -67,6 +69,7 @@ impl Default for PaidRouteStore {
         Self {
             version: CURRENT_VERSION,
             wallet: PaidRouteWalletState::default(),
+            buyer_mint_retries: BTreeMap::new(),
             offers: BTreeMap::new(),
             quotes: BTreeMap::new(),
             leases: BTreeMap::new(),
@@ -567,6 +570,8 @@ pub struct PaidRouteSellerCollectionState {
 mod automatic_selection;
 mod buyer_funding;
 mod buyer_payment;
+mod mint_retry;
+pub use mint_retry::PaidRouteMintRetry;
 mod buyer_renewal;
 mod buyer_session;
 mod free_probe;

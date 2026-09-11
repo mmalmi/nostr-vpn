@@ -49,24 +49,24 @@ impl cdk_spilman::SpilmanClientAsyncNetworking for HttpSpilmanClientNetworking {
 }
 
 #[cfg(feature = "spilman-wallet-http")]
-pub async fn fetch_spilman_keyset_ids(mint_url: &str, unit: &str) -> Result<Vec<String>, String> {
+pub async fn fetch_spilman_keyset_ids(mint_url: &str, unit: &str) -> anyhow::Result<Vec<String>> {
     let mint_url = mint_url.trim_end_matches('/');
-    let response: serde_json::Value = reqwest::Client::new()
-        .get(format!("{mint_url}/v1/keysets"))
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|error| format!("failed to fetch Cashu mint keysets: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Cashu mint keysets request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to decode Cashu mint keysets: {error}"))?;
+    let response: serde_json::Value = crate::check_mint_response(
+        reqwest::Client::new()
+            .get(format!("{mint_url}/v1/keysets"))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to fetch Cashu mint keysets: {error}"))?,
+    )?
+    .json()
+    .await
+    .map_err(|error| anyhow::anyhow!("failed to decode Cashu mint keysets: {error}"))?;
     let unit = unit.trim().to_ascii_lowercase();
     let mut ids = response
         .get("keysets")
         .and_then(|value| value.as_array())
-        .ok_or("Cashu mint keysets response is missing keysets")?
+        .ok_or_else(|| anyhow::anyhow!("Cashu mint keysets response is missing keysets"))?
         .iter()
         .filter(|entry| {
             entry
@@ -87,36 +87,36 @@ pub async fn fetch_spilman_keyset_info_json(
     mint_url: &str,
     unit: &str,
     keyset_id: Option<&str>,
-) -> Result<String, String> {
+) -> anyhow::Result<String> {
     let mint_url = mint_url.trim_end_matches('/');
     let client = reqwest::Client::new();
     let keysets_url = format!("{mint_url}/v1/keysets");
-    let keysets_response: serde_json::Value = client
-        .get(keysets_url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|error| format!("failed to fetch Cashu mint keysets: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Cashu mint keysets request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to decode Cashu mint keysets: {error}"))?;
+    let keysets_response: serde_json::Value = crate::check_mint_response(
+        client
+            .get(keysets_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to fetch Cashu mint keysets: {error}"))?,
+    )?
+    .json()
+    .await
+    .map_err(|error| anyhow::anyhow!("failed to decode Cashu mint keysets: {error}"))?;
     let keysets = keysets_response
         .get("keysets")
         .and_then(|value| value.as_array())
-        .ok_or("Cashu mint keysets response is missing keysets")?;
+        .ok_or_else(|| anyhow::anyhow!("Cashu mint keysets response is missing keysets"))?;
     let unit = unit.trim().to_ascii_lowercase();
     let selected = select_spilman_keyset(keysets, &unit, keyset_id).ok_or_else(|| {
         keyset_id.map_or_else(
-            || format!("Cashu mint has no active {unit} keyset"),
-            |id| format!("Cashu mint has no {unit} keyset {id}"),
+            || anyhow::anyhow!("Cashu mint has no active {unit} keyset"),
+            |id| anyhow::anyhow!("Cashu mint has no {unit} keyset {id}"),
         )
     })?;
     let selected_id = selected
         .get("id")
         .and_then(|value| value.as_str())
-        .ok_or("selected Cashu mint keyset is missing id")?;
+        .ok_or_else(|| anyhow::anyhow!("selected Cashu mint keyset is missing id"))?;
     let input_fee_ppk = selected
         .get("input_fee_ppk")
         .and_then(|value| value.as_u64())
@@ -125,24 +125,24 @@ pub async fn fetch_spilman_keyset_info_json(
         .get("final_expiry")
         .and_then(|value| value.as_u64());
     let keys_url = format!("{mint_url}/v1/keys/{selected_id}");
-    let keys_response: serde_json::Value = client
-        .get(keys_url)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|error| format!("failed to fetch Cashu mint keys: {error}"))?
-        .error_for_status()
-        .map_err(|error| format!("Cashu mint keys request failed: {error}"))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to decode Cashu mint keys: {error}"))?;
+    let keys_response: serde_json::Value = crate::check_mint_response(
+        client
+            .get(keys_url)
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| anyhow::anyhow!("failed to fetch Cashu mint keys: {error}"))?,
+    )?
+    .json()
+    .await
+    .map_err(|error| anyhow::anyhow!("failed to decode Cashu mint keys: {error}"))?;
     let keys = keys_response
         .get("keysets")
         .and_then(|value| value.as_array())
         .and_then(|entries| entries.first())
         .and_then(|entry| entry.get("keys"))
         .cloned()
-        .ok_or("Cashu mint keys response is missing keys")?;
+        .ok_or_else(|| anyhow::anyhow!("Cashu mint keys response is missing keys"))?;
     let mut keyset_info = serde_json::json!({
         "keysetId": selected_id,
         "unit": unit,

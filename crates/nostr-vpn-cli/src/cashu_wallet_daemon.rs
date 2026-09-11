@@ -96,6 +96,8 @@ struct DaemonCashuWalletResponse {
     id: String,
     result: Option<Value>,
     error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after_secs: Option<u64>,
 }
 
 pub(crate) struct DaemonCashuWallet {
@@ -189,11 +191,15 @@ impl DaemonCashuWallet {
                     id: request.id.clone(),
                     result: Some(result),
                     error: None,
+                    retry_after_secs: None,
                 },
                 Err(error) => DaemonCashuWalletResponse {
                     id: request.id.clone(),
                     result: None,
                     error: Some(format!("{error:#}")),
+                    retry_after_secs: error
+                        .downcast_ref::<cashu_service::MintRetryAfter>()
+                        .map(|delay| delay.0),
                 },
             };
             write_wallet_response(config_path, &response)?;
@@ -691,7 +697,12 @@ pub(crate) async fn request_daemon_cashu_wallet_worker(
             }
             return match (response.result, response.error) {
                 (Some(result), None) => Ok(result),
-                (_, Some(error)) => Err(anyhow!(error)),
+                (_, Some(error)) => Err(match response.retry_after_secs {
+                    Some(seconds) => {
+                        anyhow::Error::new(cashu_service::MintRetryAfter(seconds)).context(error)
+                    }
+                    None => anyhow!(error),
+                }),
                 _ => Err(anyhow!("Cashu wallet daemon returned an empty response")),
             };
         }

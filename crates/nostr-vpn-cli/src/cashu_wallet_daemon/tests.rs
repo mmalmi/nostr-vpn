@@ -332,3 +332,93 @@
         }
         worker.stop();
     }
+
+    #[tokio::test]
+    async fn funding_preserves_retry_after_across_wallet_ipc_and_waits_before_retrying() {
+        use crate::session_runtime::daemon_vpn_paid_exit::fund_paid_exit_session;
+        use nostr_vpn_core::paid_route_store::{
+            load_paid_route_store, paid_route_store_file_path, update_paid_route_store,
+        };
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-funding-cooldown-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).unwrap();
+        let config_path = directory.join("config.toml");
+        let store_path = paid_route_store_file_path(&config_path);
+        let now = crate::unix_timestamp();
+        update_paid_route_store(&store_path, |store| {
+            *store = recoverable_unfunded_route_store(now + 3600);
+            Ok(())
+        })
+        .unwrap();
+        prepare_ipc_directories(&config_path).unwrap();
+        let responder_config = config_path.clone();
+        let responder = tokio::spawn(async move {
+            loop {
+                if let Some(entry) = fs::read_dir(cashu_wallet_request_dir(&responder_config))
+                    .unwrap()
+                    .next()
+                {
+                    let path = entry.unwrap().path();
+                    let request: DaemonCashuWalletRequest =
+                        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                    write_wallet_response(
+                        &responder_config,
+                        &DaemonCashuWalletResponse {
+                            id: request.id,
+                            result: None,
+                            error: Some(
+                                "Cashu mint request failed with 429 Too Many Requests".to_string(),
+                            ),
+                            retry_after_secs: Some(1800),
+                        },
+                    )
+                    .unwrap();
+                    fs::remove_file(path).unwrap();
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        });
+        let app = crate::AppConfig::generated();
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            fund_paid_exit_session(&app, &config_path, "session-1", now),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        responder.await.unwrap();
+        assert_eq!(
+            error
+                .downcast_ref::<cashu_service::MintRetryAfter>()
+                .unwrap()
+                .0,
+            1800
+        );
+        let stored = load_paid_route_store(&store_path).unwrap();
+        assert!(stored.buyer_mint_failure_retry_at("https://mint.example/Bitcoin") >= now + 1800);
+        let retry = tokio::time::timeout(
+            Duration::from_millis(100),
+            fund_paid_exit_session(&app, &config_path, "session-1", now + 30),
+        )
+        .await
+        .expect("cooldown must not wait for the wallet worker")
+        .unwrap_err();
+        assert!(
+            retry
+                .downcast_ref::<cashu_service::MintRetryAfter>()
+                .is_some()
+        );
+        assert_eq!(
+            fs::read_dir(cashu_wallet_request_dir(&config_path))
+                .unwrap()
+                .count(),
+            0,
+            "funding submitted another wallet request during the mint cooldown"
+        );
+        assert_eq!(
+            stored.sessions,
+            load_paid_route_store(&store_path).unwrap().sessions
+        );
+        fs::remove_dir_all(directory).unwrap();
+    }

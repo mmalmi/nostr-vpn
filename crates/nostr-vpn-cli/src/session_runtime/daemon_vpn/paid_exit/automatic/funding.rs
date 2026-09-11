@@ -12,6 +12,15 @@ pub(super) fn start_funding(
     if automatic.funding.is_some() || now_unix < automatic.funding_retry_at {
         return Ok(false);
     }
+    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    if let Some(channel) = store
+        .sessions
+        .get(session_id)
+        .and_then(|session| store.channels.get(&session.session.payment.channel_id))
+        && now_unix < store.buyer_mint_failure_retry_at(&channel.mint_url)
+    {
+        return Ok(false);
+    }
     let changed = update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
         store.begin_buyer_session_funding(session_id, now_unix)
     })?;

@@ -8,7 +8,7 @@
     };
     use cdk_spilman::{ChannelParameters, ClientChannelFunding, ClientStorage, KeysetInfo};
     use std::collections::BTreeMap;
-    use tokio::io::AsyncReadExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     struct TestDirectory(PathBuf);
@@ -307,6 +307,8 @@
             PaidRouteChannelRole::Buyer,
             PaidRouteLifecycleStatus::Closing,
         ));
+        store.channels.get_mut("a-hanging").unwrap().mint_url = mint_url.clone();
+        store.channels.get_mut("b-complete").unwrap().mint_url = "http://127.0.0.1:1".to_string();
         update_paid_route_store(&paid_route_store_file_path(&config_path), |target| {
             *target = store;
             Ok(())
@@ -372,4 +374,155 @@
         drop(released);
 
         hanging_mint.abort();
+    }
+
+    #[tokio::test]
+    async fn mint_retry_after_survives_restart_and_coordinates_refund_channels() {
+        let directory = TestDirectory::new();
+        let config_path = directory.0.join("config.toml");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mint_url = format!("http://{}", listener.local_addr().unwrap());
+        let mint = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).await.unwrap();
+            stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+            // Keep listening so a mistaken retry reaches a real socket.
+            std::future::pending::<()>().await;
+        });
+        let (mut storage, errors) =
+            FileSpilmanClientStorage::load(spilman_client_store_path(&directory.0)).unwrap();
+        let mut store = PaidRouteStore::default();
+        for id in ["a-refund", "b-refund"] {
+            storage.save_funding(id, test_spilman_funding(&directory.0, &mint_url));
+            let mut record = channel(
+                id,
+                PaidRouteChannelRole::Buyer,
+                PaidRouteLifecycleStatus::Closing,
+            );
+            record.mint_url = mint_url.clone();
+            store.upsert_channel(record);
+        }
+        errors.ensure_ok().unwrap();
+        drop(storage);
+        update_paid_route_store(&paid_route_store_file_path(&config_path), |target| {
+            *target = store;
+            Ok(())
+        })
+        .unwrap();
+        let mut runtime = PaidExitBuyerRefundRuntime::new().unwrap();
+        let recovery = wait_for_recovery(&mut runtime, &config_path).await;
+        assert_eq!(recovery.error_count, 1);
+        assert!(
+            runtime.active_channel_id.is_none(),
+            "another channel bypassed the mint cooldown"
+        );
+        drop(runtime);
+        let store = load_paid_route_store(&paid_route_store_file_path(&config_path)).unwrap();
+        assert!(
+            store
+                .channels
+                .values()
+                .all(|c| c.status == PaidRouteLifecycleStatus::Closing)
+        );
+        let mut restarted = PaidExitBuyerRefundRuntime::new().unwrap();
+        restarted.poll(&config_path, true).unwrap();
+        assert!(
+            restarted.active_channel_id.is_none(),
+            "restart discarded Retry-After"
+        );
+        mint.abort();
+    }
+
+    #[test]
+    fn mint_failures_back_off_persistently_and_healthy_polling_does_not_starve_funding() {
+        let directory = TestDirectory::new();
+        let path = paid_route_store_file_path(&directory.0.join("config.toml"));
+        let mint = "https://mint.example/Bitcoin";
+        let mut now = 1_900_000_000;
+        for delay in [10, 20, 40, 80, 160, 320, 600, 600] {
+            update_paid_route_store(&path, |store| {
+                store.defer_buyer_mint_retry(mint, now, true, None)
+            })
+            .unwrap();
+            let store = load_paid_route_store(&path).unwrap();
+            let deadline = store.buyer_mint_failure_retry_at("https://MINT.example/Bitcoin/");
+            assert_eq!(deadline, now + delay + 1);
+            assert_eq!(store.buyer_mint_retry_at("https://another.example"), 0);
+            now = deadline;
+        }
+        update_paid_route_store(&path, |store| {
+            store.defer_buyer_mint_retry(mint, now, true, Some(3600))?;
+            store.clear_buyer_mint_retry(mint, now + 1)?;
+            store.defer_buyer_mint_retry(mint, now + 2, false, None)
+        })
+        .unwrap();
+        let store = load_paid_route_store(&path).unwrap();
+        assert_eq!(
+            store.buyer_mint_failure_retry_at(mint),
+            now + 3601,
+            "an overlapping success must not shorten Retry-After"
+        );
+        now += 3601;
+        update_paid_route_store(&path, |store| {
+            store.defer_buyer_mint_retry(mint, now, false, None)
+        })
+        .unwrap();
+        let store = load_paid_route_store(&path).unwrap();
+        assert_eq!(
+            store.buyer_mint_failure_retry_at(mint),
+            0,
+            "healthy polling must allow funding"
+        );
+        assert_eq!(store.buyer_mint_retry_at(mint), now + 11);
+        now += 11;
+        update_paid_route_store(&path, |store| {
+            store.defer_buyer_mint_retry(mint, now, true, None)
+        })
+        .unwrap();
+        assert_eq!(
+            load_paid_route_store(&path)
+                .unwrap()
+                .buyer_mint_failure_retry_at(mint),
+            now + 11,
+            "successful recovery resets the failure count"
+        );
+    }
+
+    #[tokio::test]
+    async fn refund_http_preserves_retry_after_dates_and_rejects_invalid_values() {
+        for (header, expected) in [
+            ("120", Some(120)),
+            (
+                "Thu, 01 Jan 2099 00:00:00 GMT",
+                Some(4_070_908_800_u64.saturating_sub(unix_timestamp())),
+            ),
+            ("Thu, 01 Jan 1970 00:00:00 GMT", Some(0)),
+            ("not-a-date", None),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                stream.read(&mut request).await.unwrap();
+                let response = format!(
+                    "HTTP/1.1 503 Service Unavailable\r\nRetry-After: {header}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+            });
+            let error = RefundMintConnection::new(&url)
+                .post_json::<_, serde_json::Value>("/v1/restore", &serde_json::json!({"outputs": []}))
+                .await
+                .unwrap_err();
+            let delay = error
+                .downcast_ref::<cashu_service::MintRetryAfter>()
+                .map(|delay| delay.0);
+            match (delay, expected) {
+                (Some(actual), Some(expected)) => assert!(actual.abs_diff(expected) <= 1),
+                (None, None) => {}
+                _ => panic!("lost Retry-After {header}: {error:#}"),
+            }
+            server.await.unwrap();
+        }
     }

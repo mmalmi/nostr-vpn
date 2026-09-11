@@ -195,8 +195,7 @@ where
     let mint_url = mint_url.to_string();
     let unit = unit.to_string();
     let fallback_keyset_ids = crate::fetch_spilman_keyset_ids(&mint_url, &unit)
-        .await
-        .map_err(anyhow::Error::msg)?
+        .await?
         .into_iter()
         .map(|keyset_id| keyset_id.parse())
         .collect::<Result<Vec<cashu::nuts::Id>, _>>()?;
@@ -212,8 +211,7 @@ where
                 let keyset_id = keyset_id.to_string();
                 let json =
                     fetch_spilman_keyset_info_json(&mint_url, &unit, Some(keyset_id.as_str()))
-                        .await
-                        .map_err(anyhow::Error::msg)?;
+                        .await?;
                 cdk_spilman::parse_keyset_info_from_json(&json).map_err(anyhow::Error::msg)
             }
         },

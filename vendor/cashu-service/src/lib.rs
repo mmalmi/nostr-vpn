@@ -44,3 +44,8 @@ pub use spilman_refund::*;
 pub mod spilman_receiver;
 #[cfg(feature = "spilman-configurable-host")]
 pub use spilman_receiver::*;
+
+#[cfg(feature = "spilman-wallet-http")]
+mod mint_http;
+#[cfg(feature = "spilman-wallet-http")]
+pub use mint_http::{check_mint_response, MintRetryAfter};

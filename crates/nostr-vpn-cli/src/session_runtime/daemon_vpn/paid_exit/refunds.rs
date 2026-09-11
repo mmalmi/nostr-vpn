@@ -28,13 +28,14 @@ enum PaidExitBuyerRefundOutcome {
         wallet_error: Option<String>,
     },
     Pending,
-    Failed(String),
+    Failed(anyhow::Error),
 }
 
 #[derive(Debug)]
 struct PaidExitBuyerRefundAttempt {
     channel_id: String,
     outcome: PaidExitBuyerRefundOutcome,
+    contacted_mint: bool,
 }
 
 struct PaidExitBuyerRefundCommand {
@@ -200,7 +201,7 @@ impl PaidExitBuyerRefundRuntime {
             .retain(|channel_id, _| retained.contains(channel_id));
         self.wallet_sync_pending
             .retain(|channel_id| retained.contains(channel_id));
-        let Some(channel_id) = self.next_eligible_channel(&channel_ids) else {
+        let Some(channel_id) = self.next_eligible_channel(&channel_ids, &store) else {
             return Ok(());
         };
         let Some(client_store_lock) = SharedSpilmanClientStoreLock::try_acquire(
@@ -224,7 +225,11 @@ impl PaidExitBuyerRefundRuntime {
         Ok(())
     }
 
-    fn next_eligible_channel(&mut self, channel_ids: &[String]) -> Option<String> {
+    fn next_eligible_channel(
+        &mut self,
+        channel_ids: &[String],
+        store: &PaidRouteStore,
+    ) -> Option<String> {
         if channel_ids.is_empty() {
             self.next_channel_index = 0;
             return None;
@@ -237,7 +242,10 @@ impl PaidExitBuyerRefundRuntime {
                 .retry_after
                 .get(channel_id)
                 .is_none_or(|retry_after| now >= *retry_after);
-            if eligible {
+            let mint_ready = store.channels.get(channel_id).is_some_and(|channel| {
+                unix_timestamp() >= store.buyer_mint_retry_at(&channel.mint_url)
+            });
+            if eligible && mint_ready {
                 self.next_channel_index = (index + 1) % channel_ids.len();
                 return Some(channel_id.clone());
             }
@@ -260,7 +268,8 @@ fn paid_exit_buyer_refund_worker(
                 if result_tx
                     .send(PaidExitBuyerRefundAttempt {
                         channel_id: command.channel_id,
-                        outcome: PaidExitBuyerRefundOutcome::Failed(format!(
+                        contacted_mint: false,
+                        outcome: PaidExitBuyerRefundOutcome::Failed(anyhow!(
                             "failed to start Cashu refund runtime: {error}"
                         )),
                     })
@@ -279,9 +288,8 @@ fn paid_exit_buyer_refund_worker(
         }))
         .unwrap_or_else(|_| PaidExitBuyerRefundAttempt {
             channel_id,
-            outcome: PaidExitBuyerRefundOutcome::Failed(
-                "Cashu refund recovery panicked".to_string(),
-            ),
+            contacted_mint: true,
+            outcome: PaidExitBuyerRefundOutcome::Failed(anyhow!("Cashu refund recovery panicked")),
         });
         if result_tx.send(attempt).is_err() {
             return;
@@ -316,9 +324,15 @@ async fn attempt_paid_exit_buyer_refund(
         sync_wallet,
         attempt_timeout,
     } = command;
+    let mut contacted_mint = false;
     let restore = tokio::time::timeout(
         attempt_timeout,
-        restore_spilman_refund_through_daemon_wallet(&config_path, &channel_id, client_store_lock),
+        restore_spilman_refund_through_daemon_wallet(
+            &config_path,
+            &channel_id,
+            client_store_lock,
+            &mut contacted_mint,
+        ),
     )
     .await;
     let restore = match restore {
@@ -329,7 +343,7 @@ async fn attempt_paid_exit_buyer_refund(
         Ok(result) => result,
     };
     let outcome = match restore {
-        Err(error) => PaidExitBuyerRefundOutcome::Failed(error.to_string()),
+        Err(error) => PaidExitBuyerRefundOutcome::Failed(error),
         Ok(result) if !result.complete => PaidExitBuyerRefundOutcome::Pending,
         Ok(result) => {
             let refresh_wallet = sync_wallet || result.imported_amount_sat > 0;
@@ -369,6 +383,7 @@ async fn attempt_paid_exit_buyer_refund(
     PaidExitBuyerRefundAttempt {
         channel_id,
         outcome,
+        contacted_mint,
     }
 }
 
@@ -397,14 +412,10 @@ impl RefundMintConnection {
             .json(request)
             .send()
             .await?;
-        let status = response.status();
-        let body = response.text().await?;
-        if !status.is_success() {
-            return Err(anyhow!(
-                "Cashu mint request to {path} failed with {status}: {body}"
-            ));
-        }
-        serde_json::from_str(&body).map_err(Into::into)
+        cashu_service::check_mint_response(response)?
+            .json()
+            .await
+            .map_err(Into::into)
     }
 }
 
@@ -437,6 +448,7 @@ async fn restore_spilman_refund_through_daemon_wallet(
     config_path: &Path,
     channel_id: &str,
     client_store_lock: SharedSpilmanClientStoreLock,
+    contacted_mint: &mut bool,
 ) -> Result<cashu_service::StreamingRouteRestoreCashuSpilmanRefundResult> {
     let channel_id = channel_id.trim();
     if channel_id.is_empty() {
@@ -488,6 +500,7 @@ async fn restore_spilman_refund_through_daemon_wallet(
         ));
     }
     let sender_secret = SecretKey::from_hex(&sender_key.secret_hex)?;
+    *contacted_mint = true;
     let output_keyset_json =
         cashu_service::fetch_spilman_keyset_info_json(&funding.mint_url, &unit, None)
             .await
@@ -591,8 +604,24 @@ fn apply_paid_exit_buyer_refund_attempt(
             scanned_count: 1,
             ..PaidExitBuyerRefundRecovery::default()
         };
-        if !store.channels.contains_key(&attempt.channel_id) {
+        let Some(channel) = store.channels.get(&attempt.channel_id) else {
             return Ok(recovery);
+        };
+        let mint_url = channel.mint_url.clone();
+        if attempt.contacted_mint {
+            let error = match &attempt.outcome {
+                PaidExitBuyerRefundOutcome::Failed(error) => Some(error),
+                _ => None,
+            };
+            store.defer_buyer_mint_retry(
+                &mint_url,
+                unix_timestamp(),
+                error.is_some(),
+                error
+                    .and_then(|error| error.downcast_ref::<cashu_service::MintRetryAfter>())
+                    .map(|delay| delay.0),
+            )?;
+            recovery.changed = true;
         }
         match attempt.outcome {
             PaidExitBuyerRefundOutcome::Complete {

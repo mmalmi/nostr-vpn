@@ -78,6 +78,7 @@ spilman-wallet-http = [
     "spilman-wallet",
     "dep:cashu",
     "dep:reqwest",
+    "dep:httpdate",
 ]
 wallet = [
     "dep:cdk",
@@ -244,3 +245,7 @@ path = "tests/spilman_receiver_safety.rs"
 
 [patch.crates-io]
 cdk-spilman = { path = "../cdk-spilman" }
+
+[dependencies.httpdate]
+version = "1"
+optional = true

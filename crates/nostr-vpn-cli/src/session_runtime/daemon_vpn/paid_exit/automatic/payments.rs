@@ -42,31 +42,55 @@ pub(crate) async fn fund_paid_exit_session(
         .get(&lease.lease.quote_id)
         .cloned()
         .ok_or_else(|| anyhow!("automatic paid exit session has no quote"))?;
+    let retry_at = store.buyer_mint_failure_retry_at(&channel.mint_url);
+    if now_unix < retry_at {
+        return Err(
+            anyhow::Error::new(cashu_service::MintRetryAfter(retry_at - now_unix))
+                .context("Cashu mint recovery is waiting before another funding attempt"),
+        );
+    }
+    let mint_url = channel.mint_url.clone();
+    let result = crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
+        config_path,
+        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
+            request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                mint_url: channel.mint_url,
+                receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
+                capacity_sat: session.session.payment.capacity_sat,
+                expiry_unix: channel.expires_at_unix,
+                max_amount_per_output: 0,
+                unit: "sat".to_string(),
+                // Credit the first sat toward traffic. A refundable
+                // zero-payment deposit is not payment for a new probe.
+                opening_paid_msat: 1_000,
+                keyset_id: None,
+                keyset_info_json: None,
+                client_request_id: Some(session_id.to_string()),
+                route_created_at_unix: Some(channel.created_at_unix),
+            },
+        },
+    )
+    .await;
+    let result = match result {
+        Ok(value) => value,
+        Err(error) => {
+            update_paid_route_store(&store_path, |store| {
+                store.defer_buyer_mint_retry(
+                    &mint_url,
+                    unix_timestamp(),
+                    true,
+                    error
+                        .downcast_ref::<cashu_service::MintRetryAfter>()
+                        .map(|delay| delay.0),
+                )
+            })?;
+            return Err(error);
+        }
+    };
     let opened: cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletResult =
-        serde_json::from_value(
-            crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
-                config_path,
-                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
-                    request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
-                        mint_url: channel.mint_url,
-                        receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
-                        capacity_sat: session.session.payment.capacity_sat,
-                        expiry_unix: channel.expires_at_unix,
-                        max_amount_per_output: 0,
-                        unit: "sat".to_string(),
-                        // Credit the first sat toward traffic. A refundable
-                        // zero-payment deposit is not payment for a new probe.
-                        opening_paid_msat: 1_000,
-                        keyset_id: None,
-                        keyset_info_json: None,
-                        client_request_id: Some(session_id.to_string()),
-                        route_created_at_unix: Some(channel.created_at_unix),
-                    },
-                },
-            )
-            .await?,
-        )
-        .context("daemon wallet returned an invalid opened Cashu channel")?;
+        serde_json::from_value(result)
+            .context("daemon wallet returned an invalid opened Cashu channel")?;
+
     let now_unix = unix_timestamp().max(now_unix);
     let buyer_npub = app
         .nostr_keys()?
@@ -74,6 +98,7 @@ pub(crate) async fn fund_paid_exit_session(
         .to_bech32()
         .context("failed to encode automatic paid exit buyer npub")?;
     let payment = update_paid_route_store(&store_path, |store| {
+        store.clear_buyer_mint_retry(&opened.channel.mint_url, now_unix)?;
         store.attach_buyer_spilman_channel(AttachPaidRouteBuyerSpilmanChannelRequest {
             session_id: session_id.to_string(),
             channel_id: opened.channel.channel_id.clone(),
