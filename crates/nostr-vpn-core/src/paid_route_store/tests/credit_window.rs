@@ -25,9 +25,17 @@ fn delayed_prepaid_update_resumes_seller_without_more_buyer_traffic() {
         )
         .unwrap();
     let mut seller_store = PaidRouteStore::default();
+    let envelope = opening.envelope;
     seller_store
         .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
-            envelope: opening.envelope,
+            envelope: seller_payment_envelope(
+                &envelope.service_id,
+                &envelope.lease_id,
+                &buyer_npub,
+                &seller_npub,
+                envelope.sent_at_unix,
+                envelope.payload,
+            ),
             seller_npub: seller_npub.clone(),
             config: config.clone(),
             now_unix: 130,

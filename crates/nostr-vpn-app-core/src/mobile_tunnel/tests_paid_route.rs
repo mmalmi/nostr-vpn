@@ -27,7 +27,14 @@ fn paid_route_channel_open_frame(
                     "channel_id": "mobile-channel-1",
                     "balance": 0,
                     "signature": "s".repeat(2_000),
-                    "params": {"channel": "mobile-channel-1"},
+                    "params": {
+                        "channel": "mobile-channel-1",
+                        "mint": "https://mint.example",
+                        "unit": "sat",
+                        "capacity": 10,
+                        "expiry_timestamp": now_unix.saturating_add(600),
+                        "receiver_pubkey": seller_pubkey
+                    },
                     "funding_proofs": {"proofs": []}
                 }
             }

@@ -401,7 +401,11 @@ mod tests {
                 Vec::new()
             };
             Ok(RestoreResponse {
-                outputs: request.outputs,
+                outputs: if signatures.is_empty() {
+                    Vec::new()
+                } else {
+                    request.outputs
+                },
                 signatures,
             })
         }

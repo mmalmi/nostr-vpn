@@ -2,7 +2,6 @@
 
 use std::{
     collections::HashMap,
-    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -13,6 +12,9 @@ use serde::{Deserialize, Serialize};
 use cashu::nuts::{CurrencyUnit, Id, PublicKey};
 #[cfg(feature = "spilman-configurable-host")]
 use cdk_spilman::{ChannelFunding, ChannelPolicy, ChannelState, ClosingData, PaymentProof};
+
+#[cfg(feature = "spilman-configurable-host")]
+use crate::private_file::{create_atomic_private, read_private_regular_to_string};
 
 #[cfg(feature = "spilman-configurable-host")]
 use crate::spilman::{
@@ -411,28 +413,31 @@ pub fn load_or_create_cashu_spilman_receiver_key(
     data_dir: &Path,
 ) -> Result<CashuSpilmanReceiverKeyFile, String> {
     let path = spilman_receiver_key_path(data_dir);
-    match fs::read_to_string(&path) {
-        Ok(content) => {
-            let key: CashuSpilmanReceiverKeyFile = serde_json::from_str(&content)
-                .map_err(|error| format!("failed to decode Spilman receiver key: {error}"))?;
-            if key.version != SPILMAN_RECEIVER_KEY_VERSION {
-                return Err(format!(
-                    "unsupported Spilman receiver key version {}",
-                    key.version
-                ));
+    loop {
+        match read_private_regular_to_string(&path) {
+            Ok(content) => {
+                let key: CashuSpilmanReceiverKeyFile = serde_json::from_str(&content)
+                    .map_err(|error| format!("failed to decode Spilman receiver key: {error}"))?;
+                if key.version != SPILMAN_RECEIVER_KEY_VERSION {
+                    return Err(format!(
+                        "unsupported Spilman receiver key version {}",
+                        key.version
+                    ));
+                }
+                let public_key_hex = receiver_public_key_hex(&key.secret_hex)?;
+                if public_key_hex != key.public_key_hex {
+                    return Err("Spilman receiver key public key does not match secret".to_string());
+                }
+                return Ok(key);
             }
-            let public_key_hex = receiver_public_key_hex(&key.secret_hex)?;
-            if public_key_hex != key.public_key_hex {
-                return Err("Spilman receiver key public key does not match secret".to_string());
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let key = generate_cashu_spilman_receiver_key()?;
+                if write_cashu_spilman_receiver_key(&path, &key)? {
+                    return Ok(key);
+                }
             }
-            Ok(key)
+            Err(error) => return Err(format!("failed to read Spilman receiver key: {error}")),
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let key = generate_cashu_spilman_receiver_key()?;
-            write_cashu_spilman_receiver_key(&path, &key)?;
-            Ok(key)
-        }
-        Err(error) => Err(format!("failed to read Spilman receiver key: {error}")),
     }
 }
 
@@ -532,18 +537,11 @@ fn generate_cashu_spilman_receiver_key() -> Result<CashuSpilmanReceiverKeyFile, 
 fn write_cashu_spilman_receiver_key(
     path: &Path,
     key: &CashuSpilmanReceiverKeyFile,
-) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create Spilman receiver key dir: {error}"))?;
-    }
+) -> Result<bool, String> {
     let content = serde_json::to_string_pretty(key)
         .map_err(|error| format!("failed to encode Spilman receiver key: {error}"))?;
-    fs::write(path, content)
-        .map_err(|error| format!("failed to write Spilman receiver key: {error}"))?;
-    secure_owner_only(path)
-        .map_err(|error| format!("failed to secure Spilman receiver key permissions: {error}"))?;
-    Ok(())
+    create_atomic_private(path, content.as_bytes())
+        .map_err(|error| format!("failed to write Spilman receiver key: {error}"))
 }
 
 #[cfg(feature = "spilman-configurable-host")]
@@ -609,16 +607,4 @@ mod tests {
         assert_eq!(receiver.receiver_pubkey_hex().len(), 66);
         assert!(spilman_receiver_store_path(dir.path()).exists());
     }
-}
-
-#[cfg(unix)]
-fn secure_owner_only(path: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-}
-
-#[cfg(not(unix))]
-fn secure_owner_only(_path: &Path) -> std::io::Result<()> {
-    Ok(())
 }

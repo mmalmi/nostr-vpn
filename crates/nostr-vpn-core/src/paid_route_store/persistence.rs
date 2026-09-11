@@ -615,8 +615,56 @@ pub(super) fn validate_seller_open_payment(
     if open.receiver_pubkey_hex.trim().is_empty() {
         return Err(anyhow!("paid route channel receiver pubkey is empty"));
     }
-    normalize_paid_route_receiver_pubkey(open.receiver_pubkey_hex.trim())
+    let receiver_pubkey = normalize_paid_route_receiver_pubkey(open.receiver_pubkey_hex.trim())
         .map_err(|error| anyhow!("invalid paid route channel receiver pubkey: {error}"))?;
+
+    #[derive(Deserialize)]
+    struct FundingTerms {
+        mint: String,
+        capacity: u64,
+        expiry_timestamp: u64,
+        receiver_pubkey: String,
+    }
+
+    let funding = FundingTerms::deserialize(
+        open.payment
+            .params
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing Cashu Spilman funding parameters"))?,
+    )
+    .context("invalid Cashu Spilman funding terms")?;
+    let funding_mint = normalize_paid_route_mint_url(&funding.mint)
+        .context("invalid Cashu Spilman funding mint")?;
+    if funding_mint != normalize_paid_route_mint_url(mint_url)? {
+        return Err(anyhow!(
+            "paid route mint does not match Cashu Spilman funding"
+        ));
+    }
+    if funding.capacity != open.capacity {
+        return Err(anyhow!(
+            "paid route capacity does not match Cashu Spilman funding"
+        ));
+    }
+    if open.expires_unix == 0 || open.expires_unix > funding.expiry_timestamp {
+        return Err(anyhow!(
+            "paid route expiry must not outlast Cashu Spilman funding"
+        ));
+    }
+    let funding_receiver = normalize_paid_route_receiver_pubkey(&funding.receiver_pubkey)
+        .context("invalid Cashu Spilman funding receiver pubkey")?;
+    // Channel creation lifts legacy x-only receiver keys to the even-Y point.
+    let compressed_receiver = |pubkey: String| {
+        if pubkey.len() == 64 {
+            format!("02{pubkey}")
+        } else {
+            pubkey
+        }
+    };
+    if compressed_receiver(funding_receiver) != compressed_receiver(receiver_pubkey) {
+        return Err(anyhow!(
+            "paid route receiver pubkey does not match Cashu Spilman funding"
+        ));
+    }
     Ok(())
 }
 
