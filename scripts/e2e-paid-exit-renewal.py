@@ -30,6 +30,10 @@ while delivered < target_bytes:
     assert len(body) == size, (len(body), size)
     delivered += size
     store, selected, _ = snapshot()
+    usage = [record['session']['usage'] for record in store['sessions'].values()]
+    billable = sum(item.get('billable_bytes', 0) for item in usage)
+    observed = sum(item.get('rx_bytes', 0) + item.get('tx_bytes', 0) for item in usage)
+    assert billable <= observed, f'billed {billable} bytes but observed only {observed}'
     seen.add(selected)
     time.sleep(0.2)
 assert len(seen) >= 3, f'expected at least two channel renewals, observed {len(seen) - 1}'

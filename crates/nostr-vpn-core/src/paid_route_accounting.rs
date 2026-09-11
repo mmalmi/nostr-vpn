@@ -49,11 +49,14 @@ impl PaidRouteTrafficAccountant {
                 }
             }
             IPPROTO_TCP => {
-                if let Some(tcp) = parse_tcp_at(packet, transport)
-                    && tcp.ack
-                {
+                if let Some(tcp) = parse_tcp_at(packet, transport) {
                     let key = TcpFlowKey::from_outbound_tcp(&tcp);
-                    if let Some(flow) = self.tcp_flows.get_mut(&key) {
+                    if tcp.flags & 0x02 != 0 && !tcp.ack {
+                        self.tcp_flow(key).note_buyer_syn(tcp.sequence_number);
+                    }
+                    if tcp.ack
+                        && let Some(flow) = self.tcp_flows.get_mut(&key)
+                    {
                         let acked = flow.apply_buyer_ack(tcp.ack_number);
                         delta.billable_bytes = delta.billable_bytes.saturating_add(acked.bytes);
                     }
@@ -86,12 +89,18 @@ impl PaidRouteTrafficAccountant {
                 }
             }
             IPPROTO_TCP => {
-                if let Some(tcp) = parse_tcp_at(packet, transport)
-                    && tcp.payload_len > 0
-                {
+                if let Some(tcp) = parse_tcp_at(packet, transport) {
                     let key = TcpFlowKey::from_inbound_tcp(&tcp);
-                    self.flow_for_inbound(key)
-                        .note_inbound_payload(tcp.sequence_number, tcp.payload_len);
+                    let syn = tcp.flags & 0x02 != 0;
+                    if syn {
+                        self.tcp_flow(key).note_peer_syn(tcp.sequence_number);
+                    }
+                    if tcp.payload_len > 0 {
+                        self.tcp_flow(key).note_inbound_payload(
+                            tcp.sequence_number.wrapping_add(u32::from(syn)),
+                            tcp.payload_len,
+                        );
+                    }
                 }
             }
             _ => {}
@@ -104,7 +113,7 @@ impl PaidRouteTrafficAccountant {
         self.observation_clock
     }
 
-    fn flow_for_inbound(&mut self, key: TcpFlowKey) -> &mut TcpAckState {
+    fn tcp_flow(&mut self, key: TcpFlowKey) -> &mut TcpAckState {
         if !self.tcp_flows.contains_key(&key) {
             self.flow_order.push_back(key);
             while self.tcp_flows.len() >= MAX_TRACKED_TCP_FLOWS {
@@ -150,6 +159,8 @@ struct AckedTcpUsage {
 
 #[derive(Debug, Default)]
 struct TcpAckState {
+    buyer_syn_seq: Option<u32>,
+    peer_syn_seq: Option<u32>,
     first_observed_seq: Option<u32>,
     observed_end_seq: Option<u32>,
     billed_ack_seq: Option<u32>,
@@ -157,6 +168,27 @@ struct TcpAckState {
 }
 
 impl TcpAckState {
+    fn note_buyer_syn(&mut self, sequence_number: u32) {
+        if self.buyer_syn_seq != Some(sequence_number) {
+            // A reused address/port tuple has a new sequence space. Carrying
+            // its old watermark forward can bill a random ISN gap as gigabytes.
+            *self = Self {
+                buyer_syn_seq: Some(sequence_number),
+                ..Self::default()
+            };
+        }
+    }
+
+    fn note_peer_syn(&mut self, sequence_number: u32) {
+        if self.peer_syn_seq != Some(sequence_number) {
+            *self = Self {
+                buyer_syn_seq: self.buyer_syn_seq,
+                peer_syn_seq: Some(sequence_number),
+                ..Self::default()
+            };
+        }
+    }
+
     fn note_inbound_payload(&mut self, sequence_number: u32, payload_len: usize) {
         let payload_len = payload_len.min(u32::MAX as usize) as u32;
         if payload_len == 0 {
@@ -604,6 +636,67 @@ mod tests {
 
         assert_eq!(first_ack.billable_bytes, outbound_ack.len() as u64 + 1000);
         assert_eq!(duplicate_ack.billable_bytes, outbound_ack.len() as u64);
+    }
+
+    #[test]
+    fn reused_tcp_ports_never_bill_sequence_number_gaps_as_traffic() {
+        let mut accountant = PaidRouteTrafficAccountant::default();
+        for (index, server_seq) in [10_000u32, 1_000_000_000, 50, u32::MAX - 500, 9_000]
+            .into_iter()
+            .enumerate()
+        {
+            let syn = TcpPacketSpec {
+                src: [10, 8, 0, 2],
+                dst: [203, 0, 113, 10],
+                src_port: 55_000,
+                dst_port: 443,
+                seq: 1 + index as u32,
+                ack: 0,
+                flags: 0x02,
+                payload_len: 0,
+            };
+            // Also cover a missed client SYN: the server SYN/ACK alone must
+            // distinguish a new connection from the previous use of this tuple.
+            if index % 2 == 0 {
+                accountant.record_outbound_packet(&ipv4_tcp_packet(syn));
+            }
+            let syn_ack = TcpPacketSpec {
+                src: syn.dst,
+                dst: syn.src,
+                src_port: syn.dst_port,
+                dst_port: syn.src_port,
+                seq: server_seq,
+                ack: syn.seq + 1,
+                flags: 0x12,
+                payload_len: 0,
+            };
+            accountant.record_inbound_packet(&ipv4_tcp_packet(syn_ack));
+            let data = ipv4_tcp_packet(TcpPacketSpec {
+                seq: server_seq.wrapping_add(1),
+                flags: 0x18,
+                payload_len: 1000,
+                ..syn_ack
+            });
+            accountant.record_inbound_packet(&data);
+            let ack = ipv4_tcp_packet(TcpPacketSpec {
+                seq: syn.seq + 1,
+                ack: server_seq.wrapping_add(1001),
+                flags: 0x10,
+                ..syn
+            });
+            assert_eq!(
+                accountant.record_outbound_packet(&ack).billable_bytes,
+                ack.len() as u64 + 1000,
+                "only payload from this connection is billable"
+            );
+            // A retransmitted handshake must not erase the paid watermark.
+            accountant.record_inbound_packet(&ipv4_tcp_packet(syn_ack));
+            accountant.record_inbound_packet(&data);
+            assert_eq!(
+                accountant.record_outbound_packet(&ack).billable_bytes,
+                ack.len() as u64
+            );
+        }
     }
 
     #[test]
