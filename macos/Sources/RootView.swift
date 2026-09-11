@@ -39,7 +39,7 @@ struct RootView: View {
     @State var paidRouteMintUrl = ""
     @State var paidRouteWalletFlow: PaidRouteWalletFlow?
     @State var paidRouteWalletSelectedMint = ""
-    @State var paidRouteWalletShowsResult = true
+    @State var paidRouteWalletShowsResult = false
     @State var paidRouteWalletFlowError = ""
     @State var paidRouteTopupAmount = "1000"
     @State var paidRouteReceiveToken = ""

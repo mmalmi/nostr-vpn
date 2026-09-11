@@ -131,7 +131,7 @@ extension RootView {
         .padding(22)
         .frame(width: 520)
         .onChange(of: paidRouteWalletSelectedMint) { _, _ in
-            paidRouteWalletShowsResult = true
+            paidRouteWalletShowsResult = false
             paidRouteWalletFlowError = ""
         }
         .sheet(isPresented: $showingWalletTokenScanner) {
@@ -146,7 +146,7 @@ extension RootView {
 
     func openPaidRouteWalletFlow(_ flow: PaidRouteWalletFlow, wallet: NativePaidRouteWalletState) {
         paidRouteWalletSelectedMint = wallet.defaultMint
-        paidRouteWalletShowsResult = true
+        paidRouteWalletShowsResult = false
         paidRouteWalletFlowError = ""
         paidRouteWalletFlow = flow
     }
