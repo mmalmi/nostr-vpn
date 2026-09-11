@@ -385,7 +385,7 @@
         let mint = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut request = [0; 4096];
-            stream.read(&mut request).await.unwrap();
+            assert!(stream.read(&mut request).await.unwrap() > 0);
             stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
             // Keep listening so a mistaken retry reaches a real socket.
             std::future::pending::<()>().await;
@@ -505,7 +505,7 @@
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
-                stream.read(&mut request).await.unwrap();
+                assert!(stream.read(&mut request).await.unwrap() > 0);
                 let response = format!(
                     "HTTP/1.1 503 Service Unavailable\r\nRetry-After: {header}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 );
