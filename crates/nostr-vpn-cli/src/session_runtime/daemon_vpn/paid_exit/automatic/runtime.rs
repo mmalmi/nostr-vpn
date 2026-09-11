@@ -141,11 +141,10 @@ pub(crate) async fn update_automatic_paid_exit(
         }
     }
 
-    let fund = automatic.candidate.as_ref().is_some_and(|candidate| {
-        !candidate.failed
-            && !candidate.funding_attempted
-            && candidate.health_evidence_fresh(now_unix)
-    });
+    let fund = automatic
+        .candidate
+        .as_ref()
+        .is_some_and(|candidate| candidate.ready_to_fund(now_unix));
     if fund {
         let session_id = automatic
             .candidate

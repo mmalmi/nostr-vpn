@@ -235,6 +235,7 @@ impl PaidRouteStore {
             return false;
         }
         let record = PaidRouteSessionRecord {
+            last_successful_probe_unix: 0,
             session,
             created_at_unix: updated_at_unix,
             updated_at_unix,
@@ -367,7 +368,7 @@ impl PaidRouteStore {
             .sessions
             .get_mut(&session_id)
             .ok_or_else(|| anyhow!("paid route session {session_id} does not exist"))?;
-        let before = record.session.clone();
+        let before = record.clone();
 
         if let Some(realized_exit_ip) = normalize_optional_probe_string(request.realized_exit_ip) {
             record.session.realized_exit_ip = Some(realized_exit_ip);
@@ -391,7 +392,8 @@ impl PaidRouteStore {
                 .merge_patch(quality);
         }
 
-        let changed = record.session != before;
+        record.last_successful_probe_unix = record.successful_probe_unix();
+        let changed = *record != before;
         if changed {
             record.updated_at_unix = request.now_unix;
         }

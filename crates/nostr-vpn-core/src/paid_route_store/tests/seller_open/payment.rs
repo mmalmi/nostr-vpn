@@ -94,6 +94,7 @@ fn seller_payment_channel_open_creates_seller_session_and_admission() {
     assert!(store.seller_admissions(&config, 101).is_empty());
     store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: PaidRouteSessionOpen {
                 version: PAID_ROUTE_OFFER_VERSION.to_string(),
                 service_id: "internet-exit".to_string(),
@@ -334,6 +335,7 @@ fn seller_payment_with_spilman_receiver_settles_after_selling_is_disabled() {
         .expect("seed seller channel");
     store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: PaidRouteSessionOpen {
                 version: PAID_ROUTE_OFFER_VERSION.to_string(),
                 service_id: "internet-exit".to_string(),

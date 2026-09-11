@@ -25,6 +25,7 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
     let mut seller_store = PaidRouteStore::default();
     let applied = seller_store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: open.clone(),
             authenticated_buyer_pubkey: buyer.public_key().to_hex(),
             seller_npub: seller_npub.clone(),
@@ -41,6 +42,7 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
 
     let repeated = seller_store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: open.clone(),
             authenticated_buyer_pubkey: buyer.public_key().to_hex(),
             seller_npub: seller_npub.clone(),
@@ -92,6 +94,7 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
 
     let replay_after_payment = seller_store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open,
             authenticated_buyer_pubkey: buyer.public_key().to_hex(),
             seller_npub: seller.public_key().to_bech32().expect("seller npub"),
@@ -113,6 +116,7 @@ fn funded_reconnect_is_admitted_after_the_same_buyer_used_an_older_free_probe() 
 
     store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: PaidRouteSessionOpen {
                 version: PAID_ROUTE_OFFER_VERSION.to_string(),
                 service_id: "internet-exit".to_string(),
@@ -140,6 +144,7 @@ fn funded_reconnect_is_admitted_after_the_same_buyer_used_an_older_free_probe() 
     };
     let error = store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: reconnect.clone(),
             authenticated_buyer_pubkey: buyer.public_key().to_hex(),
             seller_npub: seller_npub.clone(),
@@ -163,8 +168,8 @@ fn funded_reconnect_is_admitted_after_the_same_buyer_used_an_older_free_probe() 
                     capacity: 20,
                     expires_unix: 500,
                     receiver_pubkey_hex: seller.public_key().to_hex(),
-                    paid_msat: 0,
-                    payment: sample_spilman_payment("funded-reconnect-channel", 0),
+                    paid_msat: 1_000,
+                    payment: sample_spilman_payment("funded-reconnect-channel", 1),
                 }),
             ),
             seller_npub: seller_npub.clone(),
@@ -175,6 +180,7 @@ fn funded_reconnect_is_admitted_after_the_same_buyer_used_an_older_free_probe() 
 
     let applied = store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: reconnect,
             authenticated_buyer_pubkey: buyer.public_key().to_hex(),
             seller_npub,
@@ -455,6 +461,7 @@ fn session_open_requires_current_version_buyer_tunnel_ip_and_rejects_public_sour
     let before = seller_store.clone();
     let error = seller_store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open,
             authenticated_buyer_pubkey: buyer.public_key().to_hex(),
             seller_npub,

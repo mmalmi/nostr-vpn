@@ -28,7 +28,7 @@ use crate::paid_routes::{
     PaidRouteSessionOpen, PaidRouteUsage, SignedPaidRouteOffer,
 };
 
-const CURRENT_VERSION: u8 = 5;
+const CURRENT_VERSION: u8 = 6;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteStore {
@@ -54,6 +54,8 @@ pub struct PaidRouteStore {
     pub buyer_session_open_attempts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub seller_session_tunnel_ips: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub seller_free_probe_sources: BTreeMap<String, PaidRouteFreeProbeSource>,
 }
 
 impl Default for PaidRouteStore {
@@ -70,6 +72,7 @@ impl Default for PaidRouteStore {
             selected_buyer_session_id: String::new(),
             buyer_session_open_attempts: BTreeMap::new(),
             seller_session_tunnel_ips: BTreeMap::new(),
+            seller_free_probe_sources: BTreeMap::new(),
         }
     }
 }
@@ -173,6 +176,8 @@ pub enum PaidRouteLifecycleStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteSessionRecord {
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub last_successful_probe_unix: u64,
     pub session: PaidRouteSession,
     pub created_at_unix: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -233,6 +238,8 @@ pub struct OpenPaidRouteBuyerSessionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteAutomaticOfferSelection {
+    #[serde(default)]
+    pub previously_verified: bool,
     pub offer_key: String,
     pub mint_url: String,
     pub channel_capacity_sat: u64,
@@ -397,6 +404,8 @@ pub struct ApplyPaidRouteSellerPaymentResult {
 pub struct ApplyPaidRouteSellerSessionOpenRequest {
     pub open: PaidRouteSessionOpen,
     pub authenticated_buyer_pubkey: String,
+    /// Observed address of a direct authenticated carrier, never a buyer claim or relay address.
+    pub authenticated_source_ip: Option<std::net::IpAddr>,
     pub seller_npub: String,
     pub config: PaidExitConfig,
     pub now_unix: u64,
@@ -550,10 +559,12 @@ pub struct PaidRouteSellerCollectionState {
 mod automatic_selection;
 mod buyer_payment;
 mod buyer_session;
+mod free_probe;
 mod persistence;
 mod seller_payment;
 mod seller_state;
 mod session_open;
+pub use free_probe::PaidRouteFreeProbeSource;
 mod wallet_offers;
 
 pub use wallet_offers::normalize_paid_route_mint_url;

@@ -230,6 +230,44 @@ fn automatic_probe_waits_for_authenticated_seller_admission() {
 }
 
 #[test]
+fn returning_provider_can_fund_before_probe_but_needs_fresh_health_to_stream_payments() {
+    let seller = Keys::generate();
+    let pubkey = seller.public_key().to_hex();
+    let mut candidate = test_candidate(&pubkey);
+    candidate.selection.previously_verified = true;
+    candidate.probe_started_at = None;
+    assert!(!candidate.ready_to_fund(100));
+    candidate.observe_presence(&[test_peer_status(&pubkey, 100)], 100);
+    assert!(candidate.ready_to_fund(100));
+    assert!(!candidate.ready_to_probe(false, 100));
+    assert!(!candidate.health_evidence_fresh(100));
+    candidate.funding_attempted = true;
+    candidate.funded = true;
+    assert!(
+        !candidate.ready_to_fund(100),
+        "retry must reuse the funded channel"
+    );
+    assert!(candidate.ready_to_probe(true, 100));
+    assert!(!candidate.health_evidence_fresh(100));
+    candidate.probe_succeeded = true;
+    candidate.observe_usage(
+        &PaidRouteUsage {
+            tx_bytes: 200,
+            rx_bytes: 400,
+            ..Default::default()
+        },
+        101,
+    );
+    assert!(candidate.health_evidence_fresh(101));
+    let mut stranger = test_candidate(&pubkey);
+    stranger.observe_presence(&[test_peer_status(&pubkey, 100)], 100);
+    assert!(
+        !stranger.ready_to_fund(100),
+        "an unknown provider still needs a successful trial"
+    );
+}
+
+#[test]
 fn automatic_cancellation_never_overwrites_another_internet_mode() {
     let seller = Keys::generate();
     let seller_npub = seller.public_key().to_bech32().expect("seller npub");

@@ -103,6 +103,16 @@ impl PaidExitAutomaticCandidate {
             })
     }
 
+    pub(super) fn ready_to_fund(&self, now_unix: u64) -> bool {
+        !self.failed
+            && !self.funding_attempted
+            && (self.health_evidence_fresh(now_unix)
+                || (self.selection.previously_verified
+                    && self.last_authenticated_at.is_some_and(|seen| {
+                        now_unix.saturating_sub(seen) <= PAID_EXIT_AUTO_HEALTH_TTL_SECS
+                    })))
+    }
+
     pub(super) fn should_failover(&self, now_unix: u64) -> bool {
         if self.failed {
             return true;

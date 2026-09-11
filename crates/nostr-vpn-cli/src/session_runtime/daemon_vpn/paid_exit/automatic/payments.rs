@@ -54,7 +54,9 @@ pub(crate) async fn fund_paid_exit_session(
                         expiry_unix: channel.expires_at_unix,
                         max_amount_per_output: 0,
                         unit: "sat".to_string(),
-                        opening_paid_msat: 0,
+                        // Credit the first sat toward traffic. A refundable
+                        // zero-payment deposit is not payment for a new probe.
+                        opening_paid_msat: 1_000,
                         keyset_id: None,
                         keyset_info_json: None,
                         client_request_id: Some(session_id.to_string()),

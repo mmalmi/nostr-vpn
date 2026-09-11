@@ -296,6 +296,7 @@ pub(super) fn apply_paid_exit_session_opens(
     app: &AppConfig,
     config_path: &Path,
     opens: Vec<(String, PaidRouteSessionOpen)>,
+    peers: &[fips_endpoint::FipsEndpointPeer],
 ) -> Result<PaidExitApplySessionOpensResult> {
     if opens.is_empty() {
         return Ok(PaidExitApplySessionOpensResult::default());
@@ -328,6 +329,20 @@ pub(super) fn apply_paid_exit_session_opens(
             match store.apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
                 open,
                 authenticated_buyer_pubkey: buyer_pubkey.clone(),
+                authenticated_source_ip: peers.iter().find_map(|peer| {
+                    (peer.connected
+                        && matches!(peer.transport_type.as_deref(), Some("udp" | "tcp"))
+                        && normalize_nostr_pubkey(&peer.npub).ok().as_deref()
+                            == Some(buyer_pubkey.as_str()))
+                    .then(|| {
+                        peer.transport_addr
+                            .as_deref()?
+                            .parse::<std::net::SocketAddr>()
+                            .ok()
+                    })
+                    .flatten()
+                    .map(|address| address.ip())
+                }),
                 seller_npub: seller_npub.clone(),
                 config: app.paid_exit.clone(),
                 now_unix: unix_timestamp(),
@@ -384,7 +399,13 @@ pub(super) async fn handle_paid_exit_mesh_events(
 
     let session_opens = std::mem::take(&mut drained.paid_route_session_opens);
     if !session_opens.is_empty() {
-        match apply_paid_exit_session_opens(app, config_path, session_opens) {
+        // Only the authenticated buyer's own carrier can identify its source.
+        // Multi-hop and relay endpoints cannot establish free-trial eligibility.
+        let peers = runtime.authenticated_endpoint_peers().await;
+        let applied = peers.and_then(|peers| {
+            apply_paid_exit_session_opens(app, config_path, session_opens, &peers)
+        });
+        match applied {
             Ok(result) => {
                 eprintln!(
                     "paid-exit: authenticated session opens received={} applied={} errors={} changed={}",

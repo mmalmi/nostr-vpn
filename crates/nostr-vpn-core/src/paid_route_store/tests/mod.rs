@@ -45,6 +45,7 @@ impl Drop for ScratchDir {
 
 mod buyer;
 mod closing_store;
+mod returning_and_trial_limits;
 mod seller_open;
 mod updates;
 
@@ -104,6 +105,7 @@ fn seller_store_with_open_channel(
         .expect("apply open");
     store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
             open: crate::paid_routes::PaidRouteSessionOpen {
                 version: crate::paid_routes::PAID_ROUTE_OFFER_VERSION.to_string(),
                 service_id: "internet-exit".to_string(),

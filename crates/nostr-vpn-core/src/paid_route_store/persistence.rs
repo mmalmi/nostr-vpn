@@ -67,6 +67,8 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
         // v5 records the exact selected buyer session and its open-attempt time.
         // Serde defaults preserve existing sessions; the daemon selects the newest
         // eligible legacy session once before sending another open request.
+        // v6 preserves successful-provider history independently of live health
+        // and persists rolling free-probe grants across daemon restarts.
         object.insert("version".to_string(), CURRENT_VERSION.into());
     }
     let mut store = match serde_json::from_value::<PaidRouteStore>(value) {

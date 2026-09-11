@@ -127,3 +127,94 @@ fn manual_unacknowledged_session_fails_and_falls_back_to_direct() {
 
     let _ = std::fs::remove_dir_all(directory);
 }
+
+#[test]
+fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
+    let dir = std::env::temp_dir().join(format!("nvpn-trial-carrier-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.toml");
+    let mut app = AppConfig::generated();
+    app.paid_exit.enabled = true;
+    app.paid_exit.channel.accepted_mints = vec!["https://mint.example".into()];
+    let seller_npub = app.nostr_keys().unwrap().public_key().to_bech32().unwrap();
+    let first = Keys::generate();
+    let second = Keys::generate();
+    let open = |lease: &str| PaidRouteSessionOpen {
+        version: nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_VERSION.into(),
+        service_id: "internet-exit".into(),
+        lease_id: lease.into(),
+        channel_id: format!("channel-{lease}"),
+        seller_npub: seller_npub.clone(),
+        buyer_tunnel_ip: "10.44.201.17/32".into(),
+        expires_at_unix: unix_timestamp() + 600,
+    };
+    let mut peer = fips_endpoint::FipsEndpointPeer {
+        npub: first.public_key().to_bech32().unwrap(),
+        node_addr: fips_core::NodeAddr::from_bytes([7; 16]),
+        connected: true,
+        transport_addr: Some("203.0.113.9:2122".into()),
+        transport_type: Some("udp".into()),
+        link_id: 42,
+        srtt_ms: None,
+        srtt_age_ms: None,
+        packets_sent: 1,
+        packets_recv: 1,
+        bytes_sent: 100,
+        bytes_recv: 100,
+        rekey_in_progress: false,
+        rekey_draining: false,
+        current_k_bit: None,
+        last_outbound_route: None,
+        direct_probe_pending: false,
+        direct_probe_after_ms: None,
+        direct_probe_retry_count: 0,
+        direct_probe_auto_reconnect: false,
+        direct_probe_expires_at_ms: None,
+        nostr_traversal_consecutive_failures: 0,
+        nostr_traversal_in_cooldown: false,
+        nostr_traversal_cooldown_until_ms: None,
+        nostr_traversal_last_observed_skew_ms: None,
+    };
+    let result = apply_paid_exit_session_opens(
+        &app,
+        &config_path,
+        vec![(first.public_key().to_hex(), open("first"))],
+        &[peer.clone()],
+    )
+    .unwrap();
+    assert_eq!(result.applied_count, 1);
+    peer.npub = second.public_key().to_bech32().unwrap();
+    let result = apply_paid_exit_session_opens(
+        &app,
+        &config_path,
+        vec![(second.public_key().to_hex(), open("rotated-key"))],
+        &[peer.clone()],
+    )
+    .unwrap();
+    assert_eq!(result.error_count, 1);
+    // An authenticated relay connection is not evidence of the buyer's IP.
+    peer.transport_type = Some("websocket".into());
+    peer.transport_addr = Some("203.0.113.10:443".into());
+    let result = apply_paid_exit_session_opens(
+        &app,
+        &config_path,
+        vec![(second.public_key().to_hex(), open("relay"))],
+        &[peer.clone()],
+    )
+    .unwrap();
+    assert_eq!(result.error_count, 1);
+    peer.transport_type = Some("udp".into());
+    peer.npub = first.public_key().to_bech32().unwrap();
+    let result = apply_paid_exit_session_opens(
+        &app,
+        &config_path,
+        vec![(second.public_key().to_hex(), open("other-hop"))],
+        &[peer],
+    )
+    .unwrap();
+    assert_eq!(result.error_count, 1);
+    let store = load_paid_route_store(&paid_route_store_file_path(&config_path)).unwrap();
+    assert_eq!(store.seller_free_probe_sources.len(), 1);
+    assert!(store.seller_free_probe_sources.contains_key("203.0.113.9"));
+    fs::remove_dir_all(dir).unwrap();
+}

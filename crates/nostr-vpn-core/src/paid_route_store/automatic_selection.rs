@@ -17,6 +17,7 @@ struct Candidate {
     capacity_sat: u64,
     local_probe: Option<LocalProbeRank>,
     local_probe_count: u32,
+    previously_verified: bool,
     rating_score: i64,
     price_msat_per_gb: u64,
     signed_at_unix: u64,
@@ -41,6 +42,7 @@ impl PaidRouteStore {
             .filter_map(|(key, record)| self.candidate(key, record, now_unix))
             .max_by(compare_candidates)
             .map(|candidate| PaidRouteAutomaticOfferSelection {
+                previously_verified: candidate.previously_verified,
                 offer_key: candidate.offer_key,
                 mint_url: candidate.mint_url,
                 channel_capacity_sat: candidate.capacity_sat,
@@ -63,7 +65,23 @@ impl PaidRouteStore {
             || paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id) != key
             || !record.signed_offer.is_live_at(now_unix)
             || !offer.ip_support.ipv4
-            || offer.channel.free_probe_units < PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES
+        {
+            return None;
+        }
+
+        let previously_verified = self.sessions.values().any(|session| {
+            let Some(channel) = self.channels.get(&session.session.payment.channel_id) else {
+                return false;
+            };
+            let successful_at = session.successful_probe_unix();
+            channel.role == PaidRouteChannelRole::Buyer
+                && channel.offer_id == offer.offer_id
+                && channel.counterparty_npub == offer.seller_npub
+                && successful_at > 0
+                && successful_at <= now_unix.saturating_add(FUTURE_CLOCK_SKEW_SECS)
+        });
+        if !previously_verified
+            && offer.channel.free_probe_units < PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES
         {
             return None;
         }
@@ -79,6 +97,7 @@ impl PaidRouteStore {
             capacity_sat,
             local_probe,
             local_probe_count,
+            previously_verified,
             rating_score: record.rating_score.unwrap_or_default(),
             price_msat_per_gb: offer.pricing.price_msat_per_gb,
             signed_at_unix,
@@ -166,6 +185,28 @@ impl PaidRouteStore {
             latest = latest.max(probe);
         }
         (Some(latest.1), count)
+    }
+}
+
+impl PaidRouteSessionRecord {
+    pub(super) fn successful_probe_unix(&self) -> u64 {
+        // Backfill legacy stores from locally observed exit IP and successful
+        // measurements, never from an advert or another buyer's rating.
+        let observed = self
+            .session
+            .quality
+            .as_ref()
+            .filter(|quality| {
+                self.session
+                    .realized_exit_ip
+                    .as_ref()
+                    .is_some_and(|ip| ip.parse::<std::net::IpAddr>().is_ok())
+                    && quality.packet_loss_ppm.unwrap_or(0) < 1_000_000
+                    && (quality.latency_ms.is_some() || quality.packet_loss_ppm.is_some())
+            })
+            .and_then(|quality| quality.last_seen_unix)
+            .unwrap_or(0);
+        self.last_successful_probe_unix.max(observed)
     }
 }
 

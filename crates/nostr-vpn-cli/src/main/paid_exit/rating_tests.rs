@@ -892,6 +892,7 @@ mod paid_exit_rating_tests {
         quality: Option<PaidRouteQualityMetrics>,
     ) -> PaidRouteSessionRecord {
         PaidRouteSessionRecord {
+            last_successful_probe_unix: 0,
             session: nostr_vpn_core::paid_routes::PaidRouteSession {
                 session_id: "session-1".to_string(),
                 lease_id: "lease-1".to_string(),

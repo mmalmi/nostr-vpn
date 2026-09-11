@@ -43,6 +43,7 @@ impl PaidRouteStore {
                 .insert(session_id.clone(), now_unix.max(1));
         }
         if let Some(session) = self.sessions.get_mut(&session_id) {
+            session.last_successful_probe_unix = session.successful_probe_unix();
             session.updated_at_unix = session.updated_at_unix.max(now_unix);
             // A reconnect must earn fresh end-to-end evidence. Keeping the
             // previous probe here can make the UI report Connected while the
@@ -581,6 +582,26 @@ impl PaidRouteStore {
                     "existing paid route session uses a different buyer tunnel IP"
                 ));
             }
+            if !self.seller_session_tunnel_ips.contains_key(&session_id) {
+                let session = &self.sessions[&session_id].session;
+                let terms = accepted_channel_terms(
+                    &self.channels[&session.payment.channel_id],
+                    PaidRouteChannelRole::Seller,
+                )?
+                .clone();
+                // Funding with zero payment must not mint a fresh free allowance.
+                if session.payment.paid_msat == 0
+                    && (terms.channel.free_probe_units > 0 || terms.channel.grace_units > 0)
+                {
+                    self.claim_seller_free_probe(
+                        &buyer_pubkey,
+                        &lease_id,
+                        request.authenticated_source_ip,
+                        &terms,
+                        request.now_unix,
+                    )?;
+                }
+            }
             self.seller_session_tunnel_ips
                 .insert(session_id.clone(), buyer_tunnel_ip);
             let admission = self
@@ -627,6 +648,13 @@ impl PaidRouteStore {
             ));
         }
         self.ensure_seller_lease_slot_available(&service_id, &lease_id, &channel_id, &buyer_npub)?;
+        self.claim_seller_free_probe(
+            &buyer_pubkey,
+            &lease_id,
+            request.authenticated_source_ip,
+            &config,
+            request.now_unix,
+        )?;
         let quote_id = seller_quote_id_for_lease(&lease_id);
         let payment = PaidRoutePaymentState {
             mode: PaidRoutePaymentMode::CashuSpilman,
