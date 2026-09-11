@@ -19,6 +19,7 @@
 		5A0C2B850E75C11412CE8833 /* AppManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B8ACCA4B0D1E131227B6DB /* AppManager.swift */; };
 		5CE5ACBB50FA30430340AB02 /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70F9EAC8173DD49E1B488249 /* QRCodeScannerView.swift */; };
 		624F086A52A779B1A0A0FEC0 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = BA47FE871505F802D17559E0 /* Assets.xcassets */; };
+		6ADAF17D2A1AFFF173D92686 /* RootViewWalletFlow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410B4EED6AFCA5FF64CF152C /* RootViewWalletFlow.swift */; };
 		703B3FB6AD815B06CB5F6804 /* RootViewPaidMarket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBE014E9003A7A9F1F86AF /* RootViewPaidMarket.swift */; };
 		7069DCC8153F231D6CCEA556 /* RootViewSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6130D91DC91E5C3A2E4CB1D /* RootViewSettings.swift */; };
 		781779343E101727212353FD /* AppLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1501E9AC6FA4FD40D3382268 /* AppLifecycle.swift */; };
@@ -44,6 +45,7 @@
 		15E39397BF43B7A318613026 /* NostrVpnAppCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = NostrVpnAppCore.xcframework; path = Frameworks/NostrVpnAppCore.xcframework; sourceTree = "<group>"; };
 		1B65CF013122BCA745902824 /* PrivilegedCommandRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivilegedCommandRunner.swift; sourceTree = "<group>"; };
 		3F1160699FA7E0B240102124 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		410B4EED6AFCA5FF64CF152C /* RootViewWalletFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewWalletFlow.swift; sourceTree = "<group>"; };
 		46326DE323959D2B560058B9 /* TrayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrayController.swift; sourceTree = "<group>"; };
 		491D74DB56359B486F076A4E /* RootViewDevices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewDevices.swift; sourceTree = "<group>"; };
 		49EBD2111DA9043D1B847714 /* AppManagerActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerActions.swift; sourceTree = "<group>"; };
@@ -129,6 +131,7 @@
 				C6130D91DC91E5C3A2E4CB1D /* RootViewSettings.swift */,
 				0791EAB555478D1EA135707E /* RootViewSupport.swift */,
 				4D65211FBB441FA40EBA3E0C /* RootViewWallet.swift */,
+				410B4EED6AFCA5FF64CF152C /* RootViewWalletFlow.swift */,
 				46326DE323959D2B560058B9 /* TrayController.swift */,
 			);
 			path = Sources;
@@ -264,6 +267,7 @@
 				7069DCC8153F231D6CCEA556 /* RootViewSettings.swift in Sources */,
 				A05F3A0BDBB27DF709ACFFFB /* RootViewSupport.swift in Sources */,
 				2A52081BD20BF3F95ACDE97D /* RootViewWallet.swift in Sources */,
+				6ADAF17D2A1AFFF173D92686 /* RootViewWalletFlow.swift in Sources */,
 				C17EDC5F51A82A977D64CDA0 /* TrayController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
