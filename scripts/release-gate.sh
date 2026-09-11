@@ -2679,10 +2679,14 @@ main() {
   release_gate_timing_run \
     "Windows exclusive desktop network" \
     run_windows_exclusive_desktop_gates
+  release_gate_timing_run \
+    "Paid-exit seller UI receipt validation" \
+    verify_paid_exit_seller_ui_gates
 
-  # Exercise the least reliable external dependency—the physical iOS XCTest
-  # runner—before spending time on the remaining local Docker/perf tail. The
-  # device lanes are still isolated and serial with every measurement below.
+  # Keep physical phone work in one window after desktop/build contention.
+  # Avoid a long Docker/perf idle gap before iPhone automation is needed again.
+  # Retain the existing artifact order and serialize every lane that shares a
+  # phone or mutates its radio.
   release_gate_timing_run \
     "Physical mobile idle CPU" \
     run_mobile_idle_cpu_gates
@@ -2690,8 +2694,30 @@ main() {
     "Physical mobile WireGuard exit and DNS" \
     run_mobile_wireguard_exit_gates
   release_gate_timing_run \
-    "Paid-exit seller UI receipt validation" \
-    verify_paid_exit_seller_ui_gates
+    "Android legacy package replacement" \
+    run_android_legacy_replacement_gate
+  release_gate_timing_run \
+    "Physical mobile underlay recovery" \
+    run_mobile_underlay_change_gates
+
+  # One physical Pixel cannot safely serve multiple admin/joiner drivers at
+  # once. Keep these exact-artifact public-UI lanes serial, while reusing the
+  # already installed signed APK and host-built desktop artifacts.
+  release_gate_timing_run \
+    "iOS and Android bidirectional release join" \
+    run_mobile_join_e2e_gate
+  # All iOS inputs now exist, including the macOS/iPhone join. Seal them before
+  # unrelated checks can fail; recovery can validate this artifact-bound proof
+  # without starting another iPhone UI session. The full gate still must pass.
+  release_gate_timing_run \
+    "Seal frozen iOS physical gate" \
+    seal_frozen_ios_release_gate
+  release_gate_timing_run \
+    "Windows and Android release join" \
+    run_windows_release_mobile_join_e2e_gate
+  release_gate_timing_run \
+    "Linux and Android release join" \
+    run_linux_release_mobile_join_e2e_gate
 
   release_gate_timing_run \
     "Local mobile QR join latency" \
@@ -2702,7 +2728,7 @@ main() {
 
   # Routed idle CPU and roaming remain serial. The remaining functional Docker
   # projects have isolated names/subnets and no timing assertions, so overlap
-  # them and join before throughput or any host/device measurement begins.
+  # them and join before throughput or any host measurement begins.
   release_gate_timing_run \
     "Docker routed continuity and roaming" \
     run_docker_signal_gates
@@ -2722,28 +2748,6 @@ main() {
   release_gate_timing_run \
     "macOS daemon idle CPU" \
     run_macos_daemon_idle_cpu_gate
-  release_gate_timing_run \
-    "Android legacy package replacement" \
-    run_android_legacy_replacement_gate
-  release_gate_timing_run \
-    "Physical mobile underlay recovery" \
-    run_mobile_underlay_change_gates
-
-  # One physical Pixel cannot safely serve multiple admin/joiner drivers at
-  # once. Keep these exact-artifact public-UI lanes serial, while reusing the
-  # already installed signed APK and host-built desktop artifacts.
-  release_gate_timing_run \
-    "iOS and Android bidirectional release join" \
-    run_mobile_join_e2e_gate
-  release_gate_timing_run \
-    "Windows and Android release join" \
-    run_windows_release_mobile_join_e2e_gate
-  release_gate_timing_run \
-    "Linux and Android release join" \
-    run_linux_release_mobile_join_e2e_gate
-  release_gate_timing_run \
-    "Seal frozen iOS physical gate" \
-    seal_frozen_ios_release_gate
 
   local elapsed target_status
   elapsed="$(( $(date +%s) - RELEASE_GATE_STARTED_AT ))"

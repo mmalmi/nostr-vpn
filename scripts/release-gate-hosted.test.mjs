@@ -13,7 +13,7 @@ const functions = [
   'main',
 ].map((name) => source.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0] ?? '').join('\n')
 
-function runRoute(command, { complete = '0' } = {}) {
+function runRoute(command, { complete = '0', full = false, failCheck = '' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-hosted-route-'))
   try {
     const result = spawnSync('bash', ['-c', `
@@ -25,7 +25,14 @@ release_gate_state_init() { :; }
 release_gate_parallel_init() { RELEASE_GATE_PARALLEL_LOG_DIR="$1"; }
 release_gate_timing_init() { :; }
 release_gate_cleanup() { :; }
-release_gate_timing_run() { shift; "$@"; }
+release_gate_timing_run() {
+  if [[ "$NVPN_TEST_FULL_ROUTE" == 1 ]]; then
+    echo "check:$2"
+    [[ "$2" != "$NVPN_TEST_FAIL_CHECK" ]] || return 75
+  else
+    shift; "$@"
+  fi
+}
 release_gate_enforce_complete_real_network_modes() { :; }
 release_gate_require_complete_fixture_inputs() { :; }
 seal_release_gate_app_candidate() { :; }
@@ -40,15 +47,26 @@ build_release_gate_web_image() { echo build-web; }
 run_docker_signal_gates() { echo routing-and-roaming; }
 release_gate_parallel_start() { echo "lane:$1"; RELEASE_GATE_PARALLEL_LAST_INDEX=0; }
 release_gate_parallel_wait_group() { echo joined-functional-lanes; }
-windows_platform_lane_requested() { echo forbidden-fleet-probe; return 99; }
+windows_platform_lane_requested() {
+  [[ "$NVPN_TEST_FULL_ROUTE" == 1 ]] && return 0
+  echo forbidden-fleet-probe; return 99
+}
+macos_platform_lane_requested() { return 0; }
+linux_platform_lane_requested() { return 0; }
 ${functions}
 ${command}
 `, '_', root], {
       encoding: 'utf8',
       timeout: 10_000,
-      env: { ...process.env, NVPN_RELEASE_GATE_LOG_DIR: join(root, 'logs'), NVPN_RELEASE_GATE_REQUIRE_COMPLETE: complete },
+      env: {
+        ...process.env,
+        NVPN_RELEASE_GATE_LOG_DIR: join(root, 'logs'),
+        NVPN_RELEASE_GATE_REQUIRE_COMPLETE: complete,
+        NVPN_TEST_FULL_ROUTE: full ? '1' : '0',
+        NVPN_TEST_FAIL_CHECK: failCheck,
+      },
     })
-    return { ...result, files: readdirSync(root) }
+    return { ...result, files: readdirSync(root, { recursive: true }) }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
@@ -83,4 +101,50 @@ test('default Docker gate retains both paid-exit fixtures and their mint build',
   assert.match(result.stdout, /lane:Docker Spilman paid exit/)
   assert.match(result.stdout, /lane:Docker automatic Spilman paid exit/)
   assert.match(result.stdout, /joined-functional-lanes/)
+})
+
+test('full gate completes and seals one serial phone window before the unattended tail', () => {
+  const result = runRoute('main', { full: true })
+  assert.equal(result.status, 0, result.stderr)
+  const checks = result.stdout.split('\n').filter(line => line.startsWith('check:'))
+    .map(line => line.slice('check:'.length))
+  const first = checks.indexOf('run_mobile_idle_cpu_gates')
+  const seal = checks.indexOf('seal_frozen_ios_release_gate')
+  assert.deepEqual(checks.slice(first, seal + 1), [
+    'run_mobile_idle_cpu_gates',
+    'run_mobile_wireguard_exit_gates',
+    'run_android_legacy_replacement_gate',
+    'run_mobile_underlay_change_gates',
+    'run_mobile_join_e2e_gate',
+    'seal_frozen_ios_release_gate',
+  ])
+  assert.ok(checks.indexOf('verify_paid_exit_seller_ui_gates') < first)
+  for (const check of [
+    'run_windows_release_mobile_join_e2e_gate', 'run_linux_release_mobile_join_e2e_gate',
+    'run_mobile_qr_join_latency_gate', 'run_local_fips_transit_gate',
+    'run_docker_signal_gates', 'run_docker_isolated_functional_gates',
+    'run_docker_perf_gate', './scripts/release-gate-host-pair-latency.sh',
+    './scripts/release-gate-host-pair-loaded-latency.sh', 'run_macos_daemon_idle_cpu_gate',
+  ]) assert.ok(checks.indexOf(check) > seal, `${check} interrupted the phone window or was omitted`)
+  assert.match(result.stdout, /Release gate passed/)
+})
+
+test('desktop evidence failure stops before phone work and phone failure cannot seal evidence', () => {
+  for (const [failCheck, forbidden] of [
+    ['verify_paid_exit_seller_ui_gates', 'run_mobile_idle_cpu_gates'],
+    ['run_mobile_underlay_change_gates', 'seal_frozen_ios_release_gate'],
+  ]) {
+    const result = runRoute('main', { full: true, failCheck })
+    assert.equal(result.status, 75, result.stderr)
+    assert.ok(!result.stdout.includes(`check:${forbidden}`))
+    assert.doesNotMatch(result.stdout, /Release gate passed/)
+  }
+})
+
+test('an unattended tail failure follows the iOS seal without producing a complete gate summary', () => {
+  const result = runRoute('main', { full: true, failCheck: 'run_docker_perf_gate' })
+  assert.equal(result.status, 75, result.stderr)
+  assert.match(result.stdout, /check:seal_frozen_ios_release_gate/)
+  assert.doesNotMatch(result.stdout, /Release gate passed/)
+  assert.ok(!result.files.some(path => path.endsWith('release-gate-summary.json')))
 })
