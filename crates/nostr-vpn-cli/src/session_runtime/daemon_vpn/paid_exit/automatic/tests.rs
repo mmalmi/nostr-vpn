@@ -3,6 +3,9 @@ use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::InternetSource;
 use nostr_vpn_core::paid_routes::{PaidRouteChannelTerms, PaidRouteIpSupport, PaidRoutePricing};
 
+#[path = "mint_failover_tests.rs"]
+mod mint_failover_tests;
+
 #[test]
 fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session() {
     let seller = Keys::generate();
