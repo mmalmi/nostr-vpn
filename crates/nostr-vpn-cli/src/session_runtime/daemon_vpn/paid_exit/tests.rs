@@ -191,7 +191,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
         &[peer.clone()],
     )
     .unwrap();
-    assert_eq!(result.error_count, 1);
+    assert_eq!(result.applied_count, 1);
     // An authenticated relay connection is not evidence of the buyer's IP.
     peer.transport_type = Some("websocket".into());
     peer.transport_addr = Some("203.0.113.10:443".into());
@@ -214,7 +214,12 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     .unwrap();
     assert_eq!(result.error_count, 1);
     let store = load_paid_route_store(&paid_route_store_file_path(&config_path)).unwrap();
-    assert_eq!(store.seller_free_probe_sources.len(), 1);
-    assert!(store.seller_free_probe_sources.contains_key("203.0.113.9"));
+    assert_eq!(store.seller_free_probe_sources.len(), 2);
+    assert!(
+        store
+            .seller_free_probe_sources
+            .keys()
+            .all(|key| key.starts_with("203.0.113.9#"))
+    );
     fs::remove_dir_all(dir).unwrap();
 }

@@ -89,7 +89,12 @@ fn trial_request(
         authenticated_buyer_pubkey: buyer.public_key().to_hex(),
         authenticated_source_ip: ip.map(|ip| ip.parse().unwrap()),
         seller_npub: seller.public_key().to_bech32().unwrap(),
-        config: sample_config(),
+        config: {
+            let mut config = sample_config();
+            config.channel.free_probe_units = 8 * 1024 * 1024;
+            config.channel.grace_units = 0;
+            config
+        },
         now_unix: now,
     }
 }
@@ -322,27 +327,88 @@ fn full_trial_table_does_not_evict_recent_addresses() {
 fn seller_trial_byte_budget_includes_grace() {
     let seller = Keys::generate();
     let mut store = PaidRouteStore::default();
-    let mut first = trial_request(
+    for index in 0..8 {
+        let mut request = trial_request(
+            &seller,
+            &Keys::generate(),
+            &format!("large-{index}"),
+            Some(&format!("203.0.113.{index}")),
+            100,
+        );
+        request.config.channel.free_probe_units = 7 * 1024 * 1024;
+        request.config.channel.grace_units = 1024 * 1024;
+        store.apply_seller_session_open(request).unwrap();
+    }
+    let error = store
+        .apply_seller_session_open(trial_request(
+            &seller,
+            &Keys::generate(),
+            "overflow",
+            Some("203.0.113.99"),
+            101,
+        ))
+        .unwrap_err();
+    assert!(error.to_string().contains("budget"));
+}
+
+#[test]
+fn conference_users_share_a_byte_pool_and_payment_frees_a_reservation() {
+    let seller = Keys::generate();
+    let mut store = PaidRouteStore::default();
+    let first = Keys::generate();
+    let mut request = trial_request(&seller, &first, "conference-0", Some("203.0.113.9"), 100);
+    request.config.channel.free_probe_units = 1024 * 1024;
+    request.config.channel.grace_units = 0;
+    store.apply_seller_session_open(request.clone()).unwrap();
+    for index in 1..8 {
+        let buyer = Keys::generate();
+        let mut other = trial_request(
+            &seller,
+            &buyer,
+            &format!("conference-{index}"),
+            Some("203.0.113.9"),
+            100,
+        );
+        other.config = request.config.clone();
+        store.apply_seller_session_open(other).unwrap();
+    }
+    let mut waiting = trial_request(
         &seller,
         &Keys::generate(),
-        "large-trial",
-        Some("203.0.113.1"),
-        100,
+        "conference-waiting",
+        Some("203.0.113.9"),
+        101,
     );
-    first.config.channel.free_probe_units = 63 * 1024 * 1024;
-    first.config.channel.grace_units = 1024 * 1024;
-    store.apply_seller_session_open(first).unwrap();
+    waiting.config = request.config.clone();
+    assert!(store.apply_seller_session_open(waiting.clone()).is_err());
+    store
+        .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
+            envelope: seller_payment_envelope(
+                "internet-exit",
+                "conference-0",
+                &first.public_key().to_bech32().unwrap(),
+                &seller.public_key().to_bech32().unwrap(),
+                101,
+                StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
+                    mint_url: "https://mint.minibits.cash/Bitcoin".into(),
+                    unit: "sat".into(),
+                    capacity: 10,
+                    expires_unix: 500,
+                    receiver_pubkey_hex: seller.public_key().to_hex(),
+                    paid_msat: 1_000,
+                    payment: sample_spilman_payment("channel-conference-0", 1),
+                }),
+            ),
+            seller_npub: seller.public_key().to_bech32().unwrap(),
+            config: request.config,
+            now_unix: 101,
+        })
+        .unwrap();
     assert!(
         store
-            .apply_seller_session_open(trial_request(
-                &seller,
-                &Keys::generate(),
-                "overflow",
-                Some("203.0.113.2"),
-                101
-            ))
-            .unwrap_err()
-            .to_string()
-            .contains("budget")
+            .apply_seller_session_open(waiting)
+            .unwrap()
+            .allow_routing
     );
+    assert_eq!(store.seller_free_probe_sources.len(), 8);
 }

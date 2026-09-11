@@ -4,6 +4,7 @@ use std::net::{IpAddr, Ipv6Addr};
 const FREE_PROBE_WINDOW_SECS: u64 = 24 * 60 * 60;
 const MAX_FREE_PROBE_SOURCES: usize = 256;
 const MAX_FREE_PROBE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_SOURCE_FREE_PROBE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteFreeProbeSource {
@@ -40,13 +41,17 @@ impl PaidRouteStore {
             },
         };
         self.seller_free_probe_sources.retain(|_, grant| {
-            now_unix.saturating_sub(grant.granted_at_unix) < FREE_PROBE_WINDOW_SECS
+            // This is an unpaid-trial pool. Once this authenticated session
+            // pays, its reservation no longer excludes other users behind NAT.
+            // Historical per-buyer eligibility remains enforced by the sessions.
+            let paid = self
+                .sessions
+                .get(&super::persistence::seller_session_id_for_lease(
+                    &grant.lease_id,
+                ))
+                .is_some_and(|session| session.session.payment.paid_msat > 0);
+            !paid && now_unix.saturating_sub(grant.granted_at_unix) < FREE_PROBE_WINDOW_SECS
         });
-        if self.seller_free_probe_sources.contains_key(&key) {
-            return Err(anyhow!(
-                "free probe already granted to this source address in the last 24 hours; use a paid channel"
-            ));
-        }
         if self
             .seller_free_probe_sources
             .values()
@@ -60,6 +65,20 @@ impl PaidRouteStore {
             .channel
             .free_probe_units
             .saturating_add(config.channel.grace_units);
+        // v6 stored one entry keyed by the source; new grants include their
+        // lease id. Both forms count against the same network's byte pool.
+        let source_allocated = self
+            .seller_free_probe_sources
+            .iter()
+            .filter(|(stored_key, _)| stored_key.split('#').next() == Some(key.as_str()))
+            .fold(0_u64, |total, (_, grant)| {
+                total.saturating_add(grant.granted_bytes)
+            });
+        if source_allocated.saturating_add(granted_bytes) > MAX_SOURCE_FREE_PROBE_BYTES {
+            return Err(anyhow!(
+                "source address free-probe byte budget exhausted for 24 hours; use a paid channel"
+            ));
+        }
         let allocated = self
             .seller_free_probe_sources
             .values()
@@ -74,7 +93,7 @@ impl PaidRouteStore {
             ));
         }
         self.seller_free_probe_sources.insert(
-            key,
+            format!("{key}#{lease_id}"),
             PaidRouteFreeProbeSource {
                 buyer_pubkey: buyer_pubkey.to_string(),
                 lease_id: lease_id.to_string(),
