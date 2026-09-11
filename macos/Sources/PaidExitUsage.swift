@@ -42,7 +42,7 @@ struct PaidExitUsage: Identifiable {
             let history = sessionsByChannel[channel.channelId] ?? []
             var usage = usageByProvider[provider] ?? PaidExitUsage(id: provider, name: "")
             for session in history {
-                usage.add(bytes: max(session.bytes, session.deliveredUnits), paidMsat: 0)
+                usage.add(bytes: session.bytes, paidMsat: 0)
             }
             // Payments are cumulative per channel. Reserved funding and the
             // session's copy of that same payment must not be added again.

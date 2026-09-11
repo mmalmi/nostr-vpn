@@ -11,6 +11,7 @@ struct PaidExitUsageTests {
         let active = session("active", channel: "renewed", bytes: 3_000_000, paid: 4_000)
         var closed = session("closed", channel: "first", bytes: 2_000_000, paid: 2_000)
         closed.lifecycleStatus = "closed"
+        closed.deliveredUnits = 2_000_000_000
         let result = PaidExitUsage.providers(
             channels: [first, first, renewed, other, seller],
             sessions: [closed, active, active,
@@ -19,7 +20,7 @@ struct PaidExitUsageTests {
             offers: []
         )
         precondition(result.count == 2)
-        precondition(result[0].bytes == 5_000_000, "retain closed and renewed channel traffic once")
+        precondition(result[0].bytes == 5_000_000, "use observed traffic, including closed channels, rather than billing units")
         precondition(result[0].paidMsat == 6_500, "count cumulative payments once per channel")
         precondition(result[0].paymentText == "6.5 sat")
         precondition(result[0].name.contains("198.51.100.42"), "retain a readable provider after its offer expires")
