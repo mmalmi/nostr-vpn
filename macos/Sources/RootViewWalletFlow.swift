@@ -3,9 +3,12 @@ import SwiftUI
 extension RootView {
     func paidRouteWalletFlowSheet(
         _ flow: PaidRouteWalletFlow,
-        wallet: NativePaidRouteWalletState
+        wallet: NativePaidRouteWalletState,
+        selectedMintUrl: String,
+        showsResult: Bool,
+        flowError: String
     ) -> some View {
-        let selectedMint = wallet.mints.first { $0.url == paidRouteWalletSelectedMint }
+        let selectedMint = wallet.mints.first { $0.url == selectedMintUrl }
         let action = wallet.lastAction
         let actionMatchesFlow = flow == .receive
             ? action.kind.hasPrefix("topup")
@@ -117,14 +120,14 @@ extension RootView {
                 }
             }
 
-            if !paidRouteWalletFlowError.isEmpty {
-                Text(paidRouteWalletFlowError)
+            if !flowError.isEmpty {
+                Text(flowError)
                     .font(.callout)
                     .foregroundStyle(.red)
                     .textSelection(.enabled)
             }
-            if paidRouteWalletShowsResult && !manager.actionInFlight
-                && actionMatchesFlow && action.mintUrl == paidRouteWalletSelectedMint {
+            if showsResult && !manager.actionInFlight
+                && actionMatchesFlow && action.mintUrl == selectedMintUrl {
                 paidRouteWalletActionResult(action, showInvoiceQRCode: flow == .receive)
             }
         }

@@ -154,8 +154,11 @@ extension RootView {
 
             paidRouteWalletActionResult(wallet.lastAction)
         }
-        .sheet(item: $paidRouteWalletFlow) { flow in
-            paidRouteWalletFlowSheet(flow, wallet: wallet)
+        .sheet(item: $paidRouteWalletFlow) { [paidRouteWalletSelectedMint, paidRouteWalletShowsResult, paidRouteWalletFlowError] flow in
+            paidRouteWalletFlowSheet(
+                flow, wallet: wallet, selectedMintUrl: paidRouteWalletSelectedMint,
+                showsResult: paidRouteWalletShowsResult, flowError: paidRouteWalletFlowError
+            )
         }
     }
 
