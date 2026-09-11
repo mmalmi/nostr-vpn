@@ -15,6 +15,11 @@ pub(super) fn start_funding(
     let changed = update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
         store.begin_buyer_session_funding(session_id, now_unix)
     })?;
+    if changed {
+        // Let the daemon withdraw the trial route before the wallet opens any
+        // mint connections. Start the request on the next control tick.
+        return Ok(true);
+    }
     let app = app.clone();
     let config_path = config_path.to_path_buf();
     let session_id = session_id.to_string();
@@ -99,8 +104,9 @@ pub(super) async fn update_funding(
         .filter(|candidate| candidate.ready_to_fund(now_unix))
     {
         let session_id = candidate.session_id.clone();
-        changed |= start_funding(automatic, app, config_path, &session_id, now_unix)?;
-        if automatic.funding.is_some() {
+        let started = start_funding(automatic, app, config_path, &session_id, now_unix)?;
+        changed |= started;
+        if started || automatic.funding.is_some() {
             automatic
                 .candidate
                 .as_mut()
