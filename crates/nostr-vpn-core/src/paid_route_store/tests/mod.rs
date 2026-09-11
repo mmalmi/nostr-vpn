@@ -45,6 +45,7 @@ impl Drop for ScratchDir {
 
 mod buyer;
 mod closing_store;
+mod renewal;
 mod returning_and_trial_limits;
 mod seller_open;
 mod updates;

@@ -665,3 +665,30 @@ fn seller_payment_balance_update_accepts_underreported_due_without_importing_usa
         150
     );
 }
+
+#[test]
+fn exhausted_buyer_channel_can_close_at_its_funded_capacity() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let mut config = sample_config();
+    config.pricing.price_msat_per_gb = 10_000_000_000;
+    config.channel.free_probe_units = 0;
+    config.channel.grace_units = 0;
+    let (mut store, session_id, _) = buyer_store_with_session(&seller, &buyer, &config);
+    let capacity = store.sessions[&session_id].session.payment.capacity_sat;
+    let result = store
+        .build_buyer_signed_payment_envelope(
+            &FakePaymentSigner,
+            BuildPaidRouteBuyerSignedPaymentEnvelopeRequest {
+                session_id,
+                buyer_npub: buyer.public_key().to_bech32().unwrap(),
+                kind: BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose,
+                delivered_units: Some(capacity * 100 + 50),
+                paid_msat: None,
+                now_unix: 150,
+            },
+        )
+        .expect("settle the funded capacity even if an in-flight packet exceeded it");
+    assert_eq!(result.paid_msat, capacity * 1_000);
+    assert!(result.amount_due_msat > result.paid_msat);
+}

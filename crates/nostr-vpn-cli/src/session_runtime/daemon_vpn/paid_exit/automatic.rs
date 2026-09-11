@@ -3,6 +3,8 @@ use nostr_vpn_core::paid_routes::PaidRouteUsage;
 
 #[path = "automatic/payments.rs"]
 mod payments;
+#[path = "automatic/renewal.rs"]
+mod renewal;
 #[path = "automatic/runtime.rs"]
 mod runtime;
 #[path = "automatic/selection.rs"]

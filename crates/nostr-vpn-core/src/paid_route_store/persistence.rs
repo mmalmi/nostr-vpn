@@ -67,6 +67,7 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
         // v5 records the exact selected buyer session and its open-attempt time.
         // Serde defaults preserve existing sessions; the daemon selects the newest
         // eligible legacy session once before sending another open request.
+        // v7 persists pending channel replacements so retries reuse wallet funding.
         // v6 preserves successful-provider history independently of live health
         // and persists rolling free-probe grants across daemon restarts.
         object.insert("version".to_string(), CURRENT_VERSION.into());
@@ -541,13 +542,25 @@ pub(super) fn ensure_buyer_channel_accepts_payment(
 }
 
 pub(super) fn seller_admission_preferred(
+    store: &PaidRouteStore,
     candidate: &PaidRouteSellerAdmission,
     existing: &PaidRouteSellerAdmission,
 ) -> bool {
     match (candidate.allow_routing, existing.allow_routing) {
         (true, false) => true,
         (false, true) => false,
-        _ => candidate.updated_at_unix > existing.updated_at_unix,
+        _ => {
+            let order = |admission: &PaidRouteSellerAdmission| {
+                (
+                    store
+                        .channels
+                        .get(&admission.channel_id)
+                        .map_or(0, |channel| channel.created_at_unix),
+                    admission.updated_at_unix,
+                )
+            };
+            order(candidate) > order(existing)
+        }
     }
 }
 

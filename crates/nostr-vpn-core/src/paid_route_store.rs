@@ -28,7 +28,7 @@ use crate::paid_routes::{
     PaidRouteSessionOpen, PaidRouteUsage, SignedPaidRouteOffer,
 };
 
-const CURRENT_VERSION: u8 = 6;
+const CURRENT_VERSION: u8 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteStore {
@@ -48,6 +48,8 @@ pub struct PaidRouteStore {
     pub sessions: BTreeMap<String, PaidRouteSessionRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_admissions: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buyer_session_renewals: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub selected_buyer_session_id: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -69,6 +71,7 @@ impl Default for PaidRouteStore {
             channels: BTreeMap::new(),
             sessions: BTreeMap::new(),
             buyer_session_admissions: BTreeMap::new(),
+            buyer_session_renewals: BTreeMap::new(),
             selected_buyer_session_id: String::new(),
             buyer_session_open_attempts: BTreeMap::new(),
             seller_session_tunnel_ips: BTreeMap::new(),
@@ -558,6 +561,7 @@ pub struct PaidRouteSellerCollectionState {
 
 mod automatic_selection;
 mod buyer_payment;
+mod buyer_renewal;
 mod buyer_session;
 mod free_probe;
 mod persistence;

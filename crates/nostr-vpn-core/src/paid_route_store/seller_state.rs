@@ -79,7 +79,7 @@ impl PaidRouteStore {
                 None => {
                     by_buyer.insert(admission.buyer_pubkey.clone(), admission);
                 }
-                Some(existing) if seller_admission_preferred(&admission, existing) => {
+                Some(existing) if seller_admission_preferred(self, &admission, existing) => {
                     by_buyer.insert(admission.buyer_pubkey.clone(), admission);
                 }
                 Some(_) => {}
@@ -132,9 +132,9 @@ impl PaidRouteStore {
             .filter_map(|record| self.seller_admission_for_session(config, now_unix, record))
             .filter(|admission| admission.buyer_pubkey == buyer_pubkey)
             .max_by(|left, right| {
-                if seller_admission_preferred(left, right) {
+                if seller_admission_preferred(self, left, right) {
                     std::cmp::Ordering::Greater
-                } else if seller_admission_preferred(right, left) {
+                } else if seller_admission_preferred(self, right, left) {
                     std::cmp::Ordering::Less
                 } else {
                     std::cmp::Ordering::Equal

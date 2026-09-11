@@ -157,9 +157,15 @@ impl PaidRouteStore {
             delivered_units,
         );
         let previous_paid_msat = session_record.session.payment.paid_msat;
-        let paid_msat = request
-            .paid_msat
-            .unwrap_or_else(|| previous_paid_msat.max(amount_due_msat));
+        let paid_msat = request.paid_msat.unwrap_or_else(|| {
+            previous_paid_msat.max(amount_due_msat).min(
+                session_record
+                    .session
+                    .payment
+                    .capacity_sat
+                    .saturating_mul(1_000),
+            )
+        });
         validate_paid_route_payment_progress(
             "paid route buyer payment",
             paid_msat,
@@ -583,6 +589,13 @@ impl PaidRouteStore {
     ) -> Option<PaidRouteBuyerUsageSession> {
         let mut best = None::<(u64, PaidRouteBuyerUsageSession)>;
         for record in self.sessions.values() {
+            // Preparing a newer channel must not divert accounting away from
+            // the route that is still selected and carrying the traffic.
+            if !self.selected_buyer_session_id.is_empty()
+                && record.session.session_id != self.selected_buyer_session_id
+            {
+                continue;
+            }
             let Some(lease_record) = self.leases.get(&record.session.lease_id) else {
                 continue;
             };

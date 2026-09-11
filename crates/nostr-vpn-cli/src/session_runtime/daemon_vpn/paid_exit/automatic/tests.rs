@@ -230,6 +230,54 @@ fn automatic_probe_waits_for_authenticated_seller_admission() {
 }
 
 #[test]
+fn funded_idle_provider_stays_selected_and_unanswered_traffic_gets_rechecked() {
+    let seller = Keys::generate().public_key().to_hex();
+    let mut candidate = test_candidate(&seller);
+    candidate.funded = true;
+    candidate.probe_succeeded = true;
+    candidate.observe_presence(&[test_peer_status(&seller, 100)], 100);
+    candidate.observe_usage(
+        &PaidRouteUsage {
+            tx_bytes: 10,
+            rx_bytes: 20,
+            ..Default::default()
+        },
+        100,
+    );
+    candidate.observe_presence(&[test_peer_status(&seller, 200)], 200);
+    assert!(
+        !candidate.should_failover(200),
+        "healthy idle connection must stay selected"
+    );
+    assert!(!candidate.ready_to_probe(true, 200));
+    candidate.observe_usage(
+        &PaidRouteUsage {
+            tx_bytes: 10,
+            ..Default::default()
+        },
+        200,
+    );
+    candidate.observe_presence(&[test_peer_status(&seller, 261)], 261);
+    assert!(
+        candidate.ready_to_probe(true, 261),
+        "check actual Internet delivery before switching provider"
+    );
+    assert!(!candidate.should_failover(261));
+    candidate.observe_usage(
+        &PaidRouteUsage {
+            rx_bytes: 20,
+            ..Default::default()
+        },
+        262,
+    );
+    assert!(!candidate.ready_to_probe(true, 262));
+    assert!(
+        candidate.should_failover(322),
+        "a lost authenticated peer still needs recovery"
+    );
+}
+
+#[test]
 fn returning_provider_can_fund_before_probe_but_needs_fresh_health_to_stream_payments() {
     let seller = Keys::generate();
     let pubkey = seller.public_key().to_hex();
@@ -387,7 +435,7 @@ fn test_candidate(seller_pubkey: &str) -> PaidExitAutomaticCandidate {
         last_authenticated_at: None,
         last_tx_at: None,
         last_rx_at: None,
-        last_healthy_at: None,
+        unanswered_since: None,
         failed: false,
     }
 }

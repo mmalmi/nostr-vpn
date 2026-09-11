@@ -538,7 +538,10 @@ impl PaidRouteStore {
             capacity_sat,
         )?;
         let session_usage = self.sessions[&session_id].session.usage.clone();
-        let computed_due = context.config.amount_due_msat(&session_usage);
+        let computed_due = context
+            .config
+            .amount_due_msat(&session_usage)
+            .min(capacity_sat.saturating_mul(1_000));
         if final_paid_msat < computed_due {
             return Err(anyhow!(
                 "paid route close underpays amount due: {} msat < {} msat",

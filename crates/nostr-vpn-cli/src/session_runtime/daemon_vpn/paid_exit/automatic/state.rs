@@ -11,6 +11,8 @@ pub(crate) struct PaidExitAutomaticBuyer {
     pub(super) candidate: Option<PaidExitAutomaticCandidate>,
     pub(super) rejected_offers: HashMap<String, u64>,
     pub(super) probe: Option<PaidExitAutomaticProbe>,
+    pub(super) renewal_funding: Option<tokio::task::JoinHandle<Result<()>>>,
+    pub(super) renewal_retry_at: u64,
 }
 
 pub(super) struct PaidExitAutomaticProbe {
@@ -30,7 +32,7 @@ pub(super) struct PaidExitAutomaticCandidate {
     pub(super) last_authenticated_at: Option<u64>,
     pub(super) last_tx_at: Option<u64>,
     pub(super) last_rx_at: Option<u64>,
-    pub(super) last_healthy_at: Option<u64>,
+    pub(super) unanswered_since: Option<u64>,
     pub(super) failed: bool,
 }
 
@@ -79,8 +81,10 @@ impl PaidExitAutomaticCandidate {
         if delta.rx_bytes > 0 {
             self.last_rx_at = Some(now_unix);
         }
-        if self.health_evidence_fresh(now_unix) {
-            self.last_healthy_at = Some(now_unix);
+        if delta.rx_bytes > 0 {
+            self.unanswered_since = None;
+        } else if delta.tx_bytes > 0 {
+            self.unanswered_since.get_or_insert(now_unix);
         }
     }
 
@@ -97,7 +101,12 @@ impl PaidExitAutomaticCandidate {
 
     pub(super) fn ready_to_probe(&self, seller_admitted: bool, now_unix: u64) -> bool {
         seller_admitted
-            && self.probe_started_at.is_none()
+            && (self.probe_started_at.is_none()
+                || (self.funded
+                    && self.probe_succeeded
+                    && self.unanswered_since.is_some_and(|sent| {
+                        now_unix.saturating_sub(sent) >= PAID_EXIT_AUTO_FAILOVER_SECS
+                    })))
             && self.last_authenticated_at.is_some_and(|observed| {
                 now_unix.saturating_sub(observed) <= PAID_EXIT_AUTO_HEALTH_TTL_SECS
             })
@@ -124,9 +133,8 @@ impl PaidExitAutomaticCandidate {
             return true;
         }
         self.funded
-            && self.last_healthy_at.is_some_and(|healthy| {
-                now_unix.saturating_sub(healthy) >= PAID_EXIT_AUTO_FAILOVER_SECS
-            })
+            && now_unix.saturating_sub(self.last_authenticated_at.unwrap_or(self.selected_at))
+                >= PAID_EXIT_AUTO_FAILOVER_SECS
     }
 }
 
@@ -153,6 +161,10 @@ impl PaidExitAutomaticBuyer {
         }
         self.generation = self.generation.wrapping_add(1);
         self.candidate = None;
+        // Funding already in progress must finish persisting its wallet result.
+        // Dropping the handle detaches it; aborting could lose funded state.
+        self.renewal_funding.take();
+        self.renewal_retry_at = 0;
         self.rejected_offers.clear();
     }
 
@@ -165,6 +177,19 @@ impl PaidExitAutomaticBuyer {
         let mut candidates = store.clone();
         for offer in self.rejected_offers.keys() {
             candidates.offers.remove(offer);
+        }
+        if let Some(current) = self
+            .candidate
+            .as_ref()
+            .filter(|candidate| !candidate.failed)
+        {
+            let mut selected = candidates.clone();
+            selected
+                .offers
+                .retain(|key, _| *key == current.selection.offer_key);
+            if let Ok(selection) = selected.select_automatic_offer(now_unix) {
+                return Ok(selection);
+            }
         }
         candidates.select_automatic_offer(now_unix)
     }
@@ -195,7 +220,7 @@ impl PaidExitAutomaticBuyer {
             last_authenticated_at: None,
             last_tx_at: None,
             last_rx_at: None,
-            last_healthy_at: None,
+            unanswered_since: None,
             failed: false,
         });
     }
@@ -212,5 +237,9 @@ impl PaidExitAutomaticBuyer {
         }
         self.generation = self.generation.wrapping_add(1);
         self.candidate = None;
+        // Funding already in progress must finish persisting its wallet result.
+        // Dropping the handle detaches it; aborting could lose funded state.
+        self.renewal_funding.take();
+        self.renewal_retry_at = 0;
     }
 }

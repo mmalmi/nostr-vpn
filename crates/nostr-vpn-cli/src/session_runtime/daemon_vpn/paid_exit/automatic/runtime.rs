@@ -87,6 +87,7 @@ pub(crate) async fn update_automatic_paid_exit(
         let bind_interface = runtime.iface().to_string();
         if let Some(candidate) = automatic.candidate.as_mut() {
             candidate.probe_started_at = Some(now_unix);
+            candidate.unanswered_since = None;
             candidate.last_tx_at = None;
             candidate.last_rx_at = None;
         }
@@ -126,9 +127,7 @@ pub(crate) async fn update_automatic_paid_exit(
                     record_paid_exit_probe(config_path, &session_id, measurement, now_unix)?;
                     if let Some(candidate) = automatic.candidate.as_mut() {
                         candidate.probe_succeeded = true;
-                        if candidate.health_evidence_fresh(now_unix) {
-                            candidate.last_healthy_at = Some(now_unix);
-                        }
+                        candidate.unanswered_since = None;
                     }
                 }
                 Err(error) => {
@@ -158,7 +157,6 @@ pub(crate) async fn update_automatic_paid_exit(
             Ok(envelope) => {
                 if let Some(candidate) = automatic.candidate.as_mut() {
                     candidate.funded = true;
-                    candidate.last_healthy_at = Some(now_unix);
                 }
                 if let Err(error) = queue_paid_exit_payment(app, config_path, &envelope) {
                     eprintln!("paid-exit: automatic channel-open queue failed: {error}");
@@ -175,6 +173,8 @@ pub(crate) async fn update_automatic_paid_exit(
             }
         }
     }
+
+    renewal::renew_automatic_paid_exit(automatic, runtime, app, config_path, now_unix).await?;
 
     if automatic
         .candidate

@@ -179,7 +179,7 @@ pub(crate) fn queue_recovered_paid_exit_channel_open(
     Ok(())
 }
 
-fn drain_paid_exit_buyer_usage(
+pub(super) fn drain_paid_exit_buyer_usage(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     config_path: &Path,
     seller_pubkey: &str,
