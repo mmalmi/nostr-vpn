@@ -620,6 +620,24 @@
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
+    fn paid_control_acknowledgments_survive_removing_the_exit_route() {
+        let seller = Keys::generate();
+        let seller_peer = PeerIdentity::from_npub(&seller.public_key().to_bech32().unwrap()).unwrap();
+        let mesh = FipsMeshRuntime::new(Vec::new());
+        for frame in [
+            FipsControlFrame::PaidRoutePaymentAck { id: "a".repeat(64) },
+            FipsControlFrame::PaidRouteSessionOpenAck { lease_id: "lease".into() },
+        ] {
+            assert_eq!(
+                control_frame_source_pubkey(&mesh, seller_peer, &frame),
+                Some(seller.public_key().to_hex()),
+                "authenticated replies must reach the pending-payment/session validator in Direct mode"
+            );
+        }
+    }
+
+    #[test]
     fn control_frame_destinations_can_target_pending_join_requester() {
         let keys = Keys::generate();
         let requester_pubkey = keys.public_key().to_hex();

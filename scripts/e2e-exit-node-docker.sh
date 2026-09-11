@@ -1411,6 +1411,34 @@ fi
 assert_idle_cpu_below node-a
 assert_idle_cpu_below node-b
 
+if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
+  "${COMPOSE[@]}" exec -T node-b python3 - <<'PY'
+import json
+import pathlib
+import subprocess
+import time
+
+data = pathlib.Path('/root/.config/nvpn')
+store = json.loads((data / 'paid-routes.json').read_text())
+selected = store['selected_buyer_session_id']
+channel_id = store['sessions'][selected]['session']['payment']['channel_id']
+subprocess.run(['nvpn', 'set', '--internet-source', 'direct'], check=True, stdout=subprocess.DEVNULL)
+deadline = time.monotonic() + 60
+while time.monotonic() < deadline:
+    store = json.loads((data / 'paid-routes.json').read_text())
+    closing = store['channels'][channel_id]['status'] in ('closing', 'closed')
+    pending = list((data / 'paid-exit-payment-outbox').glob('*.json'))
+    if closing and not pending:
+        status = json.loads(subprocess.check_output(['nvpn', 'status', '--json']))
+        assert status['internet_source'] == 'direct'
+        print('Leaving paid mode: final payment acknowledged in Direct mode; outbox empty')
+        break
+    time.sleep(1)
+else:
+    raise AssertionError('final payment was not acknowledged after removing the exit route')
+PY
+fi
+
 if truthy "$PAID_EXIT_MODE"; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
     echo "paid-exit docker e2e passed: $PAID_EXIT_SELECTION_MODE selection and the automatically streamed Spilman balance update allowed paid tunnel traffic, and the public target observed exit IP $NODE_A_PUBLIC_IP"

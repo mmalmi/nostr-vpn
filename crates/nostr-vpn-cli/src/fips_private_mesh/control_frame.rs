@@ -22,6 +22,12 @@ fn control_frame_source_pubkey(
                         frame,
                         FipsControlFrame::PaidRouteSessionOpen { .. }
                             | FipsControlFrame::PaidRoutePayment { .. }
+                            // A provider can leave the routing table before
+                            // its final reply arrives. The payment/session
+                            // handler validates the authenticated sender
+                            // against the locally pending request.
+                            | FipsControlFrame::PaidRoutePaymentAck { .. }
+                            | FipsControlFrame::PaidRouteSessionOpenAck { .. }
                     );
             allow_unknown.then(|| hex::encode(source_peer.pubkey().serialize()))
         })
