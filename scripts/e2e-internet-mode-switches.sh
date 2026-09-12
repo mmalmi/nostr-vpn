@@ -46,4 +46,12 @@ EOF
     "$PROBE_BASE_URL" "$NODE_A_PUBLIC_IP" "$NAT_B_PUBLIC_IP" "$WG_UPSTREAM_IP" \
     "$upstream_npub" "$PAID_EXIT_MINT" "$PAID_EXIT_SELECTION_MODE" \
     < "$ROOT_DIR/scripts/e2e-internet-mode-switches.py"
+  "${COMPOSE[@]}" pause cashu-mint >/dev/null
+  "${COMPOSE[@]}" exec -T node-b python3 - pending "$PAID_EXIT_MINT" \
+    < "$ROOT_DIR/scripts/e2e-internet-mode-funding.py"
+  "${COMPOSE[@]}" unpause cashu-mint >/dev/null
+  "${COMPOSE[@]}" exec -T node-b python3 - completed "$PAID_EXIT_MINT" \
+    < "$ROOT_DIR/scripts/e2e-internet-mode-funding.py"
+  "${COMPOSE[@]}" exec -T node-b nvpn set \
+    --internet-source "paid_$PAID_EXIT_SELECTION_MODE" >/dev/null
 }

@@ -551,8 +551,7 @@ macro_rules! handle_daemon_state_tick {
                                         {
                                             // Automatic -> Manual on the same seller is a
                                             // handover of the existing credit, not settlement.
-                                            if app.public_paid_exit_node_pubkey_hex()
-                                                != reload.app.public_paid_exit_node_pubkey_hex()
+                                            if !automatic_paid_exit.continues_with_manual_provider(&reload.app)
                                                 && let Some(runtime) = fips_tunnel_runtime.as_ref()
                                                 && let Err(error) = finalize_automatic_paid_exit(
                                                     &automatic_paid_exit,

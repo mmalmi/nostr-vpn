@@ -332,6 +332,14 @@ fn automatic_cancellation_never_overwrites_another_internet_mode() {
         ..PaidExitAutomaticBuyer::default()
     };
     let generation = automatic.generation;
+    assert!(automatic.continues_with_manual_provider(&app));
+    let mut different = app.clone();
+    different.select_public_paid_exit_node(&Keys::generate().public_key().to_hex()).unwrap();
+    assert!(!automatic.continues_with_manual_provider(&different));
+    for mode in [InternetSource::Direct, InternetSource::PrivateVpn, InternetSource::WireGuard] {
+        different.set_internet_source(mode);
+        assert!(!automatic.continues_with_manual_provider(&different));
+    }
 
     automatic.cancel_if_disabled(&app);
 
