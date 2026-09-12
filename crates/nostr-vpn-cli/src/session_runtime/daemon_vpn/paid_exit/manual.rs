@@ -41,9 +41,10 @@ impl PaidExitManualBuyer {
         if let Some(probe) = self.probe.take() {
             probe.task.abort();
         }
-        if let Some(funding) = self.funding.take() {
-            funding.task.abort();
-        }
+        // Wallet funding can already have committed. Let its task finish
+        // attaching that result to the original session, as Automatic does.
+        // Dropping its handle prevents completion from changing this selection.
+        self.funding.take();
         self.generation = self.generation.wrapping_add(1);
         self.session_id.clear();
         self.selected_at = 0;

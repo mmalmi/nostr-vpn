@@ -1405,6 +1405,8 @@ fi
 
 if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
   run_spilman_resale_matrix
+  source "$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"
+  run_internet_mode_switch_matrix
 fi
 
 echo "--- Default route ---"
