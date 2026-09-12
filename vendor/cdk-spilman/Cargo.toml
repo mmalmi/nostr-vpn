@@ -72,7 +72,7 @@ features = [
 ]
 
 [dependencies.cashu]
-version = "=0.17.6"
+version = "=0.18.0"
 default-features = false
 package = "cashu"
 

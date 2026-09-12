@@ -200,12 +200,16 @@ impl CashuWalletService {
 }
 
 pub(super) async fn refresh_active_keyset_id(wallet: &cdk::Wallet) -> Result<Id> {
+    // CDK 0.18 keysets(Refresh) silently falls back to cached metadata on
+    // network errors. Funding needs a successful refresh of all mint metadata;
+    // fetch_mint_info propagates those errors and updates the same keyset cache.
     wallet
-        .refresh_keysets()
+        .fetch_mint_info()
         .await
-        .context("Failed to refresh Cashu mint keysets")?
-        .into_iter()
-        .min_by_key(|keyset| keyset.input_fee_ppk)
+        .context("Failed to refresh Cashu mint keysets")?;
+    wallet
+        .active_keyset_with_policy(cdk::wallet::types::KeysetLoadPolicy::CacheOnly)
+        .await
         .map(|keyset| keyset.id)
         .context("Refreshed Cashu mint has no active keyset for the wallet unit")
 }

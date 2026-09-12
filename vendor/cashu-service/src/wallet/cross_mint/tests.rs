@@ -135,6 +135,10 @@ impl MintConnector for LightningMockMintConnector {
             .store(request.amount.to_u64(), Ordering::SeqCst);
         self.state.mint_quote_calls.fetch_add(1, Ordering::SeqCst);
         Ok(MintQuoteResponse::Bolt11(MintQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
+            amount_paid: Amount::ZERO,
+            amount_issued: Amount::ZERO,
+            updated_at: 1,
             quote: self.quote_id.clone(),
             request: K_VALID_BOLT11_INVOICE.to_string(),
             amount: Some(request.amount),
@@ -160,6 +164,14 @@ impl MintConnector for LightningMockMintConnector {
                 .delay_destination_once
                 .swap(false, Ordering::SeqCst);
         Ok(MintQuoteResponse::Bolt11(MintQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
+            amount_paid: if paid && !delayed {
+                Amount::from(self.state.destination_amount_sat.load(Ordering::SeqCst))
+            } else {
+                Amount::ZERO
+            },
+            amount_issued: Amount::ZERO,
+            updated_at: 1,
             quote: self.quote_id.clone(),
             request: K_VALID_BOLT11_INVOICE.to_string(),
             amount: Some(Amount::from(
@@ -211,6 +223,7 @@ impl MintConnector for LightningMockMintConnector {
             .amount_milli_satoshis()
             .ok_or(Error::InvoiceAmountUndefined)?;
         Ok(MeltQuoteCreateResponse::Bolt11(MeltQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
             quote: self.quote_id.clone(),
             amount: Amount::from(amount_msat / 1000),
             fee_reserve: Amount::from(self.fee_reserve_sat),
@@ -232,6 +245,7 @@ impl MintConnector for LightningMockMintConnector {
             unreachable!("unused in Cashu Lightning payment test")
         }
         Ok(MeltQuoteResponse::Bolt11(MeltQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
             quote: self.quote_id.clone(),
             amount: Amount::from(
                 Bolt11Invoice::from_str(K_VALID_BOLT11_INVOICE)
@@ -269,6 +283,7 @@ impl MintConnector for LightningMockMintConnector {
         self.state.melt_calls.fetch_add(1, Ordering::SeqCst);
         self.state.paid.store(true, Ordering::SeqCst);
         Ok(MeltQuoteResponse::Bolt11(MeltQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
             quote: self.quote_id.clone(),
             amount: Amount::from(250_000_u64),
             fee_reserve: Amount::from(self.fee_reserve_sat),

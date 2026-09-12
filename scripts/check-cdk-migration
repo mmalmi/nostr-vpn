@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Build old and candidate wallets, then migrate synthetic fixtures against a
+# loopback mint. No production wallet paths or external Lightning backend.
+set -euo pipefail
+
+repo_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+trial_dir=$(mktemp -d "${TMPDIR:-/tmp}/nvpn-cdk-migration.XXXXXX")
+trap 'rm -rf -- "$trial_dir"' EXIT
+baseline_ref=9439a1b594f9ea5238c053dab890f25cb24d9f88
+features=simulation,spilman-wallet-http,spilman-configurable-host-reqwest
+export CARGO_TARGET_DIR="$trial_dir/target"
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_INCREMENTAL=0
+
+mkdir -p "$trial_dir/baseline"
+git -C "$repo_dir" archive "$baseline_ref" vendor/cashu-service vendor/cdk-spilman |
+    tar -x -C "$trial_dir/baseline"
+baseline_service="$trial_dir/baseline/vendor/cashu-service"
+mkdir -p "$baseline_service/examples"
+cp "$repo_dir/vendor/cashu-service/examples/cdk_migration_trial.rs" "$baseline_service/examples/"
+cat >> "$baseline_service/Cargo.toml" <<'MANIFEST'
+
+[[example]]
+name = "cdk_migration_trial"
+path = "examples/cdk_migration_trial.rs"
+required-features = ["simulation", "spilman-wallet-http", "spilman-configurable-host-reqwest"]
+MANIFEST
+
+printf 'Building baseline Cashu/CDK 0.17.6 from %s\n' "$baseline_ref"
+cargo build --manifest-path "$baseline_service/Cargo.toml" \
+    --example cdk_migration_trial --features "$features"
+cp "$CARGO_TARGET_DIR/debug/examples/cdk_migration_trial" "$trial_dir/baseline-trial"
+
+printf 'Building candidate Cashu/CDK 0.18.0 with Spilman 0.17.6\n'
+cargo build --manifest-path "$repo_dir/vendor/cashu-service/Cargo.toml" \
+    --example cdk_migration_trial --features "$features"
+"$trial_dir/baseline-trial" host "$CARGO_TARGET_DIR/debug/examples/cdk_migration_trial"

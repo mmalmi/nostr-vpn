@@ -8,7 +8,10 @@ use cdk::nuts::{
     RestoreRequest, RestoreResponse, SecretKey, State, SwapRequest, SwapResponse, Witness,
 };
 use cdk::secret::Secret;
-use cdk::wallet::{types::ProofInfo, MintConnector, WalletBuilder};
+use cdk::wallet::{
+    types::{KeysetLoadPolicy, ProofInfo},
+    MintConnector, WalletBuilder,
+};
 use cdk::{Amount, Error};
 use cdk_common::{
     MeltQuoteCreateResponse, MeltQuoteRequest, MeltQuoteResponse, MintQuoteRequest,
@@ -24,6 +27,7 @@ const K_TEST_EXPIRY_UNIX: u64 = 4_102_444_800;
 struct LightningMockMintConnector {
     keyset: Arc<Mutex<KeySet>>,
     additional_keysets: Arc<Mutex<Vec<KeySet>>>,
+    fail_keysets: Arc<std::sync::atomic::AtomicBool>,
     quote_id: String,
     preimage: String,
 }
@@ -33,6 +37,7 @@ impl LightningMockMintConnector {
         Self {
             keyset: Arc::new(Mutex::new(keyset)),
             additional_keysets: Arc::new(Mutex::new(Vec::new())),
+            fail_keysets: Default::default(),
             quote_id: quote_id.to_string(),
             preimage: preimage.to_string(),
         }
@@ -96,6 +101,9 @@ impl MintConnector for LightningMockMintConnector {
     }
 
     async fn get_mint_keysets(&self) -> Result<KeysetResponse, Error> {
+        if self.fail_keysets.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(Error::UnknownKeySet);
+        }
         let mut keysets = vec![self.keyset_info()];
         keysets.extend(
             self.additional_keysets
@@ -148,6 +156,7 @@ impl MintConnector for LightningMockMintConnector {
             .amount_milli_satoshis()
             .ok_or(Error::InvoiceAmountUndefined)?;
         Ok(MeltQuoteCreateResponse::Bolt11(MeltQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
             quote: self.quote_id.clone(),
             amount: Amount::from(amount_msat / 1000),
             fee_reserve: Amount::ZERO,
@@ -177,6 +186,7 @@ impl MintConnector for LightningMockMintConnector {
             return Err(Error::Custom("unexpected quote id".to_string()));
         }
         Ok(MeltQuoteResponse::Bolt11(MeltQuoteBolt11Response {
+            method: PaymentMethod::Known(cdk_common::nut00::KnownMethod::Bolt11),
             quote: self.quote_id.clone(),
             amount: Amount::from(250_000_u64),
             fee_reserve: Amount::ZERO,
@@ -318,11 +328,11 @@ async fn refresh_active_keyset_replaces_stale_cached_rotation() {
         .build()
         .unwrap();
 
-    wallet.refresh_keysets().await.unwrap();
-    assert_eq!(wallet.get_active_keyset().await.unwrap().id, old_keyset_id);
+    wallet.keysets(KeysetLoadPolicy::Refresh).await.unwrap();
+    assert_eq!(wallet.active_keyset().await.unwrap().id, old_keyset_id);
 
     mock.rotate_keyset(new_keyset);
-    assert_eq!(wallet.get_active_keyset().await.unwrap().id, old_keyset_id);
+    assert_eq!(wallet.active_keyset().await.unwrap().id, old_keyset_id);
     assert_eq!(
         refresh_active_keyset_id(&wallet).await.unwrap(),
         new_keyset_id
@@ -337,7 +347,6 @@ async fn refresh_active_keyset_ignores_active_keysets_for_other_units() {
     let mut usd_keyset = build_test_keyset(32);
     usd_keyset.unit = CurrencyUnit::Usd;
     usd_keyset.input_fee_ppk = 0;
-    let usd_keyset_id = usd_keyset.id;
     let mint_url: MintUrl = "https://mint.example".parse().unwrap();
     let db = cdk_sqlite::wallet::memory::empty().await.unwrap();
     let mock = Arc::new(LightningMockMintConnector::new(
@@ -355,12 +364,114 @@ async fn refresh_active_keyset_ignores_active_keysets_for_other_units() {
         .build()
         .unwrap();
 
-    wallet.refresh_keysets().await.unwrap();
-    assert_eq!(wallet.get_active_keyset().await.unwrap().id, usd_keyset_id);
+    wallet.keysets(KeysetLoadPolicy::Refresh).await.unwrap();
+    assert_eq!(wallet.active_keyset().await.unwrap().id, sat_keyset_id);
     assert_eq!(
         refresh_active_keyset_id(&wallet).await.unwrap(),
         sat_keyset_id
     );
+}
+
+#[tokio::test]
+async fn refresh_active_keyset_rejects_network_failure_even_with_a_populated_cache() {
+    let keyset = build_test_keyset(16);
+    let mock = Arc::new(LightningMockMintConnector::new(keyset, "quote", "00ff"));
+    let wallet = WalletBuilder::new()
+        .mint_url("https://mint.example".parse().unwrap())
+        .unit(CurrencyUnit::Sat)
+        .localstore(Arc::new(cdk_sqlite::wallet::memory::empty().await.unwrap()))
+        .seed([7; 64])
+        .shared_client(mock.clone())
+        .build()
+        .unwrap();
+    refresh_active_keyset_id(&wallet).await.unwrap();
+    mock.fail_keysets
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    // The SDK's Refresh policy permits fallback; our funding check must not.
+    assert!(wallet.keysets(KeysetLoadPolicy::Refresh).await.is_ok());
+    assert!(refresh_active_keyset_id(&wallet).await.is_err());
+}
+
+#[tokio::test]
+async fn refresh_active_keyset_ignores_cheaper_inactive_keysets_and_rejects_none_active() {
+    let mut active = build_test_keyset(16);
+    active.input_fee_ppk = 100;
+    let active_id = active.id;
+    let mut inactive = build_test_keyset(32);
+    inactive.active = Some(false);
+    let mock = Arc::new(LightningMockMintConnector::new(active.clone(), "quote", "00ff"));
+    mock.add_keyset(inactive);
+    let wallet = WalletBuilder::new()
+        .mint_url("https://mint.example".parse().unwrap())
+        .unit(CurrencyUnit::Sat)
+        .localstore(Arc::new(cdk_sqlite::wallet::memory::empty().await.unwrap()))
+        .seed([7; 64])
+        .shared_client(mock.clone())
+        .build()
+        .unwrap();
+    assert_eq!(refresh_active_keyset_id(&wallet).await.unwrap(), active_id);
+    active.active = Some(false);
+    mock.rotate_keyset(active);
+    assert!(refresh_active_keyset_id(&wallet).await.is_err());
+}
+
+#[tokio::test]
+async fn failed_cdk_preparation_preserves_file_backed_proofs_across_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let mint_url: MintUrl = "https://mint.example".parse().unwrap();
+    let mut keyset = build_test_keyset(16);
+    keyset.input_fee_ppk = 1000;
+    let proof = make_test_proof(keyset.id, 16);
+    let mock = Arc::new(LightningMockMintConnector::new(keyset, "quote", "00ff"));
+    let service = CashuWalletService::open_file_backed(directory.path())
+        .await
+        .unwrap();
+    service
+        .import_payment_proofs(
+            &mint_url.to_string(),
+            "sat",
+            &serde_json::to_string(&vec![proof.clone()]).unwrap(),
+        )
+        .await
+        .unwrap();
+    let mut wallet = service
+        .repository()
+        .get_wallet(&mint_url, &CurrencyUnit::Sat)
+        .await
+        .unwrap();
+    wallet.set_client(mock);
+    refresh_active_keyset_id(&wallet).await.unwrap();
+    // Balance covers the requested amount, but cannot also cover the input fee.
+    let prepared = wallet
+        .prepare_send(
+            Amount::from(16),
+            cdk::wallet::SendOptions {
+                include_fee: true,
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(prepared.is_err());
+    assert_eq!(
+        wallet.get_proofs_with(Some(vec![State::Unspent]), None).await.unwrap(),
+        vec![proof.clone()]
+    );
+    assert_eq!(wallet.total_balance().await.unwrap().to_u64(), 16);
+    drop(wallet);
+    drop(service);
+    let reopened = CashuWalletService::open_file_backed(directory.path())
+        .await
+        .unwrap();
+    let wallet = reopened
+        .repository()
+        .get_wallet(&mint_url, &CurrencyUnit::Sat)
+        .await
+        .unwrap();
+    assert_eq!(
+        wallet.get_proofs_with(Some(vec![State::Unspent]), None).await.unwrap(),
+        vec![proof]
+    );
+    assert_eq!(wallet.total_balance().await.unwrap().to_u64(), 16);
 }
 
 #[test]
