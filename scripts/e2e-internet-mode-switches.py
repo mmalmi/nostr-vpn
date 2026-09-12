@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """All 25 Internet mode transitions against isolated real Docker daemons."""
+import ipaddress
 import json
 import pathlib
 import subprocess
@@ -46,7 +47,7 @@ def ready(mode):
             answer = subprocess.check_output(
                 ['dig', '+short', '+time=3', '+tries=1', 'example.com', 'A'],
                 text=True, timeout=5).strip()
-            assert answer and 'no servers could be reached' not in answer, 'DNS unavailable'
+            assert answer and ipaddress.ip_address(answer.splitlines()[-1]).version == 4, 'DNS unavailable'
             assert len(fetch('/down?bytes=16384')) == 16384, 'download failed'
             assert fetch('/up', b'mode-switch' * 1024) == b'ok', 'upload failed'
             return snapshot()
