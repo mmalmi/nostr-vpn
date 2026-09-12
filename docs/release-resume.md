@@ -12,6 +12,11 @@ Docker readiness is checked before source validation, with a 15-second daemon
 deadline and bounded image inspection/download requests. Restore the Docker
 service after a readiness failure before resuming the candidate.
 
+Before freezing a new release, advance `ios/app-store-build-number`, synchronize
+versions, and run the TestFlight and App Store `preflight` commands. Both must
+identify the intended version and unused build number; do this before compiling
+or collecting physical-device evidence.
+
 The gate automatically retains successful **source quality, Rust regression,
 and Android static** checks in `artifacts/release-gate-state`. Reuse requires
 matching source content and commit, local FIPS content, Cargo configuration,
