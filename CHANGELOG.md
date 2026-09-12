@@ -2,6 +2,38 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.11 - 2026-09-13
+
+### Release notes
+
+Internet connections recover more reliably when switching modes or changing
+networks. Paid exits preserve purchased credit through reconnects and renewals,
+and wallet funding recovers from mint outages. iOS does not support paid exits.
+
+### Fixed
+
+- Preserve shared endpoint routes during WireGuard handover and keep a healthy
+  public paid connection when private peers go offline.
+- Restore Automatic Internet routes after configuration reloads, preserve paid
+  credit across mode changes, and finish outstanding wallet operations safely.
+- Renew paid channels before credit runs out, bind purchased capacity to the
+  agreed offer, and cover actual Cashu redemption fees before committing funds.
+- Back off unavailable mints, prioritize waiting Internet funding, and try an
+  available wallet mint while another mint is cooling down.
+- Refresh wallet connections after Internet route changes and keep receive and
+  send dialogs aligned with the selected mint and current transaction.
+- Show the selected Internet connection's status, provider country, price,
+  funding cooldown, and per-provider traffic and payment totals more clearly.
+- Harden Cashu Spilman channel recovery and settlement with CDK 0.18 support.
+- Update FIPS core and endpoint to 0.4.81, TCP endpoint to 0.2.16, and the
+  pubsub adapter to 0.5.4 for compatible session recovery improvements.
+
+### Release process
+
+- Group physical phone checks into one window and seal completed iOS evidence
+  before later unattended checks, allowing validated receipts to be retained.
+- Resume incomplete publication-bundle downloads from the local cache.
+
 ## 4.1.10 - 2026-09-09
 
 ### Release notes
