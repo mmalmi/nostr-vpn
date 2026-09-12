@@ -1,12 +1,11 @@
 pub(crate) fn fips_stale_participant_carrier_rebind_required(
     peer_statuses: &[MeshPeerStatus],
-    roster_pubkeys: &HashSet<String>,
     stale_participants: &[String],
 ) -> bool {
     !stale_participants.is_empty()
-        && !peer_statuses
-            .iter()
-            .any(|status| status.connected && roster_pubkeys.contains(&status.pubkey))
+        // A connected public provider also proves the shared carrier works.
+        // Losing the last private-roster peer only needs that peer refreshed.
+        && !peer_statuses.iter().any(|status| status.connected)
 }
 
 async fn restart_fips_tunnel_runtime_after_stale_participants(
@@ -19,14 +18,8 @@ async fn restart_fips_tunnel_runtime_after_stale_participants(
         .as_ref()
         .map(|runtime| {
             let stale_participants = runtime.stale_participants_needing_path_refresh(now);
-            let roster_pubkeys = context
-                .app
-                .participant_pubkeys_hex()
-                .into_iter()
-                .collect::<HashSet<_>>();
             let carrier_rebind_required = fips_stale_participant_carrier_rebind_required(
                 &runtime.peer_statuses(),
-                &roster_pubkeys,
                 &stale_participants,
             );
             (stale_participants, carrier_rebind_required)
