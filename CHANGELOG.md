@@ -37,6 +37,8 @@ and wallet funding recovers from mint outages. iOS does not support paid exits.
   daemon and image requests so unavailable infrastructure fails promptly.
 - Synchronize the main Rust lockfile during version bumps so locked release
   builds do not fail on stale workspace versions.
+- Record interrupted release gates as failures instead of reporting a passed
+  progress ledger after cancellation.
 
 ## 4.1.10 - 2026-09-09
 

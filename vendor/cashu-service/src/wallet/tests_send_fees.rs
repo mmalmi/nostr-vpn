@@ -22,7 +22,7 @@ async fn payment_token_covers_recipient_fees_with_fragmented_wallet_proofs() {
             .client(mock)
             .build()
             .unwrap();
-        wallet.refresh_keysets().await.unwrap();
+        refresh_active_keyset_id(&wallet).await.unwrap();
         let token: Token = super::super::send::prepare_payment_token(&wallet, 14, 64)
             .await
             .unwrap()

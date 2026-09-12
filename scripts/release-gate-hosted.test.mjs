@@ -24,7 +24,7 @@ release_gate_mode_disabled() { [[ "$1" == 0 ]]; }
 release_gate_state_init() { :; }
 release_gate_parallel_init() { RELEASE_GATE_PARALLEL_LOG_DIR="$1"; }
 release_gate_timing_init() { :; }
-release_gate_cleanup() { :; }
+release_gate_cleanup() { echo "cleanup-status:$?"; }
 release_gate_timing_run() {
   if [[ "$NVPN_TEST_FULL_ROUTE" == 1 ]]; then
     echo "check:$2"
@@ -100,6 +100,13 @@ test('Docker readiness failure stops before expensive source validation', () => 
   })
   assert.equal(result.status, 75, result.stderr)
   assert.doesNotMatch(result.stdout, /check:run_release_gate_candidate_preflight|lane:/)
+})
+
+test('termination preserves a failed exit status for gate cleanup', () => {
+  const result = runRoute('release_gate_timing_run() { kill -TERM "$$"; }; main')
+  assert.equal(result.status, 143, result.stderr)
+  assert.match(result.stdout, /cleanup-status:143/)
+  assert.doesNotMatch(result.stdout, /Release gate passed|cleanup-status:0/)
 })
 
 test('an unresponsive Docker daemon fails the real preflight within its deadline', () => {

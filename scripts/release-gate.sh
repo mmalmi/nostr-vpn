@@ -2455,6 +2455,9 @@ main() {
   local log_dir="${NVPN_RELEASE_GATE_LOG_DIR:-$ROOT_DIR/artifacts/release-gate-logs/$(date -u +%Y%m%dT%H%M%SZ)}"
   release_gate_state_init "$ROOT_DIR"
   trap release_gate_cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   release_gate_parallel_init "$log_dir"
   release_gate_timing_init "$log_dir"
   HOST_LINUX_VM_BUNDLE_PATH_RECEIPT="$log_dir/host-linux-vm-bundle-path.txt"
