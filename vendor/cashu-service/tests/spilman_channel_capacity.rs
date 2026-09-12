@@ -22,7 +22,7 @@ impl SpilmanClientAsyncNetworking for Mint {
         self.swaps.fetch_add(1, Ordering::SeqCst);
         let request: cdk::nuts::nut03::SwapRequest = serde_json::from_str(request).unwrap();
         let signatures: Vec<_> = request
-            .outputs
+            .outputs()
             .iter()
             .map(|message| {
                 let mut signature = BlindSignature {
