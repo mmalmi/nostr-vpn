@@ -453,6 +453,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mode_switch_preserves_inflight_manual_wallet_result() {
+        for replacement in [None, Some("replacement-session")] {
+            let mut manual = PaidExitManualBuyer::default();
+            manual.select("funding-session", 100);
+            let (release, waiting) = tokio::sync::oneshot::channel();
+            let (persisted, result) = tokio::sync::oneshot::channel();
+            manual.funding = Some(PaidExitManualFunding {
+                generation: manual.generation,
+                task: tokio::spawn(async move {
+                    waiting.await.unwrap();
+                    // The wallet response can arrive after the user leaves.
+                    // Its result must still reach durable session attachment.
+                    persisted.send(()).unwrap();
+                    Ok(PaidExitManualFundingOutcome::AlreadyFunded)
+                }),
+            });
+            if let Some(session) = replacement {
+                manual.select(session, 101);
+            } else {
+                manual.cancel();
+            }
+            release.send(()).unwrap();
+            tokio::time::timeout(Duration::from_secs(1), result)
+                .await.unwrap().expect("mode changes must not abort a wallet result");
+            assert!(!manual.funding_satisfied, "old completion cannot activate the new selection");
+            assert_eq!(manual.session_id, replacement.unwrap_or_default());
+        }
+    }
+
+    #[tokio::test]
     async fn seller_health_timeout_does_not_cancel_inflight_wallet_funding() {
         let mut manual = PaidExitManualBuyer::default();
         manual.select("funding-session", 100);
