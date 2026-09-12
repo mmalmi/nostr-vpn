@@ -171,3 +171,7 @@ impl CashuWalletService {
         self.operation_lock.lock().await
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_network_tests.rs"]
+mod network_tests;
