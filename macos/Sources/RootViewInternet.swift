@@ -263,22 +263,24 @@ extension RootView {
         Button(action: action) {
             HStack {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected ? .green : .secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .foregroundStyle(.primary)
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                    .overlay(alignment: .bottomTrailing) {
                         if selected, let color = InternetExitIndicator(
                             vpnEnabled: state.vpnEnabled, source: state.internetSource,
                             active: state.exitNodeActive,
                             needsAttention: state.exitNodeNeedsAttention).color {
                             Circle().fill(Color(nsColor: color))
-                                .frame(width: 7, height: 7)
+                                .frame(width: 6, height: 6)
+                                .overlay(Circle().stroke(Color(nsColor: .textBackgroundColor), lineWidth: 1))
+                                .offset(x: 3, y: 1)
                                 .help(state.exitNodeStatusText)
                                 .accessibilityLabel(state.exitNodeStatusText)
                                 .accessibilityIdentifier("selected-internet-source-status")
                         }
                     }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .foregroundStyle(.primary)
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
