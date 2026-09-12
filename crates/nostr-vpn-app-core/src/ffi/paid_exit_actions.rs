@@ -96,12 +96,13 @@ impl NativeAppRuntime {
         // Selection and recovery can temporarily leave no pending session
         // selected. Derive the blocker from the same mint choice as the buyer,
         // rather than losing it whenever the route changes.
-        if let Ok(selection) = store.select_automatic_offer(now)
+        let selection = store.select_automatic_offer(now).ok();
+        if let Some(selection) = selection.as_ref().filter(|selection| !selection.funded)
             && store.buyer_mint_needs_funds(&selection.mint_url, selection.channel_capacity_sat)
         {
             return Some((format!("More funds needed · {}", paid_route_mint_host(&selection.mint_url)), true));
         }
-        if !store.wallet.mints.is_empty()
+        if selection.is_none() && !store.wallet.mints.is_empty()
             && store.wallet.mints.iter().all(|mint| mint.balance_msat == Some(0))
         {
             return Some(("More funds needed · Wallet empty".to_string(), true));

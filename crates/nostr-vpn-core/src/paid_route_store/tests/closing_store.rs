@@ -837,6 +837,7 @@ fn automatic_offer_selection_reuses_a_funded_channel_when_wallet_balance_is_lock
     assert_eq!(selected.offer_key, offer_key);
     assert_eq!(selected.mint_url, mint);
     assert_eq!(selected.channel_capacity_sat, 20);
+    assert!(selected.funded, "zero wallet balance does not invalidate channel credit");
 }
 
 fn automatic_offer_config() -> PaidExitConfig {

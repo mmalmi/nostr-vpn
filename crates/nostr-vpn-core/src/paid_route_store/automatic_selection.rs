@@ -15,6 +15,7 @@ struct Candidate {
     offer_key: String,
     mint_url: String,
     capacity_sat: u64,
+    funded: bool,
     local_probe: Option<LocalProbeRank>,
     local_probe_count: u32,
     previously_verified: bool,
@@ -42,6 +43,7 @@ impl PaidRouteStore {
             .filter_map(|(key, record)| self.candidate(key, record, now_unix))
             .max_by(compare_candidates)
             .map(|candidate| PaidRouteAutomaticOfferSelection {
+                funded: candidate.funded,
                 previously_verified: candidate.previously_verified,
                 offer_key: candidate.offer_key,
                 mint_url: candidate.mint_url,
@@ -89,12 +91,13 @@ impl PaidRouteStore {
         if offer.pricing.price_msat_per_gb > PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GB {
             return None;
         }
-        let (mint_url, capacity_sat) = self.trusted_mint_and_capacity(&offer, now_unix)?;
+        let (mint_url, capacity_sat, funded) = self.trusted_mint_and_capacity(&offer, now_unix)?;
         let (local_probe, local_probe_count) = self.local_probe_history(&offer, now_unix);
         Some(Candidate {
             offer_key: key.to_string(),
             mint_url,
             capacity_sat,
+            funded,
             local_probe,
             local_probe_count,
             previously_verified,
@@ -108,7 +111,7 @@ impl PaidRouteStore {
         &self,
         offer: &PaidRouteOffer,
         now_unix: u64,
-    ) -> Option<(String, u64)> {
+    ) -> Option<(String, u64, bool)> {
         let accepted = normalize_mint_list(&offer.channel.accepted_mints);
         if let Some(existing) = self
             .sessions
@@ -134,7 +137,7 @@ impl PaidRouteStore {
             })
             .max_by_key(|(updated_at, _, _)| *updated_at)
         {
-            return Some((existing.1, existing.2));
+            return Some((existing.1, existing.2, true));
         }
         let default = self.wallet.default_mint.trim();
         let mut wallet_mints = self
@@ -159,7 +162,7 @@ impl PaidRouteStore {
         });
         wallet_mints.into_iter().find_map(|mint| {
             recommended_capacity_sat(offer, mint.balance_msat)
-                .map(|capacity| (mint.url.trim().to_string(), capacity))
+                .map(|capacity| (mint.url.trim().to_string(), capacity, false))
         })
     }
 

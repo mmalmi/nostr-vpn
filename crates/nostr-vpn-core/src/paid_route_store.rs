@@ -252,6 +252,9 @@ pub struct OpenPaidRouteBuyerSessionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteAutomaticOfferSelection {
+    /// Existing channel credit makes opening a new channel unnecessary.
+    #[serde(default)]
+    pub funded: bool,
     #[serde(default)]
     pub previously_verified: bool,
     pub offer_key: String,
