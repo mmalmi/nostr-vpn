@@ -70,7 +70,7 @@ def choose(mode):
             # A deliberately settled channel cannot be spent a second time.
             store, _, _ = snapshot()
             offer = next(iter(store['offers']))
-            cli('paid-exit', 'buy', offer, '--mint', mint, '--channel-capacity-sat', '20')
+            cli('paid-exit', 'buy', offer, '--mint', mint)
     else:
         cli('set', '--internet-source', mode)
 
