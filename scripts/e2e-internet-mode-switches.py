@@ -92,6 +92,11 @@ for previous, mode in zip(walk, walk[1:]):
     before, prior_session, prior_channel = snapshot()
     choose(mode)
     after, session, channel = ready(mode)
+    for session_id, record in before['sessions'].items():
+        saved = after['sessions'][session_id]['session']
+        old = record['session']
+        assert saved['usage'].get('billable_bytes', 0) >= old['usage'].get('billable_bytes', 0), 'lost usage history'
+        assert saved['payment']['paid_msat'] >= old['payment']['paid_msat'], 'lost payment history'
     if previous.startswith('paid_') and mode.startswith('paid_'):
         assert channel['channel_id'] == prior_channel['channel_id'], (
             f'{previous} -> {mode}: discarded usable paid credit')
