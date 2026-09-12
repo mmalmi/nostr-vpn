@@ -166,6 +166,7 @@ fn funding_swap_charges_for_actual_input_proof_count() {
         2_000_000_000,
         &serde_json::to_string(&keyset).unwrap(),
         64,
+        None,
     )
     .unwrap();
     let result: serde_json::Value = serde_json::from_str(&result).unwrap();

@@ -659,6 +659,7 @@ where
     let sender_pubkey_hex = host.add_key_from_hex(&sender.secret_hex)?;
     let bridge = cdk_spilman::SpilmanClientBridge::new(host, NoopSpilmanClientNetworking);
     let receiver_pubkey_hex = normalize_spilman_receiver_pubkey_hex(&request.receiver_pubkey_hex);
+    let unit = StreamingRouteCashuUnit::parse(&request.unit)?;
     let opened = bridge
         .open_channel_from_token_async(
             &request.token,
@@ -667,10 +668,10 @@ where
             request.expiry_unix,
             &request.keyset_info_json,
             request.max_amount_per_output,
+            request.route_capacity_sat.map(|capacity| unit.capacity_from_sat(capacity)),
             async_networking,
         )
         .await?;
-    let unit = StreamingRouteCashuUnit::parse(&request.unit)?;
     let opening_balance = unit.balance_from_msat(request.opening_paid_msat);
     let payment: CashuSpilmanPayment = bridge
         .create_payment_with_funding(&opened.channel_id, opening_balance)?
