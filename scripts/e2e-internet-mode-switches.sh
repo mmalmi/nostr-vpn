@@ -9,7 +9,7 @@ run_internet_mode_switch_matrix() {
     --network-id "$PAID_EXIT_BUYER_NETWORK_ID" --participant "$BOB_NPUB" \
     --endpoint "$WG_UPSTREAM_IP:51820" --listen-port 51820 \
     --fips-advertise-endpoint true --advertise-exit-node \
-    --fips-bootstrap-public-peers false --fips-nostr-discovery-enabled false \
+    --fips-bootstrap-enabled false --fips-nostr-discovery-enabled false \
     --internet-source direct --exit-node-leak-protection false \
     --fips-peer-endpoint "$BOB_NPUB=$NAT_B_PUBLIC_IP:51820" >/dev/null
   "${COMPOSE[@]}" exec -T wireguard-upstream nvpn start --daemon --connect \
