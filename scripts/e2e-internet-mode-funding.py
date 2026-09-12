@@ -53,6 +53,7 @@ elif phase == 'completed':
         current = store()
         payment = current['sessions'][session_id]['session']['payment'].get('cashu_spilman_payment')
         if payment and payment.get('funding_proofs') and payment.get('signature'):
+            assert current['sessions'][session_id]['session']['payment']['capacity_sat'] == 3
             assert json.loads(cli('status', '--json'))['internet_source'] == 'direct'
             assert current['selected_buyer_session_id'] == session_id
             print('Late wallet result attached to its original session; Direct stayed selected', flush=True)
