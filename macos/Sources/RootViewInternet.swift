@@ -265,8 +265,20 @@ extension RootView {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
                     .foregroundStyle(selected ? .green : .secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .foregroundStyle(.primary)
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .foregroundStyle(.primary)
+                        if selected, let color = InternetExitIndicator(
+                            vpnEnabled: state.vpnEnabled, source: state.internetSource,
+                            active: state.exitNodeActive,
+                            needsAttention: state.exitNodeNeedsAttention).color {
+                            Circle().fill(Color(nsColor: color))
+                                .frame(width: 7, height: 7)
+                                .help(state.exitNodeStatusText)
+                                .accessibilityLabel(state.exitNodeStatusText)
+                                .accessibilityIdentifier("selected-internet-source-status")
+                        }
+                    }
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)

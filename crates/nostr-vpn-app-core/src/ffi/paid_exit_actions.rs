@@ -115,6 +115,14 @@ impl NativeAppRuntime {
         let mint = paid_route_mint_host(&channel.mint_url);
         Some(if store.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
             (format!("More funds needed · {mint}"), true)
+        } else if store.buyer_mint_failure_retry_at(&channel.mint_url) > now {
+            let seconds = store.buyer_mint_failure_retry_at(&channel.mint_url) - now;
+            let remaining = if seconds >= 60 {
+                format!("{} min", seconds.div_ceil(60))
+            } else {
+                format!("{seconds} s")
+            };
+            (format!("Payment unavailable · {mint} · Retrying in {remaining}"), true)
         } else if channel.error.is_empty() {
             (format!("Setting up payment · {mint}"), false)
         } else {

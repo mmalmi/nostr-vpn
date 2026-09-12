@@ -24,22 +24,27 @@ fn cooldown_is_enforced() {
 }
 
 #[test]
-fn carrier_rebind_requires_every_roster_path_to_fail() {
-    let roster = roster_pubkeys(&["a", "b"]);
+fn carrier_rebind_requires_every_peer_path_to_fail() {
     let stale = vec!["a".to_string()];
     let mut peers = vec![pending_fips_peer("a"), pending_fips_peer("b")];
 
     assert!(fips_stale_participant_carrier_rebind_required(
-        &peers, &roster, &stale
+        &peers, &stale
     ));
 
     peers[1].connected = true;
     assert!(!fips_stale_participant_carrier_rebind_required(
-        &peers, &roster, &stale
+        &peers, &stale
     ));
     assert!(!fips_stale_participant_carrier_rebind_required(
         &peers,
-        &roster,
         &[]
     ));
+    peers[1].connected = false;
+    let mut seller = pending_fips_peer("public-paid-seller");
+    seller.connected = true;
+    peers.push(seller);
+    assert!(!fips_stale_participant_carrier_rebind_required(
+        &peers, &stale
+    ), "a private device going offline must not rebind a working paid connection");
 }

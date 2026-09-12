@@ -105,7 +105,10 @@ macro_rules! handle_daemon_state_tick {
     ($background_ready:expr) => {{
             #[cfg(feature = "paid-exit")]
             let pending_control_request =
-                paid_exit_buyer_refunds.before_tick(&config_path, $background_ready);
+                paid_exit_buyer_refunds.before_tick(&config_path, $background_ready,
+                    vpn_enabled && matches!(app.internet_source,
+                        nostr_vpn_core::config::InternetSource::PaidAutomatic
+                            | nostr_vpn_core::config::InternetSource::PaidManual));
             #[cfg(not(feature = "paid-exit"))]
             let pending_control_request = take_daemon_control_request(&config_path);
             let state_background_ready =

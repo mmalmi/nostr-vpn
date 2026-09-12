@@ -182,7 +182,7 @@
         .expect("start refund runtime");
 
         assert_eq!(
-            runtime.before_tick(&config_path, false),
+            runtime.before_tick(&config_path, false, false),
             Some(DaemonControlRequest::Pause),
             "an active network deadline must not hide local control"
         );
@@ -191,7 +191,7 @@
             "refund background work started while the network deadline was active"
         );
         assert_eq!(
-            runtime.before_tick(&config_path, false),
+            runtime.before_tick(&config_path, false, false),
             None,
             "the control request was not consumed exactly once"
         );
@@ -199,6 +199,57 @@
             runtime.active_channel_id.is_none(),
             "a control-free state tick started refund work during the network deadline"
         );
+    }
+
+    #[tokio::test]
+    async fn ready_connection_funding_gets_the_wallet_before_refund_maintenance() {
+        use nostr_vpn_core::paid_route_store::OpenPaidRouteBuyerSessionRequest;
+        use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+        let directory = TestDirectory::new();
+        let config_path = directory.0.join("config.toml");
+        let path = paid_route_store_file_path(&config_path);
+        let now = unix_timestamp();
+        let mint = "https://mint.example";
+        let mut offer = PaidExitConfig { enabled: true, ..Default::default() };
+        offer.channel.accepted_mints = vec![mint.into()];
+        offer.channel.free_probe_units = 0;
+        let seller = nostr_sdk::Keys::generate();
+        let signed = signed_paid_exit_offer_from_config("exit", &seller, &offer, None, now).unwrap();
+        let session = update_paid_route_store(&path, |store| {
+            store.upsert_signed_offer(signed, vec![], now)?;
+            store.upsert_wallet_mint(mint, "mint", Some(10_000), now);
+            let session = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+                offer_selector: "exit".into(), buyer_npub: seller.public_key().to_bech32()?,
+                mint_url: Some(mint.into()), channel_capacity_sat: Some(3),
+                initial_paid_msat: 0, now_unix: now,
+            })?;
+            store.selected_buyer_session_id = session.session_id.clone();
+            store.begin_buyer_session_funding(&session.session_id, now)?;
+            store.upsert_channel(channel("refund", PaidRouteChannelRole::Buyer, PaidRouteLifecycleStatus::Closing));
+            // The shared cooldown has just expired. A refund must not grab
+            // the store lock and renew that cooldown before funding can run.
+            store.defer_buyer_mint_retry(mint, now - 12, true, None)?;
+            Ok(session)
+        }).unwrap();
+        let mut runtime = PaidExitBuyerRefundRuntime::new().unwrap();
+        assert!(runtime.before_tick(&config_path, true, true).is_none());
+        assert!(runtime.active_channel_id.is_none(), "background refund starved ready funding");
+        let lock = SharedSpilmanClientStoreLock::try_acquire(spilman_client_store_path(&directory.0))
+            .unwrap().expect("funding must be able to acquire the wallet lock");
+        drop(lock);
+        // A genuine shortfall needs refund recovery to remain available.
+        update_paid_route_store(&path, |store| store.record_buyer_session_funding_shortfall(&session.session_id, 20)).unwrap();
+        runtime.before_tick(&config_path, true, true);
+        assert!(runtime.active_channel_id.is_some());
+        wait_for_recovery(&mut runtime, &config_path).await;
+        // A fresh worker with Direct/VPN-off context also resumes recovery,
+        // even while the selected paid session is still awaiting funding.
+        update_paid_route_store(&path, |store| store.record_buyer_session_funding_shortfall(&session.session_id, 0)).unwrap();
+        drop(runtime);
+        let mut direct = PaidExitBuyerRefundRuntime::new().unwrap();
+        direct.before_tick(&config_path, true, false);
+        assert!(direct.active_channel_id.is_some());
+        wait_for_recovery(&mut direct, &config_path).await;
     }
 
     #[tokio::test]
@@ -252,7 +303,7 @@
             .expect("queue daemon control request");
 
         assert_eq!(
-            runtime.before_tick(&config_path, false),
+            runtime.before_tick(&config_path, false, false),
             Some(DaemonControlRequest::Reload),
             "a completed background refund kept the daemon control file stuck"
         );
