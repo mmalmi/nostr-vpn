@@ -82,9 +82,9 @@ pub(crate) async fn update_automatic_paid_exit(
             .candidate
             .as_ref()
             .is_some_and(|candidate| candidate.ready_to_probe(seller_admitted, now_unix))
+        && let Ok(dns_health) = runtime.paid_exit_dns_health_probe()
     {
         let probe_app = app.clone();
-        let dns_health = runtime.paid_exit_dns_health_probe();
         let bind_interface = runtime.iface().to_string();
         if let Some(candidate) = automatic.candidate.as_mut() {
             candidate.probe_started_at = Some(now_unix);
@@ -95,7 +95,6 @@ pub(crate) async fn update_automatic_paid_exit(
         automatic.probe = Some(PaidExitAutomaticProbe {
             generation: automatic.generation,
             task: tokio::spawn(async move {
-                let dns_health = dns_health?;
                 paid_exit_route_probe_measurement(
                     &dns_health,
                     &probe_app,

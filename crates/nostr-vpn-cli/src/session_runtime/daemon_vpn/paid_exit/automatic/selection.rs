@@ -94,7 +94,7 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 .expect("recovered candidate")
                 .funding_attempted = true;
         }
-        return Ok(changing_mint || route_changed || endpoints_changed);
+        return Ok(changing_mint || exhausted || route_changed || endpoints_changed);
     }
 
     let buyer_npub = app
