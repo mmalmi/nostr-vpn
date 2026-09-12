@@ -965,6 +965,7 @@ public struct NativeAppState {
     public var exitNodeLeakProtection: Bool
     public var exitNodeActive: Bool
     public var exitNodeBlocked: Bool
+    public var exitNodeNeedsAttention: Bool
     public var exitNodeStatusText: String
     public var exitDnsMode: String
     public var exitDnsDohProvider: String
@@ -1023,7 +1024,7 @@ public struct NativeAppState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], nostrPubsubMode: String, nostrPubsubFanout: UInt32, nostrPubsubMaxHops: UInt8, nostrPubsubMaxEventBytes: UInt32, networkId: String, joinRequestQrCodeOrLink: String, internetSource: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, exitDnsMode: String, exitDnsDohProvider: String, exitDnsCustomDohUrl: String, exitDnsCustomDohBootstrapIps: String, exitDnsThroughExitServers: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, walletFiatEnabled: Bool, walletFiatCurrency: String, paidExitSeller: NativePaidExitSellerState, paidRouteMarket: NativePaidRouteMarketState, fipsHostTunnelEnabled: Bool, connectToNonRosterFipsPeers: Bool, fipsNostrDiscoveryEnabled: Bool, fipsWebrtcEnabled: Bool, fipsBootstrapEnabled: Bool,
+    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], nostrPubsubMode: String, nostrPubsubFanout: UInt32, nostrPubsubMaxHops: UInt8, nostrPubsubMaxEventBytes: UInt32, networkId: String, joinRequestQrCodeOrLink: String, internetSource: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeNeedsAttention: Bool, exitNodeStatusText: String, exitDnsMode: String, exitDnsDohProvider: String, exitDnsCustomDohUrl: String, exitDnsCustomDohBootstrapIps: String, exitDnsThroughExitServers: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, walletFiatEnabled: Bool, walletFiatCurrency: String, paidExitSeller: NativePaidExitSellerState, paidRouteMarket: NativePaidRouteMarketState, fipsHostTunnelEnabled: Bool, connectToNonRosterFipsPeers: Bool, fipsNostrDiscoveryEnabled: Bool, fipsWebrtcEnabled: Bool, fipsBootstrapEnabled: Bool,
         /**
          * Editable bootstrap/transit peers (npub -> transport-tagged addresses).
          */fipsBootstrapPeers: [String: [String]],
@@ -1075,6 +1076,7 @@ public struct NativeAppState {
         self.exitNodeLeakProtection = exitNodeLeakProtection
         self.exitNodeActive = exitNodeActive
         self.exitNodeBlocked = exitNodeBlocked
+        self.exitNodeNeedsAttention = exitNodeNeedsAttention
         self.exitNodeStatusText = exitNodeStatusText
         self.exitDnsMode = exitDnsMode
         self.exitDnsDohProvider = exitDnsDohProvider
@@ -1267,6 +1269,9 @@ extension NativeAppState: Equatable, Hashable {
             return false
         }
         if lhs.exitNodeBlocked != rhs.exitNodeBlocked {
+            return false
+        }
+        if lhs.exitNodeNeedsAttention != rhs.exitNodeNeedsAttention {
             return false
         }
         if lhs.exitNodeStatusText != rhs.exitNodeStatusText {
@@ -1465,6 +1470,7 @@ extension NativeAppState: Equatable, Hashable {
         hasher.combine(exitNodeLeakProtection)
         hasher.combine(exitNodeActive)
         hasher.combine(exitNodeBlocked)
+        hasher.combine(exitNodeNeedsAttention)
         hasher.combine(exitNodeStatusText)
         hasher.combine(exitDnsMode)
         hasher.combine(exitDnsDohProvider)
@@ -1571,6 +1577,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
                 exitNodeLeakProtection: FfiConverterBool.read(from: &buf),
                 exitNodeActive: FfiConverterBool.read(from: &buf),
                 exitNodeBlocked: FfiConverterBool.read(from: &buf),
+                exitNodeNeedsAttention: FfiConverterBool.read(from: &buf),
                 exitNodeStatusText: FfiConverterString.read(from: &buf),
                 exitDnsMode: FfiConverterString.read(from: &buf),
                 exitDnsDohProvider: FfiConverterString.read(from: &buf),
@@ -1669,6 +1676,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
         FfiConverterBool.write(value.exitNodeLeakProtection, into: &buf)
         FfiConverterBool.write(value.exitNodeActive, into: &buf)
         FfiConverterBool.write(value.exitNodeBlocked, into: &buf)
+        FfiConverterBool.write(value.exitNodeNeedsAttention, into: &buf)
         FfiConverterString.write(value.exitNodeStatusText, into: &buf)
         FfiConverterString.write(value.exitDnsMode, into: &buf)
         FfiConverterString.write(value.exitDnsDohProvider, into: &buf)

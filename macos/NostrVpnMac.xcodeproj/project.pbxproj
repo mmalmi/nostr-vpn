@@ -12,6 +12,7 @@
 		24F51F364CF81844292B7541 /* AppManagerActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49EBD2111DA9043D1B847714 /* AppManagerActions.swift */; };
 		2A52081BD20BF3F95ACDE97D /* RootViewWallet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D65211FBB441FA40EBA3E0C /* RootViewWallet.swift */; };
 		2B872AF5953978062DBB9BCF /* RootViewPaidSeller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84816A1BA75599C5E1AC796B /* RootViewPaidSeller.swift */; };
+		3C713D046FB3450698969C90 /* InternetExitIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 623962F3C7284CF3BFE3DF43 /* InternetExitIndicator.swift */; };
 		48DB3C27D3908AC7847825A8 /* PaidExitUsage.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0DC1C557B51E16C0467B4A4 /* PaidExitUsage.swift */; };
 		4D7D864A20FB82CA270FF92B /* NostrVpnAppCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD28FC1F1336837C61955C1 /* NostrVpnAppCore.swift */; };
 		54C1ED7C65A81D2C9913CDA3 /* AppManagerPaidExit.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD6774B2EC877F13F2ADD52 /* AppManagerPaidExit.swift */; };
@@ -51,6 +52,7 @@
 		49EBD2111DA9043D1B847714 /* AppManagerActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerActions.swift; sourceTree = "<group>"; };
 		4D65211FBB441FA40EBA3E0C /* RootViewWallet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewWallet.swift; sourceTree = "<group>"; };
 		5DCD6910223D0C0D4A5BADA3 /* AppManagerSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManagerSettings.swift; sourceTree = "<group>"; };
+		623962F3C7284CF3BFE3DF43 /* InternetExitIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InternetExitIndicator.swift; sourceTree = "<group>"; };
 		70F9EAC8173DD49E1B488249 /* QRCodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerView.swift; sourceTree = "<group>"; };
 		84816A1BA75599C5E1AC796B /* RootViewPaidSeller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewPaidSeller.swift; sourceTree = "<group>"; };
 		93B8ACCA4B0D1E131227B6DB /* AppManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManager.swift; sourceTree = "<group>"; };
@@ -118,6 +120,7 @@
 				5DCD6910223D0C0D4A5BADA3 /* AppManagerSettings.swift */,
 				F725886845BC471D591A69CC /* AppManagerUpdates.swift */,
 				C9F13C4142EE24AF3AC701CD /* AppManagerUpdateSupport.swift */,
+				623962F3C7284CF3BFE3DF43 /* InternetExitIndicator.swift */,
 				D52F97412C0CE07E04C2D8E1 /* NostrVpnMacApp.swift */,
 				C0DC1C557B51E16C0467B4A4 /* PaidExitUsage.swift */,
 				1B65CF013122BCA745902824 /* PrivilegedCommandRunner.swift */,
@@ -253,6 +256,7 @@
 				F2B4EFEAA95D80F5CF15D4A3 /* AppManagerSettings.swift in Sources */,
 				7FCA3C62DAB322C0AFFB369E /* AppManagerUpdateSupport.swift in Sources */,
 				1C56DFDCE237C5B7E0D2C7B2 /* AppManagerUpdates.swift in Sources */,
+				3C713D046FB3450698969C90 /* InternetExitIndicator.swift in Sources */,
 				4D7D864A20FB82CA270FF92B /* NostrVpnAppCore.swift in Sources */,
 				BB8824C1B11E41396D5245D7 /* NostrVpnMacApp.swift in Sources */,
 				48DB3C27D3908AC7847825A8 /* PaidExitUsage.swift in Sources */,
