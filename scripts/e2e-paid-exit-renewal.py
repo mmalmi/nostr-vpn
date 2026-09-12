@@ -24,9 +24,8 @@ target_bytes = capacity_msat * 1_000_000_000 // price * 9 // 4 + 4 * 1024 * 1024
 seen = {original}
 delivered = 0
 deadline = time.monotonic() + 180
-# A resumed Manual channel may be smaller than Automatic's renewal. Require
-# two observed renewals as well as the byte minimum, without assuming equal
-# capacities or allowing an unbounded test when renewal stops working.
+# Require two observed renewals as well as the byte minimum, without allowing
+# an unbounded test when renewal stops working.
 while delivered < target_bytes or len(seen) < 3:
     assert time.monotonic() < deadline, 'two channel renewals did not complete within 180 seconds'
     size = min(512 * 1024, target_bytes - delivered) if delivered < target_bytes else 512 * 1024
@@ -34,7 +33,9 @@ while delivered < target_bytes or len(seen) < 3:
         body = response.read()
     assert len(body) == size, (len(body), size)
     delivered += size
-    store, selected, _ = snapshot()
+    store, selected, current = snapshot()
+    assert current['payment']['capacity_sat'] * 1000 == capacity_msat, \
+        'renewal changed the agreed channel capacity'
     usage = [record['session']['usage'] for record in store['sessions'].values()]
     billable = sum(item.get('billable_bytes', 0) for item in usage)
     observed = sum(item.get('rx_bytes', 0) + item.get('tx_bytes', 0) for item in usage)

@@ -148,7 +148,7 @@ fn funding_swap_charges_for_actual_input_proof_count() {
         (0..4)
             .map(|index| {
                 Proof::new(
-                    Amount::from(1),
+                    Amount::from(2),
                     keyset.keyset_id,
                     Secret::new(format!("input-{index}")),
                     mint_secret.public_key(),
@@ -166,9 +166,12 @@ fn funding_swap_charges_for_actual_input_proof_count() {
         2_000_000_000,
         &serde_json::to_string(&keyset).unwrap(),
         64,
+        None,
     )
     .unwrap();
     let result: serde_json::Value = serde_json::from_str(&result).unwrap();
-    assert_eq!(result["input_value"], 4);
-    assert_eq!(result["funding_token_amount"], 2);
+    // Four input proofs cost two sats, regardless of their denominations.
+    // The remainder also covers both close stages, leaving a usable channel.
+    assert_eq!(result["input_value"], 8);
+    assert_eq!(result["funding_token_amount"], 6);
 }

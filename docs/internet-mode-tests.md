@@ -21,6 +21,13 @@ credit and monotonic payments. A paused test mint also verifies that a wallet
 result arriving after Manual-to-Direct is attached to its original session
 while Direct stays selected.
 
+The follow-on traffic check crosses two channel renewals without retrying
+failed requests, checks that renewal retains the agreed capacity, then idles
+for 75 seconds and resumes traffic. A funding regression in
+`vendor/cashu-service/tests/spilman_channel_capacity.rs` covers surplus funding,
+sender change, idempotent recovery, and rejection before spending an
+insufficient token.
+
 These Docker tests use isolated configurations, generated identities, and test
 mint funds. They require Docker network administration/TUN support and Internet
 access for the configured encrypted DNS resolver. They do not exercise native

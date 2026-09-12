@@ -311,6 +311,7 @@ impl<H: SpilmanClientHost, N: SpilmanClientNetworking> SpilmanClientBridge<H, N>
             expiry_timestamp,
             keyset_info_json,
             max_amount,
+            None,
         )?;
 
         let compute_json: serde_json::Value = serde_json::from_str(&compute_result)
@@ -416,6 +417,7 @@ impl<H: SpilmanClientHost, N: SpilmanClientNetworking> SpilmanClientBridge<H, N>
         expiry_timestamp: u64,
         keyset_info_json: &str,
         max_amount: u64,
+        requested_capacity: Option<u64>,
         async_networking: &AN,
     ) -> Result<OpenChannelResult, String> {
         // Step 1: Compute channel secret via host (ECDH delegation)
@@ -432,6 +434,7 @@ impl<H: SpilmanClientHost, N: SpilmanClientNetworking> SpilmanClientBridge<H, N>
             expiry_timestamp,
             keyset_info_json,
             max_amount,
+            requested_capacity,
         )?;
 
         let compute_json: serde_json::Value = serde_json::from_str(&compute_result)

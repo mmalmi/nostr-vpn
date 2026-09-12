@@ -26,6 +26,10 @@ standalone Linux workspace select it through `[patch.crates-io]`.
 
 ## Local fixes
 
+- Preserve the route's requested capacity when funding proofs contain extra
+  value. Bind that capacity into the existing signed parameters before funding,
+  reject insufficient tokens before spending them, and return the remainder to
+  the sender at settlement. Renewal and idempotent recovery keep the same limit.
 - Bind channel currency to the mint keyset and reject replacement parameters
   on existing channels, including funding, payment and close retries.
 - Stop accepting ordinary payments when sender refunds become available;

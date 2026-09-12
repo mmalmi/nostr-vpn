@@ -20,6 +20,7 @@ use super::*;
 /// * `expiry_timestamp` - Unix timestamp for channel expiry (refund becomes available)
 /// * `keyset_info_json` - Keyset info from mint (JSON)
 /// * `maximum_amount_for_one_output` - Max amount per output from server policy
+/// * `requested_capacity` - Agreed capacity; None uses all spendable token value
 ///
 /// # Returns
 /// JSON with:
@@ -29,6 +30,7 @@ use super::*;
 /// - `mint_url`: Mint URL from the token
 /// - `params_json`: Serialized channel params for use in later functions
 /// - `proofs_json`: The parsed proofs from the token (for create_funding_swap)
+#[allow(clippy::too_many_arguments)]
 pub fn compute_channel_from_token(
     token_string: &str,
     receiver_pubkey_hex: &str,
@@ -37,6 +39,7 @@ pub fn compute_channel_from_token(
     expiry_timestamp: u64,
     keyset_info_json: &str,
     maximum_amount_for_one_output: u64,
+    requested_capacity: Option<u64>,
 ) -> Result<String, String> {
     // Parse the token
     let token: Token = token_string
@@ -98,9 +101,18 @@ pub fn compute_channel_from_token(
     let v2 = keyset_info
         .deterministic_value_after_fees(funding_token_amount, max_amt)
         .map_err(|e| format!("Failed to compute v2: {}", e))?;
-    let capacity = keyset_info
+    let available_capacity = keyset_info
         .deterministic_value_after_fees(v2, max_amt)
         .map_err(|e| format!("Failed to compute capacity: {}", e))?;
+    // Funding proofs include fee reserves and may exceed the agreed capacity.
+    // Bind the requested limit into the signed parameters before the mint swap;
+    // settlement returns any remainder to the sender under the existing format.
+    let capacity = requested_capacity.unwrap_or(available_capacity);
+    if capacity == 0 || capacity > available_capacity {
+        return Err(format!(
+            "Requested channel capacity {capacity} is not covered by available capacity {available_capacity}"
+        ));
+    }
 
     // Parse sender pubkey
     let sender_pubkey: PublicKey = sender_pubkey_hex
