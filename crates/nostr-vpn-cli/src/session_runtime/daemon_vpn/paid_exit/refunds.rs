@@ -275,7 +275,7 @@ fn paid_exit_buyer_funding_ready(config_path: &Path) -> Result<bool> {
                 && store.buyer_session_funding_retry_at(id) <= now
                 && store.channels.get(&session.session.payment.channel_id).is_some_and(|channel| {
                     channel.expires_at_unix > now
-                        && matches!(channel.status, PaidRouteLifecycleStatus::Probing | PaidRouteLifecycleStatus::Active)
+                        && matches!(channel.status, PaidRouteLifecycleStatus::Opening | PaidRouteLifecycleStatus::Probing | PaidRouteLifecycleStatus::Active)
                 })
         })
     }))

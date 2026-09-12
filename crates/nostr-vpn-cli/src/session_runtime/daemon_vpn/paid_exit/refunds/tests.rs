@@ -212,6 +212,7 @@
         let mint = "https://mint.example";
         let mut offer = PaidExitConfig { enabled: true, ..Default::default() };
         offer.channel.accepted_mints = vec![mint.into()];
+        offer.channel.free_probe_units = 0;
         let seller = nostr_sdk::Keys::generate();
         let signed = signed_paid_exit_offer_from_config("exit", &seller, &offer, None, now).unwrap();
         let session = update_paid_route_store(&path, |store| {
