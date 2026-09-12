@@ -219,8 +219,6 @@ impl FipsPrivateTunnelRuntime {
         } else {
             Vec::new()
         };
-        self.reconcile_linux_endpoint_bypass_routes(&endpoint_bypass_specs)?;
-
         let interface_route_targets = config.interface_route_targets(route_targets.clone());
         let interface_addresses = config.interface_addresses();
         // A control-only node has no managed routes or forwarding state to
@@ -273,6 +271,10 @@ impl FipsPrivateTunnelRuntime {
                 ));
             }
         }
+        // WireGuard may own a bypass to the same server as the selected FIPS
+        // exit. Finish its cleanup before acquiring that route: otherwise we
+        // borrow the existing route and WireGuard deletes it beneath us.
+        self.reconcile_linux_endpoint_bypass_routes(&endpoint_bypass_specs)?;
         crate::apply_local_interface_network_with_mtu_and_addresses(
             &self.iface,
             &interface_addresses,
