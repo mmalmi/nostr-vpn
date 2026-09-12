@@ -35,6 +35,8 @@ and wallet funding recovers from mint outages. iOS does not support paid exits.
 - Resume incomplete publication-bundle downloads from the local cache.
 - Check Docker readiness before expensive source validation and bound stalled
   daemon and image requests so unavailable infrastructure fails promptly.
+- Synchronize the main Rust lockfile during version bumps so locked release
+  builds do not fail on stale workspace versions.
 
 ## 4.1.10 - 2026-09-09
 
