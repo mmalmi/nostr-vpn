@@ -301,3 +301,47 @@ async fn known_shortfall_enters_payment_wait_without_probing_or_calling_wallet()
     assert_ne!(store.sessions[&session_id].funding_started_unix, 0);
     assert_eq!(store.buyer_session_funding_retry_at(&session_id), u64::MAX);
 }
+
+#[test]
+fn automatic_selection_restores_cleared_route_without_buying_another_channel() {
+    let (dir, mut app, mut automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let candidate = automatic.candidate.as_mut().unwrap();
+    let session_id = candidate.session_id.clone();
+    let seller = candidate.seller_pubkey.clone();
+    candidate.funded = true;
+    candidate.funding_attempted = true;
+    candidate.probe_succeeded = true;
+    candidate.probe_started_at = Some(now);
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        store.buyer_mint_retries.clear();
+        let session = store.sessions.get_mut(&session_id).unwrap();
+        session.funding_started_unix = 0;
+        session.session.payment.cashu_spilman_payment = Some(CashuSpilmanPayment {
+            channel_id: session.session.payment.channel_id.clone(),
+            balance: 1,
+            signature: "signed".into(),
+            params: Some(json!({"unit": "sat"})),
+            funding_proofs: Some(json!({"proofs": []})),
+        });
+        session.session.realized_exit_ip = Some("198.51.100.42".into());
+        Ok(())
+    }).unwrap();
+    // A UI/config reload can retain Automatic mode while clearing its selected
+    // provider. An existing candidate must reconcile the installed route too.
+    app.set_internet_source(InternetSource::PaidAutomatic);
+    app.save(&path).unwrap();
+    assert!(app.public_paid_exit_node_pubkey_hex().is_none());
+    assert!(reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 1).unwrap());
+    assert_eq!(app.public_paid_exit_node_pubkey_hex().as_deref(), Some(seller.as_str()));
+    let candidate = automatic.candidate.as_ref().unwrap();
+    assert_eq!(candidate.session_id, session_id);
+    assert!(candidate.funded);
+    assert!(!candidate.probe_succeeded, "restored routes need fresh end-to-end evidence");
+    assert!(candidate.probe_started_at.is_none());
+    let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    assert_eq!(store.sessions.len(), 1, "reuse existing credit");
+    assert!(store.sessions[&session_id].session.realized_exit_ip.is_none());
+    assert!(!reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 2).unwrap(),
+        "an unchanged route must not continuously restart its health check");
+}
