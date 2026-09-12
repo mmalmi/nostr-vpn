@@ -18,10 +18,11 @@ standalone Linux workspace select it through `[patch.crates-io]`.
   the author's current implementation. [0.17.4](https://github.com/cashubtc/cdk/releases/tag/v0.17.4)
   improves offline wallet startup and quote concurrency;
   [0.17.5](https://github.com/cashubtc/cdk/releases/tag/v0.17.5) improves settlement consistency.
-- The newest SDK is [0.18.0](https://github.com/cashubtc/cdk/releases/tag/v0.18.0).
-  It changes wallet database state and removes `refresh_keysets()`, used by
-  our wallet's active-keyset handling. That migration is deferred; this update
-  keeps the 0.17 API and existing channel derivations.
+- The SDK migration to [0.18.0](https://github.com/cashubtc/cdk/releases/tag/v0.18.0)
+  was initially deferred. The [12 September compatibility trial](../../docs/cdk-018-migration-trial.md)
+  now updates Cashu/CDK to 0.18.0 while retaining this Spilman 0.17.6 base and
+  its channel derivations. The only additional Spilman source adaptation is
+  conversion to Cashu's shared-string currency representation.
 
 ## Local fixes
 

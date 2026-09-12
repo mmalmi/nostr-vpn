@@ -57,7 +57,7 @@ pub fn build_cashu_b_token(
     let mint_url = MintUrl::from_str(mint_url).map_err(|e| format!("Invalid mint URL: {}", e))?;
 
     let currency_unit =
-        CurrencyUnit::from_str(unit).unwrap_or(CurrencyUnit::Custom(unit.to_string()));
+        CurrencyUnit::from_str(unit).unwrap_or_else(|_| CurrencyUnit::Custom(unit.into()));
 
     let token = Token::new(mint_url, proofs, None, currency_unit);
 

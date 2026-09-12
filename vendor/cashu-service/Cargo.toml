@@ -94,6 +94,11 @@ wallet = [
 name = "cashu_service"
 path = "src/lib.rs"
 
+[[example]]
+name = "cdk_migration_trial"
+path = "examples/cdk_migration_trial.rs"
+required-features = ["simulation", "spilman-wallet-http", "spilman-configurable-host-reqwest"]
+
 [[test]]
 name = "credit_settlement_api"
 path = "tests/credit_settlement_api.rs"
@@ -117,7 +122,7 @@ version = "0.8"
 optional = true
 
 [dependencies.cashu]
-version = "=0.17.6"
+version = "=0.18.0"
 optional = true
 default-features = false
 package = "cashu"
@@ -127,19 +132,19 @@ version = "0.3.0"
 optional = true
 
 [dependencies.cdk]
-version = "=0.17.6"
+version = "=0.18.0"
 features = ["wallet"]
 optional = true
 default-features = false
 package = "cdk"
 
 [dependencies.cdk-axum]
-version = "=0.17.6"
+version = "=0.18.0"
 optional = true
 default-features = false
 
 [dependencies.cdk-common]
-version = "=0.17.6"
+version = "=0.18.0"
 features = ["mint"]
 optional = true
 default-features = false
@@ -151,7 +156,7 @@ optional = true
 default-features = false
 
 [dependencies.cdk-sqlite]
-version = "=0.17.6"
+version = "=0.18.0"
 features = ["wallet"]
 optional = true
 default-features = false
@@ -226,7 +231,7 @@ features = ["v4"]
 optional = true
 
 [dev-dependencies.cdk-common]
-version = "=0.17.6"
+version = "=0.18.0"
 default-features = false
 package = "cdk-common"
 
