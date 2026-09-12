@@ -24,8 +24,9 @@ if phase == 'pending':
     cli('set', '--internet-source', 'direct')
     cli('set', '--internet-source', 'paid_manual')
     offer = next(iter(store()['offers']))
-    cli('paid-exit', 'buy', offer, '--mint', mint, '--channel-capacity-sat', '3')
-    session_id = store()['selected_buyer_session_id']
+    purchased = json.loads(cli('paid-exit', 'buy', offer, '--mint', mint,
+                               '--channel-capacity-sat', '3', '--json'))
+    session_id = purchased['session']['session_id']
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         requests = data / 'cashu/daemon-ipc/requests'
