@@ -306,6 +306,15 @@
         assert!(pending.exit_node_blocked);
         assert_eq!(pending.exit_node_status_text,
             "Automatic paid exit · Blocked · Payment unavailable · mint.example · Retrying");
+        // A refund can put the mint into cooldown before this session has
+        // attempted funding. No channel-local error must not mean "working".
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.channels.get_mut(channel_id).unwrap().error.clear();
+            store.defer_buyer_mint_retry("https://mint.example", now, true, Some(600))
+        }).unwrap();
+        let cooldown = runtime.state();
+        assert!(cooldown.exit_node_needs_attention);
+        assert!(cooldown.exit_node_status_text.contains("Payment unavailable · mint.example · Retrying in"));
         update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
             store.record_buyer_session_funding_shortfall(session_id, 12)?;
             store.upsert_wallet_mint("https://mint.example", "Mint", Some(10_000), now);
