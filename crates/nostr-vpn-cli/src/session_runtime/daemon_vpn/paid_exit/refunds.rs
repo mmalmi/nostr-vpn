@@ -123,8 +123,8 @@ impl PaidExitBuyerRefundRuntime {
         // its turn before a background refund can take the shared store lock
         // and extend the mint cooldown again. Direct/VPN-off and insufficient
         // funds keep refund recovery available.
-        let allow_start = allow_start
-            && !(foreground_funding && paid_exit_buyer_funding_ready(config_path)?);
+        let allow_start =
+            allow_start && !(foreground_funding && paid_exit_buyer_funding_ready(config_path)?);
         let Some(recovery) = self.poll(config_path, allow_start)? else {
             return Ok(());
         };
@@ -266,17 +266,28 @@ fn paid_exit_buyer_funding_ready(config_path: &Path) -> Result<bool> {
     let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
     let now = unix_timestamp();
     let selected = store.selected_buyer_session_id.as_str();
-    let renewal = store.buyer_session_renewals.get(selected).map(String::as_str);
+    let renewal = store
+        .buyer_session_renewals
+        .get(selected)
+        .map(String::as_str);
     Ok([Some(selected), renewal].into_iter().flatten().any(|id| {
         store.sessions.get(id).is_some_and(|session| {
             session.funding_started_unix != 0
                 && session.session.payment.cashu_spilman_payment.is_none()
                 && session.session.payment.cashu_token_lease.is_none()
                 && store.buyer_session_funding_retry_at(id) <= now
-                && store.channels.get(&session.session.payment.channel_id).is_some_and(|channel| {
-                    channel.expires_at_unix > now
-                        && matches!(channel.status, PaidRouteLifecycleStatus::Opening | PaidRouteLifecycleStatus::Probing | PaidRouteLifecycleStatus::Active)
-                })
+                && store
+                    .channels
+                    .get(&session.session.payment.channel_id)
+                    .is_some_and(|channel| {
+                        channel.expires_at_unix > now
+                            && matches!(
+                                channel.status,
+                                PaidRouteLifecycleStatus::Opening
+                                    | PaidRouteLifecycleStatus::Probing
+                                    | PaidRouteLifecycleStatus::Active
+                            )
+                    })
         })
     }))
 }

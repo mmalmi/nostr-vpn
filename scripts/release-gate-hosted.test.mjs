@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -91,6 +91,38 @@ test('hosted entrypoint cannot satisfy complete fleet mode or ignore unknown arg
     assert.equal(result.status, 2, result.stderr)
     assert.deepEqual(result.files, [])
     assert.doesNotMatch(result.stdout, /source-preflight|build-node/)
+  }
+})
+
+test('Docker readiness failure stops before expensive source validation', () => {
+  const result = runRoute('main', {
+    full: true, failCheck: 'ensure_release_gate_docker_prerequisites',
+  })
+  assert.equal(result.status, 75, result.stderr)
+  assert.doesNotMatch(result.stdout, /check:run_release_gate_candidate_preflight|lane:/)
+})
+
+test('an unresponsive Docker daemon fails the real preflight within its deadline', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-docker-readiness-'))
+  try {
+    writeFileSync(join(root, 'docker'), '#!/bin/sh\n[ "$1" = info ] && exec sleep 30\necho unexpected-docker-operation >&2\nexit 99\n', { mode: 0o755 })
+    const body = source.match(/^ensure_release_gate_docker_prerequisites\(\) \{[\s\S]*?^\}/m)?.[0]
+    assert.ok(body)
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+source scripts/lib-release-gate-timeout.sh
+${body}
+ensure_release_gate_docker_prerequisites
+`], {
+      encoding: 'utf8', timeout: 22_000,
+      env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
+    })
+    assert.ifError(result.error)
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /Docker daemon readiness timed out after 15s/)
+    assert.doesNotMatch(result.stderr, /unexpected-docker-operation/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })
 

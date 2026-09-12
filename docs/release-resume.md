@@ -8,6 +8,10 @@ passed, prefer completing the missing phases and validating their receipts as
 described below. Do not create a fresh checkout or change the candidate merely
 to restart a gate.
 
+Docker readiness is checked before source validation, with a 15-second daemon
+deadline and bounded image inspection/download requests. Restore the Docker
+service after a readiness failure before resuming the candidate.
+
 The gate automatically retains successful **source quality, Rust regression,
 and Android static** checks in `artifacts/release-gate-state`. Reuse requires
 matching source content and commit, local FIPS content, Cargo configuration,

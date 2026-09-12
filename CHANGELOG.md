@@ -33,6 +33,8 @@ and wallet funding recovers from mint outages. iOS does not support paid exits.
 - Group physical phone checks into one window and seal completed iOS evidence
   before later unattended checks, allowing validated receipts to be retained.
 - Resume incomplete publication-bundle downloads from the local cache.
+- Check Docker readiness before expensive source validation and bound stalled
+  daemon and image requests so unavailable infrastructure fails promptly.
 
 ## 4.1.10 - 2026-09-09
 

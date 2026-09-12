@@ -36,15 +36,13 @@ fn carrier_rebind_requires_every_peer_path_to_fail() {
     assert!(!fips_stale_participant_carrier_rebind_required(
         &peers, &stale
     ));
-    assert!(!fips_stale_participant_carrier_rebind_required(
-        &peers,
-        &[]
-    ));
+    assert!(!fips_stale_participant_carrier_rebind_required(&peers, &[]));
     peers[1].connected = false;
     let mut seller = pending_fips_peer("public-paid-seller");
     seller.connected = true;
     peers.push(seller);
-    assert!(!fips_stale_participant_carrier_rebind_required(
-        &peers, &stale
-    ), "a private device going offline must not rebind a working paid connection");
+    assert!(
+        !fips_stale_participant_carrier_rebind_required(&peers, &stale),
+        "a private device going offline must not rebind a working paid connection"
+    );
 }

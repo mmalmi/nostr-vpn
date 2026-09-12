@@ -2110,7 +2110,7 @@ ensure_release_gate_docker_prerequisites() {
     echo "Docker is required by the release gate." >&2
     return 1
   }
-  docker info >/dev/null || {
+  release_gate_run_with_timeout "Docker daemon readiness" 15 docker info >/dev/null || {
     echo "The Docker daemon is unavailable." >&2
     return 1
   }
@@ -2119,12 +2119,13 @@ ensure_release_gate_docker_prerequisites() {
   # build. A warm release stays offline here; a cold release fails cheaply if
   # its registry is unavailable instead of wasting the completed test lanes.
   for image in "${images[@]}"; do
-    if docker image inspect "$image" >/dev/null 2>&1; then
+    if release_gate_run_with_timeout "Docker base image inspection" 15 \
+      docker image inspect "$image" >/dev/null 2>&1; then
       printf 'Docker base image present: %s\n' "$image"
       continue
     fi
     printf 'Pulling missing release-gate base image: %s\n' "$image"
-    docker pull "$image"
+    release_gate_run_with_timeout "Docker base image download" 600 docker pull "$image"
   done
 }
 
@@ -2492,18 +2493,17 @@ main() {
     "Seal exact release candidate" \
     seal_release_gate_app_candidate
 
-  # Validate generated version metadata before any remote lane snapshots the
-  # candidate. The remaining preflight leaves tracked source unchanged and can
-  # overlap work on resource-isolated remote hosts.
-  release_gate_timing_run \
-    "Local candidate preflight" \
-    run_release_gate_candidate_preflight
-
   if docker_release_gates_enabled; then
     release_gate_timing_run \
       "Docker base image preflight" \
       ensure_release_gate_docker_prerequisites
   fi
+
+  # Check Docker before spending time on source validation. Validate generated
+  # metadata before any remote lane snapshots the unchanged candidate.
+  release_gate_timing_run \
+    "Local candidate preflight" \
+    run_release_gate_candidate_preflight
 
   if [[ "$mode" == hosted ]]; then
     run_hosted_release_gate
