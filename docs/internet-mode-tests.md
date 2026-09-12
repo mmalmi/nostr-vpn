@@ -26,7 +26,12 @@ failed requests, checks that renewal retains the agreed capacity, then idles
 for 75 seconds and resumes traffic. A funding regression in
 `vendor/cashu-service/tests/spilman_channel_capacity.rs` covers surplus funding,
 sender change, idempotent recovery, and rejection before spending an
-insufficient token.
+insufficient token. Wallet regressions also check that mixed proof denominations
+cover the recipient's actual redemption fee, and that a stale pooled HTTP
+connection cannot delay the next operation after switching routes. Connection
+funding must get a turn before background refund maintenance can extend a mint
+cooldown again. The native status check distinguishes that cooldown from an
+active payment request.
 
 These Docker tests use isolated configurations, generated identities, and test
 mint funds. They require Docker network administration/TUN support and Internet
