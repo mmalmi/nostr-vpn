@@ -243,6 +243,10 @@ features = ["full"]
 name = "spilman_receiver_safety"
 path = "tests/spilman_receiver_safety.rs"
 
+[[test]]
+name = "spilman_channel_capacity"
+path = "tests/spilman_channel_capacity.rs"
+
 [patch.crates-io]
 cdk-spilman = { path = "../cdk-spilman" }
 
