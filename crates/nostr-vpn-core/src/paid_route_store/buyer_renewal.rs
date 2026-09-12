@@ -1,6 +1,19 @@
 use super::{persistence::*, *};
 
 impl PaidRouteStore {
+    /// Recovery must count delivered traffic, not the last prepaid balance.
+    /// A fully prepaid channel can still have unused credit; an exhausted one
+    /// cannot become usable again by replaying its opening payment.
+    pub fn buyer_session_has_remaining_capacity(&self, session_id: &str) -> Result<bool> {
+        let session = self.sessions.get(session_id)
+            .ok_or_else(|| anyhow!("missing buyer session"))?;
+        let channel = self.channels.get(&session.session.payment.channel_id)
+            .ok_or_else(|| anyhow!("missing buyer channel"))?;
+        let terms = accepted_channel_terms(channel, PaidRouteChannelRole::Buyer)?;
+        Ok(terms.amount_due_msat(&session.session.usage)
+            < channel.payment.capacity_sat.saturating_mul(1_000))
+    }
+
     /// Start replacing the channel with half its traffic credit still available.
     /// An opening payment alone must never trigger repeated channel purchases.
     pub fn buyer_session_needs_renewal(&self, session_id: &str, now_unix: u64) -> Result<bool> {

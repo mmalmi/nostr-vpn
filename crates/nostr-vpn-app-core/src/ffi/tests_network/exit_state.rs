@@ -313,4 +313,25 @@
         }).unwrap();
         assert_eq!(runtime.state().exit_node_status_text,
             "Automatic paid exit · Blocked · More funds needed · mint.example");
+        assert!(runtime.state().exit_node_needs_attention);
+        runtime.config.set_internet_source(InternetSource::PaidAutomatic);
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.selected_buyer_session_id.clear();
+            Ok(())
+        }).unwrap();
+        assert!(runtime.state().exit_node_status_text.contains("More funds needed"),
+            "reselection must preserve a known shortfall");
+        assert!(runtime.state().exit_node_needs_attention);
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.upsert_wallet_mint("https://mint.example", "Mint", Some(0), now);
+            Ok(())
+        }).unwrap();
+        assert!(runtime.state().exit_node_status_text.contains("Wallet empty"));
+        update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            store.upsert_wallet_mint("https://mint.example", "Mint", Some(20_000), now);
+            Ok(())
+        }).unwrap();
+        runtime.config.exit_node_leak_protection = false;
+        assert!(!runtime.state().exit_node_needs_attention, "a top-up clears the funding blocker");
+        assert!(runtime.state().exit_node_status_text.ends_with("Selecting provider"));
     }

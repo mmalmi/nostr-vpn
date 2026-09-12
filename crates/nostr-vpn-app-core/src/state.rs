@@ -265,6 +265,7 @@ pub struct UiState {
     pub exit_node_leak_protection: bool,
     pub exit_node_active: bool,
     pub exit_node_blocked: bool,
+    pub exit_node_needs_attention: bool,
     pub exit_node_status_text: String,
     pub exit_dns_mode: String,
     pub exit_dns_doh_provider: String,

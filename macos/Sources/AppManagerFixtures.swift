@@ -320,6 +320,7 @@ extension AppManager {
             exitNodeLeakProtection: true,
             exitNodeActive: !sellerScreenshot,
             exitNodeBlocked: false,
+            exitNodeNeedsAttention: false,
             exitNodeStatusText: automaticExit
                 ? "Automatic paid exit · FI · 2500 sat/GB · 198.51.100.42 · Active"
                 : sellerScreenshot ? "" : "Using paid internet: FI",

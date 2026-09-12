@@ -544,7 +544,22 @@ struct RootView: View {
             selectedSidebarItem = item
         } label: {
             HStack(spacing: 8) {
-                Label(title, systemImage: systemImage)
+                Label {
+                    Text(title)
+                } icon: {
+                    Image(systemName: systemImage)
+                        .overlay(alignment: .bottomTrailing) {
+                            if item == .internet, let color = InternetExitIndicator(
+                                vpnEnabled: state.vpnEnabled, source: state.internetSource,
+                                active: state.exitNodeActive,
+                                needsAttention: state.exitNodeNeedsAttention).color {
+                                Circle().fill(Color(nsColor: color))
+                                    .frame(width: 6, height: 6)
+                                    .overlay(Circle().stroke(selected ? Color.accentColor : Color(nsColor: .windowBackgroundColor), lineWidth: 1))
+                                    .offset(x: 3, y: 1)
+                            }
+                        }
+                }
                     .labelStyle(.titleAndIcon)
                 Spacer(minLength: 0)
             }
@@ -558,6 +573,7 @@ struct RootView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-\(item)")
+        .accessibilityLabel(item == .internet ? "\(title), \(state.exitNodeStatusText)" : title)
     }
 
     @ViewBuilder

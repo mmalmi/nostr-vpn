@@ -9,11 +9,7 @@ pub(super) fn start_funding(
     session_id: &str,
     now_unix: u64,
 ) -> Result<bool> {
-    if automatic.funding.is_some() || now_unix < automatic.funding_retry_at {
-        return Ok(false);
-    }
-    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
-    if now_unix < store.buyer_session_funding_retry_at(session_id) {
+    if automatic.funding.is_some() {
         return Ok(false);
     }
     let changed = update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
@@ -23,6 +19,12 @@ pub(super) fn start_funding(
         // Let the daemon withdraw the trial route before the wallet opens any
         // mint connections. Start the request on the next control tick.
         return Ok(true);
+    }
+    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    if now_unix < automatic.funding_retry_at
+        || now_unix < store.buyer_session_funding_retry_at(session_id)
+    {
+        return Ok(false);
     }
     let app = app.clone();
     let config_path = config_path.to_path_buf();

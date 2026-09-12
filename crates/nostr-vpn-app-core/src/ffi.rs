@@ -256,6 +256,7 @@ struct CliServiceStatusResponse {
 struct ExitNodeUiStatus {
     active: bool,
     blocked: bool,
+    needs_attention: bool,
     text: String,
 }
 

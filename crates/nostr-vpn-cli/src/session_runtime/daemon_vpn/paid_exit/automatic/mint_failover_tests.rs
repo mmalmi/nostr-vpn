@@ -238,3 +238,66 @@ fn mint_fee_shortfall_selects_other_funds_and_preserves_existing_credit() {
     });
     assert_eq!(store.buyer_session_funding_retry_at(&session_id), 0);
 }
+
+#[test]
+fn automatic_recovery_preserves_prepaid_credit_but_replaces_exhausted_channel() {
+    let (dir, mut app, mut automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let old = automatic.candidate.as_ref().unwrap().session_id.clone();
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        let session = store.sessions.get_mut(&old).unwrap();
+        session.funding_started_unix = 0;
+        let payment = CashuSpilmanPayment {
+            channel_id: session.session.payment.channel_id.clone(),
+            balance: session.session.payment.capacity_sat,
+            signature: "signed".into(),
+            params: Some(json!({"unit": "sat"})),
+            funding_proofs: Some(json!({"proofs": []})),
+        };
+        session.session.payment.paid_msat = session.session.payment.capacity_sat * 1000;
+        session.session.payment.cashu_spilman_payment = Some(payment.clone());
+        let channel = store.channels.get_mut(&session.session.payment.channel_id).unwrap();
+        channel.payment = session.session.payment.clone();
+        Ok(())
+    }).unwrap();
+    // Full prepayment does not mean traffic credit has been used.
+    let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    let selection = store.select_automatic_offer(now + 1).unwrap();
+    assert_eq!(selection.mint_url, PRIMARY);
+    assert!(store.buyer_session_has_remaining_capacity(&old).unwrap());
+
+    automatic.candidate.as_mut().unwrap().funded = true;
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        let session = store.sessions.get_mut(&old).unwrap();
+        session.session.usage.billable_bytes = 200_000_000;
+        session.updated_at_unix = now + 2;
+        Ok(())
+    }).unwrap();
+    reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 3).unwrap();
+    let next = automatic.candidate.as_ref().unwrap();
+    assert_ne!(next.session_id, old);
+    assert_eq!(next.selection.mint_url, ALTERNATIVE);
+    assert!(automatic.rejected_offers.is_empty(), "spent credit is not a seller failure");
+    let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    assert!(!store.buyer_session_has_remaining_capacity(&old).unwrap());
+    let mut restarted = PaidExitAutomaticBuyer::default();
+    reconcile_automatic_paid_exit_selection(&mut restarted, &mut app, &path, now + 4).unwrap();
+    assert_ne!(restarted.candidate.unwrap().session_id, old);
+}
+
+#[tokio::test]
+async fn known_shortfall_enters_payment_wait_without_probing_or_calling_wallet() {
+    let (dir, app, mut automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let session_id = automatic.candidate.as_ref().unwrap().session_id.clone();
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        store.sessions.get_mut(&session_id).unwrap().funding_started_unix = 0;
+        store.record_buyer_session_funding_shortfall(&session_id, 20)
+    }).unwrap();
+    assert!(funding::start_funding(&mut automatic, &app, &path, &session_id, now + 1).unwrap());
+    assert!(!funding::start_funding(&mut automatic, &app, &path, &session_id, now + 2).unwrap());
+    assert!(automatic.funding.is_none(), "no mint request with unchanged insufficient funds");
+    let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    assert_ne!(store.sessions[&session_id].funding_started_unix, 0);
+    assert_eq!(store.buyer_session_funding_retry_at(&session_id), u64::MAX);
+}

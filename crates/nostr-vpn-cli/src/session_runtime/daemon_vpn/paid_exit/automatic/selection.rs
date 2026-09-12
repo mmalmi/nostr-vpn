@@ -41,7 +41,10 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
             && candidate.selection.offer_key == selection.offer_key
             && candidate.selection.mint_url != selection.mint_url
     });
-    if changing_mint {
+    let exhausted = automatic.candidate.as_ref().is_some_and(|candidate| {
+        candidate.funded && !store.buyer_session_has_remaining_capacity(&candidate.session_id).unwrap_or(false)
+    });
+    if changing_mint || exhausted {
         // A wallet operation may already be committing funds. Consume its
         // result before deciding whether a replacement channel is necessary.
         if automatic.funding.is_some() {
@@ -157,6 +160,7 @@ fn recover_automatic_paid_exit_session(
                 && channel.mint_url == selection.mint_url
                 && channel.expires_at_unix > now_unix
                 && lease.lease.expires_at_unix > now_unix
+                && store.buyer_session_has_remaining_capacity(&session.session.session_id).ok()?
                 && matches!(
                     lease.status,
                     PaidRouteLifecycleStatus::Opening

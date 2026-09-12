@@ -390,6 +390,7 @@ impl NativeAppRuntime {
             exit_node_leak_protection: self.config.exit_node_leak_protection,
             exit_node_active: exit_node_status.active,
             exit_node_blocked: exit_node_status.blocked,
+            exit_node_needs_attention: exit_node_status.needs_attention,
             exit_node_status_text: exit_node_status.text,
             exit_dns_mode: self.config.exit_dns.mode.as_str().to_string(),
             exit_dns_doh_provider: self.config.exit_dns.doh_provider.as_str().to_string(),

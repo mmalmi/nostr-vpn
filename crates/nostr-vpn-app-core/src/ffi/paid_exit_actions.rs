@@ -1,3 +1,9 @@
+fn paid_route_mint_host(mint_url: &str) -> String {
+    nostr_sdk::prelude::Url::parse(mint_url).ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "payment service".to_string())
+}
+
 const DEFAULT_PAID_EXIT_WALLET_MINT: &str = "https://mint.minibits.cash/Bitcoin";
 
 struct PaidRouteWalletTokenPreview {
@@ -79,23 +85,39 @@ impl NativeAppRuntime {
         paid_route_store_file_path(&self.config_path)
     }
 
-    pub(super) fn pending_paid_route_funding_status(&self) -> Option<String> {
+    pub(super) fn pending_paid_route_funding_status(&self) -> Option<(String, bool)> {
         let store = load_paid_route_store(&self.paid_route_store_path()).ok()?;
-        let session = store.sessions.get(&store.selected_buyer_session_id)?;
-        let channel = store.channels.get(&session.session.payment.channel_id)?;
-        if session.funding_started_unix == 0 || channel.expires_at_unix <= unix_timestamp() {
+        let now = unix_timestamp();
+        // Renewal can run out of money while the selected channel still has
+        // credit. Keep showing that working route until its credit is consumed.
+        if self.active_paid_route_exit_ip(&self.config.exit_node).is_some() {
             return None;
         }
-        let mint = nostr_sdk::prelude::Url::parse(&channel.mint_url)
-            .ok()
-            .and_then(|url| url.host_str().map(str::to_owned))
-            .unwrap_or_else(|| "payment service".to_string());
+        // Selection and recovery can temporarily leave no pending session
+        // selected. Derive the blocker from the same mint choice as the buyer,
+        // rather than losing it whenever the route changes.
+        if let Ok(selection) = store.select_automatic_offer(now)
+            && store.buyer_mint_needs_funds(&selection.mint_url, selection.channel_capacity_sat)
+        {
+            return Some((format!("More funds needed · {}", paid_route_mint_host(&selection.mint_url)), true));
+        }
+        if !store.wallet.mints.is_empty()
+            && store.wallet.mints.iter().all(|mint| mint.balance_msat == Some(0))
+        {
+            return Some(("More funds needed · Wallet empty".to_string(), true));
+        }
+        let session = store.sessions.get(&store.selected_buyer_session_id)?;
+        let channel = store.channels.get(&session.session.payment.channel_id)?;
+        if session.funding_started_unix == 0 || channel.expires_at_unix <= now {
+            return None;
+        }
+        let mint = paid_route_mint_host(&channel.mint_url);
         Some(if store.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
-            format!("More funds needed · {mint}")
+            (format!("More funds needed · {mint}"), true)
         } else if channel.error.is_empty() {
-            format!("Setting up payment · {mint}")
+            (format!("Setting up payment · {mint}"), false)
         } else {
-            format!("Payment unavailable · {mint} · Retrying")
+            (format!("Payment unavailable · {mint} · Retrying"), true)
         })
     }
 

@@ -33,6 +33,7 @@ final class TrayController: NSObject {
     private let openMainWindow: () -> Void
 
     private let statusItem: NSStatusItem
+    private let internetBadge = InternetExitBadgeView()
     private let menu = NSMenu()
 
     // Stable items
@@ -101,6 +102,14 @@ final class TrayController: NSObject {
             button.image = image
         }
         button.toolTip = "Nostr VPN"
+        internetBadge.translatesAutoresizingMaskIntoConstraints = false
+        button.addSubview(internetBadge)
+        NSLayoutConstraint.activate([
+            internetBadge.widthAnchor.constraint(equalToConstant: 6),
+            internetBadge.heightAnchor.constraint(equalToConstant: 6),
+            internetBadge.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -2),
+            internetBadge.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+        ])
     }
 
     private func buildMenuSkeleton() {
@@ -205,6 +214,10 @@ final class TrayController: NSObject {
 
         // Internet Source submenu
         exitNodeStatusItem.title = snapshot.exitNodeStatusText
+        internetBadge.indicator = snapshot.internetIndicator
+        statusItem.length = snapshot.internetIndicator == .hidden ? NSStatusItem.variableLength : 38
+        exitNodeSubmenuItem.image = snapshot.internetIndicator.image
+        statusItem.button?.setAccessibilityLabel("Nostr VPN · \(snapshot.tooltip)")
         exitNodeStatusItem.isHidden = snapshot.exitNodeStatusText.isEmpty
         offerExitItem.state = snapshot.advertiseExitNode ? .on : .off
         noExitNodeItem.state = snapshot.internetSource == "direct" ? .on : .off
@@ -327,6 +340,7 @@ private struct MenuSnapshot: Equatable {
     let networkTitle: String?
     let networkItems: [SubmenuItem<NetworkRow>]
     let exitNodeStatusText: String
+    let internetIndicator: InternetExitIndicator
     let advertiseExitNode: Bool
     let internetSource: String
     let paidInternetAvailable: Bool
@@ -383,6 +397,9 @@ private struct MenuSnapshot: Equatable {
             networkTitle: networkTitle,
             networkItems: networkItems,
             exitNodeStatusText: state.exitNodeStatusText,
+            internetIndicator: InternetExitIndicator(
+                vpnEnabled: state.vpnEnabled, source: state.internetSource,
+                active: state.exitNodeActive, needsAttention: state.exitNodeNeedsAttention),
             advertiseExitNode: state.advertiseExitNode,
             internetSource: state.internetSource,
             paidInternetAvailable: state.paidRouteMarket.supported,

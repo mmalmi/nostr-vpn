@@ -17,12 +17,13 @@ impl NativeAppRuntime {
     ) -> ExitNodeUiStatus {
         if vpn_enabled
             && self.config.internet_source == InternetSource::PaidAutomatic
-            && let Some(payment_status) = self.pending_paid_route_funding_status()
+            && let Some((payment_status, needs_attention)) = self.pending_paid_route_funding_status()
         {
             let blocked = self.config.exit_node_leak_protection;
             return ExitNodeUiStatus {
                 active: false,
                 blocked,
+                needs_attention,
                 text: if blocked {
                     format!("Automatic paid exit · Blocked · {payment_status}")
                 } else {
@@ -87,6 +88,7 @@ impl NativeAppRuntime {
                 format!("{source} · {name} · Pending")
             };
             return ExitNodeUiStatus {
+                needs_attention: blocked,
                 active: selected_exit_active,
                 blocked,
                 text,
@@ -108,6 +110,7 @@ impl NativeAppRuntime {
             return ExitNodeUiStatus {
                 active: false,
                 blocked,
+                needs_attention: blocked,
                 text: if blocked {
                     format!("{source} · Blocked")
                 } else if self.config.internet_source == InternetSource::PaidAutomatic {
@@ -132,6 +135,7 @@ impl NativeAppRuntime {
                 "WireGuard exit · Pending".to_string()
             };
             return ExitNodeUiStatus {
+                needs_attention: blocked,
                 active: wireguard_exit_active,
                 blocked,
                 text,
