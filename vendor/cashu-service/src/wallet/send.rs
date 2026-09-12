@@ -129,26 +129,8 @@ impl CashuWalletService {
         }
 
         let available_sat = wallet.total_balance().await?.to_u64();
-        let prepared = wallet
-            .prepare_send(
-                Amount::from(amount_sat),
-                SendOptions {
-                    include_fee: true,
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(|error| {
-                if matches!(error, cdk::Error::InsufficientFunds) {
-                    anyhow::Error::new(CashuInsufficientFunds {
-                        available_sat,
-                        required_sat: amount_sat.max(available_sat.saturating_add(1)),
-                    })
-                } else {
-                    anyhow::Error::new(error)
-                }
-            })
-            .context("Failed to prepare Cashu payment token")?;
+        let (prepared, send_fee_sat) =
+            prepare_payment_token(&wallet, amount_sat, available_sat).await?;
         if let Some(required_keyset_id) = required_keyset_id {
             if proofs_require_keyset_consolidation(&prepared.proofs(), required_keyset_id) {
                 prepared
@@ -159,7 +141,6 @@ impl CashuWalletService {
             }
         }
         let operation_id = prepared.operation_id().to_string();
-        let send_fee_sat = prepared.send_fee().to_u64();
         let token = prepared
             .confirm(None)
             .await
@@ -221,4 +202,86 @@ pub(super) fn proofs_require_keyset_consolidation(
     proofs
         .iter()
         .any(|proof| proof.keyset_id != required_keyset_id)
+}
+
+/// CDK's include_fee estimate can describe an optimal split rather than the
+/// proofs its partial-swap path actually returns. Check that exact final split
+/// before confirming; adjusting a reservation never spends or reclaims tokens.
+pub(super) async fn prepare_payment_token(
+    wallet: &cdk::wallet::Wallet,
+    amount_sat: u64,
+    available_sat: u64,
+) -> Result<(cdk::wallet::PreparedSend<'_>, u64)> {
+    let mut requested = amount_sat;
+    loop {
+        let prepared = wallet
+            .prepare_send(
+                Amount::from(requested),
+                SendOptions {
+                    include_fee: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| {
+                if matches!(error, cdk::Error::InsufficientFunds) {
+                    anyhow::Error::new(CashuInsufficientFunds {
+                        available_sat,
+                        required_sat: requested.max(available_sat.saturating_add(1)),
+                    })
+                } else {
+                    anyhow::Error::new(error)
+                }
+            })
+            .context("Failed to prepare Cashu payment token")?;
+        let estimate = async {
+            let mut counts = std::collections::HashMap::new();
+            let mut nominal = 0_u64;
+            for proof in prepared.proofs_to_send() {
+                *counts.entry(proof.keyset_id).or_insert(0_u64) += 1;
+                nominal += proof.amount.to_u64();
+            }
+            if !prepared.proofs_to_swap().is_empty() {
+                let keyset = wallet.get_active_keyset().await?.id;
+                let fees_and_amounts = wallet.get_keyset_fees_and_amounts_by_id(keyset).await?;
+                let swap_amount = requested
+                    .saturating_add(prepared.send_fee().to_u64())
+                    .saturating_sub(nominal);
+                *counts.entry(keyset).or_insert(0) +=
+                    Amount::from(swap_amount).split(&fees_and_amounts)?.len() as u64;
+                nominal += swap_amount;
+            }
+            let recipient_fee = wallet.get_proofs_fee_by_count(counts).await?.total.to_u64();
+            Ok::<_, anyhow::Error>((nominal, recipient_fee))
+        }
+        .await;
+        let (nominal, recipient_fee) = match estimate {
+            Ok(value) => value,
+            Err(error) => {
+                prepared
+                    .cancel()
+                    .await
+                    .context("Failed to release Cashu payment reservation")?;
+                return Err(error);
+            }
+        };
+        let spendable = nominal.saturating_sub(recipient_fee);
+        if spendable >= amount_sat {
+            return Ok((prepared, recipient_fee));
+        }
+        prepared
+            .cancel()
+            .await
+            .context("Failed to release underfunded Cashu payment reservation")?;
+        requested = requested
+            .checked_add(amount_sat - spendable)
+            .context("Cashu payment fee overflow")?;
+        if requested > available_sat {
+            return Err(CashuInsufficientFunds {
+                available_sat,
+                required_sat: requested,
+            }
+            .into());
+        }
+    }
 }

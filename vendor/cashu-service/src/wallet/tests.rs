@@ -55,7 +55,10 @@ impl LightningMockMintConnector {
     }
 
     fn rotate_keyset(&self, keyset: KeySet) {
-        *self.keyset.lock().unwrap() = keyset;
+        let mut current = self.keyset.lock().unwrap();
+        current.active = Some(false);
+        self.additional_keysets.lock().unwrap().push(current.clone());
+        *current = keyset;
     }
 
     fn add_keyset(&self, keyset: KeySet) {
@@ -199,8 +202,24 @@ impl MintConnector for LightningMockMintConnector {
         }))
     }
 
-    async fn post_swap(&self, _request: SwapRequest) -> Result<SwapResponse, Error> {
-        unreachable!("exact proofs avoid the swap path in this test")
+    async fn post_swap(&self, request: SwapRequest) -> Result<SwapResponse, Error> {
+        let fee = (request.inputs().len() as u64 * self.keyset_info().input_fee_ppk).div_ceil(1000);
+        let input: u64 = request.inputs().iter().map(|p| p.amount.to_u64()).sum();
+        let output: u64 = request.outputs().iter().map(|p| p.amount.to_u64()).sum();
+        assert_eq!(input - fee, output, "mint swap must cover its actual input fees");
+        let signatures = request.outputs().iter().map(|message| {
+            let index = message.amount.to_u64().trailing_zeros() as u8 + 1;
+            let secret = SecretKey::from_slice(&[index; 32]).unwrap();
+            let mut signature = cdk::nuts::BlindSignature {
+                amount: message.amount,
+                keyset_id: message.keyset_id,
+                c: cdk::dhke::sign_message(&secret, &message.blinded_secret).unwrap(),
+                dleq: None,
+            };
+            signature.add_dleq_proof(&message.blinded_secret, &secret).unwrap();
+            signature
+        }).collect();
+        Ok(SwapResponse { signatures })
     }
 
     async fn get_mint_info(&self) -> Result<MintInfo, Error> {
@@ -976,3 +995,5 @@ async fn test_create_topup_quote_against_configured_mint() {
 }
 
 mod activity;
+#[path = "tests_send_fees.rs"]
+mod tests_send_fees;
