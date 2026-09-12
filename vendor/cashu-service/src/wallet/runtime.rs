@@ -145,6 +145,20 @@ impl CashuWalletService {
         &self.data_dir
     }
 
+    /// Start an operation with fresh HTTP connections after the caller may
+    /// have changed its Internet route. Keep the wallet owner, database and
+    /// durable operations; only recreate CDK's in-memory wallet clients.
+    pub async fn refresh_network_connections(&self) -> Result<()> {
+        let _guard = self.lock_operation().await;
+        for wallet in self.repository.get_wallets().await {
+            self.repository
+                .create_wallet(wallet.mint_url.clone(), wallet.unit.clone(), None)
+                .await
+                .context("failed to refresh Cashu mint connections")?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn repository(&self) -> &WalletRepository {
         &self.repository
     }

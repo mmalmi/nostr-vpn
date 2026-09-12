@@ -218,6 +218,10 @@ impl DaemonCashuWallet {
     }
 
     async fn execute(&self, command: DaemonCashuWalletCommand) -> Result<Value> {
+        // A pooled socket may still have the source address of a previous
+        // Internet mode. Do not let it spend the next channel's credit waiting
+        // for a timeout before reconnecting through the current route.
+        self.service.refresh_network_connections().await?;
         let value = match command {
             DaemonCashuWalletCommand::Overview { refresh_quotes } => {
                 let overview = self.service.load_wallet_overview(refresh_quotes).await?;
