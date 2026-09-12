@@ -159,6 +159,14 @@ impl PaidExitAutomaticBuyer {
             .is_some_and(|candidate| candidate.funded && candidate.health_evidence_fresh(now_unix))
     }
 
+    pub(crate) fn continues_with_manual_provider(&self, app: &AppConfig) -> bool {
+        app.internet_source == nostr_vpn_core::config::InternetSource::PaidManual
+            && self.candidate.as_ref().is_some_and(|candidate| {
+                app.public_paid_exit_node_pubkey_hex().as_deref()
+                    == Some(candidate.seller_pubkey.as_str())
+            })
+    }
+
     pub(crate) fn cancel_if_disabled(&mut self, app: &AppConfig) {
         if Self::enabled(app) {
             return;

@@ -549,7 +549,10 @@ macro_rules! handle_daemon_state_tick {
                                         if PaidExitAutomaticBuyer::enabled(&app)
                                             && !PaidExitAutomaticBuyer::enabled(&reload.app)
                                         {
-                                            if let Some(runtime) = fips_tunnel_runtime.as_ref()
+                                            // Automatic -> Manual on the same seller is a
+                                            // handover of the existing credit, not settlement.
+                                            if !automatic_paid_exit.continues_with_manual_provider(&reload.app)
+                                                && let Some(runtime) = fips_tunnel_runtime.as_ref()
                                                 && let Err(error) = finalize_automatic_paid_exit(
                                                     &automatic_paid_exit,
                                                     runtime,

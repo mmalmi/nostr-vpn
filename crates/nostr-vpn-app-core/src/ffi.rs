@@ -275,6 +275,7 @@ mod tests {
     include!("ffi/tests_network_join_actions.rs");
     include!("ffi/tests_service.rs");
     include!("ffi/tests_service_wireguard.rs");
+    include!("ffi/tests_internet_mode_switches.rs");
     include!("ffi/tests_exit_dns.rs");
     include!("ffi/tests_service_paid_exit_config.rs");
     include!("ffi/tests_service_paid_exit_buy.rs");

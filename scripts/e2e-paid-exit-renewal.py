@@ -23,8 +23,13 @@ price = int(sys.argv[2])
 target_bytes = capacity_msat * 1_000_000_000 // price * 9 // 4 + 4 * 1024 * 1024
 seen = {original}
 delivered = 0
-while delivered < target_bytes:
-    size = min(512 * 1024, target_bytes - delivered)
+deadline = time.monotonic() + 180
+# A resumed Manual channel may be smaller than Automatic's renewal. Require
+# two observed renewals as well as the byte minimum, without assuming equal
+# capacities or allowing an unbounded test when renewal stops working.
+while delivered < target_bytes or len(seen) < 3:
+    assert time.monotonic() < deadline, 'two channel renewals did not complete within 180 seconds'
+    size = min(512 * 1024, target_bytes - delivered) if delivered < target_bytes else 512 * 1024
     with urllib.request.urlopen(f'{sys.argv[1]}/down?bytes={size}', timeout=15) as response:
         body = response.read()
     assert len(body) == size, (len(body), size)
