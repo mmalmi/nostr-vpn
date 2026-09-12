@@ -59,7 +59,7 @@ def ready(mode):
 
 def choose(mode):
     if mode == 'private_vpn':
-        cli('set', '--internet-source', mode, '--exit-node', private_peer)
+        cli('set', '--exit-node', private_peer)
     elif mode == 'paid_manual':
         _, session, channel = snapshot()
         cli('set', '--internet-source', mode)

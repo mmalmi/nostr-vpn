@@ -1398,6 +1398,11 @@ for _ in range(64):
   fi
 fi
 
+if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+  source "$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"
+  run_internet_mode_switch_matrix
+fi
+
 if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
   "${COMPOSE[@]}" exec -T node-b python3 - "$PROBE_BASE_URL" "$PAID_EXIT_PRICE_MSAT_PER_GB" \
     < "$ROOT_DIR/scripts/e2e-paid-exit-renewal.py"
@@ -1405,8 +1410,6 @@ fi
 
 if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
   run_spilman_resale_matrix
-  source "$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"
-  run_internet_mode_switch_matrix
 fi
 
 echo "--- Default route ---"

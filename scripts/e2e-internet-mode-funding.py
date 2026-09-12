@@ -5,8 +5,9 @@ import pathlib
 import subprocess
 import sys
 import time
+import urllib.request
 
-phase, mint = sys.argv[1:]
+phase, mint, final_mode, base_url, seller_ip = sys.argv[1:]
 data = pathlib.Path('/root/.config/nvpn')
 receipt = pathlib.Path('/tmp/nvpn-mode-funding-session')
 
@@ -58,5 +59,16 @@ elif phase == 'completed':
         time.sleep(0.25)
     else:
         raise AssertionError('mode switch lost the completed wallet funding result')
+    cli('set', '--internet-source', 'paid_' + final_mode)
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(base_url + '/source-ip', timeout=3) as response:
+                assert json.load(response)['ip'] == seller_ip
+            break
+        except (OSError, AssertionError):
+            time.sleep(1)
+    else:
+        raise AssertionError('paid route did not resume using the late funding result')
 else:
     raise AssertionError(f'unknown phase: {phase}')

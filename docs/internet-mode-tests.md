@@ -13,7 +13,7 @@ obsolete selection.
 
 `./scripts/e2e-paid-exit-automatic-docker.sh` and
 `./scripts/e2e-paid-exit-docker.sh` run the network integration coverage. After
-the existing payment, renewal, and seller-upstream checks, the buyer traverses
+the initial funded route check, the buyer traverses
 all 25 mode pairs without resetting its daemon between transitions. Each step
 checks DNS resolution, HTTP upload/download, and the source address observed by
 the fixture server. Paid-to-paid transitions must preserve usable channel

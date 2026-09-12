@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Sourced by the paid-exit Docker fixture after seller resale coverage.
+# Sourced by the paid-exit Docker fixture after its initial funded route check.
 run_internet_mode_switch_matrix() {
   local upstream_npub server_pub client_priv client_pub
+  "${COMPOSE[@]}" exec -T wireguard-upstream nvpn init --force >/dev/null
+  use_fips_only_control_pubsub wireguard-upstream
   upstream_npub="$(nostr_pubkey_from_config wireguard-upstream)"
   "${COMPOSE[@]}" exec -T wireguard-upstream nvpn set \
     --network-id "$PAID_EXIT_BUYER_NETWORK_ID" --participant "$BOB_NPUB" \
+    --endpoint "$WG_UPSTREAM_IP:51820" --listen-port 51820 \
+    --fips-advertise-endpoint true --advertise-exit-node \
+    --fips-bootstrap-public-peers false --fips-nostr-discovery-enabled false \
     --internet-source direct --exit-node-leak-protection false \
     --fips-peer-endpoint "$BOB_NPUB=$NAT_B_PUBLIC_IP:51820" >/dev/null
   "${COMPOSE[@]}" exec -T wireguard-upstream nvpn start --daemon --connect \
@@ -48,10 +53,12 @@ EOF
     < "$ROOT_DIR/scripts/e2e-internet-mode-switches.py"
   "${COMPOSE[@]}" pause cashu-mint >/dev/null
   "${COMPOSE[@]}" exec -T node-b python3 - pending "$PAID_EXIT_MINT" \
+    "$PAID_EXIT_SELECTION_MODE" "$PROBE_BASE_URL" "$NODE_A_PUBLIC_IP" \
     < "$ROOT_DIR/scripts/e2e-internet-mode-funding.py"
   "${COMPOSE[@]}" unpause cashu-mint >/dev/null
   "${COMPOSE[@]}" exec -T node-b python3 - completed "$PAID_EXIT_MINT" \
+    "$PAID_EXIT_SELECTION_MODE" "$PROBE_BASE_URL" "$NODE_A_PUBLIC_IP" \
     < "$ROOT_DIR/scripts/e2e-internet-mode-funding.py"
-  "${COMPOSE[@]}" exec -T node-b nvpn set \
-    --internet-source "paid_$PAID_EXIT_SELECTION_MODE" >/dev/null
+  "${COMPOSE[@]}" exec -T wireguard-upstream nvpn stop --force >/dev/null
+  "${COMPOSE[@]}" exec -T wireguard-upstream ip link del wg0
 }
