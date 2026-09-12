@@ -57,31 +57,39 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
     }
     if let Some(candidate) = automatic.candidate.as_mut() {
         candidate.reconcile_selection(selection);
-        return Ok(false);
+        if candidate.failed {
+            return Ok(false);
+        }
+        let changed = select_automatic_paid_exit_route(app, config_path, &store, &candidate.session_id)?;
+        if changed {
+            // Config reloads can clear the selected exit without changing the
+            // automatic buyer. Restore its paid session, then prove the route
+            // again instead of keeping the previous connection's health result.
+            update_paid_route_store(&store_path, |store| {
+                store.begin_buyer_session_open_attempt(&candidate.session_id, now_unix)?;
+                Ok(())
+            })?;
+            if let Some(probe) = automatic.probe.take() {
+                probe.task.abort();
+            }
+            candidate.selected_at = now_unix;
+            candidate.probe_started_at = None;
+            candidate.probe_succeeded = false;
+            candidate.last_tx_at = None;
+            candidate.last_rx_at = None;
+            candidate.unanswered_since = None;
+        }
+        return Ok(changed);
     }
 
-    if let Some((seller_npub, seller_pubkey, session_id, funded)) =
+    if let Some((seller_pubkey, session_id, funded)) =
         recover_automatic_paid_exit_session(&store, &selection, now_unix)
     {
         update_paid_route_store(&store_path, |store| {
             store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
             Ok(())
         })?;
-        let endpoint_hints = store.buyer_session_seller_fips_endpoints(&session_id)?;
-        let endpoints_before = app.fips_peer_endpoint_hints(&seller_npub);
-        app.add_fips_peer_endpoint_hints(&seller_npub, &endpoint_hints)?;
-        let endpoints_changed = endpoints_before != app.fips_peer_endpoint_hints(&seller_npub);
-        let route_changed =
-            app.public_paid_exit_node_pubkey_hex().as_deref() != Some(seller_pubkey.as_str());
-        app.select_public_paid_exit_node(&seller_npub)?;
-        if !PaidExitAutomaticBuyer::enabled(app) {
-            return Err(anyhow!(
-                "automatic paid exit recovery changed internet mode"
-            ));
-        }
-        if route_changed || endpoints_changed {
-            app.save(config_path)?;
-        }
+        let route_changed = select_automatic_paid_exit_route(app, config_path, &store, &session_id)?;
         if funded {
             queue_recovered_paid_exit_channel_open(app, config_path, &session_id, now_unix)?;
         }
@@ -94,7 +102,7 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 .expect("recovered candidate")
                 .funding_attempted = true;
         }
-        return Ok(changing_mint || exhausted || route_changed || endpoints_changed);
+        return Ok(changing_mint || exhausted || route_changed);
     }
 
     let buyer_npub = app
@@ -141,11 +149,35 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
     Ok(true)
 }
 
+/// Keep configuration in sync even when Automatic already has a candidate.
+fn select_automatic_paid_exit_route(
+    app: &mut AppConfig,
+    config_path: &Path,
+    store: &PaidRouteStore,
+    session_id: &str,
+) -> Result<bool> {
+    let seller_npub = store.buyer_session_seller_npub(session_id)?;
+    let seller_pubkey = normalize_nostr_pubkey(&seller_npub)?;
+    let endpoint_hints = store.buyer_session_seller_fips_endpoints(session_id)?;
+    let endpoints_before = app.fips_peer_endpoint_hints(&seller_npub);
+    app.add_fips_peer_endpoint_hints(&seller_npub, &endpoint_hints)?;
+    let changed = endpoints_before != app.fips_peer_endpoint_hints(&seller_npub)
+        || app.public_paid_exit_node_pubkey_hex().as_deref() != Some(seller_pubkey.as_str());
+    if changed {
+        app.select_public_paid_exit_node(&seller_npub)?;
+        if !PaidExitAutomaticBuyer::enabled(app) {
+            return Err(anyhow!("automatic paid exit selection changed internet mode"));
+        }
+        app.save(config_path)?;
+    }
+    Ok(changed)
+}
+
 fn recover_automatic_paid_exit_session(
     store: &PaidRouteStore,
     selection: &nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection,
     now_unix: u64,
-) -> Option<(String, String, String, bool)> {
+) -> Option<(String, String, bool)> {
     let offer = &store.offers.get(&selection.offer_key)?.offer;
     let seller_pubkey = normalize_nostr_pubkey(&offer.seller_npub).ok()?;
     store
@@ -188,6 +220,6 @@ fn recover_automatic_paid_exit_session(
         })
         .max_by_key(|candidate| candidate.0)
         .map(|(_, session_id, funded)| {
-            (offer.seller_npub.clone(), seller_pubkey, session_id, funded)
+            (seller_pubkey, session_id, funded)
         })
 }
