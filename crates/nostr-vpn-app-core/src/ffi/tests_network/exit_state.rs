@@ -316,6 +316,16 @@
         assert!(runtime.state().exit_node_needs_attention);
         runtime.config.set_internet_source(InternetSource::PaidAutomatic);
         update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {
+            let pending = store.open_buyer_session(nostr_vpn_core::paid_route_store::OpenPaidRouteBuyerSessionRequest {
+                offer_selector: "internet-exit".to_string(),
+                buyer_npub: runtime.config.nostr_keys()?.public_key().to_bech32()?,
+                mint_url: Some("https://mint.example".to_string()),
+                channel_capacity_sat: Some(3),
+                initial_paid_msat: 0,
+                now_unix: now + 1,
+            })?;
+            store.record_buyer_session_funding_shortfall(&pending.session_id, 5)?;
+            store.upsert_wallet_mint("https://mint.example", "Mint", Some(3_000), now);
             store.selected_buyer_session_id.clear();
             Ok(())
         }).unwrap();
