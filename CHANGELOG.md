@@ -41,6 +41,9 @@ and wallet funding recovers from mint outages. iOS does not support paid exits.
   progress ledger after cancellation.
 - Include all vendored payment dependencies in Docker and Umbrel builds, and
   check Docker's source filter before compiling platform packages.
+- Compile the App Store feature configuration during early source validation
+  and keep its funding-status interface aligned with the shared app core.
+- Isolate automatic-exit status test fixtures from local wallet state.
 
 ## 4.1.10 - 2026-09-09
 

@@ -410,6 +410,9 @@ run_release_gate_candidate_preflight() {
 
 run_release_gate_source_quality() {
   cargo fmt --check
+  # Workspace feature unification enables paid exits. Check the App Store
+  # feature set separately before spending time on platform artifacts.
+  cargo check --locked -p nostr-vpn-app-core --no-default-features --lib
   cargo clippy --locked --workspace --all-targets -- -D warnings
 }
 
