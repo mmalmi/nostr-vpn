@@ -38,6 +38,7 @@ ios_release_network_require_unlocked() {
   local device="$1"
   python3 - "$device" <<'PY'
 import json
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import sys
@@ -58,6 +59,27 @@ try:
             raise ValueError("missing lock state")
 except (OSError, ValueError, subprocess.SubprocessError):
     raise SystemExit("iPhone lock state unavailable within the bounded preflight; no UI automation session started.") from None
+
+# Xcode needs this notification connection even when lockState and DDI queries
+# succeed. devicectl can exit zero after its observation closed immediately;
+# inspect the actual session timestamps before spending 180s on a destination.
+try:
+    with tempfile.TemporaryDirectory(prefix="nvpn-ios-notifications-") as directory:
+        output = Path(directory) / "state.json"
+        subprocess.run(
+            ["xcrun", "devicectl", "--timeout", "8", "device", "notification",
+             "observe", "--device", sys.argv[1], "--name",
+             "com.apple.springboard.lockstate", "--session-timeout", "3",
+             "--json-output", str(output)],
+            capture_output=True, timeout=10, check=True,
+        )
+        result = json.loads(output.read_text()).get("result", {})
+        started = datetime.fromisoformat(result["observationStarted"].replace("Z", "+00:00"))
+        stopped = datetime.fromisoformat(result["observationStopped"].replace("Z", "+00:00"))
+        if (stopped - started).total_seconds() < 2.5:
+            raise ValueError("notification connection closed before the observation ended")
+except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+    raise SystemExit("iPhone testing notification connection unavailable; no UI automation session started.") from None
 PY
 }
 
