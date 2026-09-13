@@ -279,3 +279,32 @@ run_mobile_wireguard_exit_gates
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('all Internet mode transitions run once in the Automatic-compatible paid fixture', () => {
+  const fixture = readFileSync('scripts/e2e-exit-node-docker.sh', 'utf8')
+  const sourceIndex = fixture.indexOf('  source "$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"')
+  const start = fixture.lastIndexOf('\nif ', sourceIndex)
+  const end = fixture.indexOf('\nfi', sourceIndex) + 3
+  const dispatch = fixture.slice(start, end)
+  assert.ok(start >= 0 && end > start)
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-paid-matrix-route-'))
+  try {
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+ROOT_DIR="$1"
+mkdir "$ROOT_DIR/scripts"
+echo 'run_internet_mode_switch_matrix() { echo "matrix:$PAID_EXIT_SELECTION_MODE"; }' >"$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"
+truthy() { [[ "$1" == 1 ]]; }
+PAID_EXIT_MODE=1
+PAID_EXIT_PAYMENT_MODE=spilman
+for PAID_EXIT_SELECTION_MODE in manual automatic; do
+${dispatch}
+done
+`, '_', root], { encoding: 'utf8', timeout: 5_000 })
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout.trim(), 'matrix:automatic')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

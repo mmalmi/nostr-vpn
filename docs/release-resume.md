@@ -21,6 +21,10 @@ a cold peer build must never overlap macOS recovery deadlines. Underlay runners
 then revalidate and import that cached artifact.
 Linux underlay cleanup collects evidence through the restored primary link;
 the guest has already removed its temporary secondary network at that point.
+The Automatic Spilman fixture owns the complete Internet mode-transition and
+pending-funding matrices. The manual fixture retains its higher price and small
+wallet for billing checks; running the same matrix there both duplicates work
+and violates Automatic's price and funding prerequisites.
 
 Before freezing a new release, advance `ios/app-store-build-number`, synchronize
 versions, and run the TestFlight and App Store `preflight` commands. Both must
