@@ -46,6 +46,17 @@ commands.
 Compile the signed test runner for the generic iOS destination. Selecting the
 physical phone is only necessary when executing tests; compilation must not wait
 for its development services to become available.
+Preparation audits the frozen app and records the installed runner before the
+first test starts. Preserve those receipts, the original test products and the
+signed archive when a device service fails. Exact reuse verifies their hashes
+and installed USB identities; a compiled runner alone is insufficient.
+The Android and iPhone DNS lanes finish independently, so a failed phone does not
+cancel the other phone's still-valid work. Radio recovery receives explicit
+artifact and runner pins from the completed preparation.
+
+A destination failure before any test method must not launch a second UI session
+for cleanup when a fresh USB check proves the untouched tunnel is still stopped.
+Cleanup remains mandatory after a method starts or the stopped proof is missing.
 
 The full gate validates desktop seller evidence before phone work, then groups
 physical idle, WireGuard/DNS, Android replacement, radio recovery and mobile/Mac

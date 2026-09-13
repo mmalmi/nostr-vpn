@@ -1691,7 +1691,13 @@ run_mobile_wireguard_exit_gates() {
       ./scripts/mobile-wireguard-exit-e2e.sh ios
   lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
-  release_gate_parallel_wait_group "${lanes[@]}"
+  # These phones have independent fixtures and receipts. Finish both bounded
+  # lanes so one unavailable test service does not discard the other proof.
+  local lane mobile_status=0
+  for lane in "${lanes[@]}"; do
+    release_gate_parallel_wait "$lane" || mobile_status=$?
+  done
+  ((mobile_status == 0)) || return "$mobile_status"
   MOBILE_ANDROID_APP_READY=1
   MOBILE_IOS_APP_READY=1
 }
@@ -1806,6 +1812,14 @@ run_mobile_underlay_change_gates() {
       ./scripts/mobile-wireguard-exit-e2e.sh android
   MOBILE_ANDROID_APP_READY=1
 
+  local ios_prepared_dir ios_xctestrun ios_runner_tree
+  ios_prepared_dir="$evidence_dir/ios-wireguard-dns-artifacts"
+  ios_xctestrun="$(select_generated_ios_release_xctestrun \
+    "$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData/Build/Products" \
+    "iOS underlay artifact reuse")" || return 1
+  ios_runner_tree="$(jq -er '.runnerBundleTreeSha256' \
+    "$ios_prepared_dir/installed-runner-receipt.json")" || return 1
+
   release_gate_run_with_timeout \
     "iOS physical Wi-Fi radio off/on recovery" \
     "$MOBILE_WG_EXIT_TIMEOUT_SECS" \
@@ -1832,6 +1846,13 @@ run_mobile_underlay_change_gates() {
       NVPN_MOBILE_WG_EXIT_CLIENT_IP=10.99.80.2 \
       NVPN_MOBILE_WG_EXIT_THROUGH_DNS_IP=10.99.80.53 \
       NVPN_MOBILE_WG_EXIT_HTTP_PROBE_PORT="$((port_base + 1))" \
+      NVPN_MOBILE_IOS_RELEASE_APP_PATH="$ROOT_DIR/dist/ios/frozen/release-testing-unpacked/Payload/Nostr VPN.app" \
+      NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA="$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData" \
+      NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$ios_xctestrun" \
+      NVPN_MOBILE_IOS_REUSE_RECEIPT="$NVPN_MOBILE_IOS_RELEASE_RECEIPT" \
+      NVPN_MOBILE_IOS_RELEASE_RUNNER_RECEIPT="$ios_prepared_dir/mobile-ios-release-runner-diagnostics.json" \
+      NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT="$ios_prepared_dir/installed-runner-receipt.json" \
+      NVPN_MOBILE_IOS_RELEASE_RUNNER_TREE_SHA256="$ios_runner_tree" \
       NVPN_MOBILE_WG_EXIT_REUSE_IOS_BUILD=1 \
       NVPN_MOBILE_WG_EXIT_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))" \
       NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$ios_artifact_dir" \

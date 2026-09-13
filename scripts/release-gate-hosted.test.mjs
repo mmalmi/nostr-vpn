@@ -237,3 +237,45 @@ test('an unattended tail failure follows the iOS seal without producing a comple
   assert.doesNotMatch(result.stdout, /Release gate passed/)
   assert.ok(!result.files.some(path => path.endsWith('release-gate-summary.json')))
 })
+
+test('a failed iPhone lane preserves the independently completing Android proof', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-phone-results-'))
+  const body = source.match(/^run_mobile_wireguard_exit_gates\(\) \{[\s\S]*?^\}/m)?.[0]
+  assert.ok(body)
+  const helper = join(process.cwd(), 'scripts/lib-release-gate-parallel.sh')
+  try {
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+ROOT_DIR="$1"
+source "$2"
+cd "$ROOT_DIR"
+mkdir scripts
+cat >scripts/mobile-wireguard-exit-e2e.sh <<'PHONE'
+#!/bin/bash
+if [[ "$1" == ios ]]; then exit 75; fi
+sleep 0.3
+printf '{}\\n' >"$NVPN_MOBILE_ANDROID_NETWORK_EVIDENCE_OUTPUT"
+PHONE
+chmod +x scripts/mobile-wireguard-exit-e2e.sh
+release_gate_parallel_init "$ROOT_DIR/logs"
+trap 'release_gate_parallel_cancel_all' EXIT
+release_gate_run_with_timeout() { shift 2; "$@"; }
+NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E=required
+NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST=fixture
+NVPN_IDLE_CPU_GATE=0
+MOBILE_WG_EXIT_TIMEOUT_SECS=5
+ANDROID_RELEASE_FOREGROUND_IDLE_CPU_MAX_PERCENT=2
+ANDROID_RELEASE_FOREGROUND_IDLE_CPU_SAMPLE_SECONDS=60
+MOBILE_ANDROID_APP_READY=0
+MOBILE_IOS_APP_READY=0
+${body}
+run_mobile_wireguard_exit_gates
+`, '_', root, helper], { encoding: 'utf8', timeout: 10_000 })
+    assert.ifError(result.error)
+    assert.equal(result.status, 75, result.stderr)
+    assert.equal(readFileSync(join(root, 'logs/mobile-network/android-wireguard-dns.json'), 'utf8'), '{}\n')
+    assert.match(result.stdout, /lane passed: Android physical WireGuard/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

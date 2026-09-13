@@ -793,6 +793,24 @@ PY
     ios_release_network_prepare_abort
     return
   fi
+  # Retain verified preparation before XCTest can fail to reach the phone.
+  # Subsequent network cases still audit this same app after execution.
+  ios_release_network_audit_artifact preparation "$result_dir" || {
+    ios_release_network_prepare_abort
+    return
+  }
+  local runner runner_tree device_sha xctestrun_sha
+  runner="$IOS_RELEASE_NETWORK_DERIVED_DATA/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
+  runner_tree="$(python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" tree-sha "$runner")" \
+    && device_sha="$(printf %s "$IOS_RELEASE_NETWORK_DEVICE" | shasum -a 256 | awk '{print $1}')" \
+    && xctestrun_sha="$(shasum -a 256 "$IOS_RELEASE_NETWORK_XCTESTRUN" | awk '{print $1}')" \
+    && ios_release_network_write_runner_install_receipt \
+      "$runner" "$result_dir/installed-runner-receipt.json" \
+      "$runner_tree" "$device_sha" "$xctestrun_sha" \
+      "$IOS_RELEASE_NETWORK_BASE_TEST_PRODUCTS_TREE_SHA" || {
+    ios_release_network_prepare_abort
+    return
+  }
   IOS_RELEASE_NETWORK_PREPARED=1
   if bool_is_true "$reuse_build"; then
     echo "iOS company-signed Release network gate reused its preserved build"
