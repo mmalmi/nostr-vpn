@@ -11,6 +11,8 @@ to restart a gate.
 Docker readiness is checked before source validation, with a 15-second daemon
 deadline and bounded image inspection/download requests. Restore the Docker
 service after a readiness failure before resuming the candidate.
+The preflight also asks Docker to copy every vendored Cargo manifest, catching
+source-filter omissions before platform compilation.
 
 Before freezing a new release, advance `ios/app-store-build-number`, synchronize
 versions, and run the TestFlight and App Store `preflight` commands. Both must

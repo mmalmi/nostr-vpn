@@ -39,6 +39,8 @@ and wallet funding recovers from mint outages. iOS does not support paid exits.
   builds do not fail on stale workspace versions.
 - Record interrupted release gates as failures instead of reporting a passed
   progress ledger after cancellation.
+- Include all vendored payment dependencies in Docker and Umbrel builds, and
+  check Docker's source filter before compiling platform packages.
 
 ## 4.1.10 - 2026-09-09
 

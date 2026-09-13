@@ -2127,6 +2127,8 @@ ensure_release_gate_docker_prerequisites() {
     printf 'Pulling missing release-gate base image: %s\n' "$image"
     release_gate_run_with_timeout "Docker base image download" 600 docker pull "$image"
   done
+  release_gate_run_with_timeout "Docker vendored source context" 60 \
+    python3 "$ROOT_DIR/scripts/check-docker-vendor-context.py" "$ROOT_DIR"
 }
 
 build_release_gate_docker_node_image() {
