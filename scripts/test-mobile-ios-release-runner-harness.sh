@@ -356,6 +356,51 @@ run_bounded() {
     "$@"
 }
 
+# A destination failure cannot touch the app. A fresh USB stopped-state proof
+# should close this attempt without starting a second automation session.
+for fixture in destination started earlier-ui stale-baseline standalone; do
+  (
+    IOS_RELEASE_NETWORK_PREPARED=1
+    IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
+    IOS_RELEASE_NETWORK_DEVICE=fixture
+    IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64=""
+    NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$TEMP_ROOT/no-start-$fixture"
+    cleanup_calls="$TEMP_ROOT/no-start-$fixture.calls"
+    baseline_calls="$TEMP_ROOT/no-start-$fixture.baselines"
+    ios_release_network_require_packet_tunnel_stopped() {
+      if [[ "$fixture" == stale-baseline && -e "$baseline_calls" ]]; then return 1; fi
+      echo probe >>"$baseline_calls"
+    }
+    ios_release_network_disconnect_cleanup_inner() { echo ui >>"$cleanup_calls"; }
+    ios_release_network_cleanup_private_artifacts() { :; }
+    if [[ "$fixture" != standalone ]]; then
+      ios_release_network_disconnect_cleanup 1
+    fi
+    if [[ "$fixture" == earlier-ui ]]; then
+      run_bounded prior-ui 5 2 FIRST bash -c 'echo FIRST'
+    fi
+    set +e
+    if [[ "$fixture" == started ]]; then
+      run_bounded destination-failure 5 2 FIRST \
+        bash -c 'echo FIRST; exit 70'
+    else
+      run_bounded destination-failure 5 2 FIRST \
+        bash -c 'echo "xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available"; exit 70'
+    fi
+    status=$?
+    set -e
+    [[ "$status" -ne 0 ]] || fail "destination failure became a success"
+    ios_release_network_disconnect_cleanup
+    if [[ "$fixture" == destination ]]; then
+      [[ ! -e "$cleanup_calls" && -s "$baseline_calls" ]] \
+        || fail "untouched stopped app started unnecessary cleanup UI"
+    else
+      [[ -s "$cleanup_calls" ]] \
+        || fail "$fixture skipped required cleanup UI"
+    fi
+  )
+done
+
 run_bounded success 5 2 FIRST \
   bash -c 'printf "FIRST\nordinary output\n"'
 grep -Fxq FIRST "$TEMP_ROOT/success.log" \

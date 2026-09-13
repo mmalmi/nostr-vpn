@@ -32,6 +32,7 @@ IOS_RELEASE_NETWORK_PENDING_SPEC_BASE64=""
 IOS_RELEASE_NETWORK_PENDING_LOG=""
 IOS_RELEASE_NETWORK_PENDING_XCRESULT=""
 IOS_RELEASE_NETWORK_EXACT_RUNNER_READY=0
+IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
 
 ios_release_network_require_unlocked() {
   local device="$1"
@@ -1326,6 +1327,7 @@ ios_release_network_run_bounded_xcode() {
   shift 9
   local pid pgid actual_pgid caller_pgid started
   local reason="" status=0 monitor_was_enabled=0 marker_seen=0 forced_kill=0
+  local prior_cleanup_required="$IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED"
   [[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || {
     echo "iOS $label timeout must be positive seconds" >&2
     return 2
@@ -1339,6 +1341,7 @@ ios_release_network_run_bounded_xcode() {
     return 2
   }
   [[ -z "$device" ]] || ios_release_network_require_unlocked "$device" || return 75
+  IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
   local -a capture_command=(
     python3 "$ROOT/scripts/capture-mobile-ios-underlay-output.py"
     "$log" "$host_markers"
@@ -1437,6 +1440,16 @@ ios_release_network_run_bounded_xcode() {
   IOS_RELEASE_NETWORK_ACTIVE_PGID=""
   [[ -z "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" ]] \
     || rm -f "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" || status=1
+  # Xcode's destination failure happens before launching the runner. Preserve
+  # an untouched baseline only for that explicit failure, never for a missing
+  # marker alone or after an earlier case could have changed the app.
+  if [[ "$prior_cleanup_required" == 0 && "$marker_seen" == 0 \
+    && "$status" -ne 0 ]] \
+    && grep -Fq 'xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available' "$log" \
+    && ! grep -Fq 'Test Case' "$log"
+  then
+    IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=0
+  fi
   if [[ "$reason" == "total" ]]; then
     echo "iOS $label exceeded its ${timeout_secs}s total deadline" >&2
     return 124
@@ -1868,14 +1881,21 @@ ios_release_network_disconnect_cleanup() {
     mkdir -p "$result_dir" || return 1
     # An already stopped tunnel gives the initial counter baseline directly.
     # Avoid opening an unnecessary Apple automation session and its teardown.
-    # Final cleanup must still restore the shipped UI and underlay settings.
-    if [[ "$preserve_prepared" == 1 && "$cleanup_failed" == 0 \
+    # A failed destination lookup also leaves that baseline untouched. Verify
+    # it over USB again rather than starting another automation session.
+    if [[ ( "$preserve_prepared" == 1 \
+      || "$IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED" == 0 ) \
+      && "$cleanup_failed" == 0 \
       && -z "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" ]] \
       && ios_release_network_require_packet_tunnel_stopped \
         "$IOS_RELEASE_NETWORK_DEVICE" \
         "$result_dir/mobile-ios-release-baseline-packet-tunnel-processes.json" 5
     then
-      echo "iOS initial counter baseline verified: packet tunnel already stopped"
+      echo "iOS untouched counter baseline verified: packet tunnel already stopped"
+      IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=0
+      if [[ "$preserve_prepared" != 1 ]]; then
+        ios_release_network_cleanup_private_artifacts || return 1
+      fi
       return 0
     fi
     local stem="mobile-ios-release-cleanup-$$-$RANDOM"
