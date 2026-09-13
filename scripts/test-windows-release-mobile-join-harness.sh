@@ -32,6 +32,21 @@ done
   NVPN_RELEASE_JOIN_INSTALL_ANDROID=1
   eval "$install_selection"
   [[ "${#android_install_binding_args[@]}" == 0 ]]
+  # Exercise both production expansions under nounset, including macOS Bash
+  # 3.2, where expanding an empty array directly reports an unbound variable.
+  for NVPN_RELEASE_JOIN_INSTALL_ANDROID in 0 1; do
+    eval "$install_selection"
+    while IFS= read -r expansion; do
+      expansion="${expansion%\\}"
+      eval "expanded=( $expansion )"
+      if [[ "$NVPN_RELEASE_JOIN_INSTALL_ANDROID" == 0 ]]; then
+        [[ "${#expanded[@]}" == 1 \
+          && "${expanded[0]}" == --allow-verified-no-install ]]
+      else
+        [[ "${#expanded[@]}" == 0 ]]
+      fi
+    done < <(sed -n '/android_install_binding_args\[@\]/p' "$HOST")
+  done
   if NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=0 NVPN_RELEASE_JOIN_INSTALL_ANDROID=0 \
       bash -c 'set -e; source "$1"; eval "$2"' _ \
       "$ROOT/scripts/lib-mobile-release-join-artifacts.sh" "$install_selection"; then
