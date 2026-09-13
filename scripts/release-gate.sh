@@ -1240,6 +1240,19 @@ linux_underlay_gate_reachable() {
     "virsh dominfo '$vm'" >/dev/null 2>&1
 }
 
+prepare_desktop_underlay_peer() {
+  if ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}" \
+    || { ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_LINUX_UNDERLAY_NETWORK_CHANGE_E2E:-auto}" \
+      && linux_underlay_gate_reachable; } \
+    || { ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_WINDOWS_UNDERLAY_NETWORK_CHANGE_E2E:-auto}" \
+      && windows_underlay_gate_reachable; }
+  then
+    release_gate_run_with_timeout "Host desktop underlay peer build" \
+      "$DESKTOP_UNDERLAY_NETWORK_CHANGE_TIMEOUT_SECS" \
+      ./scripts/prepare-macos-release-fips-peer.sh
+  fi
+}
+
 require_linux_underlay_gate() {
   local hypervisor="${NVPN_DESKTOP_UNDERLAY_HYPERVISOR_SSH:-}"
   local vm="${NVPN_LINUX_UNDERLAY_VM_NAME:-${NVPN_UBUNTU_VM_NAME:-}}"
@@ -2570,6 +2583,14 @@ main() {
   release_gate_parallel_start \
     "Linux ARM64 CLI" \
     run_linux_arm64_cli_gate
+  platform_preparation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
+
+  # Linux and Windows import this exact host-built peer during their underlay
+  # proofs. A cache miss must compile here, before macOS recovery deadlines or
+  # any other network/idle measurement can compete with that compiler load.
+  release_gate_parallel_start \
+    "Desktop underlay peer preparation" \
+    prepare_desktop_underlay_peer
   platform_preparation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
   release_gate_parallel_wait_group "${platform_preparation_lanes[@]}"

@@ -15,6 +15,10 @@ The preflight also asks Docker to copy every vendored Cargo manifest, catching
 source-filter omissions before platform compilation.
 Source validation compiles the app core without paid-exit features as well as
 checking the default workspace, so App Store feature drift fails early.
+The exact host-built Linux peer for desktop underlay checks is prepared alongside
+platform builds. All preparation finishes before network or idle measurements;
+a cold peer build must never overlap macOS recovery deadlines. Underlay runners
+then revalidate and import that cached artifact.
 
 Before freezing a new release, advance `ios/app-store-build-number`, synchronize
 versions, and run the TestFlight and App Store `preflight` commands. Both must
