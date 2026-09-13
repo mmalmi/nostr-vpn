@@ -356,9 +356,10 @@ run_bounded() {
     "$@"
 }
 
-# A destination failure cannot touch the app. A fresh USB stopped-state proof
+# Destination or automation authorization failures cannot touch the app.
+# A fresh USB stopped-state proof
 # should close this attempt without starting a second automation session.
-for fixture in destination started earlier-ui stale-baseline standalone; do
+for fixture in destination authorization started earlier-ui stale-baseline standalone; do
   (
     IOS_RELEASE_NETWORK_PREPARED=1
     IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
@@ -383,15 +384,18 @@ for fixture in destination started earlier-ui stale-baseline standalone; do
     if [[ "$fixture" == started ]]; then
       run_bounded destination-failure 5 2 FIRST \
         bash -c 'echo FIRST; exit 70'
+    elif [[ "$fixture" == authorization ]]; then
+      run_bounded authorization-failure 5 2 FIRST \
+        bash -c 'echo "Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while enabling automation mode.\""; exit 70'
     else
       run_bounded destination-failure 5 2 FIRST \
         bash -c 'echo "xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available"; exit 70'
     fi
     status=$?
     set -e
-    [[ "$status" -ne 0 ]] || fail "destination failure became a success"
+    [[ "$status" -ne 0 ]] || fail "startup failure became a success"
     ios_release_network_disconnect_cleanup
-    if [[ "$fixture" == destination ]]; then
+    if [[ "$fixture" == destination || "$fixture" == authorization ]]; then
       [[ ! -e "$cleanup_calls" && -s "$baseline_calls" ]] \
         || fail "untouched stopped app started unnecessary cleanup UI"
     else

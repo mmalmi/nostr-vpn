@@ -1458,12 +1458,13 @@ ios_release_network_run_bounded_xcode() {
   IOS_RELEASE_NETWORK_ACTIVE_PGID=""
   [[ -z "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" ]] \
     || rm -f "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" || status=1
-  # Xcode's destination failure happens before launching the runner. Preserve
-  # an untouched baseline only for that explicit failure, never for a missing
-  # marker alone or after an earlier case could have changed the app.
+  # Destination and automation-authorization failures precede every test
+  # method. Preserve an untouched baseline only for those explicit failures,
+  # never for a missing marker alone or after earlier UI work.
   if [[ "$prior_cleanup_required" == 0 && "$marker_seen" == 0 \
     && "$status" -ne 0 ]] \
-    && grep -Fq 'xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available' "$log" \
+    && { grep -Fq 'xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available' "$log" \
+      || grep -Fq 'Timed out while enabling automation mode.' "$log"; } \
     && ! grep -Fq 'Test Case' "$log"
   then
     IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=0
@@ -1899,8 +1900,8 @@ ios_release_network_disconnect_cleanup() {
     mkdir -p "$result_dir" || return 1
     # An already stopped tunnel gives the initial counter baseline directly.
     # Avoid opening an unnecessary Apple automation session and its teardown.
-    # A failed destination lookup also leaves that baseline untouched. Verify
-    # it over USB again rather than starting another automation session.
+    # An explicit pre-method startup failure also leaves it untouched. Verify
+    # it over USB again before deciding whether cleanup UI is needed.
     if [[ ( "$preserve_prepared" == 1 \
       || "$IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED" == 0 ) \
       && "$cleanup_failed" == 0 \
