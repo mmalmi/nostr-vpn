@@ -809,8 +809,8 @@ ios_release_network_xcode_command() {
     -scheme NostrVpnIos
     -configuration Release
     -derivedDataPath "$IOS_RELEASE_NETWORK_DERIVED_DATA"
-    -destination "$IOS_RELEASE_NETWORK_DESTINATION"
-    -destination-timeout 180
+    -destination generic/platform=iOS
+    ARCHS=arm64
     -collect-test-diagnostics never
     DEVELOPMENT_TEAM="$NVPN_IOS_TEAM_ID"
     NVPN_IOS_CODE_SIGN_IDENTITY="$NVPN_IOS_CODE_SIGN_IDENTITY"

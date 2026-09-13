@@ -43,6 +43,10 @@ commands.
 
 ## iPhone testing window
 
+Compile the signed test runner for the generic iOS destination. Selecting the
+physical phone is only necessary when executing tests; compilation must not wait
+for its development services to become available.
+
 The full gate validates desktop seller evidence before phone work, then groups
 physical idle, WireGuard/DNS, Android replacement, radio recovery and mobile/Mac
 join checks together. It seals the frozen iOS archive's physical-test evidence

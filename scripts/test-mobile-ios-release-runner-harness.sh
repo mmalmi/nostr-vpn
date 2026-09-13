@@ -140,6 +140,22 @@ chmod +x "$TEMP_ROOT/bin/ideviceinfo"
   done
 ) || fail "USB physical-device selection did not preserve exact identity"
 
+(
+  IOS_RELEASE_NETWORK_DERIVED_DATA="$TEMP_ROOT/build-only"
+  IOS_RELEASE_NETWORK_DESTINATION=fixture-device
+  NVPN_IOS_TEAM_ID=fixture-team
+  NVPN_IOS_CODE_SIGN_IDENTITY=fixture-signer
+  NVPN_IOS_PROVISIONING_PROFILE_UUID=fixture-app-profile
+  NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID=fixture-tunnel-profile
+  NVPN_BUILD_GIT_SHA=fixture-source
+  NVPN_BUILD_TIMESTAMP_UTC=fixture-time
+  ios_release_network_xcode_command
+  printf '%s\n' "${IOS_RELEASE_NETWORK_XCODE_COMMAND[@]}" >"$TEMP_ROOT/build-command.txt"
+  grep -Fxq 'generic/platform=iOS' "$TEMP_ROOT/build-command.txt" \
+    && grep -Fxq 'ARCHS=arm64' "$TEMP_ROOT/build-command.txt" \
+    && ! grep -Fq fixture-device "$TEMP_ROOT/build-command.txt"
+) || fail "compiling the iOS runner still waits for a live physical destination"
+
 runner_root="$TEMP_ROOT/runner-derived/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
 runner_install_log="$TEMP_ROOT/runner-install.log"
 mkdir -p "$runner_root"
@@ -149,12 +165,14 @@ plutil -insert CFBundleIdentifier \
 (
   IOS_RELEASE_NETWORK_DERIVED_DATA="$TEMP_ROOT/runner-derived"
   IOS_RELEASE_NETWORK_DEVICE=fixture-device
+  IOS_RELEASE_NETWORK_DESTINATION=fixture-device
   xcrun() {
     printf '%s\n' "$*" >>"$runner_install_log"
   }
   ios_release_network_install_exact_runner
   ios_release_network_test_command "$TEMP_ROOT/runner-derived/exact.xctestrun"
   ios_release_network_test_command "$TEMP_ROOT/runner-derived/exact.xctestrun"
+  [[ " ${IOS_RELEASE_NETWORK_XCODE_COMMAND[*]} " == *" -destination fixture-device "* ]]
 ) || fail "exact signed iOS runner was not installed in place"
 grep -Fxq \
   "devicectl device install app --device fixture-device $runner_root --quiet" \
