@@ -19,6 +19,8 @@ The exact host-built Linux peer for desktop underlay checks is prepared alongsid
 platform builds. All preparation finishes before network or idle measurements;
 a cold peer build must never overlap macOS recovery deadlines. Underlay runners
 then revalidate and import that cached artifact.
+Linux underlay cleanup collects evidence through the restored primary link;
+the guest has already removed its temporary secondary network at that point.
 
 Before freezing a new release, advance `ios/app-store-build-number`, synchronize
 versions, and run the TestFlight and App Store `preflight` commands. Both must

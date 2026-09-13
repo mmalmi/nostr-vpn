@@ -1742,8 +1742,7 @@ require_tokens "$LINUX_HOST" "detached guest-runner lifecycle" \
   'wait_for_guest_runner_success' \
   'stop_guest_runner_unit'
 require_tokens "$LINUX_HOST" "fail-closed runtime evidence capture" \
-  'capture_guest_state secondary' \
-  'capture_guest_state primary' \
+  'capture_guest_state && guest_capture_succeeded=1' \
   'guest_capture_required=' \
   'guest_capture_succeeded=1' \
   'peer_capture_required=' \
