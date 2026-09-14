@@ -83,7 +83,7 @@ async fn local_mixed_transit_prefers_udp_and_recovers_from_websocket_fallback() 
         client_config.peers = vec![udp_first_seed_peer(seed.npub(), &udp_address, &url)];
         let client = bind_local_transit_endpoint(client_config).await;
         wait_for_expected_transit(&client, seed.npub()).await;
-        assert_seed_transport(
+        wait_for_seed_transport(
             &client,
             seed.npub(),
             if udp_reachable { "udp" } else { "websocket" },
@@ -112,6 +112,15 @@ async fn local_mixed_transit_prefers_udp_and_recovers_from_websocket_fallback() 
         )
         .await;
         if let Some(socket) = black_hole {
+            assert!(
+                tokio::time::timeout(
+                    Duration::from_millis(100),
+                    wait_for_seed_transport(&client, seed.npub(), "udp"),
+                )
+                .await
+                .is_err(),
+                "UDP transport gate accepted a WebSocket-only fallback"
+            );
             socket
                 .set_nonblocking(true)
                 .expect("nonblocking UDP forwarder");
@@ -136,27 +145,7 @@ async fn local_mixed_transit_prefers_udp_and_recovers_from_websocket_fallback() 
                         .expect("forward UDP send");
                 }
             });
-            tokio::time::timeout(Duration::from_secs(30), async {
-                loop {
-                    if client
-                        .peers()
-                        .await
-                        .expect("upgrade peer state")
-                        .iter()
-                        .any(|peer| {
-                            peer.connected
-                                && peer.npub == seed.npub()
-                                && peer.transport_type.as_deref() == Some("udp")
-                        })
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-            })
-            .await
-            .expect("WSS fallback did not return to reachable UDP");
-            assert_seed_transport(&client, seed.npub(), "udp").await;
+            wait_for_seed_transport(&client, seed.npub(), "udp").await;
             deliver_ping(
                 &client_control,
                 &mut seed_control,
@@ -180,17 +169,34 @@ fn udp_first_seed_peer(npub: &str, udp_address: &str, websocket_url: &str) -> Pe
     peer.with_address(PeerAddress::with_priority("websocket", websocket_url, 200))
 }
 
-async fn assert_seed_transport(endpoint: &FipsEndpoint, seed_npub: &str, transport: &str) {
-    let peers = endpoint
-        .peers()
-        .await
-        .expect("query authenticated seed transport");
-    let seed = peers
-        .iter()
-        .find(|peer| peer.connected && peer.npub == seed_npub)
-        .expect("authenticated seed");
-    assert_eq!(seed.transport_type.as_deref(), Some(transport));
-    eprintln!("authenticated seed transport: {transport}");
+async fn wait_for_seed_transport(endpoint: &FipsEndpoint, seed_npub: &str, transport: &str) {
+    // Authentication may finish on WSS while the preferred UDP handshake is
+    // still in flight. Require promotion within the same bounded window used
+    // by the UDP-blackhole recovery test, not on the first peer snapshot.
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut previous = String::new();
+        loop {
+            let peers = endpoint
+                .peers()
+                .await
+                .expect("query authenticated seed transport");
+            let observed = peers
+                .iter()
+                .find(|peer| peer.connected && peer.npub == seed_npub)
+                .and_then(|peer| peer.transport_type.as_deref())
+                .unwrap_or("disconnected");
+            if observed != previous {
+                eprintln!("authenticated seed transport: {observed}; required: {transport}");
+                previous = observed.to_owned();
+            }
+            if observed == transport {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("authenticated seed did not reach required transport within 30 seconds");
 }
 
 async fn public_mixed_transit_round() {
@@ -441,7 +447,7 @@ async fn public_mixed_transit_endpoint(seed_index: usize) -> Arc<FipsEndpoint> {
             .expect("bind public mixed-transport transit endpoint"),
     );
     wait_for_expected_transit(&endpoint, expected_seed_npub).await;
-    assert_seed_transport(&endpoint, expected_seed_npub, "udp").await;
+    wait_for_seed_transport(&endpoint, expected_seed_npub, "udp").await;
     endpoint
 }
 
