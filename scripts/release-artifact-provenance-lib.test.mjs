@@ -291,6 +291,7 @@ for (const [helper, nearbyHelper] of [
   ['verify.sh', 'verify-build.sh'],
   ['startos-release.mjs', 'startos-release-helper.mjs'],
   ['publish.sh', 'publish-build.sh'],
+  ['ios-artifact-source.mjs', 'ios-artifact-build.mjs'],
 ]) {
   test(`component proof treats only ${helper} as harness-only`, () => {
     const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))

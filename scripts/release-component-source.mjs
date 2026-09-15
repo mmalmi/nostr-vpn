@@ -48,6 +48,7 @@ const harnessOnlyPaths = new Set([
   'scripts/ios_frozen_archive.py',
   'scripts/ios_frozen_gate.py',
   'scripts/ios-upload-receipt.mjs',
+  'scripts/ios-artifact-source.mjs',
   'scripts/lib-desktop-underlay-host-peer.sh',
   'scripts/lib-ubuntu-vm-imported-release.sh',
   'scripts/linux-vm-desktop-underlay-change-e2e.sh',
