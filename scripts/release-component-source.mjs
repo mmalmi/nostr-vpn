@@ -86,6 +86,7 @@ const harnessOnlyPaths = new Set([
   'scripts/prepare-macos-release-fips-peer.sh',
   'scripts/publish-release-refs.mjs',
   'scripts/publish.sh',
+  'scripts/verify-cargo-registry-dependency.py',
   'scripts/release-network-evidence.py',
   'scripts/release-mutation-gate.mjs',
   'scripts/release-source-verification.mjs',

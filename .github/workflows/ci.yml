@@ -23,6 +23,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      # The package preflight regression exercises real multi-package Cargo.
+      - name: Setup release Cargo
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -100,8 +106,8 @@ jobs:
         run: |
           python3 scripts/test-native-lab.py
           node scripts/sync-versions.mjs --check
-          cargo fmt --check
-          cargo clippy --workspace --all-targets -- -D warnings
+          cargo fmt --check -p nvpn -p nostr-vpn-app-core -p nostr-vpn-core -p nostr-vpn-sim -p nostr-vpn-web -p nostr-vpn-wintun -p nostr-vpn-uniffi-bindgen
+          cargo clippy --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings
           cargo test --workspace
 
   web:

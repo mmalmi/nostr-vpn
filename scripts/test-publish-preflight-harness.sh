@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PUBLISHER="$ROOT/scripts/publish.sh"
+python3 "$ROOT/scripts/test-cargo-registry-dependency.py"
 
 fail() {
   printf 'publish preflight harness failed: %s\n' "$*" >&2
@@ -117,73 +118,83 @@ grep -Fq 'Cargo could not resolve crates.io credentials' "$tmp_dir/missing.out" 
 
 # Exercise the production preflight with an unpublished dependent. A normal
 # package verification would resolve an older registry dependency here.
+# Exercise Cargo itself: the old local check accepted an API provided only by
+# a workspace patch, while the distributable package used registry sources.
 awk '
-  /^verify_dependent_dry_run\(\) \{/ { emit = 1 }
+  /^verify_cargo_packages\(\) \{/ { emit = 1 }
   /^publish_tier\(\) \{/ { exit }
   emit { print }
-' "$PUBLISHER" >"$tmp_dir/dependent-function.sh"
-awk '
-  /^if \[\[ "\$PREFLIGHT_ONLY" -eq 1 \]\]; then/ { emit = 1 }
-  emit { print }
-  emit && /^fi$/ { exit }
-' "$PUBLISHER" >"$tmp_dir/package-preflight.sh"
-[[ -s "$tmp_dir/package-preflight.sh" ]] || fail "could not extract package preflight"
-
-cat >"$tmp_dir/bin/cargo" <<'EOF'
-#!/bin/bash
-set -euo pipefail
-printf '%s\n' "$*" >>"$NVPN_TEST_CARGO_LOG"
-case "$*" in
-  'package --locked -p nostr-vpn-core'|'package --locked -p nostr-vpn-wintun') ;;
-  'package --locked -p nvpn --list')
-    [[ "$NVPN_TEST_CARGO_MODE" != package-failure ]] || exit 71
-    ;;
-  'check --locked -p nvpn')
-    [[ "$NVPN_TEST_CARGO_MODE" != build-failure ]] || exit 72
-    ;;
-  *)
-    echo "dependent registry package is unavailable before its dependency is published" >&2
-    exit 73
-    ;;
-esac
+' "$PUBLISHER" >"$tmp_dir/package-function.sh"
+[[ -s "$tmp_dir/package-function.sh" ]] || fail "could not extract package preflight"
+fixture="$tmp_dir/workspace"
+mkdir -p "$fixture/core/src" "$fixture/cli/src" "$fixture/itoa/src"
+cat >"$fixture/Cargo.toml" <<'EOF'
+[workspace]
+members = ["core", "cli"]
+exclude = ["itoa"]
+resolver = "2"
+[patch.crates-io]
+itoa = { path = "itoa" }
 EOF
-chmod +x "$tmp_dir/bin/cargo"
-
-run_package_preflight() {
-  env PATH="$tmp_dir/bin:/usr/bin:/bin" \
-    NVPN_TEST_CARGO_LOG="$tmp_dir/package-cargo.log" \
-    NVPN_TEST_CARGO_MODE="$1" \
-    bash -c '
-      set -euo pipefail
-      source "$1"
-      PREFLIGHT_ONLY=1
-      DRY_RUN=""
-      FAILED_CRATES=()
-      TIER_1_CRATES=(nostr-vpn-core nostr-vpn-wintun)
-      TIER_2_CRATES=(nvpn)
-      preflight_crates_io_credentials() { :; }
-      verify_exact_release_source() { :; }
-      package_crate_and_bind_digest() { cargo package --locked -p "$1"; }
-      source "$2"
-    ' bash "$tmp_dir/dependent-function.sh" "$tmp_dir/package-preflight.sh"
+cat >"$fixture/core/Cargo.toml" <<'EOF'
+[package]
+name = "nvpn-package-preflight-core-fixture"
+version = "0.1.0"
+edition = "2021"
+description = "Disposable Cargo preflight regression fixture"
+license = "MIT"
+[dependencies]
+itoa = "=1.0.18"
+EOF
+cat >"$fixture/cli/Cargo.toml" <<'EOF'
+[package]
+name = "nvpn-package-preflight-cli-fixture"
+version = "0.1.0"
+edition = "2021"
+description = "Disposable Cargo preflight regression fixture"
+license = "MIT"
+[dependencies]
+nvpn-package-preflight-core-fixture = { path = "../core", version = "=0.1.0" }
+EOF
+cat >"$fixture/itoa/Cargo.toml" <<'EOF'
+[package]
+name = "itoa"
+version = "1.0.18"
+edition = "2021"
+EOF
+printf 'pub fn nvpn_local_only() -> String { "42".into() }\n' >"$fixture/itoa/src/lib.rs"
+printf 'pub fn value() -> String { itoa::nvpn_local_only() }\n' >"$fixture/core/src/lib.rs"
+printf 'fn main() { println!("{}", nvpn_package_preflight_core_fixture::value()); }\n' >"$fixture/cli/src/main.rs"
+(
+  cd "$fixture"
+  git init -q
+  cargo generate-lockfile --offline
+  git add .
+  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm fixture
+  cargo check --locked --offline -p nvpn-package-preflight-cli-fixture
+) >"$tmp_dir/local-check.log" 2>&1 || { cat "$tmp_dir/local-check.log"; fail "local fixture must build"; }
+run_real_package_preflight() {
+  (
+    cd "$fixture"
+    source "$tmp_dir/package-function.sh"
+    ALL_CRATES=(nvpn-package-preflight-core-fixture nvpn-package-preflight-cli-fixture)
+    # Allow Cargo to fetch the tiny pinned registry fixture on a fresh CI host.
+    CARGO_NET_OFFLINE=false verify_cargo_packages
+  )
 }
-
-: >"$tmp_dir/package-cargo.log"
-run_package_preflight success \
-  || fail "preflight tried to package a dependent before its registry dependency exists"
-for command in \
-  'package --locked -p nostr-vpn-core' \
-  'package --locked -p nostr-vpn-wintun' \
-  'package --locked -p nvpn --list' \
-  'check --locked -p nvpn'
-do
-  grep -Fxq "$command" "$tmp_dir/package-cargo.log" \
-    || fail "package preflight omitted $command"
-done
-for mode in package-failure build-failure; do
-  if run_package_preflight "$mode" >"$tmp_dir/$mode.out" 2>&1; then
-    fail "package preflight accepted $mode"
-  fi
-done
-
-printf 'publish preflight harness passed\n'
+if run_real_package_preflight >"$tmp_dir/rejected.log" 2>&1; then
+  fail "package preflight accepted a local-only dependency API"
+fi
+grep -Fq 'cannot find function `nvpn_local_only`' "$tmp_dir/rejected.log" \
+  || { cat "$tmp_dir/rejected.log"; fail "fixture failed for an unexpected reason"; }
+# A compatible package must build even though neither workspace crate exists
+# in the public registry yet. This is the path needed before any publication.
+printf 'pub fn value() -> String { itoa::Buffer::new().format(42).to_owned() }\n' >"$fixture/core/src/lib.rs"
+(
+  cd "$fixture"
+  git add core/src/lib.rs
+  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -qm compatible
+)
+run_real_package_preflight >"$tmp_dir/accepted.log" 2>&1 \
+  || { cat "$tmp_dir/accepted.log"; fail "compatible unpublished packages did not build"; }
+printf 'publish preflight harness passed: local-only API rejected; unpublished package graph verified\n'

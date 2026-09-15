@@ -1436,9 +1436,14 @@ for source in (network, join):
 for source, label in ((network, "network"), (release_gate, "join gate")):
     if "select_generated_ios_release_xctestrun" not in source:
         raise SystemExit(f"{label} does not select the generated xctestrun")
-if "NVPN_MOBILE_IOS_RELEASE_XCTESTRUN" in release_gate:
+# The underlay lane explicitly forwards its locally generated, receipt-bound
+# plan. Restrict the no-external-input assertion to the join gate it protects.
+join_gate_source = release_gate.split("run_mobile_join_e2e_gate() {", 1)[1].split(
+    "\nrun_windows_release_mobile_join_e2e_gate() {", 1
+)[0]
+if "NVPN_MOBILE_IOS_RELEASE_XCTESTRUN" in join_gate_source:
     raise SystemExit("join gate still trusts an external xctestrun")
-if "NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA" in release_gate:
+if "NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA" in join_gate_source:
     raise SystemExit("join gate still trusts external iOS test products")
 for required in (
     'xctestrun="${NVPN_MOBILE_IOS_RELEASE_XCTESTRUN:-}"',
@@ -1450,7 +1455,7 @@ for required in (
         raise SystemExit(
             f"iOS network reuse does not bind its supplied test plan: {required}"
         )
-if "NVPN_MOBILE_IOS_RELEASE_APP_PATH" in release_gate:
+if "NVPN_MOBILE_IOS_RELEASE_APP_PATH" in join_gate_source:
     raise SystemExit("join gate still trusts an external frozen-app path")
 for required in (
     'target["TestBundlePath"]',

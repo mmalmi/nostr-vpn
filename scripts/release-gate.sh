@@ -406,14 +406,17 @@ run_release_gate_candidate_preflight() {
   # expensive exact-candidate build. These use the locked release graph and
   # are not repeated by the later full host validation lane.
   release_gate_checkpoint_run "Source quality" run_release_gate_source_quality
+  release_gate_checkpoint_run "Distributable Cargo packages" ./scripts/publish.sh --dry-run
 }
 
 run_release_gate_source_quality() {
-  cargo fmt --check
+  cargo fmt --check -p nvpn -p nostr-vpn-app-core -p nostr-vpn-core -p nostr-vpn-sim -p nostr-vpn-web -p nostr-vpn-wintun -p nostr-vpn-uniffi-bindgen
   # Workspace feature unification enables paid exits. Check the App Store
   # feature set separately before spending time on platform artifacts.
   cargo check --locked -p nostr-vpn-app-core --no-default-features --lib
-  cargo clippy --locked --workspace --all-targets -- -D warnings
+  # Keep the application lint scope: vendored dependencies are now workspace
+  # members for Cargo packaging, with their existing upstream test lint policy.
+  cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings
 }
 
 run_linux_arm64_cli_gate() {

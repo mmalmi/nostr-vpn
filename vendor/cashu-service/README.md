@@ -1,4 +1,9 @@
-# cashu-service
+# nvpn-cashu-service
+
+Nostr VPN maintained distribution of [cashu-service 0.4.8](https://crates.io/crates/cashu-service/0.4.8),
+with the Cashu 0.18 migration and payment reliability fixes used by Nostr VPN.
+The Rust library name remains `cashu_service`. This package is maintained in
+[nostr-vpn](https://github.com/mmalmi/nostr-vpn); it is not the upstream release.
 
 Reusable Cashu helper and wallet primitives for paid connectivity services.
 

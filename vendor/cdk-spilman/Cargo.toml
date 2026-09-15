@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 rust-version = "1.85.0"
-name = "cdk-spilman"
+name = "nvpn-cdk-spilman"
 version = "0.17.6"
 build = false
 autolib = false
@@ -20,10 +20,10 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Standalone Spilman payment channels library for Cashu"
-readme = false
+description = "Nostr VPN maintained Spilman payment channels for Cashu 0.18"
+readme = "README.nvpn.md"
 license = "MIT"
-repository = "https://github.com/SatsAndSports/cashu_spilman_channels"
+repository = "https://github.com/mmalmi/nostr-vpn"
 
 [features]
 configurable-host = [

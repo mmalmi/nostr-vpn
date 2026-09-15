@@ -792,30 +792,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cashu-service"
-version = "0.4.8"
-dependencies = [
- "anyhow",
- "async-trait",
- "cashu",
- "cdk",
- "cdk-spilman",
- "cdk-sqlite",
- "fs2",
- "hex",
- "httpdate",
- "libc",
- "rand 0.8.6",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -979,21 +955,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "cdk-spilman"
-version = "0.17.6"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bitcoin",
- "cashu",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tracing",
 ]
 
 [[package]]
@@ -3788,12 +3749,11 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.1.12"
+version = "4.1.13"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "cashu",
- "cashu-service",
  "dirs 6.0.0",
  "image",
  "jni 0.21.1",
@@ -3804,6 +3764,7 @@ dependencies = [
  "nostr-pubsub-fips",
  "nostr-sdk",
  "nostr-vpn-core",
+ "nvpn-cashu-service",
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
  "qrcode",
@@ -3819,14 +3780,13 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.1.12"
+version = "4.1.13"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
  "async-trait",
  "base64 0.22.1",
  "boringtun",
- "cashu-service",
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "hashtree-updater",
@@ -3837,6 +3797,7 @@ dependencies = [
  "libc",
  "nostr-identity 0.4.0",
  "nostr-sdk",
+ "nvpn-cashu-service",
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
  "nvpn-fips-tcp",
@@ -3857,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-linux"
-version = "4.1.12"
+version = "4.1.13"
 dependencies = [
  "gio",
  "glib",
@@ -3936,6 +3897,45 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "nvpn-cashu-service"
+version = "0.4.8"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cashu",
+ "cdk",
+ "cdk-sqlite",
+ "fs2",
+ "hex",
+ "httpdate",
+ "libc",
+ "nvpn-cdk-spilman",
+ "rand 0.8.6",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "nvpn-cdk-spilman"
+version = "0.17.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bitcoin",
+ "cashu",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

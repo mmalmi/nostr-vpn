@@ -1,6 +1,6 @@
 [package]
 name = "nostr-vpn-linux"
-version = "4.1.12"
+version = "4.1.13"
 description = "Simple private networks over FIPS and Nostr."
 edition = "2021"
 publish = false
@@ -22,10 +22,6 @@ rqrr = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
-
-[patch.crates-io]
-cashu-service = { path = "../vendor/cashu-service" }
-cdk-spilman = { path = "../vendor/cdk-spilman" }
 
 [package.metadata.deb]
 name = "nostr-vpn"

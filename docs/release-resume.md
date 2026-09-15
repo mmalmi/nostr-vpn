@@ -134,3 +134,21 @@ Let the canonical publisher build and push Umbrel together. An extra cache-only
 build while waiting for hosted checks does not retain an image for publication:
 [BuildKit can reclaim that cache](https://docs.docker.com/build/cache/garbage-collection/)
 before promotion, forcing the same compilation again.
+
+## Cargo packages and maintained payment dependencies
+
+The early release preflight builds the actual Cargo archives together, so new
+workspace dependencies can be verified before any upload. A local `cargo check`
+does not prove that the published package builds: Cargo removes workspace patches.
+
+Already published payment dependencies are reused only after their original
+manifest and every packaged source file match the local dependency. A changed
+dependency needs a new version. The application archives then resolve the actual
+registry checksums, preventing VCS metadata changes in a new app commit from
+creating different archives for an existing dependency version.
+
+The native 4.1.12 release is accompanied by the Cargo-only 4.1.13 correction at
+`cargo-v4.1.13`. Its VPN and payment Rust sources match 4.1.12. The correction
+publishes the maintained Cashu and Spilman packages explicitly; it does not
+replace the signed native artifacts or the App Store submission. Keep those
+publication results when resuming; do not repeat the 4.1.12 Cargo upload.

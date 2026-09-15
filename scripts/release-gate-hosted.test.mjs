@@ -29,6 +29,8 @@ release_gate_timing_run() {
   if [[ "$NVPN_TEST_FULL_ROUTE" == 1 ]]; then
     echo "check:$2"
     [[ "$2" != "$NVPN_TEST_FAIL_CHECK" ]] || return 75
+  elif [[ "$2" == ./scripts/security-audit-rust.sh ]]; then
+    echo dependency-security
   else
     shift; "$@"
   fi
@@ -56,6 +58,7 @@ linux_platform_lane_requested() { return 0; }
 ${functions}
 ${command}
 `, '_', root], {
+      cwd: root,
       encoding: 'utf8',
       timeout: 10_000,
       env: {
@@ -76,7 +79,7 @@ test('hosted entrypoint runs portable checks without fleet or private mint prepa
   const result = runRoute('main --hosted')
   assert.equal(result.status, 0, result.stderr)
   for (const check of [
-    'source-preflight', 'docker-prerequisites', 'static-rust-and-cli',
+    'source-preflight', 'docker-prerequisites', 'dependency-security', 'static-rust-and-cli',
     'public-fips-transit', 'build-node', 'build-web', 'routing-and-roaming',
     'lane:Docker NAT-safe MTU', 'lane:Docker kernel WireGuard exit',
     'lane:Docker userspace WireGuard exit', 'lane:Web/StartOS manual join',

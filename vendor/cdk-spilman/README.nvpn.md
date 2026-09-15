@@ -1,3 +1,6 @@
+This maintained fork is published as `nvpn-cdk-spilman`; the Rust library name
+remains `cdk_spilman`. It is not an upstream Spilman release.
+
 # Spilman dependency review — 2026-09-11
 
 This directory contains the published `cdk-spilman` 0.17.6 source, with

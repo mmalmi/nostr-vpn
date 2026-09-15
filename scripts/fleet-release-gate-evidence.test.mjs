@@ -36,7 +36,7 @@ const platforms = {
     'package_install',
     'public_ui_join',
   ],
-  macos: ['artifact', 'network', 'public_ui_join'],
+  macos: ['artifact', 'network_artifact', 'network', 'public_ui_join'],
   windows: ['artifact', 'installer', 'network', 'public_ui_join'],
 }
 
@@ -131,6 +131,7 @@ function fixture(root) {
     ['android', 'physical', 'fipsCoreVersion'],
     ['ios', 'mobile_artifact', 'fipsCoreVersion'],
     ['macos', 'artifact', 'fipsCoreVersion'],
+    ['macos', 'network_artifact', 'fipsCoreVersion'],
     ['linux', 'artifact', 'fipsVersion'],
     ['windows', 'artifact', 'fipsVersion'],
   ]) {
@@ -430,6 +431,7 @@ test('rejects wrong source, FIPS receipts, schema, hashes, and key sets', () => 
       ['android', 'physical', 'fipsCoreVersion'],
       ['ios', 'mobile_artifact', 'fipsCoreVersion'],
       ['macos', 'artifact', 'fipsCoreVersion'],
+      ['macos', 'network_artifact', 'fipsCoreVersion'],
       ['linux', 'artifact', 'fipsVersion'],
       ['windows', 'artifact', 'fipsVersion'],
     ]) {
