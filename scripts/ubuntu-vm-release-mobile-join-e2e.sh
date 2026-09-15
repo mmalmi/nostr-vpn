@@ -162,7 +162,8 @@ trap cleanup EXIT
 
 case "${NVPN_UBUNTU_SKIP_GIT_SYNC:-0}" in
   1|true|TRUE|True|yes|YES|Yes|on|ON|On) ;;
-  *) "$ROOT/scripts/ubuntu-vm-git-sync.sh" "$SSH_HOST" ;;
+  *) NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT="$APP_GIT_SHA" \
+    "$ROOT/scripts/ubuntu-vm-git-sync.sh" "$SSH_HOST" ;;
 esac
 ubuntu_vm_import_release_bundle
 import_ready=1

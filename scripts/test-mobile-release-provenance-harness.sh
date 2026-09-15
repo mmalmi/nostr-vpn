@@ -404,6 +404,29 @@ for entrypoint in ["mobile-release-join-e2e.sh", "windows-vm-release-mobile-join
     check(False)
     (fixture / "untracked.rs").unlink()
     git("restore", "Cargo.lock")
+
+# Exercise the Linux join runner's actual sync dispatch with a managed lock.
+# The VM must receive the committed candidate, not a temporary working tree.
+source = (root / "scripts/ubuntu-vm-release-mobile-join-e2e.sh").read_text()
+sync = re.search(r'^case "\$\{NVPN_UBUNTU_SKIP_GIT_SYNC:-0\}" in\n.*?^esac$', source, re.M | re.S)
+assert sync, "Linux join sync dispatch is missing"
+(fixture / "scripts").mkdir()
+recorder = fixture / "scripts/ubuntu-vm-git-sync.sh"
+recorder.write_text('#!/usr/bin/env bash\nset -eu\nprintf "%s\\n" "${NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT:-}" >"$SYNC_CAPTURE"\n')
+recorder.chmod(0o700)
+capture = temporary / "linux-join-sync-commit"
+head = subprocess.check_output(["git", "-C", str(fixture), "rev-parse", "HEAD"], text=True).strip()
+with (fixture / "Cargo.lock").open("a") as file:
+    file.write("# managed release graph\n")
+sync_env = {**os.environ, "ROOT": str(fixture), "APP_GIT_SHA": head,
+            "SSH_HOST": "unused", "SYNC_CAPTURE": str(capture),
+            "NVPN_UBUNTU_SKIP_GIT_SYNC": "0"}
+subprocess.run(["bash", "-eu", "-c", sync.group(0)], env=sync_env, check=True)
+assert capture.read_text().strip() == head, "Linux join sync did not pin the committed candidate"
+capture.unlink()
+sync_env["NVPN_UBUNTU_SKIP_GIT_SYNC"] = "1"
+subprocess.run(["bash", "-eu", "-c", sync.group(0)], env=sync_env, check=True)
+assert not capture.exists(), "Linux join repeated explicitly skipped source synchronization"
 print("Mobile join source guards preserve exact managed dependency state and reject unrelated changes")
 PY_JOIN
 
