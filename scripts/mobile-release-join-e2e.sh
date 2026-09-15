@@ -352,8 +352,8 @@ phase_ios_admin_android_manual() {
   local admin_log ios_admin_relaunch_joiner submitted completed
   local peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
   local accepted="$RESULT_DIR/iphone-admin-pixel-manual-accepted.ms"
-  release_join_android_open_network_setup
   ios_create_admin "Release manual iPhone admin"
+  release_join_android_open_network_setup
   release_join_android_manual_submit \
     "$RELEASE_JOIN_IOS_ADMIN_ID" "$RELEASE_JOIN_IOS_NETWORK_ID"
   release_join_android_wait_vpn_connected
