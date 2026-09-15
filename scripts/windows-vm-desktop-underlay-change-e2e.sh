@@ -199,6 +199,13 @@ JS
     "$ARTIFACT_DIR/windows-wireguard-ownership-harness.log" \
     || fail "Windows native WireGuard ownership regression harness failed"
 
+  run_ps_primary \
+    "& $(ps_quote "$GUEST_REPO\\scripts\\test-desktop-windows-probe-logging.ps1")" \
+    >"$ARTIFACT_DIR/windows-probe-logging-harness.log"
+  grep -Fq 'WINDOWS_CONCURRENT_PROBE_LOGGING_OK' \
+    "$ARTIFACT_DIR/windows-probe-logging-harness.log" \
+    || fail "Windows concurrent probe logging regression failed"
+
   run_ps_primary "\$ErrorActionPreference = 'Stop'
 \$Bin = $(ps_quote "$GUEST_BINARY")
 \$ReceiptPath = $(ps_quote "$GUEST_INSTALLER_RECEIPT")
@@ -853,7 +860,11 @@ collect_failure_artifacts() {
       daemon.restart.stderr.log \
       daemon.restart.stdout.log \
       payload.log \
-      wireguard-payload.log
+      wireguard-payload.log \
+      probe.stdout.log \
+      probe.stderr.log \
+      wireguard-probe.stdout.log \
+      wireguard-probe.stderr.log
     do
       {
         printf '### %s\n' "$name"

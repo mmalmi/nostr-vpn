@@ -915,23 +915,13 @@ switch ($Action) {
       throw "Probe requires PeerTunnelIp"
     }
     $log = Join-Path $StateDir "payload.log"
+    # Add-Content on Windows PowerShell 5.1 denies concurrent readers and can
+    # kill this probe while the recovery observer reads its timestamped log.
     while (!(Test-Path -LiteralPath (Join-Path $StateDir "stop-probe"))) {
-      try {
-        $ok = Invoke-BoundedIcmpProbe $PeerTunnelIp 750
-        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        if ($ok) {
-          Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
-        }
-        else {
-          Add-Content -LiteralPath $log `
-            -Value "FAIL $completedAt" -Encoding ASCII
-        }
-      }
-      catch {
-        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        Add-Content -LiteralPath $log `
-          -Value "FAIL $completedAt exception" -Encoding ASCII
-      }
+      $ok = try { Invoke-BoundedIcmpProbe $PeerTunnelIp 750 } catch { $false }
+      $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+      $result = if ($ok) { "OK" } else { "FAIL" }
+      [IO.File]::AppendAllText($log, "$result $completedAt`r`n", [Text.Encoding]::ASCII)
       Start-Sleep -Milliseconds 100
     }
   }
@@ -943,24 +933,12 @@ switch ($Action) {
     }
     $log = Join-Path $StateDir "wireguard-payload.log"
     while (!(Test-Path -LiteralPath (Join-Path $StateDir "stop-probe"))) {
-      try {
-        # Measure the owned WireGuard data path itself at a high cadence. The
-        # stable-state audit below still requires public DNS and verified
-        # HTTPS, while this local responder avoids spending most of the
-        # four-second handoff budget inside one unrelated Internet request.
-        $ok = Invoke-BoundedIcmpProbe $WireGuardServerIp 750
-        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        if ($ok) {
-          Add-Content -LiteralPath $log -Value "OK $completedAt" -Encoding ASCII
-        }
-        else {
-          Add-Content -LiteralPath $log -Value "FAIL $completedAt" -Encoding ASCII
-        }
-      }
-      catch {
-        $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-        Add-Content -LiteralPath $log -Value "FAIL $completedAt" -Encoding ASCII
-      }
+      # The timed probe uses the local responder. Stable-state checks still
+      # require public DNS and verified HTTPS through the selected exit.
+      $ok = try { Invoke-BoundedIcmpProbe $WireGuardServerIp 750 } catch { $false }
+      $completedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+      $result = if ($ok) { "OK" } else { "FAIL" }
+      [IO.File]::AppendAllText($log, "$result $completedAt`r`n", [Text.Encoding]::ASCII)
       Start-Sleep -Milliseconds 100
     }
   }
@@ -1078,7 +1056,9 @@ switch ($Action) {
         "-PeerTunnelIp", $PeerTunnelIp
       )
       $probe = Start-Process -FilePath "powershell.exe" -ArgumentList $probeArgs `
-        -WindowStyle Hidden -PassThru
+        -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $StateDir "probe.stdout.log") `
+        -RedirectStandardError (Join-Path $StateDir "probe.stderr.log")
 
       $wireGuardProbeArgs = @(
         "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
@@ -1090,7 +1070,9 @@ switch ($Action) {
         "-WireGuardServerIp", $WireGuardServerIp
       )
       $wireGuardProbe = Start-Process -FilePath "powershell.exe" `
-        -ArgumentList $wireGuardProbeArgs -WindowStyle Hidden -PassThru
+        -ArgumentList $wireGuardProbeArgs -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $StateDir "wireguard-probe.stdout.log") `
+        -RedirectStandardError (Join-Path $StateDir "wireguard-probe.stderr.log")
 
       Wait-ForCondition "initial FIPS, WireGuard exit, DNS, HTTPS, and payload" 30000 {
         try {
