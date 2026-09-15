@@ -5,9 +5,13 @@ impl PaidRouteStore {
     /// A fully prepaid channel can still have unused credit; an exhausted one
     /// cannot become usable again by replaying its opening payment.
     pub fn buyer_session_has_remaining_capacity(&self, session_id: &str) -> Result<bool> {
-        let session = self.sessions.get(session_id)
+        let session = self
+            .sessions
+            .get(session_id)
             .ok_or_else(|| anyhow!("missing buyer session"))?;
-        let channel = self.channels.get(&session.session.payment.channel_id)
+        let channel = self
+            .channels
+            .get(&session.session.payment.channel_id)
             .ok_or_else(|| anyhow!("missing buyer channel"))?;
         let terms = accepted_channel_terms(channel, PaidRouteChannelRole::Buyer)?;
         Ok(terms.amount_due_msat(&session.session.usage)

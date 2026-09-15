@@ -32,11 +32,13 @@ IOS_RELEASE_NETWORK_PENDING_SPEC_BASE64=""
 IOS_RELEASE_NETWORK_PENDING_LOG=""
 IOS_RELEASE_NETWORK_PENDING_XCRESULT=""
 IOS_RELEASE_NETWORK_EXACT_RUNNER_READY=0
+IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
 
 ios_release_network_require_unlocked() {
   local device="$1"
   python3 - "$device" <<'PY'
 import json
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import sys
@@ -57,6 +59,27 @@ try:
             raise ValueError("missing lock state")
 except (OSError, ValueError, subprocess.SubprocessError):
     raise SystemExit("iPhone lock state unavailable within the bounded preflight; no UI automation session started.") from None
+
+# Xcode needs this notification connection even when lockState and DDI queries
+# succeed. devicectl can exit zero after its observation closed immediately;
+# inspect the actual session timestamps before spending 180s on a destination.
+try:
+    with tempfile.TemporaryDirectory(prefix="nvpn-ios-notifications-") as directory:
+        output = Path(directory) / "state.json"
+        subprocess.run(
+            ["xcrun", "devicectl", "--timeout", "8", "device", "notification",
+             "observe", "--device", sys.argv[1], "--name",
+             "com.apple.springboard.lockstate", "--session-timeout", "3",
+             "--json-output", str(output)],
+            capture_output=True, timeout=10, check=True,
+        )
+        result = json.loads(output.read_text()).get("result", {})
+        started = datetime.fromisoformat(result["observationStarted"].replace("Z", "+00:00"))
+        stopped = datetime.fromisoformat(result["observationStopped"].replace("Z", "+00:00"))
+        if (stopped - started).total_seconds() < 2.5:
+            raise ValueError("notification connection closed before the observation ended")
+except (OSError, ValueError, TypeError, KeyError, AttributeError, subprocess.SubprocessError):
+    raise SystemExit("iPhone testing notification connection unavailable; no UI automation session started.") from None
 PY
 }
 
@@ -792,6 +815,24 @@ PY
     ios_release_network_prepare_abort
     return
   fi
+  # Retain verified preparation before XCTest can fail to reach the phone.
+  # Subsequent network cases still audit this same app after execution.
+  ios_release_network_audit_artifact preparation "$result_dir" || {
+    ios_release_network_prepare_abort
+    return
+  }
+  local runner runner_tree device_sha xctestrun_sha
+  runner="$IOS_RELEASE_NETWORK_DERIVED_DATA/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
+  runner_tree="$(python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" tree-sha "$runner")" \
+    && device_sha="$(printf %s "$IOS_RELEASE_NETWORK_DEVICE" | shasum -a 256 | awk '{print $1}')" \
+    && xctestrun_sha="$(shasum -a 256 "$IOS_RELEASE_NETWORK_XCTESTRUN" | awk '{print $1}')" \
+    && ios_release_network_write_runner_install_receipt \
+      "$runner" "$result_dir/installed-runner-receipt.json" \
+      "$runner_tree" "$device_sha" "$xctestrun_sha" \
+      "$IOS_RELEASE_NETWORK_BASE_TEST_PRODUCTS_TREE_SHA" || {
+    ios_release_network_prepare_abort
+    return
+  }
   IOS_RELEASE_NETWORK_PREPARED=1
   if bool_is_true "$reuse_build"; then
     echo "iOS company-signed Release network gate reused its preserved build"
@@ -809,8 +850,8 @@ ios_release_network_xcode_command() {
     -scheme NostrVpnIos
     -configuration Release
     -derivedDataPath "$IOS_RELEASE_NETWORK_DERIVED_DATA"
-    -destination "$IOS_RELEASE_NETWORK_DESTINATION"
-    -destination-timeout 180
+    -destination generic/platform=iOS
+    ARCHS=arm64
     -collect-test-diagnostics never
     DEVELOPMENT_TEAM="$NVPN_IOS_TEAM_ID"
     NVPN_IOS_CODE_SIGN_IDENTITY="$NVPN_IOS_CODE_SIGN_IDENTITY"
@@ -1326,6 +1367,7 @@ ios_release_network_run_bounded_xcode() {
   shift 9
   local pid pgid actual_pgid caller_pgid started
   local reason="" status=0 monitor_was_enabled=0 marker_seen=0 forced_kill=0
+  local prior_cleanup_required="$IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED"
   [[ "$timeout_secs" =~ ^[1-9][0-9]*$ ]] || {
     echo "iOS $label timeout must be positive seconds" >&2
     return 2
@@ -1339,6 +1381,7 @@ ios_release_network_run_bounded_xcode() {
     return 2
   }
   [[ -z "$device" ]] || ios_release_network_require_unlocked "$device" || return 75
+  IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
   local -a capture_command=(
     python3 "$ROOT/scripts/capture-mobile-ios-underlay-output.py"
     "$log" "$host_markers"
@@ -1437,6 +1480,17 @@ ios_release_network_run_bounded_xcode() {
   IOS_RELEASE_NETWORK_ACTIVE_PGID=""
   [[ -z "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" ]] \
     || rm -f "$IOS_RELEASE_NETWORK_ACTIVE_PGID_FILE" || status=1
+  # Destination and automation-authorization failures precede every test
+  # method. Preserve an untouched baseline only for those explicit failures,
+  # never for a missing marker alone or after earlier UI work.
+  if [[ "$prior_cleanup_required" == 0 && "$marker_seen" == 0 \
+    && "$status" -ne 0 ]] \
+    && { grep -Fq 'xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available' "$log" \
+      || grep -Fq 'Timed out while enabling automation mode.' "$log"; } \
+    && ! grep -Fq 'Test Case' "$log"
+  then
+    IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=0
+  fi
   if [[ "$reason" == "total" ]]; then
     echo "iOS $label exceeded its ${timeout_secs}s total deadline" >&2
     return 124
@@ -1868,14 +1922,21 @@ ios_release_network_disconnect_cleanup() {
     mkdir -p "$result_dir" || return 1
     # An already stopped tunnel gives the initial counter baseline directly.
     # Avoid opening an unnecessary Apple automation session and its teardown.
-    # Final cleanup must still restore the shipped UI and underlay settings.
-    if [[ "$preserve_prepared" == 1 && "$cleanup_failed" == 0 \
+    # An explicit pre-method startup failure also leaves it untouched. Verify
+    # it over USB again before deciding whether cleanup UI is needed.
+    if [[ ( "$preserve_prepared" == 1 \
+      || "$IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED" == 0 ) \
+      && "$cleanup_failed" == 0 \
       && -z "$IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64" ]] \
       && ios_release_network_require_packet_tunnel_stopped \
         "$IOS_RELEASE_NETWORK_DEVICE" \
         "$result_dir/mobile-ios-release-baseline-packet-tunnel-processes.json" 5
     then
-      echo "iOS initial counter baseline verified: packet tunnel already stopped"
+      echo "iOS untouched counter baseline verified: packet tunnel already stopped"
+      IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=0
+      if [[ "$preserve_prepared" != 1 ]]; then
+        ios_release_network_cleanup_private_artifacts || return 1
+      fi
       return 0
     fi
     local stem="mobile-ios-release-cleanup-$$-$RANDOM"

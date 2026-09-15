@@ -1634,6 +1634,16 @@ test('final publication preflights tools and Zapstore identity before the releas
   assert.match(zapstorePublisher, /'nak',[\s\S]*\['decode', context\.publisherNpub\]/)
 })
 
+test('staging checks platform packaging prerequisites before starting its release gate', () => {
+  const source = readFileSync(join(process.cwd(), 'scripts/local-release.mjs'), 'utf8')
+  const mainStart = source.indexOf('function main()')
+  const preflight = source.indexOf('preflightStartosRelease({', mainStart)
+  assert.ok(preflight > mainStart && preflight < source.indexOf('const steps = [', mainStart))
+  assert.match(source.slice(preflight, source.indexOf('const steps = [', preflight)), /needsWorkspace: !String\(env\.NVPN_RELEASE_STARTOS_ARTIFACT_DIR/)
+  const linux = source.indexOf('validateLinuxPublicationBuilder({ env })', mainStart)
+  assert.ok(linux > mainStart && linux < source.indexOf('const steps = [', mainStart))
+})
+
 test('publication verification requires real Windows and Linux underlay gates', () => {
   const localRelease = readFileSync(join(process.cwd(), 'scripts/local-release.mjs'), 'utf8')
   const verifyStart = localRelease.indexOf('function runVerify(')

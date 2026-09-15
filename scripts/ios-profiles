@@ -476,6 +476,7 @@ def ensure_profiles():
     env_values = {
         "NVPN_IOS_SIGNING_STYLE": "manual",
         "NVPN_IOS_CODE_SIGN_IDENTITY": code_sign_identity,
+        "NVPN_IOS_EXPORT_SIGNING_CERTIFICATE": code_sign_identity,
     }
     installed = []
 

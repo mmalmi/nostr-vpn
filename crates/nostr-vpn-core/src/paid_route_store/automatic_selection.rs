@@ -127,7 +127,9 @@ impl PaidRouteStore {
                     && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
                     && paid_route_lifecycle_allows_routing(lease.status)
                     && paid_route_lifecycle_allows_routing(channel.status)
-                    && self.buyer_session_has_remaining_capacity(&session.session.session_id).ok()?
+                    && self
+                        .buyer_session_has_remaining_capacity(&session.session.session_id)
+                        .ok()?
                     && paid_route_session_has_payment_material(&session.session, channel))
                 .then_some((
                     session.updated_at_unix,

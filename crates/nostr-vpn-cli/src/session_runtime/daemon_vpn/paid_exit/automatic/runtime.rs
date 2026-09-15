@@ -72,8 +72,10 @@ pub(crate) async fn update_automatic_paid_exit(
         .as_ref()
         .map(|candidate| {
             let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
-            Ok::<_, anyhow::Error>(store.buyer_session_is_seller_admitted(&candidate.session_id)?
-                && store.buyer_session_allows_routing(&candidate.session_id, now_unix)?)
+            Ok::<_, anyhow::Error>(
+                store.buyer_session_is_seller_admitted(&candidate.session_id)?
+                    && store.buyer_session_allows_routing(&candidate.session_id, now_unix)?,
+            )
         })
         .transpose()?
         .unwrap_or(false);

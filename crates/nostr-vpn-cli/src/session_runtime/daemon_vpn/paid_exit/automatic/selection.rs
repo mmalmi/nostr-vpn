@@ -42,7 +42,10 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
             && candidate.selection.mint_url != selection.mint_url
     });
     let exhausted = automatic.candidate.as_ref().is_some_and(|candidate| {
-        candidate.funded && !store.buyer_session_has_remaining_capacity(&candidate.session_id).unwrap_or(false)
+        candidate.funded
+            && !store
+                .buyer_session_has_remaining_capacity(&candidate.session_id)
+                .unwrap_or(false)
     });
     if changing_mint || exhausted {
         // A wallet operation may already be committing funds. Consume its
@@ -60,7 +63,8 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         if candidate.failed {
             return Ok(false);
         }
-        let changed = select_automatic_paid_exit_route(app, config_path, &store, &candidate.session_id)?;
+        let changed =
+            select_automatic_paid_exit_route(app, config_path, &store, &candidate.session_id)?;
         if changed {
             // Config reloads can clear the selected exit without changing the
             // automatic buyer. Restore its paid session, then prove the route
@@ -89,7 +93,8 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
             store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
             Ok(())
         })?;
-        let route_changed = select_automatic_paid_exit_route(app, config_path, &store, &session_id)?;
+        let route_changed =
+            select_automatic_paid_exit_route(app, config_path, &store, &session_id)?;
         if funded {
             queue_recovered_paid_exit_channel_open(app, config_path, &session_id, now_unix)?;
         }
@@ -166,7 +171,9 @@ fn select_automatic_paid_exit_route(
     if changed {
         app.select_public_paid_exit_node(&seller_npub)?;
         if !PaidExitAutomaticBuyer::enabled(app) {
-            return Err(anyhow!("automatic paid exit selection changed internet mode"));
+            return Err(anyhow!(
+                "automatic paid exit selection changed internet mode"
+            ));
         }
         app.save(config_path)?;
     }
@@ -192,7 +199,9 @@ fn recover_automatic_paid_exit_session(
                 && channel.mint_url == selection.mint_url
                 && channel.expires_at_unix > now_unix
                 && lease.lease.expires_at_unix > now_unix
-                && store.buyer_session_has_remaining_capacity(&session.session.session_id).ok()?
+                && store
+                    .buyer_session_has_remaining_capacity(&session.session.session_id)
+                    .ok()?
                 && matches!(
                     lease.status,
                     PaidRouteLifecycleStatus::Opening
@@ -219,7 +228,5 @@ fn recover_automatic_paid_exit_session(
             ))
         })
         .max_by_key(|candidate| candidate.0)
-        .map(|(_, session_id, funded)| {
-            (seller_pubkey, session_id, funded)
-        })
+        .map(|(_, session_id, funded)| (seller_pubkey, session_id, funded))
 }

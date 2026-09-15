@@ -862,7 +862,6 @@ capture_cleanup_fault_diagnostics() {
 }
 
 capture_guest_state() {
-  local transport="$1"
   local remote_command
   remote_command="sudo -n tar --ignore-failed-read -C '$GUEST_STATE_DIR' -cf - \
 identity.json daemon.state.json daemon.stderr.log daemon.stdout.log \
@@ -875,20 +874,9 @@ crash-connect.stderr.log crash-restart-daemon.stderr.log \
 cleanup-fault.receipt.json xtables-stop.log \
 fault-daemon.stdout.log fault-daemon.stderr.log \
 xtables-lock-held xtables-lock-release"
-  case "$transport" in
-    secondary)
-      run_secondary_bounded 30 "$remote_command" \
-        | tar -C "$ARTIFACT_DIR/guest-state" -xf -
-      ;;
-    primary)
-      primary_ssh_command
-      "${LINUX_PRIMARY_SSH[@]}" "$remote_command" \
-        | tar -C "$ARTIFACT_DIR/guest-state" -xf -
-      ;;
-    *)
-      fail "unsupported guest evidence transport: $transport"
-      ;;
-  esac
+  primary_ssh_command
+  "${LINUX_PRIMARY_SSH[@]}" "$remote_command" \
+    | tar -C "$ARTIFACT_DIR/guest-state" -xf -
 }
 
 capture_peer_state() {
@@ -907,16 +895,12 @@ capture_remote_state() {
   local peer_capture_succeeded=0
   local capture_failed=0
   mkdir -p "$ARTIFACT_DIR/guest-state" "$ARTIFACT_DIR/peer-state"
-  if [[ -n "$SECONDARY_PROXY" ]] \
-    && run_secondary_bounded 8 \
-      sudo -n test -d "$GUEST_STATE_DIR" >/dev/null 2>&1
+  # Cleanup restores the primary link before collecting evidence. The guest
+  # has already deleted its secondary profile; probing it here times out and
+  # can orphan the SSH forwarding child after the deadline kills its parent.
+  if run_primary sudo -n test -d "$GUEST_STATE_DIR" >/dev/null 2>&1
   then
-    capture_guest_state secondary && guest_capture_succeeded=1
-  fi
-  if [[ "$guest_capture_succeeded" == "0" ]] \
-    && run_primary sudo -n test -d "$GUEST_STATE_DIR" >/dev/null 2>&1
-  then
-    capture_guest_state primary && guest_capture_succeeded=1
+    capture_guest_state && guest_capture_succeeded=1
   fi
   if [[ "$PEER_INITIALIZED" == "1" ]] \
     && run_hypervisor_bounded 8 \

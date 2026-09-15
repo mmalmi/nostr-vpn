@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -24,7 +24,7 @@ release_gate_mode_disabled() { [[ "$1" == 0 ]]; }
 release_gate_state_init() { :; }
 release_gate_parallel_init() { RELEASE_GATE_PARALLEL_LOG_DIR="$1"; }
 release_gate_timing_init() { :; }
-release_gate_cleanup() { :; }
+release_gate_cleanup() { echo "cleanup-status:$?"; }
 release_gate_timing_run() {
   if [[ "$NVPN_TEST_FULL_ROUTE" == 1 ]]; then
     echo "check:$2"
@@ -94,6 +94,45 @@ test('hosted entrypoint cannot satisfy complete fleet mode or ignore unknown arg
   }
 })
 
+test('Docker readiness failure stops before expensive source validation', () => {
+  const result = runRoute('main', {
+    full: true, failCheck: 'ensure_release_gate_docker_prerequisites',
+  })
+  assert.equal(result.status, 75, result.stderr)
+  assert.doesNotMatch(result.stdout, /check:run_release_gate_candidate_preflight|lane:/)
+})
+
+test('termination preserves a failed exit status for gate cleanup', () => {
+  const result = runRoute('release_gate_timing_run() { kill -TERM "$$"; }; main')
+  assert.equal(result.status, 143, result.stderr)
+  assert.match(result.stdout, /cleanup-status:143/)
+  assert.doesNotMatch(result.stdout, /Release gate passed|cleanup-status:0/)
+})
+
+test('an unresponsive Docker daemon fails the real preflight within its deadline', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-docker-readiness-'))
+  try {
+    writeFileSync(join(root, 'docker'), '#!/bin/sh\n[ "$1" = info ] && exec sleep 30\necho unexpected-docker-operation >&2\nexit 99\n', { mode: 0o755 })
+    const body = source.match(/^ensure_release_gate_docker_prerequisites\(\) \{[\s\S]*?^\}/m)?.[0]
+    assert.ok(body)
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+source scripts/lib-release-gate-timeout.sh
+${body}
+ensure_release_gate_docker_prerequisites
+`], {
+      encoding: 'utf8', timeout: 22_000,
+      env: { ...process.env, PATH: `${root}:${process.env.PATH}` },
+    })
+    assert.ifError(result.error)
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, /Docker daemon readiness timed out after 15s/)
+    assert.doesNotMatch(result.stderr, /unexpected-docker-operation/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('default Docker gate retains both paid-exit fixtures and their mint build', () => {
   const result = runRoute('build_release_gate_docker_images; run_docker_isolated_functional_gates')
   assert.equal(result.status, 0, result.stderr)
@@ -129,6 +168,56 @@ test('full gate completes and seals one serial phone window before the unattende
   assert.match(result.stdout, /Release gate passed/)
 })
 
+test('cold desktop peer preparation joins before network timing starts', () => {
+  const result = runRoute('main', { full: true })
+  assert.equal(result.status, 0, result.stderr)
+  const events = result.stdout.split('\n')
+  const peer = events.indexOf('lane:Desktop underlay peer preparation')
+  const joined = events.indexOf('joined-functional-lanes')
+  const timing = events.indexOf('check:run_local_fips_websocket_timing_regression_gate')
+  const desktop = events.indexOf('lane:macOS post-build UI, idle CPU, and desktop network')
+  assert.ok(peer >= 0 && peer < joined, 'cold peer compilation must join platform preparation')
+  assert.ok(joined < timing && timing < desktop, 'network measurements must follow joined builds')
+  assert.equal(events.filter(event => event === 'lane:Desktop underlay peer preparation').length, 1)
+})
+
+test('desktop peer preparation builds once for reachable enabled consumers and propagates failure', () => {
+  const bodies = ['release_gate_mode_disabled', 'prepare_desktop_underlay_peer']
+    .map(name => source.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0] ?? '').join('\n')
+  for (const [linux, windows, reachable, complete, buildStatus, expected] of [
+    ['required', 'required', 'yes', '0', 0, 'build'],
+    ['off', 'required', 'yes', '0', 0, 'build'],
+    ['off', 'off', 'yes', '0', 0, ''],
+    ['auto', 'auto', 'no', '0', 0, ''],
+    ['required', 'required', 'no', '1', 0, 'build'],
+    ['required', 'required', 'yes', '1', 75, 'build'],
+  ]) {
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+DESKTOP_UNDERLAY_NETWORK_CHANGE_TIMEOUT_SECS=2400
+linux_underlay_gate_reachable() { [[ "$NVPN_TEST_REACHABLE" == yes ]]; }
+windows_underlay_gate_reachable() { [[ "$NVPN_TEST_REACHABLE" == yes ]]; }
+release_gate_run_with_timeout() {
+  [[ "$2" == 2400 && "$3" == ./scripts/prepare-macos-release-fips-peer.sh ]]
+  echo build
+  return "$NVPN_TEST_BUILD_STATUS"
+}
+${bodies}
+prepare_desktop_underlay_peer
+`], {
+      encoding: 'utf8', timeout: 5_000,
+      env: { ...process.env,
+        NVPN_RELEASE_GATE_LINUX_UNDERLAY_NETWORK_CHANGE_E2E: linux,
+        NVPN_RELEASE_GATE_WINDOWS_UNDERLAY_NETWORK_CHANGE_E2E: windows,
+        NVPN_RELEASE_GATE_REQUIRE_COMPLETE: complete,
+        NVPN_TEST_REACHABLE: reachable, NVPN_TEST_BUILD_STATUS: String(buildStatus),
+      },
+    })
+    assert.equal(result.status, buildStatus, result.stderr)
+    assert.equal(result.stdout.trim(), expected)
+  }
+})
+
 test('desktop evidence failure stops before phone work and phone failure cannot seal evidence', () => {
   for (const [failCheck, forbidden] of [
     ['verify_paid_exit_seller_ui_gates', 'run_mobile_idle_cpu_gates'],
@@ -147,4 +236,75 @@ test('an unattended tail failure follows the iOS seal without producing a comple
   assert.match(result.stdout, /check:seal_frozen_ios_release_gate/)
   assert.doesNotMatch(result.stdout, /Release gate passed/)
   assert.ok(!result.files.some(path => path.endsWith('release-gate-summary.json')))
+})
+
+test('a failed iPhone lane preserves the independently completing Android proof', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-phone-results-'))
+  const body = source.match(/^run_mobile_wireguard_exit_gates\(\) \{[\s\S]*?^\}/m)?.[0]
+  assert.ok(body)
+  const helper = join(process.cwd(), 'scripts/lib-release-gate-parallel.sh')
+  try {
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+ROOT_DIR="$1"
+source "$2"
+cd "$ROOT_DIR"
+mkdir scripts
+cat >scripts/mobile-wireguard-exit-e2e.sh <<'PHONE'
+#!/bin/bash
+if [[ "$1" == ios ]]; then exit 75; fi
+sleep 0.3
+printf '{}\\n' >"$NVPN_MOBILE_ANDROID_NETWORK_EVIDENCE_OUTPUT"
+PHONE
+chmod +x scripts/mobile-wireguard-exit-e2e.sh
+release_gate_parallel_init "$ROOT_DIR/logs"
+trap 'release_gate_parallel_cancel_all' EXIT
+release_gate_run_with_timeout() { shift 2; "$@"; }
+NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E=required
+NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST=fixture
+NVPN_IDLE_CPU_GATE=0
+MOBILE_WG_EXIT_TIMEOUT_SECS=5
+ANDROID_RELEASE_FOREGROUND_IDLE_CPU_MAX_PERCENT=2
+ANDROID_RELEASE_FOREGROUND_IDLE_CPU_SAMPLE_SECONDS=60
+MOBILE_ANDROID_APP_READY=0
+MOBILE_IOS_APP_READY=0
+${body}
+run_mobile_wireguard_exit_gates
+`, '_', root, helper], { encoding: 'utf8', timeout: 10_000 })
+    assert.ifError(result.error)
+    assert.equal(result.status, 75, result.stderr)
+    assert.equal(readFileSync(join(root, 'logs/mobile-network/android-wireguard-dns.json'), 'utf8'), '{}\n')
+    assert.match(result.stdout, /lane passed: Android physical WireGuard/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('all Internet mode transitions run once in the Automatic-compatible paid fixture', () => {
+  const fixture = readFileSync('scripts/e2e-exit-node-docker.sh', 'utf8')
+  const sourceIndex = fixture.indexOf('  source "$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"')
+  const start = fixture.lastIndexOf('\nif ', sourceIndex)
+  const end = fixture.indexOf('\nfi', sourceIndex) + 3
+  const dispatch = fixture.slice(start, end)
+  assert.ok(start >= 0 && end > start)
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-paid-matrix-route-'))
+  try {
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+ROOT_DIR="$1"
+mkdir "$ROOT_DIR/scripts"
+echo 'run_internet_mode_switch_matrix() { echo "matrix:$PAID_EXIT_SELECTION_MODE"; }' >"$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"
+truthy() { [[ "$1" == 1 ]]; }
+PAID_EXIT_MODE=1
+PAID_EXIT_PAYMENT_MODE=spilman
+for PAID_EXIT_SELECTION_MODE in manual automatic; do
+${dispatch}
+done
+`, '_', root], { encoding: 'utf8', timeout: 5_000 })
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, result.stderr)
+    assert.equal(result.stdout.trim(), 'matrix:automatic')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })

@@ -284,7 +284,11 @@ phase_ios_admin_android_qr() {
 
 phase_android_admin_ios_qr() {
   local join_log android_scan_log submitted completed ios_qr_content_width_bps
-  local ios_qr_relaunch_admin
+  local ios_qr_relaunch_admin qr_carrier_log
+  qr_carrier_log="$(ios_log ios-carrier-preflight)"
+  release_join_ios_run_test \
+    testNormalizeRetainedJoinCarrierSettings "$qr_carrier_log" \
+    || fail "iPhone QR join carrier did not authenticate public bootstrap"
   release_join_android_open_network_setup
   release_join_android_create_admin
   android_scan_log="$RESULT_DIR/android-admin-ios-qr-approval.log"
@@ -469,11 +473,10 @@ esac
 
 rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
 
-# Admin creation and manual joining already restore the carrier and verify
-# authenticated bootstrap in their first XCTest. Only the QR-only iPhone
-# joiner and desktop-only entry points need a separate normalization session.
+# Phone phases prepare their own carrier. Desktop-only entry still needs
+# normalization before handing the retained app to the desktop harness.
 case "$RELEASE_JOIN_PHASE_SELECTION" in
-  pixel-admin-iphone-qr-only|desktop-only)
+  desktop-only)
     carrier_preflight_log="$(ios_log ios-carrier-preflight)"
     release_join_ios_run_test \
       testNormalizeRetainedJoinCarrierSettings "$carrier_preflight_log" \

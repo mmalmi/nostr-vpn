@@ -8,6 +8,29 @@ passed, prefer completing the missing phases and validating their receipts as
 described below. Do not create a fresh checkout or change the candidate merely
 to restart a gate.
 
+Docker readiness is checked before source validation, with a 15-second daemon
+deadline and bounded image inspection/download requests. Restore the Docker
+service after a readiness failure before resuming the candidate.
+The preflight also asks Docker to copy every vendored Cargo manifest, catching
+source-filter omissions before platform compilation.
+Source validation compiles the app core without paid-exit features as well as
+checking the default workspace, so App Store feature drift fails early.
+The exact host-built Linux peer for desktop underlay checks is prepared alongside
+platform builds. All preparation finishes before network or idle measurements;
+a cold peer build must never overlap macOS recovery deadlines. Underlay runners
+then revalidate and import that cached artifact.
+Linux underlay cleanup collects evidence through the restored primary link;
+the guest has already removed its temporary secondary network at that point.
+The Automatic Spilman fixture owns the complete Internet mode-transition and
+pending-funding matrices. The manual fixture retains its higher price and small
+wallet for billing checks; running the same matrix there both duplicates work
+and violates Automatic's price and funding prerequisites.
+
+Before freezing a new release, advance `ios/app-store-build-number`, synchronize
+versions, and run the TestFlight and App Store `preflight` commands. Both must
+identify the intended version and unused build number; do this before compiling
+or collecting physical-device evidence.
+
 The gate automatically retains successful **source quality, Rust regression,
 and Android static** checks in `artifacts/release-gate-state`. Reuse requires
 matching source content and commit, local FIPS content, Cargo configuration,
@@ -23,6 +46,21 @@ still use the existing `--complete-gate-from-receipts` and
 commands.
 
 ## iPhone testing window
+
+Compile the signed test runner for the generic iOS destination. Selecting the
+physical phone is only necessary when executing tests; compilation must not wait
+for its development services to become available.
+Preparation audits the frozen app and records the installed runner before the
+first test starts. Preserve those receipts, the original test products and the
+signed archive when a device service fails. Exact reuse verifies their hashes
+and installed USB identities; a compiled runner alone is insufficient.
+The Android and iPhone DNS lanes finish independently, so a failed phone does not
+cancel the other phone's still-valid work. Radio recovery receives explicit
+artifact and runner pins from the completed preparation.
+
+A destination failure before any test method must not launch a second UI session
+for cleanup when a fresh USB check proves the untouched tunnel is still stopped.
+Cleanup remains mandatory after a method starts or the stopped proof is missing.
 
 The full gate validates desktop seller evidence before phone work, then groups
 physical idle, WireGuard/DNS, Android replacement, radio recovery and mobile/Mac

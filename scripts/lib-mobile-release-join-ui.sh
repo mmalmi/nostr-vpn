@@ -558,6 +558,7 @@ release_join_android_assert_qr_full_width() {
   then
     RELEASE_JOIN_ANDROID_QR_CONTENT_WIDTH_BPS="$ratio_bps"
   fi
+  echo "NVPN_RELEASE_JOIN_MARKER NVPN_RELEASE_JOIN_ANDROID_QR_CONTENT_WIDTH_BPS=$RELEASE_JOIN_ANDROID_QR_CONTENT_WIDTH_BPS"
 }
 
 release_join_android_assert_pending_qr() {

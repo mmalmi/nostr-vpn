@@ -10,8 +10,19 @@ mkdir "$private/bin"
 cat >"$private/bin/xcrun" <<'PY'
 #!/usr/bin/env python3
 import json,os,sys,time
-assert sys.argv[1:4]==['devicectl','--timeout','5']
-assert sys.argv[4:7]==['device','info','lockState']
+if sys.argv[4:7]==['device','notification','observe']:
+ assert sys.argv[1:4]==['devicectl','--timeout','8']
+ assert sys.argv[sys.argv.index('--session-timeout')+1]=='3'
+ mode=os.environ.get('NVPN_TEST_NOTIFICATION_STATE','healthy')
+ if mode=='unavailable':sys.exit(1)
+ result={'observationStarted':'2026-01-01T00:00:00.000Z',
+         'observationStopped':'2026-01-01T00:00:03.001Z'}
+ if mode=='closed':result['observationStopped']='2026-01-01T00:00:00.010Z'
+ if mode=='missing':result.pop('observationStopped')
+ if mode=='invalid':result['observationStopped']='invalid'
+ json.dump({'result':result},open(sys.argv[sys.argv.index('--json-output')+1],'w'))
+ sys.exit(0)
+assert sys.argv[1:7]==['devicectl','--timeout','5','device','info','lockState']
 mode=os.environ['NVPN_TEST_LOCK_STATE']
 if mode=='unavailable':sys.exit(1)
 if mode=='timeout':time.sleep(30)
@@ -28,6 +39,14 @@ for state in locked unavailable missing timeout; do
   echo "Physical preflight accepted $state" >&2;exit 1
  fi
 done
+export NVPN_TEST_LOCK_STATE=unlocked
+for state in closed unavailable missing invalid; do
+ export NVPN_TEST_NOTIFICATION_STATE="$state"
+ if ios_release_network_require_unlocked fixture >"$private/notification-$state.log" 2>&1; then
+  echo "Physical preflight accepted notification connection $state" >&2;exit 1
+ fi
+done
+export NVPN_TEST_NOTIFICATION_STATE=healthy
 # A locked phone must not launch a runner or arm device mutations.
 export NVPN_TEST_LOCK_STATE=locked
 RELEASE_JOIN_ARTIFACTS_VALIDATED=1
@@ -37,6 +56,17 @@ PRIVATE_DIR="$private"
 release_join_ios_test_command() { echo launched >"$private/launched"; }
 if release_join_ios_start_test fixture "$private/test.log"; then exit 1;fi
 [[ ! -e "$private/launched" && "$RELEASE_JOIN_DEVICE_MUTATED" == 0 ]]
+# A successful command exit with a failed notification observation must also
+# stop before XCTest, preserving the untouched baseline for cleanup.
+export NVPN_TEST_LOCK_STATE=unlocked NVPN_TEST_NOTIFICATION_STATE=closed
+if release_join_ios_start_test fixture "$private/test.log"; then exit 1;fi
+[[ ! -e "$private/launched" && "$RELEASE_JOIN_DEVICE_MUTATED" == 0 ]]
+IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=0
+if ios_release_network_run_bounded_xcode fixture 5 3 marker run \
+ "$private/network.log" "$private/markers.tsv" fixture "" \
+ bash -c 'touch "$1"' _ "$private/network-launched"; then exit 1;fi
+[[ ! -e "$private/network-launched" && "$IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED" == 0 ]]
+export NVPN_TEST_NOTIFICATION_STATE=healthy
 # With no test method and a freshly proven stopped baseline, failed startup
 # cleanup must preserve that state without another UI automation session.
 RELEASE_JOIN_IOS_CLEANUP_ARMED=1

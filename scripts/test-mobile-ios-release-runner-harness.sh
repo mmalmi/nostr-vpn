@@ -140,6 +140,22 @@ chmod +x "$TEMP_ROOT/bin/ideviceinfo"
   done
 ) || fail "USB physical-device selection did not preserve exact identity"
 
+(
+  IOS_RELEASE_NETWORK_DERIVED_DATA="$TEMP_ROOT/build-only"
+  IOS_RELEASE_NETWORK_DESTINATION=fixture-device
+  NVPN_IOS_TEAM_ID=fixture-team
+  NVPN_IOS_CODE_SIGN_IDENTITY=fixture-signer
+  NVPN_IOS_PROVISIONING_PROFILE_UUID=fixture-app-profile
+  NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID=fixture-tunnel-profile
+  NVPN_BUILD_GIT_SHA=fixture-source
+  NVPN_BUILD_TIMESTAMP_UTC=fixture-time
+  ios_release_network_xcode_command
+  printf '%s\n' "${IOS_RELEASE_NETWORK_XCODE_COMMAND[@]}" >"$TEMP_ROOT/build-command.txt"
+  grep -Fxq 'generic/platform=iOS' "$TEMP_ROOT/build-command.txt" \
+    && grep -Fxq 'ARCHS=arm64' "$TEMP_ROOT/build-command.txt" \
+    && ! grep -Fq fixture-device "$TEMP_ROOT/build-command.txt"
+) || fail "compiling the iOS runner still waits for a live physical destination"
+
 runner_root="$TEMP_ROOT/runner-derived/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
 runner_install_log="$TEMP_ROOT/runner-install.log"
 mkdir -p "$runner_root"
@@ -149,12 +165,14 @@ plutil -insert CFBundleIdentifier \
 (
   IOS_RELEASE_NETWORK_DERIVED_DATA="$TEMP_ROOT/runner-derived"
   IOS_RELEASE_NETWORK_DEVICE=fixture-device
+  IOS_RELEASE_NETWORK_DESTINATION=fixture-device
   xcrun() {
     printf '%s\n' "$*" >>"$runner_install_log"
   }
   ios_release_network_install_exact_runner
   ios_release_network_test_command "$TEMP_ROOT/runner-derived/exact.xctestrun"
   ios_release_network_test_command "$TEMP_ROOT/runner-derived/exact.xctestrun"
+  [[ " ${IOS_RELEASE_NETWORK_XCODE_COMMAND[*]} " == *" -destination fixture-device "* ]]
 ) || fail "exact signed iOS runner was not installed in place"
 grep -Fxq \
   "devicectl device install app --device fixture-device $runner_root --quiet" \
@@ -338,6 +356,55 @@ run_bounded() {
     "$@"
 }
 
+# Destination or automation authorization failures cannot touch the app.
+# A fresh USB stopped-state proof
+# should close this attempt without starting a second automation session.
+for fixture in destination authorization started earlier-ui stale-baseline standalone; do
+  (
+    IOS_RELEASE_NETWORK_PREPARED=1
+    IOS_RELEASE_NETWORK_UI_CLEANUP_REQUIRED=1
+    IOS_RELEASE_NETWORK_DEVICE=fixture
+    IOS_RELEASE_NETWORK_CLEANUP_SPEC_BASE64=""
+    NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$TEMP_ROOT/no-start-$fixture"
+    cleanup_calls="$TEMP_ROOT/no-start-$fixture.calls"
+    baseline_calls="$TEMP_ROOT/no-start-$fixture.baselines"
+    ios_release_network_require_packet_tunnel_stopped() {
+      if [[ "$fixture" == stale-baseline && -e "$baseline_calls" ]]; then return 1; fi
+      echo probe >>"$baseline_calls"
+    }
+    ios_release_network_disconnect_cleanup_inner() { echo ui >>"$cleanup_calls"; }
+    ios_release_network_cleanup_private_artifacts() { :; }
+    if [[ "$fixture" != standalone ]]; then
+      ios_release_network_disconnect_cleanup 1
+    fi
+    if [[ "$fixture" == earlier-ui ]]; then
+      run_bounded prior-ui 5 2 FIRST bash -c 'echo FIRST'
+    fi
+    set +e
+    if [[ "$fixture" == started ]]; then
+      run_bounded destination-failure 5 2 FIRST \
+        bash -c 'echo FIRST; exit 70'
+    elif [[ "$fixture" == authorization ]]; then
+      run_bounded authorization-failure 5 2 FIRST \
+        bash -c 'echo "Error Domain=com.apple.dt.XCTest.XCTFuture Code=1000 \"Timed out while enabling automation mode.\""; exit 70'
+    else
+      run_bounded destination-failure 5 2 FIRST \
+        bash -c 'echo "xcodebuild: error: Timed out waiting for all destinations matching the provided destination specifier to become available"; exit 70'
+    fi
+    status=$?
+    set -e
+    [[ "$status" -ne 0 ]] || fail "startup failure became a success"
+    ios_release_network_disconnect_cleanup
+    if [[ "$fixture" == destination || "$fixture" == authorization ]]; then
+      [[ ! -e "$cleanup_calls" && -s "$baseline_calls" ]] \
+        || fail "untouched stopped app started unnecessary cleanup UI"
+    else
+      [[ -s "$cleanup_calls" ]] \
+        || fail "$fixture skipped required cleanup UI"
+    fi
+  )
+done
+
 run_bounded success 5 2 FIRST \
   bash -c 'printf "FIRST\nordinary output\n"'
 grep -Fxq FIRST "$TEMP_ROOT/success.log" \
@@ -451,7 +518,8 @@ set +e
     "$TEMP_ROOT/device-no-marker.log" \
     "$TEMP_ROOT/device-no-marker-host-markers.tsv" \
     fixture-device "" \
-    bash -c 'cat "$1"; sleep 10' _ "$stale_device_marker"
+    bash -c 'cat "$1"; sleep 10 & printf "%s\n" "$!" >"$2"; wait' _ \
+      "$stale_device_marker" "$TEMP_ROOT/device-no-marker-child.pid"
 )
 device_no_marker_status=$?
 set -e
@@ -476,10 +544,12 @@ run_bounded missing-marker 5 2 NEVER \
   bash -c 'printf "ordinary failure\n"; exit 7'
 missing_status=$?
 run_bounded launch-timeout 5 1 FIRST \
-  bash -c 'sleep 10'
+  bash -c 'sleep 10 & printf "%s\n" "$!" >"$1"; wait' _ \
+    "$TEMP_ROOT/launch-timeout-child.pid"
 launch_status=$?
 run_bounded total-timeout 1 5 FIRST \
-  bash -c 'trap "" TERM; printf "FIRST\n"; (trap "" TERM; sleep 10) & wait'
+  bash -c 'trap "" TERM; printf "FIRST\n"; (trap "" TERM; exec sleep 10) & printf "%s\n" "$!" >"$1"; wait' _ \
+    "$TEMP_ROOT/total-timeout-child.pid"
 total_status=$?
 set -e
 [[ "$missing_status" -eq 125 ]] \
@@ -488,9 +558,15 @@ set -e
   || fail "launch timeout returned $launch_status instead of 125"
 [[ "$total_status" -eq 124 ]] \
   || fail "total timeout returned $total_status instead of 124"
-if ps -axo command= | grep -F 'sleep 10' | grep -v grep >/dev/null; then
-  fail "bounded runner left its fixture child running"
-fi
+for phase in device-no-marker launch-timeout total-timeout; do
+  [[ -s "$TEMP_ROOT/$phase-child.pid" ]] || fail "$phase did not record its child"
+  fixture_child_pid="$(<"$TEMP_ROOT/$phase-child.pid")"
+  [[ "$fixture_child_pid" =~ ^[1-9][0-9]*$ ]] || fail "$phase recorded an invalid child"
+  if ps -o stat= -p "$fixture_child_pid" 2>/dev/null \
+    | awk 'NF && $1 !~ /^Z/ { alive = 1 } END { exit !alive }'; then
+    fail "bounded runner left its $phase fixture child running"
+  fi
+done
 
 spec="$(
   python3 - <<'PY'

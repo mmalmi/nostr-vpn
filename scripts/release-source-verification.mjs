@@ -584,17 +584,8 @@ export function validateWindowsPublicationFipsReceipts({
   return expected
 }
 
-export function linuxPublicationVerificationPlan({
+export function validateLinuxPublicationBuilder({
   env,
-  tag,
-  candidateCommit,
-  candidateTree,
-  gateReceipt,
-  packageInstallReceipt,
-  bundlePath,
-  bundleReceiptPath,
-  bundleReceiptSha256,
-  candidateRoot = defaultCandidateRoot,
   hostPlatform = process.platform,
   hostArch = process.arch,
 }) {
@@ -634,6 +625,25 @@ export function linuxPublicationVerificationPlan({
       'remote-native Linux publication requires an explicit native builder host.',
     )
   }
+
+  return builderMode
+}
+
+export function linuxPublicationVerificationPlan({
+  env,
+  tag,
+  candidateCommit,
+  candidateTree,
+  gateReceipt,
+  packageInstallReceipt,
+  bundlePath,
+  bundleReceiptPath,
+  bundleReceiptSha256,
+  candidateRoot = defaultCandidateRoot,
+  hostPlatform = process.platform,
+  hostArch = process.arch,
+}) {
+  const builderMode = validateLinuxPublicationBuilder({ env, hostPlatform, hostArch })
 
   const exactCandidateRoot = realpathSync(candidateRoot)
   const commandEnv = { ...process.env, ...env }

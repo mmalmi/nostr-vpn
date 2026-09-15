@@ -537,10 +537,23 @@ const timings = validateMacosPixelJoinReceipt({
   androidInstallReceiptSha256: hash(readFileSync(installPath)),
   androidInstallReceiptSize: readFileSync(installPath).length,
 })
-writeFileSync(join(output, 'reused-pixel-summary.json'), bytes, { flag: 'wx' })
-writeFileSync(join(output, 'delivery-times.tsv'),
-  Object.entries(timings).map(([label, elapsed]) => `${label}\t${elapsed}\n`).join(''),
-  { flag: 'wx' })
+function retainExact(path, value) {
+  const expected = Buffer.from(value)
+  try {
+    writeFileSync(path, expected, { flag: 'wx' })
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    const existing = lstatSync(path)
+    if (!existing.isFile() || existing.isSymbolicLink()
+      || !readFileSync(path).equals(expected)) {
+      throw new Error('Existing retained Mac/Pixel evidence does not match the selected receipt.')
+    }
+  }
+}
+retainExact(join(output, 'reused-pixel-summary.json'), bytes)
+retainExact(join(output, 'delivery-times.tsv'),
+  ['macOS-admin-to-Android-manual', 'Android-admin-to-macOS-manual']
+    .map((label) => `${label}\t${timings[label]}\n`).join(''))
 console.log(hash(bytes))
 JS
 }
