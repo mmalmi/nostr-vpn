@@ -204,26 +204,12 @@ struct FipsRosterSyncState {
     source: Option<(String, u64, String)>,
     roster: Option<SignedRoster>,
     removal_rosters: HashMap<String, SignedRoster>,
-    removal_sends: HashMap<String, FipsRosterRemovalSend>,
-}
-struct FipsRosterRemovalSend {
-    hash: String,
-    attempted_at: u64,
-    delivered: bool,
-    task: Option<tokio::task::JoinHandle<Result<()>>>,
-}
-impl Drop for FipsRosterRemovalSend {
-    fn drop(&mut self) {
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
-    }
 }
 struct FipsRosterSentState {
     hash: String,
     sent_at: u64,
 }
-async fn sync_fips_roster_with_connected_peers(
+fn sync_fips_roster_with_connected_peers(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
@@ -243,19 +229,12 @@ async fn sync_fips_roster_with_connected_peers(
             .as_ref()
             .and_then(|(network_id, _, _)| store.removals.remove(network_id))
             .unwrap_or_default();
-        state.removal_sends.retain(|peer, sent| {
-            state
-                .removal_rosters
-                .get(peer)
-                .is_some_and(|roster| roster.content_hash() == sent.hash)
-        });
         state.source = state.roster.as_ref().map(|_| source).unwrap_or_default();
     }
     let Some(signed_roster) = state.roster.clone() else {
         return Ok(0);
     };
     let now = unix_timestamp();
-    let roster_hash = signed_roster.content_hash();
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let roster_peers = app
         .active_network_signal_pubkeys_hex()
@@ -269,40 +248,6 @@ async fn sync_fips_roster_with_connected_peers(
         .map(|status| status.pubkey)
         .collect::<HashSet<_>>();
 
-    // A removed member no longer appears in the private roster, but its
-    // authenticated FIPS connection can still receive its signed removal.
-    // Wait for TCP acknowledgement off the daemon loop, retry failed sends,
-    // and stop after delivery. Never send it later roster revisions.
-    for (peer, roster) in &state.removal_rosters {
-        if let Some(sent) = state.removal_sends.get_mut(peer) {
-            if sent.task.as_ref().is_some_and(|task| task.is_finished()) {
-                match sent.task.take().unwrap().await {
-                    Ok(Ok(())) => sent.delivered = true,
-                    Ok(Err(error)) => eprintln!("fips: removal roster delivery failed: {error}"),
-                    Err(error) => eprintln!("fips: removal roster delivery task failed: {error}"),
-                }
-            }
-            if sent.delivered
-                || sent.task.is_some()
-                || now.saturating_sub(sent.attempted_at) < FIPS_ROSTER_RESEND_SECS
-            {
-                continue;
-            }
-        }
-        if connected.contains(peer) {
-            let delivery = runtime.roster_delivery(peer.clone(), roster.clone())?;
-            state.removal_sends.insert(
-                peer.clone(),
-                FipsRosterRemovalSend {
-                    hash: roster.content_hash(),
-                    attempted_at: now,
-                    delivered: false,
-                    task: Some(tokio::spawn(delivery)),
-                },
-            );
-        }
-    }
-
     let awaiting_approval = nostr_vpn_core::join_delivery::load_join_rosters(config_path)
         .into_iter()
         .map(|(_, queued)| queued.recipient_npub)
@@ -310,7 +255,7 @@ async fn sync_fips_roster_with_connected_peers(
     let (connected, _) = split_ready_fips_roster_recipients(
         connected
             .into_iter()
-            .filter(|peer| roster_peers.contains(peer))
+            .filter(|peer| roster_peers.contains(peer) || state.removal_rosters.contains_key(peer))
             .collect(),
         &awaiting_approval,
     );
@@ -321,16 +266,20 @@ async fn sync_fips_roster_with_connected_peers(
 
     let mut sent = 0usize;
     for peer in connected {
+        // Former members use ordinary roster delivery, but only receive the
+        // first signed roster that excluded them, never later revisions.
+        let roster = state.removal_rosters.get(&peer).unwrap_or(&signed_roster);
+        let roster_hash = roster.content_hash();
         if state.sent_by_peer.get(&peer).is_some_and(|sent| {
             sent.hash == roster_hash && now.saturating_sub(sent.sent_at) < FIPS_ROSTER_RESEND_SECS
         }) {
             continue;
         }
-        runtime.enqueue_roster(&peer, signed_roster.clone())?;
+        runtime.enqueue_roster(&peer, roster.clone())?;
         state.sent_by_peer.insert(
             peer,
             FipsRosterSentState {
-                hash: roster_hash.clone(),
+                hash: roster_hash,
                 sent_at: now,
             },
         );

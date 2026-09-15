@@ -390,7 +390,6 @@
 
         // Removing packet authorization must not prevent signed removal
         // delivery over the authenticated control connection.
-        let alice_runtime = Arc::new(alice_runtime);
         alice_runtime
             .replace_peers(Vec::new(), vec![format!("{alice_ip}/32")], Vec::new())
             .expect("remove Bob's packet authorization");
@@ -421,13 +420,9 @@
             &alice_keys,
         )
         .expect("sign removal");
-        let delivery = alice_runtime
-            .roster_delivery(alice_control.sender(), bob_pubkey.clone(), removal)
+        alice_runtime
+            .enqueue_roster(&alice_control.sender(), &bob_pubkey, removal.clone())
             .expect("route removal without private membership");
-        tokio::time::timeout(Duration::from_secs(5), delivery)
-            .await
-            .expect("removal delivery deadline")
-            .expect("TCP acknowledges removal");
         let received = tokio::time::timeout(Duration::from_secs(5), bob_control.recv())
             .await
             .expect("receive removal deadline")
@@ -443,6 +438,7 @@
         else {
             panic!("expected signed removal roster");
         };
+        assert_eq!(*signed_roster, removal);
         let mut bob_app = AppConfig::generated();
         bob_app.nostr.secret_key = bob_keys.secret_key().to_bech32().unwrap();
         bob_app.nostr.public_key = bob_pubkey.clone();

@@ -182,7 +182,7 @@ impl Drop for JoinRosterDeliveryClaim {
 fn track_join_roster_delivery(
     path: PathBuf,
     participant: String,
-    delivery: crate::fips_private_mesh::FipsRosterDelivery,
+    delivery: crate::fips_private_mesh::FipsJoinRosterDelivery,
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
         let _claim = JoinRosterDeliveryClaim(path.clone());

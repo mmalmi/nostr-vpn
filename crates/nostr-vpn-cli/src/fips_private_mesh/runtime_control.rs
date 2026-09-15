@@ -3,14 +3,6 @@
 // its connection inside the 15-second public-UI join deadline.
 pub(crate) const JOIN_ROSTER_DELIVERY_TIMEOUT: Duration = Duration::from_secs(12);
 
-fn roster_control_frame(signed_roster: SignedRoster) -> Result<FipsControlFrame> {
-    Ok(FipsControlFrame::Roster {
-        network_id: signed_roster.network_id()?,
-        roster: signed_roster.roster()?,
-        signed_roster: Some(Box::new(signed_roster)),
-    })
-}
-
 impl FipsPrivateMeshRuntime {
     pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {
         let participants = self.ping_due_participants(now)?;
@@ -76,31 +68,12 @@ impl FipsPrivateMeshRuntime {
         self.enqueue_stateful_control_frame(
             control,
             participant,
-            &roster_control_frame(signed_roster)?,
+            &FipsControlFrame::Roster {
+                network_id: signed_roster.network_id()?,
+                roster: signed_roster.roster()?,
+                signed_roster: Some(Box::new(signed_roster)),
+            },
         )
-    }
-
-    pub(crate) fn roster_delivery(
-        self: &Arc<Self>,
-        control: FipsControlTcpSender,
-        participant: String,
-        signed_roster: SignedRoster,
-    ) -> Result<FipsRosterDelivery> {
-        let destination = control_frame_destination_peer(
-            &self.mesh.load(),
-            &self.peer_identities.load(),
-            &participant,
-        )?;
-        let frame = roster_control_frame(signed_roster)?;
-        let runtime = Arc::clone(self);
-        Ok(Box::pin(async move {
-            let sent_len = control.send(destination, &frame).await?;
-            runtime.note_tx(
-                Some(&participant),
-                participant_pubkey_bytes(&participant).as_ref(),
-                sent_len,
-            )
-        }))
     }
 
     pub(crate) fn join_roster_delivery(
@@ -108,7 +81,7 @@ impl FipsPrivateMeshRuntime {
         control: FipsControlTcpSender,
         participant: String,
         join_roster: JoinRosterControl,
-    ) -> Result<FipsRosterDelivery> {
+    ) -> Result<FipsJoinRosterDelivery> {
         let participant_key = participant_pubkey_bytes(&participant);
         let destination = {
             let mesh = self.mesh.load();

@@ -153,7 +153,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
         return;
     };
     if let Err(error) =
-        sync_fips_roster_with_connected_peers(runtime, app, config_path, roster_sync_state).await
+        sync_fips_roster_with_connected_peers(runtime, app, config_path, roster_sync_state)
     {
         eprintln!("fips: roster peer sync failed: {error}");
     }
