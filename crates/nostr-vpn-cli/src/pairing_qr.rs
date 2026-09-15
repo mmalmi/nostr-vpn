@@ -35,8 +35,8 @@ pub(crate) fn render_pairing_output(uri: &str) -> Result<String> {
 pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     #[cfg(unix)]
-    let uri = crate::join_request_ipc::request_daemon_join_request_link(&config_path, args.reset)
-        .await?;
+    let uri =
+        crate::join_request_ipc::request_daemon_join_request_link(&config_path, args.reset).await?;
     #[cfg(not(unix))]
     let app = ensure_pending_join_request_and_reload(
         &config_path,
