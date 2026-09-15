@@ -1,3 +1,4 @@
+import { withIosArtifactSource } from './ios-artifact-source.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
@@ -5,6 +6,8 @@ import { createHash } from 'node:crypto'
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
+  realpathSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -811,29 +814,68 @@ test('frozen iOS publication binds an unchanged-product source proof', () => {
   )
 })
 
-test('retained iOS export runs only from its proven artifact source', () => {
-  const source = readFileSync(
-    new URL('./local-release.mjs', import.meta.url),
-    'utf8',
-  )
-  for (const required of [
-    'requireReceiptSource(archiveReceipt',
-    "'worktree', 'add', '--detach', sourceRoot, archiveReceipt.appGitSha",
-    "for (const name of ['dist', 'artifacts'])",
-    'mkdirSync(linkRoot)',
-    'for (const entry of readdirSync(externalRoot))',
-    'join(linkRoot, entry)',
-    "join(repoRoot, 'scripts', 'ios-build'), 'ios-export'",
-    'NVPN_BUILD_GIT_SHA: archiveReceipt.appGitSha',
-    'NVPN_IOS_RELEASE_SOURCE_ROOT: sourceRoot',
-    'source_equivalence: sourceEquivalence',
-  ]) {
-    assert.match(source, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+test('iOS export and upload retain original source, paths and bytes across harness changes', (context) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'nvpn-ios-source-context-'))
+  context.after(() => rmSync(repoRoot, { recursive: true, force: true }))
+  const git = (args, cwd = repoRoot) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
   }
-  assert.doesNotMatch(
-    source,
-    /join\(sourceRoot, 'scripts', 'ios-build'\), 'ios-export'/,
-  )
+  git(['init', '-q'])
+  git(['config', 'user.name', 'Release Test'])
+  git(['config', 'user.email', 'release@example.invalid'])
+  mkdirSync(join(repoRoot, 'ios'))
+  mkdirSync(join(repoRoot, 'docs'))
+  writeFileSync(join(repoRoot, '.gitignore'), 'dist/\nartifacts/\n')
+  writeFileSync(join(repoRoot, 'ios', 'App.swift'), 'original app\n')
+  git(['add', '.'])
+  git(['commit', '-qm', 'artifact source'])
+  const receipt = { appGitSha: git(['rev-parse', 'HEAD']), appGitTree: git(['rev-parse', 'HEAD^{tree}']) }
+  const tag = 'v4.1.5'
+  const gateDir = join(repoRoot, 'artifacts', 'release-gate-logs', `local-release-${tag}`)
+  const joinDir = join(repoRoot, 'artifacts', 'mobile-release-join')
+  for (const directory of [join(repoRoot, 'dist', 'ios'), gateDir, joinDir]) mkdirSync(directory, { recursive: true })
+  const ipa = join(repoRoot, 'dist', 'ios', 'release.ipa')
+  writeFileSync(ipa, 'original archive bytes\n')
+  writeFileSync(join(gateDir, 'receipt.json'), 'original gate bytes\n')
+  const env = { ...process.env, NVPN_RELEASE_TAG: tag, NVPN_RELEASE_STAGE_DIR: '/exact/stage' }
+  const original = { repoRoot, receipt, commit: receipt.appGitSha, tree: receipt.appGitTree, env }
+  withIosArtifactSource(original, ({ cwd }) => assert.equal(cwd, repoRoot))
+
+  writeFileSync(join(repoRoot, 'docs', 'release-resume.md'), 'new harness instructions\n')
+  git(['add', 'docs'])
+  git(['commit', '-qm', 'harness update'])
+  const candidate = { ...original, commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']) }
+  for (const shouldFail of [false, true]) {
+    let temporarySource
+    const invoke = () => withIosArtifactSource(candidate, ({ cwd, env: scoped }) => {
+      temporarySource = cwd
+      assert.notEqual(cwd, repoRoot)
+      assert.equal(git(['rev-parse', 'HEAD'], cwd), receipt.appGitSha)
+      assert.equal(git(['status', '--porcelain'], cwd), '')
+      assert.equal(scoped.NVPN_BUILD_GIT_SHA, receipt.appGitSha)
+      assert.equal(scoped.NVPN_IOS_RELEASE_SOURCE_ROOT, cwd)
+      assert.equal(scoped.NVPN_RELEASE_STAGE_DIR, env.NVPN_RELEASE_STAGE_DIR)
+      assert.equal(scoped.NVPN_RELEASE_GATE_LOG_DIR, gateDir)
+      assert.equal(scoped.NVPN_RELEASE_JOIN_RESULT_DIR, joinDir)
+      assert.equal(realpathSync(join(cwd, 'dist', 'ios', 'release.ipa')), realpathSync(ipa))
+      assert.equal(readFileSync(join(cwd, 'ios', 'App.swift'), 'utf8'), 'original app\n')
+      if (shouldFail) throw new Error('upload failed')
+    })
+    if (shouldFail) assert.throws(invoke, /upload failed/)
+    else invoke()
+    assert.equal(existsSync(temporarySource), false)
+    assert.equal(git(['worktree', 'list', '--porcelain']).match(/^worktree /gm).length, 1)
+    assert.equal(readFileSync(ipa, 'utf8'), 'original archive bytes\n')
+    assert.equal(readFileSync(join(gateDir, 'receipt.json'), 'utf8'), 'original gate bytes\n')
+  }
+  writeFileSync(join(repoRoot, 'ios', 'App.swift'), 'changed app\n')
+  git(['add', 'ios'])
+  git(['commit', '-qm', 'product change'])
+  assert.throws(() => withIosArtifactSource({
+    ...candidate, commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']),
+  }, () => assert.fail('changed product reached export/upload')), /changed product\/build input/)
 })
 
 test('retained iOS outputs stay available without dirtying the exact checkout', (context) => {
@@ -1190,6 +1232,7 @@ test('staged draft publication publishes only the already validated bytes', () =
     'github-release-publication.mjs',
     'htree-release-publication.mjs',
     'ios-release-publication.mjs',
+    'ios-artifact-source.mjs',
     'ios-upload-receipt.mjs',
     'release-mutation-gate.mjs',
     'verify-release-publication-bundle.mjs',
@@ -1632,6 +1675,16 @@ test('final publication preflights tools and Zapstore identity before the releas
     /zapstorePublicationPrerequisites\([\s\S]*?apk:\s*!requireApk\s*\|\|\s*Boolean\(apkPath\s*&&\s*existsSync\(apkPath\)\)/,
   )
   assert.match(zapstorePublisher, /'nak',[\s\S]*\['decode', context\.publisherNpub\]/)
+})
+
+test('staging checks platform packaging prerequisites before starting its release gate', () => {
+  const source = readFileSync(join(process.cwd(), 'scripts/local-release.mjs'), 'utf8')
+  const mainStart = source.indexOf('function main()')
+  const preflight = source.indexOf('preflightStartosRelease({', mainStart)
+  assert.ok(preflight > mainStart && preflight < source.indexOf('const steps = [', mainStart))
+  assert.match(source.slice(preflight, source.indexOf('const steps = [', preflight)), /needsWorkspace: !String\(env\.NVPN_RELEASE_STARTOS_ARTIFACT_DIR/)
+  const linux = source.indexOf('validateLinuxPublicationBuilder({ env })', mainStart)
+  assert.ok(linux > mainStart && linux < source.indexOf('const steps = [', mainStart))
 })
 
 test('publication verification requires real Windows and Linux underlay gates', () => {

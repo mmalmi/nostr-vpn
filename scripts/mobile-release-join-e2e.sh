@@ -26,10 +26,9 @@ resolve_shared_build_metadata "$ROOT"
   echo "Signed Release mobile join gate requires macOS/Xcode" >&2
   exit 2
 }
-[[ -z "$(git -C "$ROOT" status --porcelain)" ]] || {
-  echo "Signed Release mobile join gate requires a clean committed candidate" >&2
-  exit 2
-}
+assert_release_checkout_state \
+  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "Signed Release mobile join" || exit 2
 HARNESS_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 HARNESS_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 APP_GIT_SHA="${NVPN_EXPECTED_APP_GIT_SHA:-}"
@@ -235,6 +234,7 @@ assert_delivery_deadline() {
 
 phase_ios_admin_android_qr() {
   local scan_log submitted completed
+  local peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
   # Request iOS automation while the operator is ready, before Android setup.
   ios_create_admin "Release QR iPhone admin"
   release_join_android_open_network_setup
@@ -254,7 +254,8 @@ phase_ios_admin_android_qr() {
     testImportJoinQrImageAndRequireAdminRosterProgress "$scan_log" \
     "NVPN_RELEASE_JOIN_IMAGE_FILENAME=$IOS_QR_STAGED_FILENAME" \
     "NVPN_RELEASE_JOIN_IMAGE_SHA256=$(shasum -a 256 "$ANDROID_QR_CAPTURE" | awk '{print $1}')" \
-    "NVPN_RELEASE_JOIN_JOINER_ID=$RELEASE_JOIN_ANDROID_JOINER_ID"
+    "NVPN_RELEASE_JOIN_JOINER_ID=$RELEASE_JOIN_ANDROID_JOINER_ID" \
+    "NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME=$peer_accepted_filename"
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_IMPORT_READY=1 \
     "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
     || fail "iPhone did not open its shipped QR image importer"
@@ -276,6 +277,8 @@ phase_ios_admin_android_qr() {
     "$RESULT_DIR/iphone-admin-pixel-qr-observations.tsv")" \
     || fail "Pixel stayed on QR view or lacked the exact iPhone admin roster row"
   assert_delivery_deadline "$submitted" "$completed" "iPhone-admin-to-Pixel-QR"
+  release_join_signal_ios_peer_accepted \
+    "$peer_accepted_filename" "$RELEASE_JOIN_ANDROID_JOINER_ID"
   release_join_ios_finish_test \
     || fail "iPhone admin did not accept the exact Pixel joiner"
   release_join_android_relaunch_and_wait_accepted "$RELEASE_JOIN_IOS_ADMIN_ID" \
@@ -284,7 +287,11 @@ phase_ios_admin_android_qr() {
 
 phase_android_admin_ios_qr() {
   local join_log android_scan_log submitted completed ios_qr_content_width_bps
-  local ios_qr_relaunch_admin
+  local ios_qr_relaunch_admin qr_carrier_log
+  qr_carrier_log="$(ios_log ios-carrier-preflight)"
+  release_join_ios_run_test \
+    testNormalizeRetainedJoinCarrierSettings "$qr_carrier_log" \
+    || fail "iPhone QR join carrier did not authenticate public bootstrap"
   release_join_android_open_network_setup
   release_join_android_create_admin
   android_scan_log="$RESULT_DIR/android-admin-ios-qr-approval.log"
@@ -344,8 +351,8 @@ phase_ios_admin_android_manual() {
   local admin_log ios_admin_relaunch_joiner submitted completed
   local peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
   local accepted="$RESULT_DIR/iphone-admin-pixel-manual-accepted.ms"
-  release_join_android_open_network_setup
   ios_create_admin "Release manual iPhone admin"
+  release_join_android_open_network_setup
   release_join_android_manual_submit \
     "$RELEASE_JOIN_IOS_ADMIN_ID" "$RELEASE_JOIN_IOS_NETWORK_ID"
   release_join_android_wait_vpn_connected
@@ -469,11 +476,10 @@ esac
 
 rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
 
-# Admin creation and manual joining already restore the carrier and verify
-# authenticated bootstrap in their first XCTest. Only the QR-only iPhone
-# joiner and desktop-only entry points need a separate normalization session.
+# Phone phases prepare their own carrier. Desktop-only entry still needs
+# normalization before handing the retained app to the desktop harness.
 case "$RELEASE_JOIN_PHASE_SELECTION" in
-  pixel-admin-iphone-qr-only|desktop-only)
+  desktop-only)
     carrier_preflight_log="$(ios_log ios-carrier-preflight)"
     release_join_ios_run_test \
       testNormalizeRetainedJoinCarrierSettings "$carrier_preflight_log" \

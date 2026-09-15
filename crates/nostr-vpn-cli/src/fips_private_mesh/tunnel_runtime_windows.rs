@@ -205,6 +205,11 @@ impl FipsPrivateTunnelRuntime {
         cleanup_journal_config_path: &std::path::Path,
     ) -> Result<()> {
         validate_windows_wireguard_config(&config.wireguard_exit, &config.exit_dns)?;
+        let had_wireguard_upstream = self.wg_upstream.is_some();
+        let previous_dns = self
+            .config
+            .exit_dns_resolver_config(had_wireguard_upstream)?;
+        let starting_secure_dns = config.secure_dns_required() && self.secure_dns.is_none();
         let existing_wireguard_upstream_matches = config.wireguard_exit.enabled
             && config.wireguard_exit.configured()
             && self
@@ -231,7 +236,7 @@ impl FipsPrivateTunnelRuntime {
         if self.config.nostr_relays != config.nostr_relays {
             self.mesh.update_relays(&config.nostr_relays).await?;
         }
-        if config.secure_dns_required() && self.secure_dns.is_none() {
+        if starting_secure_dns {
             crate::secure_dns_runtime::SecureDnsRuntime::start_into(
                 &mut self.secure_dns,
                 &self.iface,
@@ -252,7 +257,7 @@ impl FipsPrivateTunnelRuntime {
             secure_dns.update_records(config.magic_dns_records.clone());
             secure_dns.update_config(
                 config.magic_dns_records.clone(),
-                config.exit_dns_resolver_config(false)?,
+                config.exit_dns_resolver_config(existing_wireguard_upstream_matches)?,
             )?;
         }
         // Verify and install the desired WireGuard upstream before changing
@@ -282,8 +287,17 @@ impl FipsPrivateTunnelRuntime {
         let servers = resolver_config.through_exit_servers().to_vec();
         if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_config(config.magic_dns_records.clone(), resolver_config)?;
-            secure_dns
-                .update_windows_wireguard_dns(wireguard_interface.as_deref(), &servers)?;
+            // Peer and physical-route refreshes do not change the DNS policy.
+            // Reinstalling it removes the active NRPT rules before recreating
+            // them, leaving a gap and launching PowerShell on every refresh.
+            if starting_secure_dns
+                || previous_dns.through_exit_servers() != servers.as_slice()
+                || (!existing_wireguard_upstream_matches
+                    && (had_wireguard_upstream || wireguard_interface.is_some()))
+            {
+                secure_dns
+                    .update_windows_wireguard_dns(wireguard_interface.as_deref(), &servers)?;
+            }
         }
         self.config = config;
         Ok(())

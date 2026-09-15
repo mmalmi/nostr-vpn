@@ -477,8 +477,13 @@ mod tests {
             }
             release.send(()).unwrap();
             tokio::time::timeout(Duration::from_secs(1), result)
-                .await.unwrap().expect("mode changes must not abort a wallet result");
-            assert!(!manual.funding_satisfied, "old completion cannot activate the new selection");
+                .await
+                .unwrap()
+                .expect("mode changes must not abort a wallet result");
+            assert!(
+                !manual.funding_satisfied,
+                "old completion cannot activate the new selection"
+            );
             assert_eq!(manual.session_id, replacement.unwrap_or_default());
         }
     }

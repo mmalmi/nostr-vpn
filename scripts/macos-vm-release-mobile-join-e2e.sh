@@ -537,10 +537,23 @@ const timings = validateMacosPixelJoinReceipt({
   androidInstallReceiptSha256: hash(readFileSync(installPath)),
   androidInstallReceiptSize: readFileSync(installPath).length,
 })
-writeFileSync(join(output, 'reused-pixel-summary.json'), bytes, { flag: 'wx' })
-writeFileSync(join(output, 'delivery-times.tsv'),
-  Object.entries(timings).map(([label, elapsed]) => `${label}\t${elapsed}\n`).join(''),
-  { flag: 'wx' })
+function retainExact(path, value) {
+  const expected = Buffer.from(value)
+  try {
+    writeFileSync(path, expected, { flag: 'wx' })
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error
+    const existing = lstatSync(path)
+    if (!existing.isFile() || existing.isSymbolicLink()
+      || !readFileSync(path).equals(expected)) {
+      throw new Error('Existing retained Mac/Pixel evidence does not match the selected receipt.')
+    }
+  }
+}
+retainExact(join(output, 'reused-pixel-summary.json'), bytes)
+retainExact(join(output, 'delivery-times.tsv'),
+  ['macOS-admin-to-Android-manual', 'Android-admin-to-macOS-manual']
+    .map((label) => `${label}\t${timings[label]}\n`).join(''))
 console.log(hash(bytes))
 JS
 }
@@ -1149,8 +1162,9 @@ remote approval-start
 wait_log_marker \
   "$desktop_ios_join_log" \
   "NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=$RELEASE_JOIN_IOS_ADMIN_ID" \
-  "$RELEASE_JOIN_DELIVERY_WAIT_SECS"
+  "$((RELEASE_JOIN_DELIVERY_WAIT_SECS + 15))"
 ios_admin_remote_completed_ms="$(release_join_now_ms)"
+echo "iPhone-to-macOS approval observed after $((ios_admin_remote_completed_ms - ios_admin_observed_submitted_ms))ms"
 release_join_signal_ios_peer_accepted \
   "$ios_peer_accepted_filename" "$DESKTOP_IOS_JOINER_ID"
 release_join_ios_finish_test \
@@ -1169,8 +1183,12 @@ ios_admin_phone_elapsed_ms=$((ios_admin_applied_ms - ios_admin_submitted_ms))
 ios_admin_delivery_elapsed_ms="$ios_admin_remote_elapsed_ms"
 ((ios_admin_phone_elapsed_ms <= ios_admin_delivery_elapsed_ms)) \
   || ios_admin_delivery_elapsed_ms="$ios_admin_phone_elapsed_ms"
+# Complete both durability checks even when delivery was late, as in the
+# opposite direction. The observation window does not widen the 15s limit.
+ios_admin_delivery_status=0
 assert_delivery_duration \
-  "$ios_admin_delivery_elapsed_ms" "iPhone-admin-to-macOS-manual"
+  "$ios_admin_delivery_elapsed_ms" "iPhone-admin-to-macOS-manual" \
+  || ios_admin_delivery_status=$?
 ios_admin_relaunch_joiner="$(
   ios_marker_value_from \
     "$ios_admin_log" NVPN_RELEASE_JOIN_ADMIN_RELAUNCH_DURABLE
@@ -1188,6 +1206,7 @@ finish_remote "$desktop_ios_join_log" \
   }
 remote verify "$RELEASE_JOIN_IOS_ADMIN_ID" \
   >"$RESULT_DIR/macos/desktop-ios-joiner-verify.log"
+((ios_admin_delivery_status == 0))
 )
 ios_admin_macos_status=$?
 set -e

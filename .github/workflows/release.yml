@@ -160,7 +160,9 @@ jobs:
     name: Verify exact locally gated assets (no publication)
     # Importing the immutable bundle is independent of the source checks.
     # Local publication still requires the entire workflow to succeed.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_HTREE_VERSION: '0.2.114'
     permissions:
       contents: read
     steps:
@@ -177,8 +179,27 @@ jobs:
       - name: Install htree native dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
 
+      # Tag-scoped caches let retries reuse this tool without recompiling it.
+      - name: Restore pinned htree client
+        id: htree-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ~/.cargo/bin/htree
+          key: release-htree-ubuntu24.04-${{ runner.arch }}-${{ env.RELEASE_HTREE_VERSION }}-rust-${{ env.RELEASE_RUST_TOOLCHAIN }}
+
       - name: Install pinned htree client
-        run: cargo install hashtree-cli --version 0.2.114 --locked --bin htree
+        if: steps.htree-cache.outputs.cache-hit != 'true'
+        run: cargo install hashtree-cli --version "${RELEASE_HTREE_VERSION}" --locked --bin htree
+
+      - name: Verify pinned htree client
+        run: test "$(htree --version)" = "htree ${RELEASE_HTREE_VERSION}"
+
+      - name: Save verified htree client before downloading the release
+        if: steps.htree-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cargo/bin/htree
+          key: ${{ steps.htree-cache.outputs.cache-primary-key }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

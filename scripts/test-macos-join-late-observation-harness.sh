@@ -68,4 +68,49 @@ for completed_ms in 14000 16001; do
   grep -Fxq remote:verify "$trace"
   grep -Fxq cleanup "$trace"
 done
+python3 - "$ROOT/scripts/macos-vm-release-mobile-join-e2e.sh" "$fixture/reverse.sh" <<'PY'
+from pathlib import Path
+import sys
+source = Path(sys.argv[1]).read_text()
+start = source.index("set +e\n(\nset -euo pipefail\nMACOS_MOBILE_DIRECTION_LABEL=iphone-admin-macos-joiner")
+end = source.index("\nios_admin_macos_status=$?", start)
+Path(sys.argv[2]).write_text(source[start:end] + "\n")
+PY
+
+for completed_ms in 15000 16001; do
+  RESULT_DIR="$fixture/reverse-$completed_ms"
+  mkdir -p "$RESULT_DIR/macos"
+  trace="$RESULT_DIR/trace"
+  prepare_macos_mobile_direction() { :; }
+  ios_create_admin() { RELEASE_JOIN_IOS_ADMIN_ID=admin; RELEASE_JOIN_IOS_NETWORK_ID=network; }
+  marker_value() { echo joiner; }
+  ios_marker_value_from() {
+    case "$2" in
+      NVPN_RELEASE_JOIN_APPROVAL_SUBMITTED_MS) echo 1000 ;;
+      NVPN_RELEASE_JOIN_ROSTER_APPLIED_MS) echo 4000 ;;
+      NVPN_RELEASE_JOIN_ADMIN_RELAUNCH_DURABLE) echo joiner ;;
+    esac
+  }
+  release_join_ios_wait_marker() { :; }
+  wait_log_marker() {
+    if [[ "$2" == NVPN_RELEASE_JOIN_ROSTER_PARTICIPANT=admin ]]; then
+      echo "capture-timeout:$3" >>"$trace"
+      [[ "$3" == 30 ]] || return 1
+    fi
+  }
+  assert_delivery_duration() { (($1 >= 0 && $1 <= 15000)); }
+  finish_remote() { echo remote-finished >>"$trace"; }
+  source "$fixture/reverse.sh"
+  status=$?
+  set -e
+  expected=0
+  ((completed_ms - 1000 <= 15000)) || expected=1
+  [[ "$status" == "$expected" ]]
+  grep -Fxq capture-timeout:30 "$trace"
+  grep -Fxq peer-accepted "$trace"
+  grep -Fxq relaunch-verified "$trace"
+  grep -Fxq remote-finished "$trace"
+  grep -Fxq remote:verify "$trace"
+  grep -Fxq cleanup "$trace"
+done
 echo MACOS_LATE_JOIN_OBSERVATION_HARNESS_OK

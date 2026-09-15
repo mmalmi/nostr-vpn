@@ -26,10 +26,9 @@ fi
   echo "Windows/Pixel Release join gate must be controlled by macOS" >&2
   exit 2
 }
-[[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] || {
-  echo "Windows/Pixel Release join gate requires a clean committed candidate" >&2
-  exit 2
-}
+assert_release_checkout_state \
+  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "Windows/Pixel Release join" || exit 2
 APP_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 APP_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 [[ "${NVPN_EXPECTED_APP_GIT_SHA:-}" =~ ^[0-9a-f]{40}$ \
@@ -106,7 +105,7 @@ ANDROID_FIPS_VERSION="$(jq -er '.fipsCoreVersion' "$ANDROID_ARTIFACT_RECEIPT")"
 ANDROID_APK_SHA="$(
   python3 "$ROOT/scripts/desktop_mobile_manual_join_receipt.py" \
     validate-android \
-    "${android_install_binding_args[@]}" \
+    ${android_install_binding_args[@]+"${android_install_binding_args[@]}"} \
     --receipt "$ANDROID_INSTALL_RECEIPT" \
     --android-artifact-receipt "$ANDROID_ARTIFACT_RECEIPT" \
     --android-fips-metadata-receipt "$ANDROID_FIPS_METADATA_RECEIPT" \
@@ -599,7 +598,7 @@ assert_release_checkout_state \
   "$DESKTOP_ROOT" "$DESKTOP_APP_GIT_SHA" "$DESKTOP_APP_GIT_TREE" \
   'Windows Release product' || exit 1
 receipt_binding_args=(
-  "${android_install_binding_args[@]}"
+  ${android_install_binding_args[@]+"${android_install_binding_args[@]}"}
   --desktop-receipt "$DESKTOP_RECEIPT"
   --android-artifact-receipt "$ANDROID_ARTIFACT_RECEIPT"
   --android-install-receipt "$ANDROID_INSTALL_RECEIPT"

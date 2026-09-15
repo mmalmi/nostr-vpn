@@ -54,10 +54,9 @@ chmod 700 "$PRIVATE_DIR"
 
 APP_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 APP_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
-[[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] || {
-  echo "Linux desktop/mobile join requires a clean committed candidate" >&2
-  exit 2
-}
+assert_release_checkout_state \
+  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "Linux desktop/mobile join" || exit 2
 [[ "${NVPN_EXPECTED_APP_GIT_SHA:-}" =~ ^[0-9a-f]{40}$ \
   && "$APP_GIT_SHA" == "$NVPN_EXPECTED_APP_GIT_SHA" ]] || {
   echo "Set NVPN_EXPECTED_APP_GIT_SHA to the exact committed candidate" >&2
@@ -163,7 +162,8 @@ trap cleanup EXIT
 
 case "${NVPN_UBUNTU_SKIP_GIT_SYNC:-0}" in
   1|true|TRUE|True|yes|YES|Yes|on|ON|On) ;;
-  *) "$ROOT/scripts/ubuntu-vm-git-sync.sh" "$SSH_HOST" ;;
+  *) NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT="$APP_GIT_SHA" \
+    "$ROOT/scripts/ubuntu-vm-git-sync.sh" "$SSH_HOST" ;;
 esac
 ubuntu_vm_import_release_bundle
 import_ready=1

@@ -3695,9 +3695,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7554d14b5a8d2d9317c25706afa8b20ac786108112e052959d72797fd4496f5f"
+checksum = "25547c5914c56e119d6a4048c7677577e170576b7b4c825abd43260169b2a8e5"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.1.10"
+version = "4.1.12"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3819,7 +3819,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.1.10"
+version = "4.1.12"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3857,7 +3857,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-linux"
-version = "4.1.10"
+version = "4.1.12"
 dependencies = [
  "gio",
  "glib",
@@ -3940,9 +3940,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.81"
+version = "0.4.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70ecf9f062a22bee37163b1db2b01bb72683f0984f05a98215b5704de5923016"
+checksum = "4c63b7f605b3566cd01b748c6aaef8a3427d8751266d1e411ab28b06a7233823"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -3985,9 +3985,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.81"
+version = "0.4.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cebcff3e8db8fdff9a6acf19f6982f0210803dcd2cc192eb9fa004d46706372"
+checksum = "14d5f42a9cf5917e11bd0352117d1df18bff2f2f937e01a0cd93cc65e56c2a5e"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4015,9 +4015,9 @@ checksum = "7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.16"
+version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57b56ce6b754bb4157d204543467b2eecd167d86df7c80d78950652d2630e76a"
+checksum = "26ec0461fb629d165709abcd5c27fb98ed60606181de132a1090fec177d6430b"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -5079,9 +5079,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "once_cell",
  "ring",
@@ -5115,9 +5115,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",

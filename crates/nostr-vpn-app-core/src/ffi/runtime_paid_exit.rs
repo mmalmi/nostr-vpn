@@ -358,7 +358,7 @@ impl NativeAppRuntime {
         }
     }
 
-    fn pending_paid_route_funding_status(&self) -> Option<String> {
+    fn pending_paid_route_funding_status(&self) -> Option<(String, bool)> {
         None
     }
 

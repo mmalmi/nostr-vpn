@@ -15,6 +15,8 @@ const harnessOnlyPaths = new Set([
   'scripts/android-release-foreground-idle-receipt.mjs',
   'scripts/native-lab.py',
   'scripts/docker-replace-nvpn-binary',
+  // Included only by ffi.rs's cfg(test) module; the parent remains a product input.
+  'crates/nostr-vpn-app-core/src/ffi/tests_network/exit_state.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_core.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_runtime/websocket_join.rs',
   'crates/nostr-vpn-core/examples/desktop_manual_join_e2e_fixture.rs',
@@ -33,6 +35,7 @@ const harnessOnlyPaths = new Set([
   'scripts/desktop-mobile-manual-join-windows-ui.ps1',
   'scripts/desktop-linux-underlay-change-e2e.sh',
   'scripts/desktop-linux-underlay-peer-e2e.sh',
+  'scripts/desktop-windows-underlay-change-e2e.ps1',
   'scripts/e2e-macos-release-network.sh',
   'scripts/e2e-macos-service-toggle.sh',
   'scripts/e2e-macos-service.sh',
@@ -45,6 +48,7 @@ const harnessOnlyPaths = new Set([
   'scripts/ios_frozen_archive.py',
   'scripts/ios_frozen_gate.py',
   'scripts/ios-upload-receipt.mjs',
+  'scripts/ios-artifact-source.mjs',
   'scripts/lib-desktop-underlay-host-peer.sh',
   'scripts/lib-ubuntu-vm-imported-release.sh',
   'scripts/linux-vm-desktop-underlay-change-e2e.sh',
@@ -155,6 +159,12 @@ function isProductInput(path, platform) {
     || path === 'crates/nostr-vpn-app-core/src/c_abi/ios_packet_flow.rs'
   ) return platform === 'ios'
   if (path.startsWith('crates/nostr-vpn-cli/')) {
+    // This leaf contains only Windows production items and host-only tests.
+    // Its include parent remains shared, so changing that boundary invalidates
+    // every desktop artifact.
+    if (path === 'crates/nostr-vpn-cli/src/fips_private_mesh/tunnel_runtime_windows.rs') {
+      return platform === 'windows'
+    }
     if (path === 'crates/nostr-vpn-cli/src/fips_private_mesh/linux_cleanup.rs') {
       return platform === 'linux'
     }

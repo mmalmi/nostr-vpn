@@ -149,8 +149,10 @@
 
     #[test]
     fn native_state_only_blocks_pending_automatic_exit_when_leak_protection_is_enabled() {
+        let dir = unique_service_test_dir("nvpn-pending-automatic-exit-state");
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.config_path = dir.join("config.toml");
         runtime.startup_error = None;
         runtime.vpn_enabled = true;
         create_test_network(&mut runtime, "Home");
@@ -172,6 +174,7 @@
             state.exit_node_status_text,
             "Automatic paid exit · Blocked"
         );
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -203,6 +206,7 @@
         let dir = unique_service_test_dir("nvpn-automatic-exit-confirmation");
         let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test"));
         runtime.startup_error = None;
+        runtime.config.wallet_fiat_enabled = false;
         runtime.config_path = dir.join("config.toml");
         create_test_network(&mut runtime, "Buyer");
         runtime.config.set_internet_source(InternetSource::PaidAutomatic);

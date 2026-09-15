@@ -2,6 +2,81 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.12 - 2026-09-15
+
+### Release notes
+
+This release updates TLS security and improves device approval and network
+roster recovery. It includes the connection and payment reliability improvements
+in 4.1.11. iOS does not support paid exits.
+
+### Fixed
+
+- Update rustls to 0.23.45 to address RUSTSEC-2026-0285 in TLS 1.3 handshake
+  encryption-level validation.
+- Keep device approval responsive while recovering the first Internet route,
+  preserve signed removals after roster revocation, and report join errors accurately.
+- Preserve active Windows DNS policy while refreshing peers and physical routes.
+- Start the private mesh promptly when the host has no default Internet route.
+- Update FIPS core and endpoint to 0.4.82 to retain in-flight path recovery and
+  recover sparse unanswered sessions without restarting the VPN.
+
+### Release process
+
+- Check dependency advisories, packaging tools, signing keys, and Linux builders before expensive tests,
+  and export iOS archives with the exact certificate selected by their profiles.
+- Prepare physical test artifacts before timed checks and retain verified results
+  when resuming interrupted device tests.
+- Check the exact Windows source before building its installer and avoid temporary
+  workspace snapshots during release preparation.
+- Reuse the verified native Linux build for network test peers and validate
+  temporary dependency state when resuming physical join tests.
+- Limit paid-mode testing to compatible fixtures, prepare QR approval carriers
+  explicitly, and keep cleanup checks scoped to processes owned by each test.
+
+## 4.1.11 - 2026-09-13
+
+### Release notes
+
+Internet connections recover more reliably when switching modes or changing
+networks. Paid exits preserve purchased credit through reconnects and renewals,
+and wallet funding recovers from mint outages. iOS does not support paid exits.
+
+### Fixed
+
+- Preserve shared endpoint routes during WireGuard handover and keep a healthy
+  public paid connection when private peers go offline.
+- Restore Automatic Internet routes after configuration reloads, preserve paid
+  credit across mode changes, and finish outstanding wallet operations safely.
+- Renew paid channels before credit runs out, bind purchased capacity to the
+  agreed offer, and cover actual Cashu redemption fees before committing funds.
+- Back off unavailable mints, prioritize waiting Internet funding, and try an
+  available wallet mint while another mint is cooling down.
+- Refresh wallet connections after Internet route changes and keep receive and
+  send dialogs aligned with the selected mint and current transaction.
+- Show the selected Internet connection's status, provider country, price,
+  funding cooldown, and per-provider traffic and payment totals more clearly.
+- Harden Cashu Spilman channel recovery and settlement with CDK 0.18 support.
+- Update FIPS core and endpoint to 0.4.81, TCP endpoint to 0.2.16, and the
+  pubsub adapter to 0.5.4 for compatible session recovery improvements.
+
+### Release process
+
+- Group physical phone checks into one window and seal completed iOS evidence
+  before later unattended checks, allowing validated receipts to be retained.
+- Resume incomplete publication-bundle downloads from the local cache.
+- Check Docker readiness before expensive source validation and bound stalled
+  daemon and image requests so unavailable infrastructure fails promptly.
+- Synchronize the main Rust lockfile during version bumps so locked release
+  builds do not fail on stale workspace versions.
+- Record interrupted release gates as failures instead of reporting a passed
+  progress ledger after cancellation.
+- Include all vendored payment dependencies in Docker and Umbrel builds, and
+  check Docker's source filter before compiling platform packages.
+- Compile the App Store feature configuration during early source validation
+  and keep its funding-status interface aligned with the shared app core.
+- Isolate automatic-exit status test fixtures from local wallet state.
+
 ## 4.1.10 - 2026-09-09
 
 ### Release notes

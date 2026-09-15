@@ -34,6 +34,7 @@
 
 - App Store availability: exclude France, keep China enabled, and never claim worldwide availability in metadata or review notes.
 - Before release: `just release-gate`; Linux GTK: `( cd linux && cargo check )`.
-- Bump: changelog `## X.Y.Z - YYYY-MM-DD`; root version; `node scripts/sync-versions.mjs --check`; gate.
+- Bump: changelog `## X.Y.Z - YYYY-MM-DD`; root version; advance `ios/app-store-build-number` to an unused build number; run `node scripts/sync-versions.mjs`, then `--check`; gate.
+- Before expensive builds, run `scripts/testflight-internal preflight` and `scripts/appstore-draft preflight`; both must agree on the intended marketing version/build. A new candidate must not reuse an already uploaded build.
 - Stage the exact clean commit with `node scripts/local-release.mjs --stage-dir <dir>`; use `--reuse-gate-receipts` only after composing a complete artifact-bound receipt set.
 - Publish with `--publish-staged-draft`, then `scripts/publish-release-refs.mjs`, then `--promote-draft --require-zapstore`. Direct `--publish` and `--final` modes are disabled.

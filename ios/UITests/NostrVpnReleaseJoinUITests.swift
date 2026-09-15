@@ -110,6 +110,8 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         let imageFilename = try required("NVPN_RELEASE_JOIN_IMAGE_FILENAME")
         let expectedImageSHA = try required("NVPN_RELEASE_JOIN_IMAGE_SHA256")
         XCTAssertTrue(app.launchEnvironment.isEmpty)
+        // Each XCTest launches the app again; require its live carrier before approval.
+        try normalizeAndRequireJoinCarrier()
         openLinkDevice()
         let scan = element("join-request-scan-open")
         XCTAssertTrue(scan.waitForExistence(timeout: 10))
@@ -160,6 +162,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
                 .waitForExistence(timeout: deliveryTimeout),
             "Admin roster did not show the scanned joining identity"
         )
+        try waitForPeerAcceptance(expectedJoiner)
         emit("NVPN_RELEASE_JOIN_ADMIN_ACCEPTED=\(expectedJoiner)")
     }
 
@@ -221,6 +224,8 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
 
     func testManualAdminAddRequiresRosterProgress() throws {
         let joiner = try requiredNpub("NVPN_RELEASE_JOIN_JOINER_ID")
+        // Each XCTest launches the app again; require its live carrier before approval.
+        try normalizeAndRequireJoinCarrier()
         openLinkDevice()
         replaceText(scrollTo("manual-admin-joiner-id"), with: joiner)
         let alias = element("manual-admin-alias")
@@ -477,8 +482,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         let retained = ShippedUIInteraction.replaceText(
             field,
             with: value,
-            in: app,
-            incrementally: value.hasPrefix("npub1")
+            in: app
         )
         XCTAssertTrue(
             retained,

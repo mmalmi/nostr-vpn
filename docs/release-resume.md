@@ -8,6 +8,29 @@ passed, prefer completing the missing phases and validating their receipts as
 described below. Do not create a fresh checkout or change the candidate merely
 to restart a gate.
 
+Docker readiness is checked before source validation, with a 15-second daemon
+deadline and bounded image inspection/download requests. Restore the Docker
+service after a readiness failure before resuming the candidate.
+The preflight also asks Docker to copy every vendored Cargo manifest, catching
+source-filter omissions before platform compilation.
+Source validation compiles the app core without paid-exit features as well as
+checking the default workspace, so App Store feature drift fails early.
+The exact host-built Linux peer for desktop underlay checks is prepared alongside
+platform builds. All preparation finishes before network or idle measurements;
+a cold peer build must never overlap macOS recovery deadlines. Underlay runners
+then revalidate and import that cached artifact.
+Linux underlay cleanup collects evidence through the restored primary link;
+the guest has already removed its temporary secondary network at that point.
+The Automatic Spilman fixture owns the complete Internet mode-transition and
+pending-funding matrices. The manual fixture retains its higher price and small
+wallet for billing checks; running the same matrix there both duplicates work
+and violates Automatic's price and funding prerequisites.
+
+Before freezing a new release, advance `ios/app-store-build-number`, synchronize
+versions, and run the TestFlight and App Store `preflight` commands. Both must
+identify the intended version and unused build number; do this before compiling
+or collecting physical-device evidence.
+
 The gate automatically retains successful **source quality, Rust regression,
 and Android static** checks in `artifacts/release-gate-state`. Reuse requires
 matching source content and commit, local FIPS content, Cargo configuration,
@@ -24,6 +47,21 @@ commands.
 
 ## iPhone testing window
 
+Compile the signed test runner for the generic iOS destination. Selecting the
+physical phone is only necessary when executing tests; compilation must not wait
+for its development services to become available.
+Preparation audits the frozen app and records the installed runner before the
+first test starts. Preserve those receipts, the original test products and the
+signed archive when a device service fails. Exact reuse verifies their hashes
+and installed USB identities; a compiled runner alone is insufficient.
+The Android and iPhone DNS lanes finish independently, so a failed phone does not
+cancel the other phone's still-valid work. Radio recovery receives explicit
+artifact and runner pins from the completed preparation.
+
+A destination failure before any test method must not launch a second UI session
+for cleanup when a fresh USB check proves the untouched tunnel is still stopped.
+Cleanup remains mandatory after a method starts or the stopped proof is missing.
+
 The full gate validates desktop seller evidence before phone work, then groups
 physical idle, WireGuard/DNS, Android replacement, radio recovery and mobile/Mac
 join checks together. It seals the frozen iOS archive's physical-test evidence
@@ -38,6 +76,10 @@ set before staging with `--reuse-gate-receipts`. The iOS seal alone does not pas
 the release gate. Restarting the entire gate still reruns physical phases; it
 does not automatically skip them based on this seal.
 
+When a later harness change preserves all iOS product inputs, both export and
+upload use a temporary checkout of the archive's original source. The publication
+gate still validates the current release commit and the unchanged archive bytes.
+
 An unlocked screen and Apple UI Automation authorization are separate conditions.
 The release network and join runners check lock state with a bounded fresh query
 and stop on an automation-authorization timeout. Enter the automation passcode on
@@ -46,6 +88,16 @@ completed evidence; do not reboot, reinstall, or repeat unchanged startup attemp
 to chase the prompt. Grouping tests reduces idle gaps but does not guarantee a
 single prompt. Simulator tests remain independent of physical devices and cannot
 replace the real-device VPN evidence.
+
+A device passcode is not mandatory for UI automation. For a dedicated test phone,
+the owner can remove it in Settings > Face ID & Passcode > Turn Passcode Off.
+[Apple's developer guidance](https://developer.apple.com/forums/thread/693273)
+confirms that this removes the recurring automation passcode prompt; there is no
+supported way to automate entering an enabled passcode. Removing it also removes
+the phone's passcode protection. Do not change a personal phone's security
+settings automatically. With a passcode retained, arrange an attended testing
+window and start the prepared runner while the owner is ready to answer Apple's
+prompt; an unlocked screen alone does not establish automation authorization.
 
 ## Inspecting and resuming a gate
 
@@ -77,3 +129,8 @@ process is killed. Do not reset the budget merely because a test failed.
 Candidate edits invalidate cached checks. Changing the candidate while a gate
 runs rejects completion. Keep optional release-tool improvements outside a
 frozen release, and integrate them after publication.
+
+Let the canonical publisher build and push Umbrel together. An extra cache-only
+build while waiting for hosted checks does not retain an image for publication:
+[BuildKit can reclaim that cache](https://docs.docker.com/build/cache/garbage-collection/)
+before promotion, forcing the same compilation again.

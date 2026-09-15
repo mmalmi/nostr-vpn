@@ -256,10 +256,14 @@ fn automatic_recovery_preserves_prepaid_credit_but_replaces_exhausted_channel() 
         };
         session.session.payment.paid_msat = session.session.payment.capacity_sat * 1000;
         session.session.payment.cashu_spilman_payment = Some(payment.clone());
-        let channel = store.channels.get_mut(&session.session.payment.channel_id).unwrap();
+        let channel = store
+            .channels
+            .get_mut(&session.session.payment.channel_id)
+            .unwrap();
         channel.payment = session.session.payment.clone();
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     // Full prepayment does not mean traffic credit has been used.
     let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
     let selection = store.select_automatic_offer(now + 1).unwrap();
@@ -272,12 +276,16 @@ fn automatic_recovery_preserves_prepaid_credit_but_replaces_exhausted_channel() 
         session.session.usage.billable_bytes = 200_000_000;
         session.updated_at_unix = now + 2;
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 3).unwrap();
     let next = automatic.candidate.as_ref().unwrap();
     assert_ne!(next.session_id, old);
     assert_eq!(next.selection.mint_url, ALTERNATIVE);
-    assert!(automatic.rejected_offers.is_empty(), "spent credit is not a seller failure");
+    assert!(
+        automatic.rejected_offers.is_empty(),
+        "spent credit is not a seller failure"
+    );
     let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
     assert!(!store.buyer_session_has_remaining_capacity(&old).unwrap());
     let mut restarted = PaidExitAutomaticBuyer::default();
@@ -291,12 +299,20 @@ async fn known_shortfall_enters_payment_wait_without_probing_or_calling_wallet()
     let path = dir.path().join("config.toml");
     let session_id = automatic.candidate.as_ref().unwrap().session_id.clone();
     update_paid_route_store(&paid_route_store_file_path(&path), |store| {
-        store.sessions.get_mut(&session_id).unwrap().funding_started_unix = 0;
+        store
+            .sessions
+            .get_mut(&session_id)
+            .unwrap()
+            .funding_started_unix = 0;
         store.record_buyer_session_funding_shortfall(&session_id, 20)
-    }).unwrap();
+    })
+    .unwrap();
     assert!(funding::start_funding(&mut automatic, &app, &path, &session_id, now + 1).unwrap());
     assert!(!funding::start_funding(&mut automatic, &app, &path, &session_id, now + 2).unwrap());
-    assert!(automatic.funding.is_none(), "no mint request with unchanged insufficient funds");
+    assert!(
+        automatic.funding.is_none(),
+        "no mint request with unchanged insufficient funds"
+    );
     let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
     assert_ne!(store.sessions[&session_id].funding_started_unix, 0);
     assert_eq!(store.buyer_session_funding_retry_at(&session_id), u64::MAX);
@@ -326,22 +342,38 @@ fn automatic_selection_restores_cleared_route_without_buying_another_channel() {
         });
         session.session.realized_exit_ip = Some("198.51.100.42".into());
         Ok(())
-    }).unwrap();
+    })
+    .unwrap();
     // A UI/config reload can retain Automatic mode while clearing its selected
     // provider. An existing candidate must reconcile the installed route too.
     app.set_internet_source(InternetSource::PaidAutomatic);
     app.save(&path).unwrap();
     assert!(app.public_paid_exit_node_pubkey_hex().is_none());
-    assert!(reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 1).unwrap());
-    assert_eq!(app.public_paid_exit_node_pubkey_hex().as_deref(), Some(seller.as_str()));
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 1).unwrap()
+    );
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex().as_deref(),
+        Some(seller.as_str())
+    );
     let candidate = automatic.candidate.as_ref().unwrap();
     assert_eq!(candidate.session_id, session_id);
     assert!(candidate.funded);
-    assert!(!candidate.probe_succeeded, "restored routes need fresh end-to-end evidence");
+    assert!(
+        !candidate.probe_succeeded,
+        "restored routes need fresh end-to-end evidence"
+    );
     assert!(candidate.probe_started_at.is_none());
     let store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
     assert_eq!(store.sessions.len(), 1, "reuse existing credit");
-    assert!(store.sessions[&session_id].session.realized_exit_ip.is_none());
-    assert!(!reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 2).unwrap(),
-        "an unchanged route must not continuously restart its health check");
+    assert!(
+        store.sessions[&session_id]
+            .session
+            .realized_exit_ip
+            .is_none()
+    );
+    assert!(
+        !reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 2).unwrap(),
+        "an unchanged route must not continuously restart its health check"
+    );
 }

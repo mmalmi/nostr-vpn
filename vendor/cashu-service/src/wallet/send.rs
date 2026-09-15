@@ -242,7 +242,7 @@ pub(super) async fn prepare_payment_token(
                 nominal += proof.amount.to_u64();
             }
             if !prepared.proofs_to_swap().is_empty() {
-                let keyset = wallet.get_active_keyset().await?.id;
+                let keyset = wallet.active_keyset().await?.id;
                 let fees_and_amounts = wallet.get_keyset_fees_and_amounts_by_id(keyset).await?;
                 let swap_amount = requested
                     .saturating_add(prepared.send_fee().to_u64())

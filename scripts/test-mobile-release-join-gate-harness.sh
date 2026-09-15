@@ -1167,6 +1167,10 @@ PY
     : >"$2"
     trace "ios-test:$active_test"
   }
+  release_join_ios_run_test() {
+    [[ "$1" == testNormalizeRetainedJoinCarrierSettings ]]
+    trace ios-carrier-prepared
+  }
   release_join_ios_wait_marker() {
     trace "ios-marker:$1"
   }
@@ -1257,6 +1261,13 @@ PY
 
   : >"$trace_file"
   phase_android_admin_ios_qr
+  carrier_line="$(grep -n -m1 '^ios-carrier-prepared$' "$trace_file" | cut -d: -f1)"
+  pending_line="$(grep -n -m1 '^ios-test:testShowPhysicalJoinQrAndRequireRosterCompletion$' "$trace_file" | cut -d: -f1)"
+  [[ -n "$carrier_line" && -n "$pending_line" ]]
+  ((carrier_line < pending_line)) || {
+    echo "Reverse QR join began without preparing its public carrier" >&2
+    exit 1
+  }
   grep -Fxq android-admin "$trace_file"
   grep -Fxq android-scan-ready "$trace_file"
   grep -Fxq 'android-scan-accepted:npub1iosjoiner' "$trace_file"

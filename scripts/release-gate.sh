@@ -410,6 +410,9 @@ run_release_gate_candidate_preflight() {
 
 run_release_gate_source_quality() {
   cargo fmt --check
+  # Workspace feature unification enables paid exits. Check the App Store
+  # feature set separately before spending time on platform artifacts.
+  cargo check --locked -p nostr-vpn-app-core --no-default-features --lib
   cargo clippy --locked --workspace --all-targets -- -D warnings
 }
 
@@ -474,7 +477,6 @@ run_release_gate_static_preflight() {
 }
 
 run_rust_validation_lane() {
-  ./scripts/security-audit-rust.sh
   export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
   release_gate_checkpoint_run "Rust regression checks" run_rust_regression_checks
   ./scripts/e2e-manual-join-cli.sh
@@ -648,6 +650,7 @@ prepare_windows_platform_lane_sync() {
   local host="${NVPN_WINDOWS_SSH_HOST:-}"
   if windows_vm_reachable "$host"; then
     NVPN_WINDOWS_FIPS_REPO_PATH="$release_fips_path" \
+      NVPN_WINDOWS_GIT_SYNC_EXACT_APP_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)" \
       ./scripts/windows-vm-git-sync.sh "$host"
     write_platform_preparation_receipt \
       "$WINDOWS_PLATFORM_PREPARATION_RECEIPT" windows
@@ -1237,6 +1240,19 @@ linux_underlay_gate_reachable() {
     "virsh dominfo '$vm'" >/dev/null 2>&1
 }
 
+prepare_desktop_underlay_peer() {
+  if ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}" \
+    || { ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_LINUX_UNDERLAY_NETWORK_CHANGE_E2E:-auto}" \
+      && linux_underlay_gate_reachable; } \
+    || { ! release_gate_mode_disabled "${NVPN_RELEASE_GATE_WINDOWS_UNDERLAY_NETWORK_CHANGE_E2E:-auto}" \
+      && windows_underlay_gate_reachable; }
+  then
+    release_gate_run_with_timeout "Host desktop underlay peer build" \
+      "$DESKTOP_UNDERLAY_NETWORK_CHANGE_TIMEOUT_SECS" \
+      ./scripts/prepare-macos-release-fips-peer.sh
+  fi
+}
+
 require_linux_underlay_gate() {
   local hypervisor="${NVPN_DESKTOP_UNDERLAY_HYPERVISOR_SSH:-}"
   local vm="${NVPN_LINUX_UNDERLAY_VM_NAME:-${NVPN_UBUNTU_VM_NAME:-}}"
@@ -1675,7 +1691,13 @@ run_mobile_wireguard_exit_gates() {
       ./scripts/mobile-wireguard-exit-e2e.sh ios
   lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
-  release_gate_parallel_wait_group "${lanes[@]}"
+  # These phones have independent fixtures and receipts. Finish both bounded
+  # lanes so one unavailable test service does not discard the other proof.
+  local lane mobile_status=0
+  for lane in "${lanes[@]}"; do
+    release_gate_parallel_wait "$lane" || mobile_status=$?
+  done
+  ((mobile_status == 0)) || return "$mobile_status"
   MOBILE_ANDROID_APP_READY=1
   MOBILE_IOS_APP_READY=1
 }
@@ -1790,6 +1812,14 @@ run_mobile_underlay_change_gates() {
       ./scripts/mobile-wireguard-exit-e2e.sh android
   MOBILE_ANDROID_APP_READY=1
 
+  local ios_prepared_dir ios_xctestrun ios_runner_tree
+  ios_prepared_dir="$evidence_dir/ios-wireguard-dns-artifacts"
+  ios_xctestrun="$(select_generated_ios_release_xctestrun \
+    "$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData/Build/Products" \
+    "iOS underlay artifact reuse")" || return 1
+  ios_runner_tree="$(jq -er '.runnerBundleTreeSha256' \
+    "$ios_prepared_dir/installed-runner-receipt.json")" || return 1
+
   release_gate_run_with_timeout \
     "iOS physical Wi-Fi radio off/on recovery" \
     "$MOBILE_WG_EXIT_TIMEOUT_SECS" \
@@ -1816,6 +1846,13 @@ run_mobile_underlay_change_gates() {
       NVPN_MOBILE_WG_EXIT_CLIENT_IP=10.99.80.2 \
       NVPN_MOBILE_WG_EXIT_THROUGH_DNS_IP=10.99.80.53 \
       NVPN_MOBILE_WG_EXIT_HTTP_PROBE_PORT="$((port_base + 1))" \
+      NVPN_MOBILE_IOS_RELEASE_APP_PATH="$ROOT_DIR/dist/ios/frozen/release-testing-unpacked/Payload/Nostr VPN.app" \
+      NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA="$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData" \
+      NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$ios_xctestrun" \
+      NVPN_MOBILE_IOS_REUSE_RECEIPT="$NVPN_MOBILE_IOS_RELEASE_RECEIPT" \
+      NVPN_MOBILE_IOS_RELEASE_RUNNER_RECEIPT="$ios_prepared_dir/mobile-ios-release-runner-diagnostics.json" \
+      NVPN_MOBILE_IOS_INSTALLED_RUNNER_RECEIPT="$ios_prepared_dir/installed-runner-receipt.json" \
+      NVPN_MOBILE_IOS_RELEASE_RUNNER_TREE_SHA256="$ios_runner_tree" \
       NVPN_MOBILE_WG_EXIT_REUSE_IOS_BUILD=1 \
       NVPN_MOBILE_WG_EXIT_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))" \
       NVPN_MOBILE_WG_EXIT_IOS_UI_RESULT_DIR="$ios_artifact_dir" \
@@ -2110,7 +2147,7 @@ ensure_release_gate_docker_prerequisites() {
     echo "Docker is required by the release gate." >&2
     return 1
   }
-  docker info >/dev/null || {
+  release_gate_run_with_timeout "Docker daemon readiness" 15 docker info >/dev/null || {
     echo "The Docker daemon is unavailable." >&2
     return 1
   }
@@ -2119,13 +2156,16 @@ ensure_release_gate_docker_prerequisites() {
   # build. A warm release stays offline here; a cold release fails cheaply if
   # its registry is unavailable instead of wasting the completed test lanes.
   for image in "${images[@]}"; do
-    if docker image inspect "$image" >/dev/null 2>&1; then
+    if release_gate_run_with_timeout "Docker base image inspection" 15 \
+      docker image inspect "$image" >/dev/null 2>&1; then
       printf 'Docker base image present: %s\n' "$image"
       continue
     fi
     printf 'Pulling missing release-gate base image: %s\n' "$image"
-    docker pull "$image"
+    release_gate_run_with_timeout "Docker base image download" 600 docker pull "$image"
   done
+  release_gate_run_with_timeout "Docker vendored source context" 60 \
+    python3 "$ROOT_DIR/scripts/check-docker-vendor-context.py" "$ROOT_DIR"
 }
 
 build_release_gate_docker_node_image() {
@@ -2454,6 +2494,9 @@ main() {
   local log_dir="${NVPN_RELEASE_GATE_LOG_DIR:-$ROOT_DIR/artifacts/release-gate-logs/$(date -u +%Y%m%dT%H%M%SZ)}"
   release_gate_state_init "$ROOT_DIR"
   trap release_gate_cleanup EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   release_gate_parallel_init "$log_dir"
   release_gate_timing_init "$log_dir"
   HOST_LINUX_VM_BUNDLE_PATH_RECEIPT="$log_dir/host-linux-vm-bundle-path.txt"
@@ -2492,18 +2535,20 @@ main() {
     "Seal exact release candidate" \
     seal_release_gate_app_candidate
 
-  # Validate generated version metadata before any remote lane snapshots the
-  # candidate. The remaining preflight leaves tracked source unchanged and can
-  # overlap work on resource-isolated remote hosts.
-  release_gate_timing_run \
-    "Local candidate preflight" \
-    run_release_gate_candidate_preflight
-
   if docker_release_gates_enabled; then
     release_gate_timing_run \
       "Docker base image preflight" \
       ensure_release_gate_docker_prerequisites
   fi
+
+  # Check Docker before spending time on source validation. Validate generated
+  # metadata before any remote lane snapshots the unchanged candidate.
+  release_gate_timing_run \
+    "Dependency security preflight" \
+    ./scripts/security-audit-rust.sh
+  release_gate_timing_run \
+    "Local candidate preflight" \
+    run_release_gate_candidate_preflight
 
   if [[ "$mode" == hosted ]]; then
     run_hosted_release_gate
@@ -2593,6 +2638,12 @@ main() {
   if [[ -e "$HOST_LINUX_VM_BUNDLE_PATH_RECEIPT" ]]; then
     load_host_linux_vm_bundle_path_receipt
   fi
+  # The verified Linux bundle seeds the same immutable musl peer used by
+  # desktop network tests. Reuse it after preparation rather than starting a
+  # second cross-build, and finish before any network/idle measurement.
+  release_gate_timing_run \
+    "Desktop underlay peer preparation" \
+    prepare_desktop_underlay_peer
   release_gate_timing_run \
     "Prepare exact local FIPS Cargo graph" \
     prepare_release_cargo_config

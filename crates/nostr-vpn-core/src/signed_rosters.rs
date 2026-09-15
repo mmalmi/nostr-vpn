@@ -288,7 +288,11 @@ mod tests {
         upsert_signed_roster(&path, later.clone()).unwrap();
         let mut restored = load_signed_rosters(&path).unwrap();
         assert_eq!(restored.removals["mesh"][&member], removal);
-        assert!(!restored.record_removals(&later, &[member.clone()]).unwrap());
+        assert!(
+            !restored
+                .record_removals(&later, std::slice::from_ref(&member))
+                .unwrap()
+        );
         assert_eq!(restored.removals["mesh"][&member].signed_at(), 20);
         upsert_signed_roster(&path, sign(40, vec![member.clone()])).unwrap();
         assert!(

@@ -877,7 +877,8 @@ release_join_prepare_ios_release() {
     -scheme NostrVpnIos \
     -configuration Release \
     -derivedDataPath "$derived" \
-    -destination "platform=iOS,id=$udid" \
+    -destination "generic/platform=iOS" \
+    ARCHS=arm64 \
     DEVELOPMENT_TEAM="$team" \
     NVPN_IOS_CODE_SIGN_IDENTITY="$NVPN_IOS_CODE_SIGN_IDENTITY" \
     NVPN_IOS_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PROVISIONING_PROFILE_UUID" \

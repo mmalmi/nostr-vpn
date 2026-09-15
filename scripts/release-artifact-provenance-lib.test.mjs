@@ -62,6 +62,84 @@ test('exact ZIP validation rejects publication payload extras', () => {
   }
 })
 
+test('component proof excludes the cfg(test) exit fixture but retains its production parent', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-exit-fixture-proof-'))
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  const commit = (path, content) => {
+    write(join(root, path), content)
+    git('add', path)
+    git('commit', '-qm', path)
+    return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') }
+  }
+  try {
+    git('init', '-q')
+    git('config', 'user.name', 'Release Test')
+    git('config', 'user.email', 'release@example.invalid')
+    const parent = 'crates/nostr-vpn-app-core/src/ffi.rs'
+    const receipt = commit(parent, '#[cfg(test)] mod tests {}')
+    const fixture = commit('crates/nostr-vpn-app-core/src/ffi/tests_network/exit_state.rs', 'deterministic currency setting')
+    const args = {
+      candidateRoot: root, receiptCommit: receipt.commit, receiptTree: receipt.tree,
+      candidateCommit: fixture.commit, candidateTree: fixture.tree,
+    }
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({ ...args, platform }))
+    }
+    const changedParent = commit(parent, 'mod tests {}')
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.throws(() => proveUnchangedPlatformInputs({
+        ...args, platform, candidateCommit: changedParent.commit, candidateTree: changedParent.tree,
+      }), /changed product\/build input/)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('Windows runtime changes invalidate Windows while its include parent remains shared', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-windows-runtime-proof-'))
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  const commit = (path, content) => {
+    write(join(root, path), content)
+    git('add', path)
+    git('commit', '-qm', path)
+    return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') }
+  }
+  try {
+    git('init', '-q')
+    git('config', 'user.name', 'Release Test')
+    git('config', 'user.email', 'release@example.invalid')
+    const parent = 'crates/nostr-vpn-cli/src/fips_private_mesh.rs'
+    const receipt = commit(parent, 'include!("fips_private_mesh/tunnel_runtime_windows.rs");')
+    commit('crates/nostr-vpn-cli/src/fips_private_mesh/tunnel_runtime_windows.rs', '#[cfg(target_os = "windows")] fn refresh_dns() {}')
+    const changed = commit('scripts/desktop-windows-underlay-change-e2e.ps1', 'Assert-StableDnsPolicy')
+    const args = {
+      candidateRoot: root, receiptCommit: receipt.commit, receiptTree: receipt.tree,
+      candidateCommit: changed.commit, candidateTree: changed.tree,
+    }
+    for (const platform of ['android', 'ios', 'linux', 'macos']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({ ...args, platform }))
+    }
+    assert.throws(() => proveUnchangedPlatformInputs({ ...args, platform: 'windows' }), /changed product\/build input/)
+    const changedParent = commit(parent, 'fn shared_runtime() {}')
+    for (const platform of ['linux', 'macos', 'windows']) {
+      assert.throws(() => proveUnchangedPlatformInputs({
+        ...args, platform, candidateCommit: changedParent.commit, candidateTree: changedParent.tree,
+      }), /changed product\/build input/)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('component proof retains only unchanged platform product inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-component-proof-'))
   const git = (...args) => {
@@ -213,6 +291,7 @@ for (const [helper, nearbyHelper] of [
   ['verify.sh', 'verify-build.sh'],
   ['startos-release.mjs', 'startos-release-helper.mjs'],
   ['publish.sh', 'publish-build.sh'],
+  ['ios-artifact-source.mjs', 'ios-artifact-build.mjs'],
 ]) {
   test(`component proof treats only ${helper} as harness-only`, () => {
     const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))
@@ -959,6 +1038,7 @@ test('release receipt collection requires exact source and strict public UI gate
       },
       macos: {
         artifact: join(root, 'macos-artifact.json'),
+        network_artifact: join(root, 'macos-network-artifact.json'),
         public_ui_join: macosJoinPath,
         network: join(root, 'macos-network.json'),
       },
@@ -1397,6 +1477,7 @@ test('release receipt collection requires exact source and strict public UI gate
     }
     const macosText = JSON.stringify(macosArtifact)
     writeFileSync(paths.macos.artifact, macosText)
+    writeFileSync(paths.macos.network_artifact, macosText)
     writeFileSync(paths.macos.public_ui_join, JSON.stringify({
       ...source,
       schema: 1,
@@ -1820,7 +1901,13 @@ test('release receipt collection requires exact source and strict public UI gate
       readFileSync(retainedPath))
     assert.equal(readFileSync(join(reuseOutput, 'macos/delivery-times.tsv'), 'utf8'),
       Object.entries(pixelReceipt.deliveryMilliseconds).map(([label, ms]) => `${label}\t${ms}\n`).join(''))
-    assert.notEqual(reuse().status, 0, 'a rerun must preserve the retained evidence')
+    assert.equal(reuse().status, 0, 'identical retained evidence is reusable')
+    const retainedTimingsPath = join(reuseOutput, 'macos/delivery-times.tsv')
+    const retainedTimings = readFileSync(retainedTimingsPath)
+    writeFileSync(retainedTimingsPath, 'changed evidence\n')
+    assert.notEqual(reuse().status, 0, 'a rerun must reject changed retained evidence')
+    assert.equal(readFileSync(retainedTimingsPath, 'utf8'), 'changed evidence\n')
+    writeFileSync(retainedTimingsPath, retainedTimings)
 
     const wireguardText = readFileSync(paths.android.wireguard_dns, 'utf8')
     const combinedWireguard = JSON.parse(wireguardText)
@@ -1907,6 +1994,37 @@ test('release receipt collection requires exact source and strict public UI gate
       },
       /macOS desktop network receipt is incomplete/,
     )
+    const originalMacosNetwork = readFileSync(paths.macos.network, 'utf8')
+    const networkArtifact = {
+      ...macosArtifact,
+      manualJoinDriverSha256: 'b'.repeat(64),
+      packageTreeSha256: 'c'.repeat(64),
+    }
+    const networkArtifactText = JSON.stringify(networkArtifact)
+    writeFileSync(paths.macos.network_artifact, networkArtifactText)
+    const separatelyPackagedNetwork = JSON.parse(originalMacosNetwork)
+    separatelyPackagedNetwork.summary.artifactReceiptSha256 = sha256(networkArtifactText)
+    writeFileSync(paths.macos.network, JSON.stringify(separatelyPackagedNetwork))
+    assert.doesNotThrow(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }))
+    for (const key of [
+      'appExecutableSha256', 'cliExecutableSha256', 'appBundleTreeSha256',
+      'appGitSha', 'fipsGitSha', 'signerCertificateSha256',
+    ]) {
+      assertRejectedReceiptMutation(
+        paths.macos.network_artifact,
+        (receipt) => { receipt[key] = '0'.repeat(64) },
+        /macOS network and join packages contain different product evidence/,
+      )
+    }
+    assertRejectedReceiptMutation(
+      paths.macos.network,
+      (receipt) => { receipt.summary.artifactReceiptSha256 = '0'.repeat(64) },
+      /macOS desktop network receipt is incomplete/,
+    )
+    writeFileSync(paths.macos.network_artifact, macosText)
+    writeFileSync(paths.macos.network, originalMacosNetwork)
     const androidIdentityPaths = [
       paths.android.physical,
       paths.android.install,

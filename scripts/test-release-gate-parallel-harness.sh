@@ -415,6 +415,13 @@ main_body="$(sed -n '/^main() {$/,$p' "$release_gate")"
 static_preflight_body="$(
   sed -n '/^run_release_gate_static_preflight() {$/,/^}$/p' "$release_gate"
 )"
+bundle_ready_line="$(grep -nF 'load_host_linux_vm_bundle_path_receipt' <<<"$main_body" | head -n1 | cut -d: -f1)"
+peer_preparation_line="$(grep -nF 'prepare_desktop_underlay_peer' <<<"$main_body" | head -n1 | cut -d: -f1)"
+cargo_preparation_line="$(grep -nF 'prepare_release_cargo_config' <<<"$main_body" | head -n1 | cut -d: -f1)"
+[[ -n "$bundle_ready_line" && -n "$peer_preparation_line" && -n "$cargo_preparation_line" ]] \
+  || fail "release gate omits native bundle/peer preparation"
+((bundle_ready_line < peer_preparation_line && peer_preparation_line < cargo_preparation_line)) \
+  || fail "release gate rebuilds the Linux peer before the native bundle can seed it"
 candidate_preflight_body="$(
   sed -n '/^run_release_gate_candidate_preflight() {$/,/^}$/p' "$release_gate"
 )"

@@ -1398,7 +1398,11 @@ for _ in range(64):
   fi
 fi
 
-if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+# The all-mode matrix needs Automatic-eligible pricing and its larger wallet.
+# Keep the manual fixture's expensive, tightly funded billing checks separate.
+if truthy "$PAID_EXIT_MODE" \
+  && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" \
+    && "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
   source "$ROOT_DIR/scripts/e2e-internet-mode-switches.sh"
   run_internet_mode_switch_matrix
 fi
