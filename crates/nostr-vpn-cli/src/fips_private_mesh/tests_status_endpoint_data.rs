@@ -26,7 +26,58 @@
     }
 
     #[tokio::test]
-    async fn join_roster_receipt_marks_the_new_participant_online() {
+    async fn first_roster_member_advert_requests_one_immediate_capabilities_reply() {
+        use super::{PeerCapabilities, ReceivedFipsControlFrame, control_frame_participant_identity};
+
+        let local_keys = Keys::generate();
+        let peer_keys = Keys::generate();
+        let peer_pubkey = peer_keys.public_key().to_hex();
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &peer_pubkey,
+            vec!["10.44.22.44/32".to_string()],
+        )
+        .expect("peer config");
+        let runtime = bind_endpoint_data_test_runtime(
+            local_keys.secret_key().to_bech32().expect("local nsec"),
+            "capability-reply-test",
+            vec![peer],
+        )
+        .await;
+        let source_peer = control_frame_participant_identity(&peer_pubkey).expect("peer identity");
+        for (signed_at, expected_reply) in [(10, true), (10, false), (9, false), (11, false)] {
+            let received = runtime
+                .received_stateful_control_frame(ReceivedFipsControlFrame {
+                    source_peer,
+                    frame: FipsControlFrame::Capabilities {
+                        network_id: "capability-reply-test".to_string(),
+                        capabilities: PeerCapabilities {
+                            signed_at,
+                            ..Default::default()
+                        },
+                    },
+                })
+                .expect("receive authenticated advertisement");
+            assert!(matches!(received,
+                Some(FipsPrivateMeshEvent::Capabilities { first_received, .. })
+                    if first_received == expected_reply
+            ));
+        }
+        let unknown = Keys::generate().public_key().to_hex();
+        let received = runtime
+            .received_stateful_control_frame(ReceivedFipsControlFrame {
+                source_peer: control_frame_participant_identity(&unknown).expect("unknown identity"),
+                frame: FipsControlFrame::Capabilities {
+                    network_id: "capability-reply-test".to_string(),
+                    capabilities: Default::default(),
+                },
+            })
+            .expect("unknown advertisement");
+        assert!(received.is_none(), "unapproved peers must remain excluded");
+        runtime.endpoint().shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn join_roster_receipt_marks_the_new_participant_online_after_roster_refresh() {
         let local_keys = Keys::generate();
         let peer_keys = Keys::generate();
         let peer_pubkey = peer_keys.public_key().to_hex();
@@ -38,13 +89,16 @@
         let runtime = bind_endpoint_data_test_runtime(
             local_keys.secret_key().to_bech32().expect("local nsec"),
             "join-receipt-test",
-            vec![peer],
+            vec![],
         )
         .await;
 
         runtime
             .note_join_roster_receipt(&peer_pubkey)
             .expect("record receipt liveness");
+        runtime
+            .replace_peers(vec![peer], vec![], vec![])
+            .expect("apply roster in place");
 
         let status = runtime
             .peer_statuses()

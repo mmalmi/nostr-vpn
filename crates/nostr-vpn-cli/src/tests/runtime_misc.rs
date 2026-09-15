@@ -331,9 +331,21 @@ fn selected_public_paid_exit_counts_as_private_fips_peer_without_active_network(
 fn fips_roster_publish_attempts_disconnected_recipients() {
     let recipients = vec!["alice".to_string(), "bob".to_string()];
 
-    let (ready, pending) = split_ready_fips_roster_recipients(recipients.clone());
+    let (ready, pending) = split_ready_fips_roster_recipients(recipients.clone(), &HashSet::new());
 
     assert_eq!(ready, recipients);
+    assert!(pending.is_empty());
+}
+#[test]
+fn generic_roster_waits_for_join_receipt_without_delaying_existing_peers() {
+    let recipients = vec!["existing".to_string(), "joining".to_string()];
+    let awaiting = HashSet::from(["joining".to_string()]);
+    let (ready, pending) = split_ready_fips_roster_recipients(recipients, &awaiting);
+    assert_eq!(ready, ["existing"]);
+    assert_eq!(pending, awaiting);
+    let (ready, pending) =
+        split_ready_fips_roster_recipients(pending.into_iter().collect(), &HashSet::new());
+    assert_eq!(ready, ["joining"]);
     assert!(pending.is_empty());
 }
 #[test]

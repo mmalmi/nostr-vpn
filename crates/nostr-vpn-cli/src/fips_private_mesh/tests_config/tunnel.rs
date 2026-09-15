@@ -324,6 +324,7 @@
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn pending_paid_manual_exit_without_leak_protection_leaves_dns_direct() {
         let keys = Keys::generate();
         let own_pubkey = keys.public_key().to_hex();

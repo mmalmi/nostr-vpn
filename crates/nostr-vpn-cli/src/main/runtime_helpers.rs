@@ -361,7 +361,21 @@ async fn drain_fips_mesh_events(
                 sender_pubkey,
                 network_id,
                 capabilities,
+                first_received,
             } => {
+                // An exit's initial advert may have arrived before this peer
+                // installed the roster and been rejected as an unknown sender.
+                // Its first admitted advert proves it is ready for our reply.
+                // Reply once, avoiding both a minute of startup delay and an
+                // endless exchange on each periodic advertisement.
+                if first_received
+                    && roster_participants.contains(&sender_pubkey)
+                    && let Err(error) =
+                        send_local_fips_capabilities(runtime, app, vec![sender_pubkey.clone()])
+                            .await
+                {
+                    eprintln!("fips: initial capabilities reply failed: {error}");
+                }
                 // The FIPS receive path records capabilities before queuing
                 // this event. Apply fresh direct endpoint hints promptly so
                 // peers that roam between LAN/NAT paths do not stay on stale
@@ -647,94 +661,6 @@ fn fips_paid_route_admissions_from_store(
         })
         .collect())
 }
-struct SyncFipsPrivateRuntimeContext<'a> {
-    app: &'a AppConfig,
-    config_path: &'a Path,
-    network_id: &'a str,
-    iface: &'a str,
-    underlay_interface: Option<&'a str>,
-    underlay_interface_mtu: Option<u32>,
-    own_pubkey: Option<&'a str>,
-    recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
-    ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
-    vpn_enabled: bool,
-    expected_peers: usize,
-}
-async fn sync_fips_private_runtime(
-    runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
-    context: SyncFipsPrivateRuntimeContext<'_>,
-) -> Result<bool> {
-    if !fips_private_runtime_active_for_config(
-        context.app,
-        context.config_path,
-        context.vpn_enabled,
-        context.expected_peers,
-    )? {
-        let runtime_replaced = runtime.is_some();
-        if let Some(runtime) = runtime.take() {
-            stop_fips_private_tunnel_runtime(context.config_path, runtime).await?;
-        }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        if !context.app.fips_host_tunnel_enabled {
-            crate::fips_host_tunnel::FipsHostTunnelRuntime::cleanup_disabled_artifacts();
-        }
-        return Ok(runtime_replaced);
-    }
-
-    let config_iface = runtime
-        .as_ref()
-        .map(|runtime| runtime.iface().to_string())
-        .unwrap_or_else(|| context.iface.to_string());
-    let live_peer_endpoints = runtime
-        .as_ref()
-        .map(|runtime| runtime.peer_endpoint_hints())
-        .unwrap_or_default();
-    let ethernet_underlay = runtime
-        .as_ref()
-        .and_then(crate::fips_private_mesh::FipsPrivateTunnelRuntime::ethernet_underlay)
-        .or(context.ethernet_underlay);
-    let mut config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
-        app: context.app,
-        config_path: context.config_path,
-        network_id: context.network_id,
-        iface: config_iface,
-        underlay_interface: context.underlay_interface,
-        underlay_interface_mtu: context.underlay_interface_mtu,
-        own_pubkey: context.own_pubkey,
-        // Preserve authenticated non-roster hints across config and link
-        // refreshes. The bounded live admission deduction is intentionally
-        // restart-neutral, but these hints still carry the working transit
-        // path and should not disappear during an ordinary reload.
-        recent_peers: context.recent_peers,
-        live_peer_endpoints: &live_peer_endpoints,
-        ethernet_underlay,
-    })
-    .await?;
-    if !context.vpn_enabled {
-        config.disable_client_dataplane();
-    }
-
-    let restart = runtime
-        .as_ref()
-        .is_some_and(|existing| existing.requires_endpoint_restart(&config));
-    if restart {
-        if let Some(existing) = runtime.take() {
-            stop_fips_private_tunnel_runtime(context.config_path, existing).await?;
-        }
-        let started = start_fips_private_tunnel_runtime(context.config_path, config).await?;
-        eprintln!("daemon: restarted FIPS private mesh on {}", started.iface());
-        *runtime = Some(started);
-        Ok(true)
-    } else if let Some(existing) = runtime.as_mut() {
-        apply_fips_private_tunnel_runtime_config(context.config_path, existing, config).await?;
-        Ok(false)
-    } else {
-        let started = start_fips_private_tunnel_runtime(context.config_path, config).await?;
-        eprintln!("daemon: FIPS private mesh on {}", started.iface());
-        *runtime = Some(started);
-        Ok(true)
-    }
-}
 fn enqueue_pending_fips_join_requests(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
@@ -810,6 +736,14 @@ async fn broadcast_local_fips_capabilities(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
 ) -> Result<usize> {
+    send_local_fips_capabilities(runtime, app, runtime.peer_pubkeys()).await
+}
+
+async fn send_local_fips_capabilities(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    participants: Vec<String>,
+) -> Result<usize> {
     let Some(network) = app.active_network_opt() else {
         return Ok(0);
     };
@@ -828,7 +762,7 @@ async fn broadcast_local_fips_capabilities(
     let signed_at = unix_timestamp();
     let mut sent = 0usize;
 
-    for participant in runtime.peer_pubkeys() {
+    for participant in participants {
         let capabilities = PeerCapabilities {
             advertised_routes: advertised_routes.clone(),
             endpoint_hints: if desired_hint_recipients.contains(&participant) {

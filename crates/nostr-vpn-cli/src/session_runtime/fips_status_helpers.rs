@@ -1,3 +1,100 @@
+struct SyncFipsPrivateRuntimeContext<'a> {
+    app: &'a AppConfig,
+    config_path: &'a Path,
+    network_id: &'a str,
+    iface: &'a str,
+    underlay_interface: Option<&'a str>,
+    underlay_interface_mtu: Option<u32>,
+    own_pubkey: Option<&'a str>,
+    recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+    ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
+    vpn_enabled: bool,
+    expected_peers: usize,
+    join_roster_deliveries: Vec<tokio::task::JoinHandle<bool>>,
+}
+async fn sync_fips_private_runtime(
+    runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
+    context: SyncFipsPrivateRuntimeContext<'_>,
+) -> Result<bool> {
+    if !fips_private_runtime_active_for_config(
+        context.app,
+        context.config_path,
+        context.vpn_enabled,
+        context.expected_peers,
+    )? {
+        let runtime_replaced = runtime.is_some();
+        finish_join_roster_deliveries_before_runtime_sync(
+            context.join_roster_deliveries,
+            runtime_replaced,
+        )
+        .await;
+        if let Some(runtime) = runtime.take() {
+            stop_fips_private_tunnel_runtime(context.config_path, runtime).await?;
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if !context.app.fips_host_tunnel_enabled {
+            crate::fips_host_tunnel::FipsHostTunnelRuntime::cleanup_disabled_artifacts();
+        }
+        return Ok(runtime_replaced);
+    }
+
+    let config_iface = runtime
+        .as_ref()
+        .map(|runtime| runtime.iface().to_string())
+        .unwrap_or_else(|| context.iface.to_string());
+    let live_peer_endpoints = runtime
+        .as_ref()
+        .map(|runtime| runtime.peer_endpoint_hints())
+        .unwrap_or_default();
+    let ethernet_underlay = runtime
+        .as_ref()
+        .and_then(crate::fips_private_mesh::FipsPrivateTunnelRuntime::ethernet_underlay)
+        .or(context.ethernet_underlay);
+    let mut config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
+        app: context.app,
+        config_path: context.config_path,
+        network_id: context.network_id,
+        iface: config_iface,
+        underlay_interface: context.underlay_interface,
+        underlay_interface_mtu: context.underlay_interface_mtu,
+        own_pubkey: context.own_pubkey,
+        // Preserve authenticated non-roster hints across config and link
+        // refreshes. The bounded live admission deduction is intentionally
+        // restart-neutral, but these hints still carry the working transit
+        // path and should not disappear during an ordinary reload.
+        recent_peers: context.recent_peers,
+        live_peer_endpoints: &live_peer_endpoints,
+        ethernet_underlay,
+    })
+    .await?;
+    if !context.vpn_enabled {
+        config.disable_client_dataplane();
+    }
+
+    let restart = runtime
+        .as_ref()
+        .is_some_and(|existing| existing.requires_endpoint_restart(&config));
+    finish_join_roster_deliveries_before_runtime_sync(context.join_roster_deliveries, restart)
+        .await;
+    if restart {
+        if let Some(existing) = runtime.take() {
+            stop_fips_private_tunnel_runtime(context.config_path, existing).await?;
+        }
+        let started = start_fips_private_tunnel_runtime(context.config_path, config).await?;
+        eprintln!("daemon: restarted FIPS private mesh on {}", started.iface());
+        *runtime = Some(started);
+        Ok(true)
+    } else if let Some(existing) = runtime.as_mut() {
+        apply_fips_private_tunnel_runtime_config(context.config_path, existing, config).await?;
+        Ok(false)
+    } else {
+        let started = start_fips_private_tunnel_runtime(context.config_path, config).await?;
+        eprintln!("daemon: FIPS private mesh on {}", started.iface());
+        *runtime = Some(started);
+        Ok(true)
+    }
+}
+
 async fn fips_relay_statuses_from_runtime(
     runtime: &Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
 ) -> Vec<DaemonRelayState> {

@@ -38,11 +38,13 @@ impl FipsPrivateMeshRuntime {
                 network_id,
                 capabilities,
             } => {
-                self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
+                let first_received =
+                    self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
                 Ok(Some(FipsPrivateMeshEvent::Capabilities {
                     sender_pubkey: source_pubkey,
                     network_id,
                     capabilities,
+                    first_received,
                 }))
             }
             #[cfg(feature = "paid-exit")]

@@ -82,7 +82,13 @@ fn should_wait_for_post_sync_join_roster_delivery(
 
 pub(super) async fn finish_join_roster_deliveries_before_runtime_sync(
     delivery_tasks: Vec<tokio::task::JoinHandle<bool>>,
+    runtime_replaced: bool,
 ) {
+    // Dropping the handles detaches delivery on the existing carrier. Only
+    // replacing that carrier requires a receipt before configuration can proceed.
+    if !runtime_replaced {
+        return;
+    }
     wait_for_join_roster_delivery_tasks(
         delivery_tasks,
         crate::fips_private_mesh::JOIN_ROSTER_DELIVERY_TIMEOUT + JOIN_ROSTER_DELIVERY_WAIT_GRACE,
@@ -298,41 +304,6 @@ mod tests {
     }
 
     #[test]
-    fn receipt_backed_join_delivery_precedes_generic_roster_publish() {
-        let daemon_vpn = include_str!("../daemon_vpn.rs");
-        let join_approval = include_str!("join_approval.rs");
-        let path_refresh = daemon_vpn
-            .find("refresh_queued_join_roster_delivery_paths(")
-            .expect("queued join recipient endpoint refresh");
-        let delivery = daemon_vpn
-            .find("finish_join_roster_deliveries_before_runtime_sync(")
-            .expect("pre-sync receipt-backed join delivery");
-        let generic_publish = daemon_vpn
-            .find("let pre_sync_fips_roster_recipients =")
-            .expect("pre-sync generic roster publish");
-
-        assert!(
-            path_refresh < delivery,
-            "authenticated joiner endpoint hints must reach the live endpoint before receipt-backed delivery"
-        );
-        let queued_refresh = join_approval
-            .split_once("pub(super) async fn refresh_queued_join_roster_delivery_paths")
-            .map(|(_, body)| body)
-            .expect("queued join return-path refresh body")
-            .split("fn claim_join_roster_delivery")
-            .next()
-            .expect("queued join return-path refresh boundary");
-        assert!(
-            queued_refresh.contains("refresh_peer_paths"),
-            "updating a known joiner address must actively reprobe its path before delivery"
-        );
-        assert!(
-            delivery < generic_publish,
-            "generic roster publication must not refresh the joiner's runtime before its durable approval receipt"
-        );
-    }
-
-    #[test]
     fn approved_device_ipc_does_not_create_another_join_request() {
         let mut app = AppConfig::generated_without_networks();
         let network_id = app.add_owned_network("Approved network");
@@ -433,9 +404,10 @@ mod tests {
                 Ok(())
             }),
         );
-        let waiter = tokio::spawn(finish_join_roster_deliveries_before_runtime_sync(vec![
-            delivery_task,
-        ]));
+        let waiter = tokio::spawn(finish_join_roster_deliveries_before_runtime_sync(
+            vec![delivery_task],
+            true,
+        ));
 
         tokio::task::yield_now().await;
         assert!(
@@ -445,6 +417,29 @@ mod tests {
         complete_tx.send(()).expect("complete delivery");
         waiter.await.expect("delivery waiter");
         assert!(!path.exists(), "durable receipt did not consume outbox");
+    }
+
+    #[tokio::test]
+    async fn in_place_roster_update_does_not_wait_for_remote_approval() {
+        let (complete_tx, complete_rx) = tokio::sync::oneshot::channel();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+        let delivery = tokio::spawn(async move {
+            complete_rx.await.expect("release remote receipt");
+            finished_tx.send(()).expect("delivery remains alive");
+            true
+        });
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            finish_join_roster_deliveries_before_runtime_sync(vec![delivery], false),
+        )
+        .await
+        .expect("local roster update must not wait for a remote peer");
+        complete_tx
+            .send(())
+            .expect("detached delivery was not cancelled");
+        finished_rx
+            .await
+            .expect("receipt delivery completes in the background");
     }
 
     #[tokio::test]

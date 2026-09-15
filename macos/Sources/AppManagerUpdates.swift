@@ -304,11 +304,11 @@ extension AppManager {
         }
     }
 
-    func startServiceSettlementPolling() {
+    func startServiceSettlementPolling(attempts: Int = 8) {
         serviceSettlementTask?.cancel()
         serviceSettling = true
         serviceSettlementTask = Task { [weak self] in
-            for _ in 0..<8 {
+            for _ in 0..<attempts {
                 guard !Task.isCancelled else {
                     return
                 }

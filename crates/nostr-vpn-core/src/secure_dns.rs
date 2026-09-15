@@ -18,6 +18,7 @@ const DOH_HOST: &str = "cloudflare-dns.com";
 const DOH_CONTENT_TYPE: &str = "application/dns-message";
 const DOH_TIMEOUT: Duration = Duration::from_secs(3);
 const WIREGUARD_DNS_TIMEOUT: Duration = Duration::from_secs(3);
+const WIREGUARD_DNS_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 pub const SECURE_DNS_MAX_MESSAGE_BYTES: usize = 4_096;
 
 #[derive(Clone)]
@@ -279,9 +280,24 @@ impl WireGuardDnsResolver {
             socket.connect(server).await?;
             socket.send(query).await?;
             let mut packet = vec![0_u8; SECURE_DNS_MAX_MESSAGE_BYTES];
-            let length = socket.recv(&mut packet).await?;
-            packet.truncate(length);
-            Ok::<_, std::io::Error>(packet)
+            // The first UDP packet can be lost while the exit session opens.
+            // Retry on this socket within the existing per-server deadline so
+            // callers need not repeat their first lookup after startup.
+            let mut retry = tokio::time::interval_at(
+                tokio::time::Instant::now() + WIREGUARD_DNS_RETRY_INTERVAL,
+                WIREGUARD_DNS_RETRY_INTERVAL,
+            );
+            retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    biased;
+                    received = socket.recv(&mut packet) => {
+                        packet.truncate(received?);
+                        return Ok::<_, std::io::Error>(packet);
+                    }
+                    _ = retry.tick() => { socket.send(query).await?; }
+                }
+            }
         })
         .await
         .map_err(|_| SecureDnsError::WireGuardDnsTimeout(server))?
@@ -647,6 +663,75 @@ mod tests {
             .expect("transient request recovered");
         assert_eq!(Message::from_vec(&response).expect("DNS response").id, 914);
         server.await.expect("fixture task");
+    }
+
+    #[tokio::test]
+    async fn through_exit_dns_recovers_a_lost_first_query_without_application_retry() {
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("DNS fixture");
+        let address = socket.local_addr().expect("DNS address");
+        let query = dns_query(921);
+        let expected = dns_response(&query, 921);
+        let response = expected.clone();
+        let server = tokio::spawn(async move {
+            let mut packet = [0_u8; 512];
+            let (first_length, first_peer) =
+                socket.recv_from(&mut packet).await.expect("first query");
+            let first = packet[..first_length].to_vec();
+            // Simulate the first datagram disappearing while the exit path opens.
+            let (length, peer) = socket
+                .recv_from(&mut packet)
+                .await
+                .expect("retransmitted query");
+            assert_eq!(peer, first_peer, "retry uses the same DNS socket");
+            assert_eq!(&packet[..length], first.as_slice());
+            socket.send_to(&response, peer).await.expect("DNS answer");
+        });
+        let resolver = WireGuardDnsResolver::with_servers(vec![address]).expect("exit DNS");
+        let result =
+            tokio::time::timeout(Duration::from_secs(2), resolver.resolve_query(&query)).await;
+        server.abort();
+        assert_eq!(
+            result
+                .expect("first lookup should recover within two seconds")
+                .expect("DNS response"),
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn through_exit_dns_retries_preserve_the_upstream_failover_deadline() {
+        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("unresponsive DNS fixture");
+        let server = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("healthy DNS fixture");
+        let resolver = WireGuardDnsResolver::with_servers(vec![
+            blackhole.local_addr().expect("unresponsive address"),
+            server.local_addr().expect("healthy address"),
+        ])
+        .expect("exit DNS");
+        let query = dns_query(922);
+        let response = dns_response(&query, 922);
+        let fixture = tokio::spawn(async move {
+            let mut packet = [0_u8; 512];
+            let (_, peer) = server.recv_from(&mut packet).await.expect("failover query");
+            server
+                .send_to(&response, peer)
+                .await
+                .expect("failover response");
+        });
+        let response = tokio::time::timeout(
+            WIREGUARD_DNS_TIMEOUT + Duration::from_secs(1),
+            resolver.resolve_query(&query),
+        )
+        .await
+        .expect("retries must not extend upstream failover")
+        .expect("DNS response");
+        assert_eq!(Message::from_vec(&response).expect("DNS answer").id, 922);
+        fixture.await.expect("DNS fixture");
     }
 
     #[tokio::test]

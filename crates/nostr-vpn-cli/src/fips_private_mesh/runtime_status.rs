@@ -434,7 +434,7 @@ impl FipsPrivateMeshRuntime {
         participant: &str,
         capabilities: &PeerCapabilities,
         now: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let normalized = normalize_nostr_pubkey(participant)?;
         let mut caps = self
             .peer_capabilities
@@ -442,18 +442,20 @@ impl FipsPrivateMeshRuntime {
             .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?;
         match caps.get(&normalized) {
             Some(existing) if existing.capabilities.signed_at > capabilities.signed_at => {
-                return Ok(());
+                return Ok(false);
             }
             _ => {}
         }
-        caps.insert(
-            normalized,
-            PeerCapabilitiesEntry {
-                capabilities: capabilities.clone(),
-                received_at: now,
-            },
-        );
-        Ok(())
+        let first_received = caps
+            .insert(
+                normalized,
+                PeerCapabilitiesEntry {
+                    capabilities: capabilities.clone(),
+                    received_at: now,
+                },
+            )
+            .is_none();
+        Ok(first_received)
     }
 
 }

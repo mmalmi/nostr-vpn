@@ -23,7 +23,12 @@ fn publish_fips_active_network_roster_to(
     recipients.sort();
     recipients.dedup();
 
-    let (ready_recipients, mut retry) = split_ready_fips_roster_recipients(recipients);
+    let awaiting_approval = nostr_vpn_core::join_delivery::load_join_rosters(config_path)
+        .into_iter()
+        .map(|(_, delivery)| delivery.recipient_npub)
+        .collect();
+    let (ready_recipients, mut retry) =
+        split_ready_fips_roster_recipients(recipients, &awaiting_approval);
     let mut sent = 0usize;
     for recipient in ready_recipients {
         match runtime.enqueue_roster(&recipient, signed_roster.clone()) {
@@ -77,11 +82,19 @@ fn join_roster_is_durably_persisted(
     )
 }
 
-fn split_ready_fips_roster_recipients(recipients: Vec<String>) -> (Vec<String>, HashSet<String>) {
+fn split_ready_fips_roster_recipients(
+    recipients: Vec<String>,
+    awaiting_approval: &HashSet<String>,
+) -> (Vec<String>, HashSet<String>) {
     // Do not gate roster sends on nvpn presence. A stale-roster peer may drop
     // Ping/Pong from newly added peers as unknown until this signed roster
     // reaches it, while FIPS can still route/discover the control message.
-    (recipients, HashSet::new())
+    // A generic roster can reconfigure a joining peer before its approval
+    // receipt returns. Keep that peer pending until the durable outbox clears.
+    let (pending, ready): (Vec<_>, Vec<_>) = recipients
+        .into_iter()
+        .partition(|recipient| awaiting_approval.contains(recipient));
+    (ready, pending.into_iter().collect())
 }
 
 include!("runtime_endpoint_helpers.rs");

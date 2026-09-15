@@ -137,6 +137,7 @@ macro_rules! handle_daemon_state_tick {
                     if let Err(error) = sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {
+                            join_roster_deliveries: Vec::new(),
                             app: &app,
                             config_path: &config_path,
                             network_id: &network_id,
@@ -440,6 +441,7 @@ macro_rules! handle_daemon_state_tick {
                         match sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {
+                            join_roster_deliveries: Vec::new(),
                             app: &app,
                             config_path: &config_path,
                             network_id: &network_id,
@@ -656,18 +658,8 @@ macro_rules! handle_daemon_state_tick {
                 };
                 let pre_sync_join_roster_delivery_attempted =
                     !pre_sync_join_roster_deliveries.is_empty();
-                // The current runtime learned the pending joiner's live route
-                // from its authenticated request. Finish the receipt-backed
-                // approval on that route before peer-set sync can replace the
-                // runtime and discard the only address knowledge we have.
-                finish_join_roster_deliveries_before_runtime_sync(
-                    pre_sync_join_roster_deliveries,
-                )
-                .await;
-                // A generic roster frame also makes the joining device refresh its
-                // runtime. Send it only after the receipt-backed approval has used
-                // the authenticated join-request carrier; otherwise that refresh
-                // can stop the carrier before the approval receipt is returned.
+                // Generic roster publication excludes pending join approvals:
+                // those recipients must apply their receipt-backed roster first.
                 let pre_sync_fips_roster_recipients = if publish_fips_roster_after_control {
                     fips_tunnel_runtime
                         .as_ref()
@@ -694,6 +686,7 @@ macro_rules! handle_daemon_state_tick {
                     match sync_fips_private_runtime(
                     &mut fips_tunnel_runtime,
                     SyncFipsPrivateRuntimeContext {
+                        join_roster_deliveries: pre_sync_join_roster_deliveries,
                         app: &app,
                         config_path: &config_path,
                         network_id: &network_id,

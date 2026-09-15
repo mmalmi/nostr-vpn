@@ -275,6 +275,13 @@ final class AppManager: ObservableObject {
         actionInFlight = true
         actionStatus = status
         actionError = ""
+        let joiningDevice: Bool
+        switch action {
+        case .importJoinRequest, .acceptJoinRequest, .addParticipant:
+            joiningDevice = true
+        default:
+            joiningDevice = false
+        }
         Task {
             let nextState = await Task.detached {
                 app.dispatch(action: action)
@@ -290,6 +297,10 @@ final class AppManager: ObservableObject {
                 }
                 if settleService {
                     self.startServiceSettlementPolling()
+                } else if joiningDevice, nextState.error.isEmpty {
+                    // Approval delivery continues after the local roster is saved.
+                    // Observe its receipt without waiting for the idle refresh.
+                    self.startServiceSettlementPolling(attempts: 30)
                 }
                 completion?(nextState.error.isEmpty)
             }
