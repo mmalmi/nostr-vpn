@@ -2336,6 +2336,7 @@ function main() {
     },
     macos: {
       artifact: join(releaseJoinResultDir, 'macos', 'artifact.json'),
+      network_artifact: join(releaseGateLogDir, 'desktop-dns-ui', 'macos', 'app-artifact.json'),
       public_ui_join: join(releaseJoinResultDir, 'macos', 'summary.json'),
       network: join(
         releaseGateLogDir,
