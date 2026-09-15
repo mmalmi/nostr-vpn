@@ -17,6 +17,9 @@ in 4.1.11. iOS does not support paid exits.
 - Keep device approval responsive while recovering the first Internet route,
   preserve signed removals after roster revocation, and report join errors accurately.
 - Preserve active Windows DNS policy while refreshing peers and physical routes.
+- Start the private mesh promptly when the host has no default Internet route.
+- Update FIPS core and endpoint to 0.4.82 to retain in-flight path recovery and
+  recover sparse unanswered sessions without restarting the VPN.
 
 ### Release process
 
@@ -26,6 +29,8 @@ in 4.1.11. iOS does not support paid exits.
   when resuming interrupted device tests.
 - Check the exact Windows source before building its installer and avoid temporary
   workspace snapshots during release preparation.
+- Reuse the verified native Linux build for network test peers and validate
+  temporary dependency state when resuming physical join tests.
 - Limit paid-mode testing to compatible fixtures, prepare QR approval carriers
   explicitly, and keep cleanup checks scoped to processes owned by each test.
 
