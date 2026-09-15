@@ -177,7 +177,8 @@ run_real_package_preflight() {
     cd "$fixture"
     source "$tmp_dir/package-function.sh"
     ALL_CRATES=(nvpn-package-preflight-core-fixture nvpn-package-preflight-cli-fixture)
-    CARGO_NET_OFFLINE=true verify_cargo_packages
+    # Allow Cargo to fetch the tiny pinned registry fixture on a fresh CI host.
+    CARGO_NET_OFFLINE=false verify_cargo_packages
   )
 }
 if run_real_package_preflight >"$tmp_dir/rejected.log" 2>&1; then

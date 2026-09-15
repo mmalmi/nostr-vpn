@@ -2404,7 +2404,7 @@ test('every mutating Apple distribution entry point requires the canonical exact
 test('Cargo preflight handles unpublished dependencies and rejects package or build failures', () => {
   const result = spawnSync('bash', [
     join(process.cwd(), 'scripts/test-publish-preflight-harness.sh'),
-  ], { encoding: 'utf8', timeout: 15_000 })
+  ], { encoding: 'utf8', timeout: 60_000 })
   assert.equal(result.status, 0, result.stderr || result.stdout)
 })
 

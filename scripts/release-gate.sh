@@ -414,7 +414,9 @@ run_release_gate_source_quality() {
   # Workspace feature unification enables paid exits. Check the App Store
   # feature set separately before spending time on platform artifacts.
   cargo check --locked -p nostr-vpn-app-core --no-default-features --lib
-  cargo clippy --locked --workspace --all-targets -- -D warnings
+  # Keep the application lint scope: vendored dependencies are now workspace
+  # members for Cargo packaging, with their existing upstream test lint policy.
+  cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings
 }
 
 run_linux_arm64_cli_gate() {

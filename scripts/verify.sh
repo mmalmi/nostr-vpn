@@ -27,7 +27,7 @@ run_fast() {
   python3 scripts/test-native-lab.py
   node scripts/sync-versions.mjs --check
   cargo fmt --check
-  cargo clippy --workspace --all-targets -- -D warnings
+  cargo clippy --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings
   # mobile-test-kit runs all app-core tests below, including app-state.
   scripts/test-dataplane-safety-fast.sh nvpn
   scripts/mobile-test-kit.sh rust
