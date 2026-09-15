@@ -169,7 +169,13 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     let network_snapshot = capture_network_snapshot();
     let network_changed_at = Some(unix_timestamp());
     let timeout = network_probe_timeout(&app);
-    let captive_portal = detect_captive_portal(timeout).await;
+    // A guest with only a raw Ethernet underlay has no Internet route until
+    // FIPS starts. Probing now only waits for DNS timeouts and delays the mesh.
+    let captive_portal = if network_snapshot.default_interface.is_some() {
+        detect_captive_portal(timeout).await
+    } else {
+        None
+    };
     let mut port_mapping_runtime = PortMappingRuntime::default();
     let vpn_enabled = daemon_start_vpn_enabled(&app, args.paused);
     let (fips_tunnel_runtime, last_fips_endpoint_peer_signature) =
