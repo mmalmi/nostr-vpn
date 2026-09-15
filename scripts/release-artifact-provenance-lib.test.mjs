@@ -1037,6 +1037,7 @@ test('release receipt collection requires exact source and strict public UI gate
       },
       macos: {
         artifact: join(root, 'macos-artifact.json'),
+        network_artifact: join(root, 'macos-network-artifact.json'),
         public_ui_join: macosJoinPath,
         network: join(root, 'macos-network.json'),
       },
@@ -1475,6 +1476,7 @@ test('release receipt collection requires exact source and strict public UI gate
     }
     const macosText = JSON.stringify(macosArtifact)
     writeFileSync(paths.macos.artifact, macosText)
+    writeFileSync(paths.macos.network_artifact, macosText)
     writeFileSync(paths.macos.public_ui_join, JSON.stringify({
       ...source,
       schema: 1,
@@ -1898,7 +1900,13 @@ test('release receipt collection requires exact source and strict public UI gate
       readFileSync(retainedPath))
     assert.equal(readFileSync(join(reuseOutput, 'macos/delivery-times.tsv'), 'utf8'),
       Object.entries(pixelReceipt.deliveryMilliseconds).map(([label, ms]) => `${label}\t${ms}\n`).join(''))
-    assert.notEqual(reuse().status, 0, 'a rerun must preserve the retained evidence')
+    assert.equal(reuse().status, 0, 'identical retained evidence is reusable')
+    const retainedTimingsPath = join(reuseOutput, 'macos/delivery-times.tsv')
+    const retainedTimings = readFileSync(retainedTimingsPath)
+    writeFileSync(retainedTimingsPath, 'changed evidence\n')
+    assert.notEqual(reuse().status, 0, 'a rerun must reject changed retained evidence')
+    assert.equal(readFileSync(retainedTimingsPath, 'utf8'), 'changed evidence\n')
+    writeFileSync(retainedTimingsPath, retainedTimings)
 
     const wireguardText = readFileSync(paths.android.wireguard_dns, 'utf8')
     const combinedWireguard = JSON.parse(wireguardText)
@@ -1985,6 +1993,37 @@ test('release receipt collection requires exact source and strict public UI gate
       },
       /macOS desktop network receipt is incomplete/,
     )
+    const originalMacosNetwork = readFileSync(paths.macos.network, 'utf8')
+    const networkArtifact = {
+      ...macosArtifact,
+      manualJoinDriverSha256: 'b'.repeat(64),
+      packageTreeSha256: 'c'.repeat(64),
+    }
+    const networkArtifactText = JSON.stringify(networkArtifact)
+    writeFileSync(paths.macos.network_artifact, networkArtifactText)
+    const separatelyPackagedNetwork = JSON.parse(originalMacosNetwork)
+    separatelyPackagedNetwork.summary.artifactReceiptSha256 = sha256(networkArtifactText)
+    writeFileSync(paths.macos.network, JSON.stringify(separatelyPackagedNetwork))
+    assert.doesNotThrow(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }))
+    for (const key of [
+      'appExecutableSha256', 'cliExecutableSha256', 'appBundleTreeSha256',
+      'appGitSha', 'fipsGitSha', 'signerCertificateSha256',
+    ]) {
+      assertRejectedReceiptMutation(
+        paths.macos.network_artifact,
+        (receipt) => { receipt[key] = '0'.repeat(64) },
+        /macOS network and join packages contain different product evidence/,
+      )
+    }
+    assertRejectedReceiptMutation(
+      paths.macos.network,
+      (receipt) => { receipt.summary.artifactReceiptSha256 = '0'.repeat(64) },
+      /macOS desktop network receipt is incomplete/,
+    )
+    writeFileSync(paths.macos.network_artifact, macosText)
+    writeFileSync(paths.macos.network, originalMacosNetwork)
     const androidIdentityPaths = [
       paths.android.physical,
       paths.android.install,

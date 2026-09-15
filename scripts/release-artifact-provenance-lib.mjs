@@ -1952,12 +1952,30 @@ function collectReleaseGateEvidence({
     platformReceiptPaths.macos.network,
     'macOS desktop network receipt',
   )
+  const macosNetworkArtifact = readRequiredJson(
+    platformReceiptPaths.macos.network_artifact,
+    'macOS network-tested artifact receipt',
+  )
+  // The two gates can package different signed test helpers around the exact
+  // same app. Retain both packages' provenance and compare every product field.
+  const macosHelperFields = new Set([
+    'archiveSha256', 'archiveSize', 'packageTreeSha256',
+    'manualJoinDriverSha256', 'manualJoinDriverCodeDirectoryHash',
+    'manualJoinFixtureSha256', 'manualJoinFixtureCodeDirectoryHash',
+    'serviceToggleDriverSha256', 'serviceToggleDriverCodeDirectoryHash',
+  ])
+  const productFields = (receipt) => Object.fromEntries(
+    Object.entries(receipt).filter(([name]) => !macosHelperFields.has(name)),
+  )
+  if (!isDeepStrictEqual(productFields(macosArtifact), productFields(macosNetworkArtifact))) {
+    throw new Error('macOS network and join packages contain different product evidence.')
+  }
   requireDesktopNetworkReceipt({
     receipt: macosNetwork,
     platform: 'macos',
     commit: macosSource.commit,
     tree: macosSource.tree,
-    artifactReceiptPath: platformReceiptPaths.macos.artifact,
+    artifactReceiptPath: platformReceiptPaths.macos.network_artifact,
   })
   const expectedIosGateReceipts = {
     'background-foreground-and-rapid-start-stop': [
