@@ -162,6 +162,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
                 .waitForExistence(timeout: deliveryTimeout),
             "Admin roster did not show the scanned joining identity"
         )
+        try waitForPeerAcceptance(expectedJoiner)
         emit("NVPN_RELEASE_JOIN_ADMIN_ACCEPTED=\(expectedJoiner)")
     }
 

@@ -235,6 +235,7 @@ assert_delivery_deadline() {
 
 phase_ios_admin_android_qr() {
   local scan_log submitted completed
+  local peer_accepted_filename="nvpn-peer-accepted-$(uuidgen).txt"
   # Request iOS automation while the operator is ready, before Android setup.
   ios_create_admin "Release QR iPhone admin"
   release_join_android_open_network_setup
@@ -254,7 +255,8 @@ phase_ios_admin_android_qr() {
     testImportJoinQrImageAndRequireAdminRosterProgress "$scan_log" \
     "NVPN_RELEASE_JOIN_IMAGE_FILENAME=$IOS_QR_STAGED_FILENAME" \
     "NVPN_RELEASE_JOIN_IMAGE_SHA256=$(shasum -a 256 "$ANDROID_QR_CAPTURE" | awk '{print $1}')" \
-    "NVPN_RELEASE_JOIN_JOINER_ID=$RELEASE_JOIN_ANDROID_JOINER_ID"
+    "NVPN_RELEASE_JOIN_JOINER_ID=$RELEASE_JOIN_ANDROID_JOINER_ID" \
+    "NVPN_RELEASE_JOIN_PEER_ACCEPTED_FILENAME=$peer_accepted_filename"
   release_join_ios_wait_marker NVPN_RELEASE_JOIN_IMPORT_READY=1 \
     "$((RELEASE_JOIN_IOS_SETUP_WAIT_SECS + RELEASE_JOIN_UI_WAIT_SECS))" \
     || fail "iPhone did not open its shipped QR image importer"
@@ -276,6 +278,8 @@ phase_ios_admin_android_qr() {
     "$RESULT_DIR/iphone-admin-pixel-qr-observations.tsv")" \
     || fail "Pixel stayed on QR view or lacked the exact iPhone admin roster row"
   assert_delivery_deadline "$submitted" "$completed" "iPhone-admin-to-Pixel-QR"
+  release_join_signal_ios_peer_accepted \
+    "$peer_accepted_filename" "$RELEASE_JOIN_ANDROID_JOINER_ID"
   release_join_ios_finish_test \
     || fail "iPhone admin did not accept the exact Pixel joiner"
   release_join_android_relaunch_and_wait_accepted "$RELEASE_JOIN_IOS_ADMIN_ID" \
