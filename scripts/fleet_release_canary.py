@@ -104,6 +104,7 @@ GATE_RECEIPT_KEYS = {
     },
     "macos": {
         "artifact",
+        "network_artifact",
         "public_ui_join",
         "network",
     },

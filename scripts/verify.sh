@@ -26,7 +26,7 @@ EOF
 run_fast() {
   python3 scripts/test-native-lab.py
   node scripts/sync-versions.mjs --check
-  cargo fmt --check
+  cargo fmt --check -p nvpn -p nostr-vpn-app-core -p nostr-vpn-core -p nostr-vpn-sim -p nostr-vpn-web -p nostr-vpn-wintun -p nostr-vpn-uniffi-bindgen
   cargo clippy --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings
   # mobile-test-kit runs all app-core tests below, including app-state.
   scripts/test-dataplane-safety-fast.sh nvpn

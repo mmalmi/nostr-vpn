@@ -673,7 +673,7 @@ grep -Fq 'release_gate_checkpoint_run "Source quality" run_release_gate_source_q
   <<<"$candidate_preflight_body" \
   || fail "release gate preflight does not validate or reuse exact source-quality evidence"
 source_quality_body="$(sed -n '/^run_release_gate_source_quality() {$/,/^}$/p' "$release_gate")"
-grep -Fq 'cargo clippy --locked --workspace --all-targets -- -D warnings' \
+grep -Fq 'cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings' \
   <<<"$source_quality_body" \
   || fail "release gate candidate preflight omits strict fail-fast Clippy"
 grep -Fq 'cargo fmt --check' <<<"$source_quality_body" \

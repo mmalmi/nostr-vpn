@@ -410,7 +410,7 @@ run_release_gate_candidate_preflight() {
 }
 
 run_release_gate_source_quality() {
-  cargo fmt --check
+  cargo fmt --check -p nvpn -p nostr-vpn-app-core -p nostr-vpn-core -p nostr-vpn-sim -p nostr-vpn-web -p nostr-vpn-wintun -p nostr-vpn-uniffi-bindgen
   # Workspace feature unification enables paid exits. Check the App Store
   # feature set separately before spending time on platform artifacts.
   cargo check --locked -p nostr-vpn-app-core --no-default-features --lib

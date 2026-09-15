@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PUBLISHER="$ROOT/scripts/publish.sh"
+python3 "$ROOT/scripts/test-cargo-registry-dependency.py"
 
 fail() {
   printf 'publish preflight harness failed: %s\n' "$*" >&2

@@ -255,6 +255,49 @@ publish_crate() {
     return 0
 }
 
+prepare_payment_dependencies() {
+    local crate version manifest package_dir archive code files pending=()
+    for crate in ${DEPENDENCY_CRATES[@]+"${DEPENDENCY_CRATES[@]}"}; do
+        # Keep unchanged dependency versions on crates.io. Repackaging them at
+        # every app commit changes Cargo's VCS metadata and archive checksum.
+        read -r version manifest < <(
+            cargo metadata --locked --no-deps --format-version 1 | python3 -c '
+import json,sys
+p = next(p for p in json.load(sys.stdin)["packages"] if p["name"] == sys.argv[1])
+print(p["version"], p["manifest_path"])
+' "$crate"
+        )
+        package_dir="$(dirname "$manifest")"
+        archive="$(mktemp "${TMPDIR:-/tmp}/nvpn-dependency.XXXXXX")"
+        if ! code="$(curl -sSL --connect-timeout 15 --max-time 60 -w '%{http_code}' \
+            "https://static.crates.io/crates/${crate}/${crate}-${version}.crate" -o "$archive")"; then
+            rm -f "$archive"
+            return 1
+        fi
+        case "$code" in
+            200)
+                if ! files="$(cargo package --locked -p "$crate" --list)" \
+                    || ! python3 "$SCRIPT_DIR/verify-cargo-registry-dependency.py" \
+                        "$crate" "$version" "$package_dir" "$archive" <<<"$files"; then
+                    rm -f "$archive"
+                    return 1
+                fi
+                ;;
+            403|404) pending+=("$crate") ;;
+            *)
+                rm -f "$archive"
+                echo "Cannot check registry dependency ${crate}: HTTP ${code}" >&2
+                return 1
+                ;;
+        esac
+        rm -f "$archive"
+    done
+    DEPENDENCY_CRATES=(${pending[@]+"${pending[@]}"})
+    # Selected new workspace packages are verified together. Unchanged
+    # dependencies resolve from their actual registry archives and checksums.
+    ALL_CRATES=(${DEPENDENCY_CRATES[@]+"${DEPENDENCY_CRATES[@]}"} "${TIER_1_CRATES[@]}" "${TIER_2_CRATES[@]}")
+}
+
 verify_cargo_packages() {
     local package_args=() crate
     for crate in "${ALL_CRATES[@]}"; do
@@ -333,6 +376,8 @@ if [[ -z "$DRY_RUN" ]]; then
     verify_exact_release_source
 fi
 
+prepare_payment_dependencies
+
 if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
     [[ -z "$DRY_RUN" ]] || {
         echo "--preflight and --dry-run cannot be combined." >&2
@@ -354,7 +399,7 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 || -n "$DRY_RUN" ]]; then
 fi
 
 # The maintained payment dependencies must exist before the application crates.
-for crate in "${DEPENDENCY_CRATES[@]}"; do
+for crate in ${DEPENDENCY_CRATES[@]+"${DEPENDENCY_CRATES[@]}"}; do
     publish_tier "Dependency" "$crate"
     [[ ${#FAILED_CRATES[@]} -eq 0 ]] || exit 1
 done

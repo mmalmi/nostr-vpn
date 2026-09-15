@@ -50,7 +50,7 @@ const platformReceiptKeys = {
     'package_install',
     'public_ui_join',
   ],
-  macos: ['artifact', 'network', 'public_ui_join'],
+  macos: ['artifact', 'network_artifact', 'network', 'public_ui_join'],
   windows: ['artifact', 'installer', 'network', 'public_ui_join'],
 }
 const platformKeys = Object.keys(platformReceiptKeys).sort()
@@ -153,6 +153,7 @@ function requireCoreArtifactFipsSource(platformReceiptPaths, source) {
     ['android', 'physical', 'fipsCoreVersion'],
     ['ios', 'mobile_artifact', 'fipsCoreVersion'],
     ['macos', 'artifact', 'fipsCoreVersion'],
+    ['macos', 'network_artifact', 'fipsCoreVersion'],
     ['linux', 'artifact', 'fipsVersion'],
     ['windows', 'artifact', 'fipsVersion'],
   ]) {
