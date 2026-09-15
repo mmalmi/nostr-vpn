@@ -62,6 +62,44 @@ test('exact ZIP validation rejects publication payload extras', () => {
   }
 })
 
+test('component proof excludes the cfg(test) exit fixture but retains its production parent', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-exit-fixture-proof-'))
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  const commit = (path, content) => {
+    write(join(root, path), content)
+    git('add', path)
+    git('commit', '-qm', path)
+    return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') }
+  }
+  try {
+    git('init', '-q')
+    git('config', 'user.name', 'Release Test')
+    git('config', 'user.email', 'release@example.invalid')
+    const parent = 'crates/nostr-vpn-app-core/src/ffi.rs'
+    const receipt = commit(parent, '#[cfg(test)] mod tests {}')
+    const fixture = commit('crates/nostr-vpn-app-core/src/ffi/tests_network/exit_state.rs', 'deterministic currency setting')
+    const args = {
+      candidateRoot: root, receiptCommit: receipt.commit, receiptTree: receipt.tree,
+      candidateCommit: fixture.commit, candidateTree: fixture.tree,
+    }
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({ ...args, platform }))
+    }
+    const changedParent = commit(parent, 'mod tests {}')
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.throws(() => proveUnchangedPlatformInputs({
+        ...args, platform, candidateCommit: changedParent.commit, candidateTree: changedParent.tree,
+      }), /changed product\/build input/)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('component proof retains only unchanged platform product inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-component-proof-'))
   const git = (...args) => {

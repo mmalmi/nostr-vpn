@@ -206,6 +206,7 @@
         let dir = unique_service_test_dir("nvpn-automatic-exit-confirmation");
         let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test"));
         runtime.startup_error = None;
+        runtime.config.wallet_fiat_enabled = false;
         runtime.config_path = dir.join("config.toml");
         create_test_network(&mut runtime, "Buyer");
         runtime.config.set_internet_source(InternetSource::PaidAutomatic);
