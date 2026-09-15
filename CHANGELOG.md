@@ -16,6 +16,7 @@ in 4.1.11. iOS does not support paid exits.
   encryption-level validation.
 - Keep device approval responsive while recovering the first Internet route,
   preserve signed removals after roster revocation, and report join errors accurately.
+- Preserve active Windows DNS policy while refreshing peers and physical routes.
 
 ### Release process
 
@@ -23,6 +24,8 @@ in 4.1.11. iOS does not support paid exits.
   and export iOS archives with the exact certificate selected by their profiles.
 - Prepare physical test artifacts before timed checks and retain verified results
   when resuming interrupted device tests.
+- Check the exact Windows source before building its installer and avoid temporary
+  workspace snapshots during release preparation.
 - Limit paid-mode testing to compatible fixtures, prepare QR approval carriers
   explicitly, and keep cleanup checks scoped to processes owned by each test.
 

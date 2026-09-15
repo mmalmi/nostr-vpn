@@ -257,7 +257,7 @@ impl FipsPrivateTunnelRuntime {
             secure_dns.update_records(config.magic_dns_records.clone());
             secure_dns.update_config(
                 config.magic_dns_records.clone(),
-                config.exit_dns_resolver_config(false)?,
+                config.exit_dns_resolver_config(existing_wireguard_upstream_matches)?,
             )?;
         }
         // Verify and install the desired WireGuard upstream before changing

@@ -17,6 +17,8 @@ release_join_assert_fips_unchanged
 EXPECTED_FIPS_SHA="$RELEASE_JOIN_FIPS_SHA"
 EXPECTED_FIPS_TREE="$RELEASE_JOIN_FIPS_TREE"
 EXPECTED_FIPS_VERSION="$RELEASE_JOIN_FIPS_VERSION"
+EXPECTED_APP_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+EXPECTED_APP_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
 SSH_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"
 SSH_PROXY_COMMAND="${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}"
@@ -81,12 +83,19 @@ case "${NVPN_WINDOWS_SKIP_GIT_SYNC:-0}" in
     echo "Skipping Windows VM git sync; release-gate lane already synced the candidate."
     ;;
   *)
-    "$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
+    NVPN_WINDOWS_GIT_SYNC_EXACT_APP_COMMIT="$EXPECTED_APP_SHA" \
+      "$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
     ;;
 esac
 
 run_ps "\$ErrorActionPreference = 'Stop'
 Set-Location '$GUEST_REPO'
+\$head = (git rev-parse HEAD).Trim()
+\$tree = (git rev-parse 'HEAD^{tree}').Trim()
+\$status = (git status --porcelain --untracked-files=all | Out-String).Trim()
+if (\$head -ne '$EXPECTED_APP_SHA' -or \$tree -ne '$EXPECTED_APP_TREE' -or \$status) {
+  throw 'Windows installer build checkout differs from the exact release candidate'
+}
 New-Item -ItemType Directory -Force -Path '$GUEST_ARTIFACT_ROOT' | Out-Null
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue '$REMOTE_GATE_DIR'
 New-Item -ItemType Directory -Force -Path '$REMOTE_GATE_DIR' | Out-Null
