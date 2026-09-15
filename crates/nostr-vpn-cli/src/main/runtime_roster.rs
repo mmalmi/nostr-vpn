@@ -16,6 +16,10 @@ fn publish_fips_active_network_roster_to(
     let Some(signed_roster) = active_signed_roster_for_sync(app, config_path, false)? else {
         return Ok(0);
     };
+    let removals = load_signed_rosters(&signed_rosters_file_path(config_path))?
+        .removals
+        .remove(&normalize_runtime_network_id(&signed_roster.network_id()?))
+        .unwrap_or_default();
     let mut recipients = app.active_network_signal_pubkeys_hex();
     recipients.extend(extra_recipients.iter().cloned());
     recipients.extend(pending_recipients.drain());
@@ -31,7 +35,8 @@ fn publish_fips_active_network_roster_to(
         split_ready_fips_roster_recipients(recipients, &awaiting_approval);
     let mut sent = 0usize;
     for recipient in ready_recipients {
-        match runtime.enqueue_roster(&recipient, signed_roster.clone()) {
+        let roster = removals.get(&recipient).unwrap_or(&signed_roster);
+        match runtime.enqueue_roster(&recipient, roster.clone()) {
             Ok(()) => sent += 1,
             Err(error) => {
                 eprintln!("fips: roster send to {recipient} failed: {error}");
@@ -76,10 +81,7 @@ fn join_roster_is_durably_persisted(
     config_path: &Path,
     control: &JoinRosterControl,
 ) -> Result<bool> {
-    nostr_vpn_core::join_roster_persistence::join_roster_is_durably_persisted(
-        config_path,
-        control,
-    )
+    nostr_vpn_core::join_roster_persistence::join_roster_is_durably_persisted(config_path, control)
 }
 
 fn split_ready_fips_roster_recipients(

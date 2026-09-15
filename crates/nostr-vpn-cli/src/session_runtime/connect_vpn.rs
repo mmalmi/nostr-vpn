@@ -100,6 +100,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                         &config_path,
                         &mut fips_roster_sync_state,
                     )
+                    .await
                     {
                         eprintln!("fips: roster peer sync failed: {error}");
                     }

@@ -13,6 +13,10 @@ use crate::fips_control::SignedRoster;
 pub struct SignedRosterStore {
     #[serde(default)]
     pub rosters: HashMap<String, SignedRoster>,
+    /// Keep the first signed removal for a former member. Retrying delivery
+    /// must not disclose later membership changes to that former member.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub removals: HashMap<String, HashMap<String, SignedRoster>>,
 }
 
 impl SignedRosterStore {
@@ -38,8 +42,53 @@ impl SignedRosterStore {
         if !replace {
             return Ok(false);
         }
+        let roster = signed_roster.roster()?;
+        let members = roster
+            .devices
+            .iter()
+            .chain(&roster.admins)
+            .collect::<Vec<_>>();
+        let removals = self.removals.entry(key.clone()).or_default();
+        removals.retain(|member, _| !members.contains(&member));
+        if let Some(previous) = self
+            .rosters
+            .get(&key)
+            .filter(|previous| previous.verify().is_ok())
+        {
+            let previous = previous.roster()?;
+            for member in previous.devices.iter().chain(&previous.admins) {
+                if !members.contains(&member) {
+                    removals
+                        .entry(member.clone())
+                        .or_insert_with(|| signed_roster.clone());
+                }
+            }
+        }
         self.rosters.insert(key, signed_roster);
         Ok(true)
+    }
+
+    pub fn record_removals(
+        &mut self,
+        signed_roster: &SignedRoster,
+        removed: &[String],
+    ) -> Result<bool> {
+        signed_roster.verify()?;
+        let network_id = normalize_runtime_network_id(&signed_roster.network_id()?);
+        let roster = signed_roster.roster()?;
+        let removals = self.removals.entry(network_id).or_default();
+        let mut changed = false;
+        for member in removed {
+            if roster.devices.contains(member) || roster.admins.contains(member) {
+                continue;
+            }
+            if let std::collections::hash_map::Entry::Vacant(entry) = removals.entry(member.clone())
+            {
+                entry.insert(signed_roster.clone());
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
 
     fn retain_valid(&mut self) {
@@ -48,6 +97,27 @@ impl SignedRosterStore {
                 normalize_runtime_network_id(network_id)
                     == normalize_runtime_network_id(&signed_network_id)
             }) && signed_roster.verify().is_ok()
+        });
+        self.removals.retain(|network_id, removals| {
+            let Some(current) = self
+                .rosters
+                .get(network_id)
+                .and_then(|signed| signed.roster().ok())
+            else {
+                return false;
+            };
+            removals.retain(|member, signed| {
+                !current.devices.contains(member)
+                    && !current.admins.contains(member)
+                    && signed.verify().is_ok()
+                    && signed
+                        .network_id()
+                        .is_ok_and(|id| normalize_runtime_network_id(&id) == *network_id)
+                    && signed.roster().is_ok_and(|roster| {
+                        !roster.devices.contains(member) && !roster.admins.contains(member)
+                    })
+            });
+            !removals.is_empty()
         });
     }
 }
@@ -186,6 +256,47 @@ mod tests {
         assert_eq!(
             restored.latest_for("mesh").unwrap().artifact_hash(),
             signed.artifact_hash()
+        );
+    }
+
+    #[test]
+    fn removal_keeps_its_original_signed_snapshot_until_readmission() {
+        let dir = ScratchDir::new("removal");
+        let path = dir.path().join("signed-rosters.json");
+        let admin = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let later_member = Keys::generate().public_key().to_hex();
+        let sign = |signed_at, devices| {
+            SignedRoster::sign(
+                "mesh",
+                NetworkRoster {
+                    network_name: "Home".into(),
+                    devices,
+                    admins: vec![admin.public_key().to_hex()],
+                    aliases: HashMap::new(),
+                    signed_at,
+                },
+                &admin,
+            )
+            .unwrap()
+        };
+        let initial = sign(10, vec![member.clone()]);
+        let removal = sign(20, Vec::new());
+        let later = sign(30, vec![later_member]);
+        upsert_signed_roster(&path, initial).unwrap();
+        upsert_signed_roster(&path, removal.clone()).unwrap();
+        upsert_signed_roster(&path, later.clone()).unwrap();
+        let mut restored = load_signed_rosters(&path).unwrap();
+        assert_eq!(restored.removals["mesh"][&member], removal);
+        assert!(!restored.record_removals(&later, &[member.clone()]).unwrap());
+        assert_eq!(restored.removals["mesh"][&member].signed_at(), 20);
+        upsert_signed_roster(&path, sign(40, vec![member.clone()])).unwrap();
+        assert!(
+            !load_signed_rosters(&path)
+                .unwrap()
+                .removals
+                .get("mesh")
+                .is_some_and(|removals| removals.contains_key(&member))
         );
     }
 }

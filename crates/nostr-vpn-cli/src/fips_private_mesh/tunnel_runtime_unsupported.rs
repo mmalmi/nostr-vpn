@@ -149,11 +149,19 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
+    pub(crate) fn roster_delivery(
+        &self,
+        _participant: String,
+        _signed_roster: SignedRoster,
+    ) -> Result<FipsRosterDelivery> {
+        Err(anyhow!("FIPS roster delivery is unsupported on this platform"))
+    }
+
     pub(crate) fn join_roster_delivery(
         &self,
         _participant: String,
         _join_roster: JoinRosterControl,
-    ) -> Result<FipsJoinRosterDelivery> {
+    ) -> Result<FipsRosterDelivery> {
         Ok(Box::pin(async { Ok(()) }))
     }
 

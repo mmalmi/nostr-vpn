@@ -388,6 +388,97 @@
             assert!(started.elapsed() <= Duration::from_secs(4));
         }
 
+        // Removing packet authorization must not prevent signed removal
+        // delivery over the authenticated control connection.
+        let alice_runtime = Arc::new(alice_runtime);
+        alice_runtime
+            .replace_peers(Vec::new(), vec![format!("{alice_ip}/32")], Vec::new())
+            .expect("remove Bob's packet authorization");
+        assert!(!alice_runtime.peer_pubkeys().contains(&bob_pubkey));
+        alice_runtime.refresh_link_statuses().await.unwrap();
+        assert!(
+            alice_runtime
+                .peer_statuses()
+                .iter()
+                .any(|peer| peer.pubkey == bob_pubkey && peer.connected)
+        );
+        let alice_control = FipsControlTcpRuntime::start(Arc::clone(alice_runtime.endpoint()))
+            .await
+            .expect("start admin control");
+        let mut bob_control = FipsControlTcpRuntime::start(Arc::clone(bob_runtime.endpoint()))
+            .await
+            .expect("start removed member control");
+        let now = unix_timestamp();
+        let removal = nostr_vpn_core::fips_control::SignedRoster::sign(
+            scope,
+            nostr_vpn_core::fips_control::NetworkRoster {
+                network_name: "Removal test".into(),
+                devices: Vec::new(),
+                admins: vec![alice_pubkey.clone()],
+                aliases: HashMap::new(),
+                signed_at: now,
+            },
+            &alice_keys,
+        )
+        .expect("sign removal");
+        let delivery = alice_runtime
+            .roster_delivery(alice_control.sender(), bob_pubkey.clone(), removal)
+            .expect("route removal without private membership");
+        tokio::time::timeout(Duration::from_secs(5), delivery)
+            .await
+            .expect("removal delivery deadline")
+            .expect("TCP acknowledges removal");
+        let received = tokio::time::timeout(Duration::from_secs(5), bob_control.recv())
+            .await
+            .expect("receive removal deadline")
+            .expect("receive removal");
+        let event = bob_runtime
+            .received_stateful_control_frame(received)
+            .expect("authenticate removal")
+            .expect("removal event");
+        let FipsPrivateMeshEvent::Roster {
+            signed_roster: Some(signed_roster),
+            ..
+        } = event
+        else {
+            panic!("expected signed removal roster");
+        };
+        let mut bob_app = AppConfig::generated();
+        bob_app.nostr.secret_key = bob_keys.secret_key().to_bech32().unwrap();
+        bob_app.nostr.public_key = bob_pubkey.clone();
+        bob_app.networks[0].enabled = true;
+        bob_app.networks[0].network_id = scope.into();
+        bob_app.networks[0].devices = vec![bob_pubkey];
+        bob_app.networks[0].admins = vec![alice_pubkey];
+        bob_app.networks[0].shared_roster_updated_at = now - 1;
+        bob_app.networks[0].local_identity_confirmation_pending = false;
+        assert!(bob_app.active_network_has_confirmed_local_identity());
+        let dir = std::env::temp_dir().join(format!("nvpn-removal-{}", rand::random::<u64>()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("config.toml");
+        crate::persist_shared_network_roster(
+            &mut bob_app,
+            &path,
+            Some(&signed_roster),
+            &mut String::new(),
+        )
+        .expect("persist removal")
+        .expect("roster changed");
+        let mut restored = AppConfig::load(&path).expect("reload removed member");
+        assert!(!restored.active_network_has_confirmed_local_identity());
+        assert!(restored.networks.is_empty());
+        restored
+            .ensure_pending_nostr_join_request(now)
+            .expect("removed member can rejoin");
+        assert!(
+            restored
+                .pending_nostr_join_request_link(crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX)
+                .is_ok()
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        drop(alice_control);
+        drop(bob_control);
+
         alice_runtime
             .endpoint()
             .shutdown()

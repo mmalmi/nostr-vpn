@@ -18,6 +18,38 @@ fn config_in(dir: &Path) -> PathBuf {
 }
 
 #[tokio::test]
+async fn join_request_preserves_a_running_daemons_rejection() {
+    let dir = test_dir();
+    let config = config_in(&dir);
+    let (request_tx, mut request_rx) = tokio::sync::mpsc::unbounded_channel();
+    let server = JoinRequestIpcServer::spawn(&config, request_tx).unwrap();
+    let client = crate::pairing_qr::run_join_request(crate::JoinRequestArgs {
+        config: Some(config),
+        no_wait: true,
+        no_qr: true,
+        reset: false,
+    });
+    let daemon = async {
+        request_rx
+            .recv()
+            .await
+            .unwrap()
+            .response
+            .send(Err(
+                "this device is already approved for its active network".into(),
+            ))
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(client, daemon);
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        "this device is already approved for its active network"
+    );
+    drop(server);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
 async fn current_reset_permissions_and_cleanup_use_one_socket() {
     let dir = test_dir();
     let config = config_in(&dir);

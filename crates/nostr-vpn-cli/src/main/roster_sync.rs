@@ -145,7 +145,8 @@ fn active_signed_roster_for_sync(
     let shared = app.shared_network_roster(&network.id)?;
     let store_path = signed_rosters_file_path(config_path);
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
-    if let Some(stored) = load_signed_rosters(&store_path)?
+    let mut store = load_signed_rosters(&store_path)?;
+    if let Some(stored) = store
         .latest_for(&shared.network_id)
         .filter(|stored| signed_roster_matches_shared(stored, &shared))
         .filter(|stored| {
@@ -156,6 +157,9 @@ fn active_signed_roster_for_sync(
         })
         .cloned()
     {
+        if store.record_removals(&stored, &network.removed_devices)? {
+            nostr_vpn_core::signed_rosters::write_signed_rosters(&store_path, &store)?;
+        }
         return Ok(Some(stored));
     }
 
@@ -171,7 +175,9 @@ fn active_signed_roster_for_sync(
         network_roster_from_shared(&shared),
         &app.nostr_keys()?,
     )?;
-    upsert_signed_roster(&store_path, signed_roster.clone())?;
+    store.upsert(signed_roster.clone())?;
+    store.record_removals(&signed_roster, &network.removed_devices)?;
+    nostr_vpn_core::signed_rosters::write_signed_rosters(&store_path, &store)?;
     Ok(Some(signed_roster))
 }
 
@@ -197,12 +203,27 @@ struct FipsRosterSyncState {
     sent_by_peer: HashMap<String, FipsRosterSentState>,
     source: Option<(String, u64, String)>,
     roster: Option<SignedRoster>,
+    removal_rosters: HashMap<String, SignedRoster>,
+    removal_sends: HashMap<String, FipsRosterRemovalSend>,
+}
+struct FipsRosterRemovalSend {
+    hash: String,
+    attempted_at: u64,
+    delivered: bool,
+    task: Option<tokio::task::JoinHandle<Result<()>>>,
+}
+impl Drop for FipsRosterRemovalSend {
+    fn drop(&mut self) {
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
 }
 struct FipsRosterSentState {
     hash: String,
     sent_at: u64,
 }
-fn sync_fips_roster_with_connected_peers(
+async fn sync_fips_roster_with_connected_peers(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
@@ -217,6 +238,17 @@ fn sync_fips_roster_with_connected_peers(
     });
     if state.source != source {
         state.roster = active_signed_roster_for_sync(app, config_path, true)?;
+        let mut store = load_signed_rosters(&signed_rosters_file_path(config_path))?;
+        state.removal_rosters = source
+            .as_ref()
+            .and_then(|(network_id, _, _)| store.removals.remove(network_id))
+            .unwrap_or_default();
+        state.removal_sends.retain(|peer, sent| {
+            state
+                .removal_rosters
+                .get(peer)
+                .is_some_and(|roster| roster.content_hash() == sent.hash)
+        });
         state.source = state.roster.as_ref().map(|_| source).unwrap_or_default();
     }
     let Some(signed_roster) = state.roster.clone() else {
@@ -234,9 +266,54 @@ fn sync_fips_roster_with_connected_peers(
         .into_iter()
         .filter(|status| status.connected)
         .filter(|status| own_pubkey.as_deref() != Some(status.pubkey.as_str()))
-        .filter(|status| roster_peers.contains(&status.pubkey))
         .map(|status| status.pubkey)
         .collect::<HashSet<_>>();
+
+    // A removed member no longer appears in the private roster, but its
+    // authenticated FIPS connection can still receive its signed removal.
+    // Wait for TCP acknowledgement off the daemon loop, retry failed sends,
+    // and stop after delivery. Never send it later roster revisions.
+    for (peer, roster) in &state.removal_rosters {
+        if let Some(sent) = state.removal_sends.get_mut(peer) {
+            if sent.task.as_ref().is_some_and(|task| task.is_finished()) {
+                match sent.task.take().unwrap().await {
+                    Ok(Ok(())) => sent.delivered = true,
+                    Ok(Err(error)) => eprintln!("fips: removal roster delivery failed: {error}"),
+                    Err(error) => eprintln!("fips: removal roster delivery task failed: {error}"),
+                }
+            }
+            if sent.delivered
+                || sent.task.is_some()
+                || now.saturating_sub(sent.attempted_at) < FIPS_ROSTER_RESEND_SECS
+            {
+                continue;
+            }
+        }
+        if connected.contains(peer) {
+            let delivery = runtime.roster_delivery(peer.clone(), roster.clone())?;
+            state.removal_sends.insert(
+                peer.clone(),
+                FipsRosterRemovalSend {
+                    hash: roster.content_hash(),
+                    attempted_at: now,
+                    delivered: false,
+                    task: Some(tokio::spawn(delivery)),
+                },
+            );
+        }
+    }
+
+    let awaiting_approval = nostr_vpn_core::join_delivery::load_join_rosters(config_path)
+        .into_iter()
+        .map(|(_, queued)| queued.recipient_npub)
+        .collect();
+    let (connected, _) = split_ready_fips_roster_recipients(
+        connected
+            .into_iter()
+            .filter(|peer| roster_peers.contains(peer))
+            .collect(),
+        &awaiting_approval,
+    );
 
     state
         .sent_by_peer

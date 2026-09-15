@@ -141,7 +141,7 @@ const MACOS_UDP_SEND_BUF_MIN_MULTIPLIER: usize = 4;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
 const MAX_FIPS_UDP_SEND_BUF_SIZE: usize = 8 * 1024 * 1024;
 
-pub(crate) type FipsJoinRosterDelivery = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
+pub(crate) type FipsRosterDelivery = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
 #[cfg(any(target_os = "macos", test))]
 const fn macos_default_udp_send_buf_size() -> usize {

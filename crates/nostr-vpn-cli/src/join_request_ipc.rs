@@ -130,7 +130,10 @@ pub(crate) async fn request_daemon_join_request_link(
     let mut stream = tokio::time::timeout(JOIN_REQUEST_IPC_TIMEOUT, UnixStream::connect(&path))
         .await
         .context("timed out connecting to the nVPN daemon join-request socket")?
-        .with_context(|| format!("failed to connect to {}", path.display()))?;
+        .with_context(|| format!(
+            "the nVPN daemon must be running to create an ephemeral join request (failed to connect to {})",
+            path.display()
+        ))?;
     tokio::time::timeout(
         JOIN_REQUEST_IPC_TIMEOUT,
         stream.write_all(&[u8::from(reset)]),
