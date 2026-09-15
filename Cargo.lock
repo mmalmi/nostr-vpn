@@ -3684,7 +3684,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.1.11"
+version = "4.1.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3718,7 +3718,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.1.11"
+version = "4.1.12"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-sim"
-version = "4.1.11"
+version = "4.1.12"
 dependencies = [
  "anyhow",
  "hex",
@@ -3784,7 +3784,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.1.11"
+version = "4.1.12"
 dependencies = [
  "anyhow",
  "axum",
@@ -3805,7 +3805,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.1.11"
+version = "4.1.12"
 dependencies = [
  "anyhow",
  "wintun",
@@ -3900,7 +3900,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.1.11"
+version = "4.1.12"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5061,9 +5061,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.40"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "once_cell",
  "ring",
@@ -5097,9 +5097,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.13"
+version = "0.103.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61c429a8649f110dddef65e2a5ad240f747e85f7758a6bccc7e5777bd33f756e"
+checksum = "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2"
 dependencies = [
  "ring",
  "rustls-pki-types",

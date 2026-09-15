@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.12 - 2026-09-15
+
+### Release notes
+
+This release updates TLS security and improves device approval and network
+roster recovery. It includes the connection and payment reliability improvements
+in 4.1.11. iOS does not support paid exits.
+
+### Fixed
+
+- Update rustls to 0.23.45 to address RUSTSEC-2026-0285 in TLS 1.3 handshake
+  encryption-level validation.
+- Keep device approval responsive while recovering the first Internet route,
+  preserve signed removals after roster revocation, and report join errors accurately.
+
+### Release process
+
+- Check dependency advisories, packaging tools, signing keys, and Linux builders before expensive tests,
+  and export iOS archives with the exact certificate selected by their profiles.
+- Prepare physical test artifacts before timed checks and retain verified results
+  when resuming interrupted device tests.
+- Limit paid-mode testing to compatible fixtures, prepare QR approval carriers
+  explicitly, and keep cleanup checks scoped to processes owned by each test.
+
 ## 4.1.11 - 2026-09-13
 
 ### Release notes

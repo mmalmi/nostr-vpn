@@ -477,7 +477,6 @@ run_release_gate_static_preflight() {
 }
 
 run_rust_validation_lane() {
-  ./scripts/security-audit-rust.sh
   export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
   release_gate_checkpoint_run "Rust regression checks" run_rust_regression_checks
   ./scripts/e2e-manual-join-cli.sh
@@ -2543,6 +2542,9 @@ main() {
 
   # Check Docker before spending time on source validation. Validate generated
   # metadata before any remote lane snapshots the unchanged candidate.
+  release_gate_timing_run \
+    "Dependency security preflight" \
+    ./scripts/security-audit-rust.sh
   release_gate_timing_run \
     "Local candidate preflight" \
     run_release_gate_candidate_preflight

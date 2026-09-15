@@ -1,6 +1,6 @@
 [package]
 name = "nostr-vpn-linux"
-version = "4.1.11"
+version = "4.1.12"
 description = "Simple private networks over FIPS and Nostr."
 edition = "2021"
 publish = false
