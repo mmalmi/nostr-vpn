@@ -76,6 +76,10 @@ set before staging with `--reuse-gate-receipts`. The iOS seal alone does not pas
 the release gate. Restarting the entire gate still reruns physical phases; it
 does not automatically skip them based on this seal.
 
+When a later harness change preserves all iOS product inputs, both export and
+upload use a temporary checkout of the archive's original source. The publication
+gate still validates the current release commit and the unchanged archive bytes.
+
 An unlocked screen and Apple UI Automation authorization are separate conditions.
 The release network and join runners check lock state with a bounded fresh query
 and stop on an automation-authorization timeout. Enter the automation passcode on

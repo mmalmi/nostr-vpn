@@ -15,7 +15,6 @@ import {
   realpathSync,
   rmSync,
   statSync,
-  symlinkSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -78,6 +77,7 @@ import {
   preflightUmbrelPublication,
   publishVerifiedUmbrelRelease,
 } from './umbrel-release.mjs'
+import { withIosArtifactSource } from './ios-artifact-source.mjs'
 import { validateReleaseMutationGate } from './release-mutation-gate.mjs'
 import {
   preflightRequiredZapstorePublication as preflightExactZapstorePublication,
@@ -1547,47 +1547,12 @@ function buildIosArtifacts({
   // Ordinary staging is local-only. It verifies the physically tested frozen
   // archive and exports its exact App Store IPA without contacting Apple.
   // Upload/attach/submission entry points require the exact-source mutation gate.
-  if (sourceEquivalence) {
-    const temporaryRoot = mkdtempSync(join(os.tmpdir(), 'nvpn-ios-export-source-'))
-    const sourceRoot = join(temporaryRoot, 'source')
-    let worktreeAdded = false
-    try {
-      run('git', [
-        'worktree', 'add', '--detach', sourceRoot, archiveReceipt.appGitSha,
-      ])
-      worktreeAdded = true
-      for (const name of ['dist', 'artifacts']) {
-        const externalRoot = join(repoRoot, name)
-        if (!existsSync(externalRoot)) continue
-        const linkRoot = join(sourceRoot, name)
-        mkdirSync(linkRoot)
-        for (const entry of readdirSync(externalRoot)) {
-          symlinkSync(
-            join(externalRoot, entry),
-            join(linkRoot, entry),
-          )
-        }
-      }
-      run('bash', [join(repoRoot, 'scripts', 'ios-build'), 'ios-export'], {
-        cwd: sourceRoot,
-        env: {
-          ...env,
-          NVPN_BUILD_GIT_SHA: archiveReceipt.appGitSha,
-          NVPN_IOS_RELEASE_SOURCE_ROOT: sourceRoot,
-        },
-      })
-    } finally {
-      for (const name of ['dist', 'artifacts']) {
-        rmSync(join(sourceRoot, name), { recursive: true, force: true })
-      }
-      if (worktreeAdded) {
-        run('git', ['worktree', 'remove', sourceRoot], { capture: true })
-      }
-      rmSync(temporaryRoot, { recursive: true, force: true })
-    }
-  } else {
-    run('bash', [join(repoRoot, 'scripts', 'ios-build'), 'ios-export'], { env })
-  }
+  withIosArtifactSource({
+    repoRoot, receipt: archiveReceipt,
+    commit: candidateCommit, tree: candidateTree, env,
+  }, (context) => {
+    run('bash', [join(repoRoot, 'scripts', 'ios-build'), 'ios-export'], context)
+  })
   builtLines.push(`Verified and exported iOS ${tag} without uploading it.`)
 
   const exportDir = join(repoRoot, 'dist', 'ios', 'export')
