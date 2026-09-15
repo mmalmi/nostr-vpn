@@ -524,7 +524,8 @@ function Observe-Recovery {
     [string]$ExpectedNpub,
     [string]$ExpectedTunnelIp,
     [long]$ObservationStartedUnixMilliseconds,
-    [int]$RebindBefore
+    [int]$RebindBefore,
+    [string[]]$ExpectedDnsRuleNames
   )
   Wait-ForCondition "$Label physical underlay to become usable" `
     30000 $NewUnderlayAvailable 25 $true |
@@ -544,6 +545,13 @@ function Observe-Recovery {
   # Stable state is still audited, but audit latency is deliberately excluded
   # from the product recovery measurement above.
   Assert-ActiveExit $ExpectedPhysicalIndex $ExpectedDaemonPid
+  $dnsRuleNames = @((Get-SecureDnsRules).Name | Sort-Object)
+  if (
+    $ExpectedDnsRuleNames.Count -eq 0 -or
+    ($dnsRuleNames -join ",") -ne ($ExpectedDnsRuleNames -join ",")
+  ) {
+    throw "$Label recreated unchanged DNS policy during network recovery"
+  }
   Assert-SessionContinuity `
     $ExpectedDaemonPid `
     $ExpectedEndpointStartCount `
@@ -1098,6 +1106,7 @@ switch ($Action) {
         }
       } 250 $true | Out-Null
       Assert-NativeWireGuardSecretAcl
+      $stableDnsRuleNames = @((Get-SecureDnsRules).Name | Sort-Object)
       Write-Marker "ready" "$daemonPid"
 
       Wait-ForFile "arm-secondary"
@@ -1110,7 +1119,7 @@ switch ($Action) {
         (Test-PhysicalUnderlay ([int]$secondary.ifIndex))
       } ([int]$secondary.ifIndex) $daemonPid $endpointStartCount `
         $identityNpub $tunnelIp $secondaryObservationStarted `
-        $secondaryRebindBefore
+        $secondaryRebindBefore $stableDnsRuleNames
 
       Wait-ForFile "arm-primary"
       $primaryObservationStarted =
@@ -1121,7 +1130,7 @@ switch ($Action) {
         Test-PhysicalUnderlay ([int]$primary.ifIndex)
       } ([int]$primary.ifIndex) $daemonPid $endpointStartCount `
         $identityNpub $tunnelIp $primaryObservationStarted `
-        $primaryRebindBefore
+        $primaryRebindBefore $stableDnsRuleNames
 
       Run-DnsSettingCase "automatic" @(
         "--exit-dns-mode", "automatic"

@@ -100,6 +100,46 @@ test('component proof excludes the cfg(test) exit fixture but retains its produc
   }
 })
 
+test('Windows runtime changes invalidate Windows while its include parent remains shared', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-windows-runtime-proof-'))
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  const commit = (path, content) => {
+    write(join(root, path), content)
+    git('add', path)
+    git('commit', '-qm', path)
+    return { commit: git('rev-parse', 'HEAD'), tree: git('rev-parse', 'HEAD^{tree}') }
+  }
+  try {
+    git('init', '-q')
+    git('config', 'user.name', 'Release Test')
+    git('config', 'user.email', 'release@example.invalid')
+    const parent = 'crates/nostr-vpn-cli/src/fips_private_mesh.rs'
+    const receipt = commit(parent, 'include!("fips_private_mesh/tunnel_runtime_windows.rs");')
+    commit('crates/nostr-vpn-cli/src/fips_private_mesh/tunnel_runtime_windows.rs', '#[cfg(target_os = "windows")] fn refresh_dns() {}')
+    const changed = commit('scripts/desktop-windows-underlay-change-e2e.ps1', 'Assert-StableDnsPolicy')
+    const args = {
+      candidateRoot: root, receiptCommit: receipt.commit, receiptTree: receipt.tree,
+      candidateCommit: changed.commit, candidateTree: changed.tree,
+    }
+    for (const platform of ['android', 'ios', 'linux', 'macos']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({ ...args, platform }))
+    }
+    assert.throws(() => proveUnchangedPlatformInputs({ ...args, platform: 'windows' }), /changed product\/build input/)
+    const changedParent = commit(parent, 'fn shared_runtime() {}')
+    for (const platform of ['linux', 'macos', 'windows']) {
+      assert.throws(() => proveUnchangedPlatformInputs({
+        ...args, platform, candidateCommit: changedParent.commit, candidateTree: changedParent.tree,
+      }), /changed product\/build input/)
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('component proof retains only unchanged platform product inputs', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-component-proof-'))
   const git = (...args) => {

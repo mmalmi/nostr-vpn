@@ -35,6 +35,7 @@ const harnessOnlyPaths = new Set([
   'scripts/desktop-mobile-manual-join-windows-ui.ps1',
   'scripts/desktop-linux-underlay-change-e2e.sh',
   'scripts/desktop-linux-underlay-peer-e2e.sh',
+  'scripts/desktop-windows-underlay-change-e2e.ps1',
   'scripts/e2e-macos-release-network.sh',
   'scripts/e2e-macos-service-toggle.sh',
   'scripts/e2e-macos-service.sh',
@@ -157,6 +158,12 @@ function isProductInput(path, platform) {
     || path === 'crates/nostr-vpn-app-core/src/c_abi/ios_packet_flow.rs'
   ) return platform === 'ios'
   if (path.startsWith('crates/nostr-vpn-cli/')) {
+    // This leaf contains only Windows production items and host-only tests.
+    // Its include parent remains shared, so changing that boundary invalidates
+    // every desktop artifact.
+    if (path === 'crates/nostr-vpn-cli/src/fips_private_mesh/tunnel_runtime_windows.rs') {
+      return platform === 'windows'
+    }
     if (path === 'crates/nostr-vpn-cli/src/fips_private_mesh/linux_cleanup.rs') {
       return platform === 'linux'
     }
