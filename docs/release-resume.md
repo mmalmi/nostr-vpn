@@ -129,3 +129,8 @@ process is killed. Do not reset the budget merely because a test failed.
 Candidate edits invalidate cached checks. Changing the candidate while a gate
 runs rejects completion. Keep optional release-tool improvements outside a
 frozen release, and integrate them after publication.
+
+Let the canonical publisher build and push Umbrel together. An extra cache-only
+build while waiting for hosted checks does not retain an image for publication:
+[BuildKit can reclaim that cache](https://docs.docker.com/build/cache/garbage-collection/)
+before promotion, forcing the same compilation again.
