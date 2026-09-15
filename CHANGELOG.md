@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.13 - 2026-09-16
+
+### Cargo distribution repair
+
+This version repairs the Rust packages on crates.io. Native applications,
+installers, containers, and the App Store submission remain at 4.1.12.
+The VPN and payment Rust source is unchanged from that tested release.
+
+- Publish the maintained Cashu and Spilman dependencies under explicit Nostr VPN
+  package names, so Cargo installs receive the same payment implementation.
+- Pin the CLI to the matching core and Windows support packages.
+- Build all distributable Cargo packages together during early release preflight,
+  including unpublished workspace dependencies, without local registry patches.
+
 ## 4.1.12 - 2026-09-15
 
 ### Release notes

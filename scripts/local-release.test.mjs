@@ -2415,7 +2415,6 @@ test('crates publication has no dirty bypass and replays exact source immediatel
   )
   assert.doesNotMatch(publisher, /--allow-dirty/)
   assert.match(publisher, /require_release_mutation_gate "\$REPO_DIR"/)
-  assert.match(publisher, /cargo package --locked -p "\$crate"/)
   assert.match(publisher, /packageSha256/)
   assert.match(publisher, /preflight_crates_io_credentials/)
   assert.doesNotMatch(publisher, /import tomllib/)
@@ -2432,18 +2431,9 @@ test('crates publication has no dirty bypass and replays exact source immediatel
     publisher,
     /static\.crates\.io\/crates\/\$\{crate\}\/\$\{crate\}-\$\{version\}\.crate/,
   )
-  assert.match(
-    publisher,
-    /for crate in "\$\{TIER_1_CRATES\[@\]\}"; do[\s\S]*package_crate_and_bind_digest "\$crate"/,
-  )
-  assert.match(
-    publisher,
-    /for crate in "\$\{TIER_2_CRATES\[@\]\}"; do[\s\S]*verify_dependent_dry_run "\$crate"/,
-  )
-  assert.match(
-    publisher,
-    /package_crate_and_bind_digest "\$crate"\s*\n\s*verify_exact_release_source\s*\n\s*fi\s*\n\s*if output=\$\(cargo publish --locked/,
-  )
+  assert.match(publisher, /cargo package --locked "\$\{package_args\[@\]\}"/)
+  assert.doesNotMatch(publisher, /verify_dependent_dry_run|cargo check --locked -p/)
+  assert.match(publisher, /verify_cargo_packages[\s\S]*bind_package_digest "\$crate"/)
 })
 
 test('Linux publication reuses the VM-installed deb and real static-musl CLI archive', () => {

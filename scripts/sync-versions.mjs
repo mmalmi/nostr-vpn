@@ -91,6 +91,12 @@ function bumpCargoLockPackages(text, packageNames, version) {
 }
 
 const targets = [
+  makeTarget('Cargo.toml', (text, version) =>
+    text.replace(
+      /^(nostr-vpn-(?:core|wintun)\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/gm,
+      (_, prefix, suffix) => `${prefix}=${version}${suffix}`,
+    ),
+  ),
   makeTarget('Cargo.lock', (text, version) =>
     bumpCargoLockPackages(
       text,

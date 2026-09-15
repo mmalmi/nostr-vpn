@@ -7,12 +7,23 @@ members = [
   "crates/nostr-vpn-sim",
   "crates/nostr-vpn-web",
   "crates/nostr-vpn-wintun",
+  "vendor/cashu-service",
+  "vendor/cdk-spilman",
 ]
-exclude = ["linux", "vendor/cashu-service", "vendor/cdk-spilman"]
+exclude = ["linux"]
+default-members = [
+  "crates/nostr-vpn-app-core",
+  "crates/nostr-vpn-app-core/uniffi-bindgen",
+  "crates/nostr-vpn-core",
+  "crates/nostr-vpn-cli",
+  "crates/nostr-vpn-sim",
+  "crates/nostr-vpn-web",
+  "crates/nostr-vpn-wintun",
+]
 resolver = "2"
 
 [workspace.package]
-version = "4.1.12"
+version = "4.1.13"
 edition = "2024"
 license = "MIT"
 authors = ["Nostr VPN contributors"]
@@ -25,9 +36,9 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 boringtun = "0.7"
-cashu-service = { version = "0.4.8", default-features = false }
+cashu-service = { package = "nvpn-cashu-service", version = "=0.4.8", path = "vendor/cashu-service", default-features = false }
 cashu = { version = "=0.18.0", default-features = false }
-cdk-spilman = "=0.17.6"
+cdk-spilman = { package = "nvpn-cdk-spilman", version = "=0.17.6", path = "vendor/cdk-spilman" }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.82" }
@@ -63,8 +74,8 @@ nostr-pubsub-social-graph = "0.2.2"
 nostr-social-graph = "0.1.4"
 nostr-social-memory = "0.1.1"
 nostr-identity = "0.4.0"
-nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core", default-features = false }
-nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
+nostr-vpn-core = { version = "=4.1.13", path = "crates/nostr-vpn-core", default-features = false }
+nostr-vpn-wintun = { version = "=4.1.13", path = "crates/nostr-vpn-wintun" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -75,7 +86,3 @@ missing_panics_doc = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-
-[patch.crates-io]
-cashu-service = { path = "vendor/cashu-service" }
-cdk-spilman = { path = "vendor/cdk-spilman" }

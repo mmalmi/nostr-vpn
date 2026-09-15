@@ -21,7 +21,7 @@ test('version synchronization leaves the workspace usable by locked Cargo comman
       writeFileSync(join(root, name, 'src/lib.rs'), '')
       writeFileSync(join(root, name, 'Cargo.toml'), `[package]\nname = "${name}"\nversion.workspace = true\nedition = "2021"\n`)
     }
-    const manifest = version => `[workspace]\nmembers = ${JSON.stringify(packages)}\nresolver = "2"\n[workspace.package]\nversion = "${version}"\n`
+    const manifest = version => `[workspace]\nmembers = ${JSON.stringify(packages)}\nresolver = "2"\n[workspace.package]\nversion = "${version}"\n[workspace.dependencies]\nnostr-vpn-core = { version = "=4.1.10", path = "nostr-vpn-core" }\nnostr-vpn-wintun = { version = "=4.1.10", path = "nostr-vpn-wintun" }\n`
     const run = (command, args) => spawnSync(command, args, { cwd: root, encoding: 'utf8', timeout: 15_000 })
     const passed = result => {
       assert.ifError(result.error)
@@ -32,6 +32,8 @@ test('version synchronization leaves the workspace usable by locked Cargo comman
     writeFileSync(join(root, 'Cargo.toml'), manifest('4.1.11'))
     passed(run(process.execPath, ['scripts/sync-versions.mjs']))
     passed(run(process.execPath, ['scripts/sync-versions.mjs', '--check']))
+    assert.match(readFileSync(join(root, 'Cargo.toml'), 'utf8'), /nostr-vpn-core = \{ version = "=4\.1\.11"/)
+    assert.match(readFileSync(join(root, 'Cargo.toml'), 'utf8'), /nostr-vpn-wintun = \{ version = "=4\.1\.11"/)
     passed(run('cargo', ['metadata', '--offline', '--locked', '--format-version=1']))
   } finally {
     rmSync(root, { recursive: true, force: true })

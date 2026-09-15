@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/publish.sh           # Publish all publishable crates
-#   ./scripts/publish.sh --dry-run # Verify independent crates and local dependents
+#   ./scripts/publish.sh --dry-run # Build every distributable package without publishing
 #   ./scripts/publish.sh --plan    # Print publish order
 
 set -euo pipefail
@@ -43,6 +43,8 @@ for arg in "$@"; do
     esac
 done
 
+DEPENDENCY_CRATES=("nvpn-cdk-spilman" "nvpn-cashu-service")
+
 TIER_1_CRATES=(
     "nostr-vpn-core"
     "nostr-vpn-wintun"
@@ -53,6 +55,7 @@ TIER_2_CRATES=(
 )
 
 ALL_CRATES=(
+    "${DEPENDENCY_CRATES[@]}"
     "${TIER_1_CRATES[@]}"
     "${TIER_2_CRATES[@]}"
 )
@@ -89,11 +92,10 @@ verify_exact_release_source() {
     }
 }
 
-package_crate_and_bind_digest() {
+bind_package_digest() {
     local crate="$1"
     local package_path receipt_path
     verify_exact_release_source
-    cargo package --locked -p "$crate" >/dev/null
     package_path="$(
         cargo metadata --locked --no-deps --format-version 1 \
             | NVPN_CARGO_RECEIPT_CRATE="$crate" python3 -c '
@@ -234,7 +236,6 @@ publish_crate() {
     echo "=========================================="
 
     if [[ -z "$DRY_RUN" ]]; then
-        package_crate_and_bind_digest "$crate"
         verify_exact_release_source
     fi
     if output=$(cargo publish --locked -p "$crate" $DRY_RUN 2>&1); then
@@ -254,19 +255,16 @@ publish_crate() {
     return 0
 }
 
-verify_dependent_dry_run() {
-    local crate="$1"
-
-    echo ""
-    echo "=========================================="
-    echo "Verifying unpublished dependent: ${crate}"
-    echo "=========================================="
-    if cargo package --locked -p "$crate" --list >/dev/null \
-        && cargo check --locked -p "$crate"; then
-        echo "[ok] ${crate} package contents and local dependency build verified"
-    else
-        FAILED_CRATES+=("$crate")
-    fi
+verify_cargo_packages() {
+    local package_args=() crate
+    for crate in "${ALL_CRATES[@]}"; do
+        package_args+=(--package "$crate")
+    done
+    # Cargo packages the selected workspace dependencies into a temporary
+    # registry and builds their actual archives in dependency order. Unlike a
+    # local cargo check, this catches patches missing from the registry before
+    # publishing any dependency or starting native/device release checks.
+    cargo package --locked "${package_args[@]}"
 }
 
 publish_tier() {
@@ -341,41 +339,32 @@ if [[ "$PREFLIGHT_ONLY" -eq 1 ]]; then
         exit 1
     }
     preflight_crates_io_credentials
-    for crate in "${TIER_1_CRATES[@]}"; do
-        package_crate_and_bind_digest "$crate"
-        verify_exact_release_source
+fi
+
+verify_cargo_packages
+if [[ -z "$DRY_RUN" ]]; then
+    verify_exact_release_source
+    for crate in "${ALL_CRATES[@]}"; do
+        bind_package_digest "$crate"
     done
-    for crate in "${TIER_2_CRATES[@]}"; do
-        # Registry package verification follows Tier 1 publication; before
-        # that, validate package contents and the intended local dependency.
-        verify_dependent_dry_run "$crate"
-        verify_exact_release_source
-    done
-    [[ ${#FAILED_CRATES[@]} -eq 0 ]] || exit 1
-    echo "[ok] credentials, independent packages and local dependent builds are ready."
+fi
+if [[ "$PREFLIGHT_ONLY" -eq 1 || -n "$DRY_RUN" ]]; then
+    echo "[ok] Every distributable Cargo package built successfully."
     exit 0
 fi
 
+# The maintained payment dependencies must exist before the application crates.
+for crate in "${DEPENDENCY_CRATES[@]}"; do
+    publish_tier "Dependency" "$crate"
+    [[ ${#FAILED_CRATES[@]} -eq 0 ]] || exit 1
+done
 publish_tier "Tier 1" "${TIER_1_CRATES[@]}"
-if [[ -n "$DRY_RUN" ]]; then
-    echo "Tier 2 registry resolution is deferred until this release's Tier 1 crates are indexed."
-    for crate in "${TIER_2_CRATES[@]}"; do
-        verify_dependent_dry_run "$crate"
-    done
-else
-    publish_tier "Tier 2" "${TIER_2_CRATES[@]}"
-fi
+[[ ${#FAILED_CRATES[@]} -eq 0 ]] || exit 1
+publish_tier "Tier 2" "${TIER_2_CRATES[@]}"
 
-echo ""
-echo "=========================================="
 if [[ ${#FAILED_CRATES[@]} -eq 0 ]]; then
-    if [[ -n "$DRY_RUN" ]]; then
-        echo "[ok] All available pre-publication checks passed!"
-    else
-        echo "[ok] All crates published successfully!"
-    fi
+    echo "[ok] All crates published successfully!"
 else
     echo "[fail] Failed to publish: ${FAILED_CRATES[*]}"
     exit 1
 fi
-echo "=========================================="

@@ -11,7 +11,7 @@
 
 [package]
 edition = "2021"
-name = "cashu-service"
+name = "nvpn-cashu-service"
 version = "0.4.8"
 authors = ["Martti Malmi"]
 build = false
@@ -20,11 +20,11 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Reusable Cashu helper and wallet primitives for paid connectivity services"
+description = "Nostr VPN maintained Cashu helper and wallet primitives"
 homepage = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/cashu-service"
 readme = "README.md"
 license = "MIT"
-repository = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/cashu-service"
+repository = "https://github.com/mmalmi/nostr-vpn"
 
 [features]
 credit-settlement = [
@@ -151,7 +151,9 @@ default-features = false
 package = "cdk-common"
 
 [dependencies.cdk-spilman]
-version = "0.17.5"
+package = "nvpn-cdk-spilman"
+version = "=0.17.6"
+path = "../cdk-spilman"
 optional = true
 default-features = false
 
@@ -242,7 +244,6 @@ version = "3"
 version = "1"
 features = ["full"]
 
-[workspace]
 
 [[test]]
 name = "spilman_receiver_safety"
@@ -252,8 +253,6 @@ path = "tests/spilman_receiver_safety.rs"
 name = "spilman_channel_capacity"
 path = "tests/spilman_channel_capacity.rs"
 
-[patch.crates-io]
-cdk-spilman = { path = "../cdk-spilman" }
 
 [dependencies.httpdate]
 version = "1"
