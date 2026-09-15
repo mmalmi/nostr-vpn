@@ -357,4 +357,54 @@ ios_release_network_cleanup_private_artifacts
 [[ -z "$IOS_RELEASE_NETWORK_SIGNING_DIR" ]]
 [[ -z "$IOS_RELEASE_NETWORK_DEVICE_RECEIPT" ]]
 
+# Exercise each real join entrypoint's source guard before touching any device.
+python3 - "$ROOT_DIR" "$TMP_ROOT" <<'PY_JOIN'
+import hashlib
+import os
+import pathlib
+import re
+import subprocess
+import sys
+
+root, temporary = map(pathlib.Path, sys.argv[1:])
+fixture = temporary / "join-source"
+fixture.mkdir()
+for name, value in {"Cargo.toml": "[workspace]\n", "Cargo.lock": "version = 4\n", "source.rs": "fn main() {}\n"}.items():
+    (fixture / name).write_text(value)
+def git(*args):
+    subprocess.run(["git", "-C", str(fixture), *args], check=True, capture_output=True)
+git("init", "-q")
+git("add", ".")
+git("-c", "user.name=Harness", "-c", "user.email=harness.invalid", "commit", "-qm", "fixture")
+def digest(name):
+    return hashlib.sha256((fixture / name).read_bytes()).hexdigest()
+for entrypoint in ["mobile-release-join-e2e.sh", "windows-vm-release-mobile-join-e2e.sh", "ubuntu-vm-release-mobile-join-e2e.sh"]:
+    source = (root / "scripts" / entrypoint).read_text()
+    match = re.search(r"^assert_release_checkout_state \\\n.*?\|\| exit 2$", source, re.M | re.S)
+    assert match, f"{entrypoint} does not use the canonical source guard"
+    guard = match.group(0)
+    env = os.environ.copy()
+    def check(expected):
+        result = subprocess.run(["bash", "-c", 'source "$1/scripts/release_common.sh"; ROOT="$2"; eval "$3"', "join-source-check", str(root), str(fixture), guard], env=env, capture_output=True, text=True)
+        assert (result.returncode == 0) == expected, (entrypoint, result.stderr)
+    check(True)
+    with (fixture / "Cargo.lock").open("a") as file:
+        file.write("# temporary release graph\n")
+    check(False)
+    env["NVPN_LOCAL_FIPS_SESSION_CARGO_TOML_SHA256"] = digest("Cargo.toml")
+    env["NVPN_LOCAL_FIPS_SESSION_CARGO_LOCK_SHA256"] = digest("Cargo.lock")
+    check(True)
+    env["NVPN_LOCAL_FIPS_SESSION_CARGO_LOCK_SHA256"] = "0" * 64
+    check(False)
+    env["NVPN_LOCAL_FIPS_SESSION_CARGO_LOCK_SHA256"] = digest("Cargo.lock")
+    (fixture / "source.rs").write_text("fn changed() {}\n")
+    check(False)
+    git("restore", "source.rs")
+    (fixture / "untracked.rs").write_text("unexpected\n")
+    check(False)
+    (fixture / "untracked.rs").unlink()
+    git("restore", "Cargo.lock")
+print("Mobile join source guards preserve exact managed dependency state and reject unrelated changes")
+PY_JOIN
+
 echo "mobile Release provenance harness passed"

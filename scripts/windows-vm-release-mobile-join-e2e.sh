@@ -26,10 +26,9 @@ fi
   echo "Windows/Pixel Release join gate must be controlled by macOS" >&2
   exit 2
 }
-[[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] || {
-  echo "Windows/Pixel Release join gate requires a clean committed candidate" >&2
-  exit 2
-}
+assert_release_checkout_state \
+  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "Windows/Pixel Release join" || exit 2
 APP_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 APP_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 [[ "${NVPN_EXPECTED_APP_GIT_SHA:-}" =~ ^[0-9a-f]{40}$ \

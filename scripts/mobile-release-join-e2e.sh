@@ -26,10 +26,9 @@ resolve_shared_build_metadata "$ROOT"
   echo "Signed Release mobile join gate requires macOS/Xcode" >&2
   exit 2
 }
-[[ -z "$(git -C "$ROOT" status --porcelain)" ]] || {
-  echo "Signed Release mobile join gate requires a clean committed candidate" >&2
-  exit 2
-}
+assert_release_checkout_state \
+  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "Signed Release mobile join" || exit 2
 HARNESS_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 HARNESS_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 APP_GIT_SHA="${NVPN_EXPECTED_APP_GIT_SHA:-}"

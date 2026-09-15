@@ -54,10 +54,9 @@ chmod 700 "$PRIVATE_DIR"
 
 APP_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 APP_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
-[[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] || {
-  echo "Linux desktop/mobile join requires a clean committed candidate" >&2
-  exit 2
-}
+assert_release_checkout_state \
+  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "Linux desktop/mobile join" || exit 2
 [[ "${NVPN_EXPECTED_APP_GIT_SHA:-}" =~ ^[0-9a-f]{40}$ \
   && "$APP_GIT_SHA" == "$NVPN_EXPECTED_APP_GIT_SHA" ]] || {
   echo "Set NVPN_EXPECTED_APP_GIT_SHA to the exact committed candidate" >&2
