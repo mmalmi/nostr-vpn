@@ -294,7 +294,75 @@ verify_bundle() {
     >/dev/null
 }
 
+cache_bundle_peer() {
+  verify_bundle || return 1
+  python3 - "$ROOT" "$BUNDLE_DIR" \
+    "${NVPN_MACOS_FIPS_PEER_CACHE_DIR:-${ARTIFACT_ROOT:-$ROOT/artifacts}/macos-release-fips-peer}" \
+    "$APP_GIT_SHA" "$APP_GIT_TREE" \
+    "$RELEASE_JOIN_FIPS_SHA" "$RELEASE_JOIN_FIPS_TREE" "$RELEASE_JOIN_FIPS_VERSION" <<'PY_PEER'
+import errno
+import json
+import os
+import pathlib
+import shutil
+import subprocess
+import sys
+import tempfile
+
+root, bundle, cache, app_sha, app_tree, fips_sha, fips_tree, fips_version = sys.argv[1:]
+bundle = pathlib.Path(bundle)
+cache = pathlib.Path(cache)
+if cache.is_symlink():
+    raise SystemExit("Linux peer cache root must not be a symlink")
+cache.mkdir(parents=True, exist_ok=True)
+target = "x86_64-unknown-linux-musl"
+final = cache / f"{app_sha}-{fips_sha}-{target}"
+verifier = str(pathlib.Path(root) / "scripts/verify-host-linux-peer-artifact.py")
+
+def verify(directory):
+    subprocess.run([
+        sys.executable, verifier, str(directory / "receipt.json"),
+        str(directory / "nvpn"), app_sha, app_tree, fips_sha, fips_tree,
+        fips_version, target,
+    ], check=True)
+
+if final.exists() or final.is_symlink():
+    if final.is_symlink() or not final.is_dir():
+        raise SystemExit("Linux peer cache entry is unsafe")
+    verify(final)
+else:
+    receipt = json.loads((bundle / "receipt.json").read_text())
+    artifact = receipt["artifacts"]["muslCli"]
+    remote = receipt["builderMode"] == "remote-native"
+    payload = {
+        "schema": 1, "builtOnHostMac": not remote, "builtOnRemoteVm": remote,
+        "appGitSha": app_sha, "appGitTree": app_tree,
+        "fipsGitSha": fips_sha, "fipsGitTree": fips_tree,
+        "fipsVersion": fips_version, "target": target,
+        "binarySha256": artifact["sha256"], "binarySize": artifact["size"],
+    }
+    if remote:
+        payload.update(builtOnMacosUtm=False, buildExecutionHostClass="remote-linux-builder")
+    temporary = pathlib.Path(tempfile.mkdtemp(prefix=".bundle-peer-", dir=cache))
+    try:
+        shutil.copyfile(bundle / artifact["file"], temporary / "nvpn")
+        (temporary / "nvpn").chmod(0o555)
+        (temporary / "receipt.json").write_text(json.dumps(payload, indent=2) + "\n")
+        verify(temporary)
+        try:
+            os.rename(temporary, final)
+        except OSError as error:
+            if error.errno not in (errno.EEXIST, errno.ENOTEMPTY) or final.is_symlink():
+                raise
+            verify(final)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary)
+PY_PEER
+}
+
 if verify_bundle; then
+  cache_bundle_peer
   printf '%s\n' "$BUNDLE_DIR"
   exit 0
 fi
@@ -311,6 +379,7 @@ HOST_BUILD_LOCK_HELD=1
 # A second process can finish the exact bundle while this process waits for
 # the kernel lock. Re-verify under the lock before spending any build work.
 if verify_bundle; then
+  cache_bundle_peer
   printf '%s\n' "$BUNDLE_DIR"
   exit 0
 fi
@@ -788,5 +857,5 @@ mv "$TEMP_DIR/final" "$BUNDLE_DIR"
 find "$TEMP_DIR" -xdev -depth -mindepth 1 -delete
 rmdir "$TEMP_DIR"
 TEMP_DIR=""
-verify_bundle
+cache_bundle_peer
 printf '%s\n' "$BUNDLE_DIR"

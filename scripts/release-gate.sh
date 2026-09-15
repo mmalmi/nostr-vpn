@@ -2609,14 +2609,6 @@ main() {
     run_linux_arm64_cli_gate
   platform_preparation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
-  # Linux and Windows import this exact host-built peer during their underlay
-  # proofs. A cache miss must compile here, before macOS recovery deadlines or
-  # any other network/idle measurement can compete with that compiler load.
-  release_gate_parallel_start \
-    "Desktop underlay peer preparation" \
-    prepare_desktop_underlay_peer
-  platform_preparation_lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
-
   release_gate_parallel_wait_group "${platform_preparation_lanes[@]}"
   if [[ -e "$WINDOWS_PLATFORM_PREPARATION_RECEIPT" ]]; then
     platform_preparation_receipt_valid \
@@ -2646,6 +2638,12 @@ main() {
   if [[ -e "$HOST_LINUX_VM_BUNDLE_PATH_RECEIPT" ]]; then
     load_host_linux_vm_bundle_path_receipt
   fi
+  # The verified Linux bundle seeds the same immutable musl peer used by
+  # desktop network tests. Reuse it after preparation rather than starting a
+  # second cross-build, and finish before any network/idle measurement.
+  release_gate_timing_run \
+    "Desktop underlay peer preparation" \
+    prepare_desktop_underlay_peer
   release_gate_timing_run \
     "Prepare exact local FIPS Cargo graph" \
     prepare_release_cargo_config

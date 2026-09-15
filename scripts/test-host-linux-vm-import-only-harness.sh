@@ -674,6 +674,55 @@ verify_fixture() {
 verify_fixture remote-native \
   | grep -Fq HOST_LINUX_VM_BUNDLE_VERIFIED
 
+# Exercise the production peer-cache writer against the fully verified bundle.
+# Its cache must preserve the native binary and reject a different candidate.
+(
+  # Bash 3.2 cannot reliably source a heredoc-bearing function from /dev/fd.
+  sed -n '/^verify_bundle() {$/,/^}$/p' "$ROOT/scripts/prepare-host-linux-vm-bundle.sh" >"$backup/peer-functions.sh"
+  sed -n '/^cache_bundle_peer() {$/,/^}$/p' "$ROOT/scripts/prepare-host-linux-vm-bundle.sh" >>"$backup/peer-functions.sh"
+  source "$backup/peer-functions.sh"
+  BUNDLE_DIR="$tmp" RECEIPT="$tmp/receipt.json"
+  APP_GIT_SHA="$app_sha" APP_GIT_TREE="$app_tree" APP_VERSION="$app_version"
+  RELEASE_JOIN_FIPS_SHA="$fips_sha" RELEASE_JOIN_FIPS_TREE="$fips_tree"
+  RELEASE_JOIN_FIPS_VERSION="$fips_version"
+  ROOT_CARGO_LOCK_SHA256="$root_lock_sha" ROOT_REALIZED_CARGO_LOCK_SHA256="$root_realized_lock_sha"
+  LINUX_CARGO_LOCK_SHA256="$linux_lock_sha" LINUX_REALIZED_CARGO_LOCK_SHA256="$linux_realized_lock_sha"
+  TARGET=x86_64-unknown-linux-gnu BUILDER_MODE=remote-native RUST_TOOLCHAIN="$rust_toolchain"
+  DOCKERFILE_SHA256="$dockerfile_sha" CONTAINER_PAYLOAD_SHA256="$payload_sha"
+  FIPS_PATCH_PACKAGES=("${patch_specs[@]}")
+  NVPN_MACOS_FIPS_PEER_CACHE_DIR="$backup/peer-cache"
+  cache_bundle_peer
+  peer="$NVPN_MACOS_FIPS_PEER_CACHE_DIR/$app_sha-$fips_sha-x86_64-unknown-linux-musl"
+  cmp "$tmp/nvpn-x86_64-unknown-linux-musl" "$peer/nvpn"
+  jq -e '.builtOnHostMac == false and .builtOnRemoteVm == true
+    and .buildExecutionHostClass == "remote-linux-builder"' "$peer/receipt.json" >/dev/null
+  cache_bundle_peer
+  cmp "$tmp/nvpn-x86_64-unknown-linux-musl" "$peer/nvpn"
+  (
+    NVPN_MACOS_FIPS_PEER_CACHE_DIR="$backup/peer-cache-concurrent"
+    cache_bundle_peer & first_writer=$!
+    cache_bundle_peer & second_writer=$!
+    wait "$first_writer"
+    wait "$second_writer"
+    cmp "$tmp/nvpn-x86_64-unknown-linux-musl" \
+      "$NVPN_MACOS_FIPS_PEER_CACHE_DIR/$app_sha-$fips_sha-x86_64-unknown-linux-musl/nvpn"
+  )
+  if (APP_GIT_SHA="$(printf '9%.0s' {1..40})"; cache_bundle_peer) >/dev/null 2>&1; then
+    fail "peer cache accepted another candidate"
+  fi
+  chmod 0755 "$peer/nvpn"
+  printf 'corruption' >>"$peer/nvpn"
+  chmod 0555 "$peer/nvpn"
+  if cache_bundle_peer >/dev/null 2>&1; then
+    fail "peer cache accepted corrupted compiler output"
+  fi
+  NVPN_MACOS_FIPS_PEER_CACHE_DIR="$backup/peer-cache-symlink"
+  ln -s "$backup/peer-cache" "$NVPN_MACOS_FIPS_PEER_CACHE_DIR"
+  if cache_bundle_peer >/dev/null 2>&1; then
+    fail "peer cache followed a symlink root"
+  fi
+)
+
 cp "$tmp/receipt.json" "$backup/receipt-canonical-remote-native.json"
 for adversary in \
   schema \
