@@ -86,6 +86,7 @@ import {
 import {
   exactFipsPublicationCandidate,
   linuxPublicationVerificationPlan,
+  validateLinuxPublicationBuilder,
   validateWindowsPublicationFipsReceipts,
 } from './release-source-verification.mjs'
 import { completeReleaseGateFromReceipts } from './release-gate-resume.mjs'
@@ -2762,6 +2763,9 @@ function main() {
     return
   }
 
+  if (!options.dryRun && shouldRunStep('linux', options)) {
+    validateLinuxPublicationBuilder({ env })
+  }
   if (!options.dryRun && shouldRunStep('startos', options)) {
     preflightStartosRelease({
       needsWorkspace: !String(env.NVPN_RELEASE_STARTOS_ARTIFACT_DIR ?? '').trim(),
