@@ -477,8 +477,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         let retained = ShippedUIInteraction.replaceText(
             field,
             with: value,
-            in: app,
-            incrementally: value.hasPrefix("npub1")
+            in: app
         )
         XCTAssertTrue(
             retained,
