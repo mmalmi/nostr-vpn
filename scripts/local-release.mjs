@@ -64,7 +64,7 @@ import {
   validateWindowsInstallerGateReceipt,
   validateExactZipMembers,
 } from './release-artifact-provenance-lib.mjs'
-import { inspectStartosReleasePackage } from './startos-release.mjs'
+import { inspectStartosReleasePackage, preflightStartosRelease } from './startos-release.mjs'
 import {
   preflightGithubRelease,
   publishExactGithubRelease,
@@ -2760,6 +2760,12 @@ function main() {
       )
     }
     return
+  }
+
+  if (!options.dryRun && shouldRunStep('startos', options)) {
+    preflightStartosRelease({
+      needsWorkspace: !String(env.NVPN_RELEASE_STARTOS_ARTIFACT_DIR ?? '').trim(),
+    })
   }
 
   const steps = [

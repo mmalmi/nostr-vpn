@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, createPrivateKey } from 'node:crypto'
 import {
   copyFileSync,
   createReadStream,
+  existsSync,
   mkdirSync,
   readFileSync,
   rmSync,
@@ -123,6 +124,25 @@ export function validateStartosCliVersion(output) {
     throw new Error(`StartOS package builder is ${actual || '<missing>'}, expected ${expected}`)
   }
   return actual
+}
+
+export function preflightStartosRelease({ needsWorkspace = true } = {}) {
+  validateStartosCliVersion(run('start-cli', ['--version'], { capture: true }))
+  if (!needsWorkspace) return
+
+  for (let directory = repoRoot; ; directory = dirname(directory)) {
+    const keyPath = join(directory, '.startos', 'build.key.pem')
+    if (existsSync(keyPath)) {
+      if (createPrivateKey(readFileSync(keyPath)).asymmetricKeyType !== 'ed25519') {
+        throw new Error('The StartOS workspace requires an Ed25519 package-signing key.')
+      }
+      return
+    }
+    if (directory === dirname(directory)) break
+  }
+  throw new Error(
+    'Missing StartOS packaging workspace. Run start-cli s9pk init-workspace in the checkout parent and retain the existing package-signing key as .startos/build.key.pem; see CONTRIBUTING.md.',
+  )
 }
 
 export function resolveStartosTarget(value) {
@@ -317,9 +337,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   if (!options.dryRun) {
-    validateStartosCliVersion(
-      run('start-cli', ['--version'], { capture: true }),
-    )
+    preflightStartosRelease()
   }
 
   const outputDir = resolve(repoRoot, options.outputDir || 'dist')
