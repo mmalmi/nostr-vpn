@@ -170,13 +170,28 @@ fi
 perl -0pi -e 's#exclude = \["linux"\]#exclude = ["linux", ".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"]#' \
   "$WORK_DIR/Cargo.toml"
 
+# Keep Cargo metadata on Docker's native filesystem, but retain it across
+# containers. An immutable builder image and target own one serialized cache.
+builder_info="$(run_builder_docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$IMAGE" 2>/dev/null)" || builder_info=""
+if [[ -z "$builder_info" || ( -n "$DOCKER_PLATFORM" && "${builder_info#* }" != "$DOCKER_PLATFORM" ) ]]; then
+  pull_args=()
+  [[ -z "$DOCKER_PLATFORM" ]] || pull_args+=(--platform "$DOCKER_PLATFORM")
+  run_builder_docker pull "${pull_args[@]}" "$IMAGE" >&2
+  builder_info="$(run_builder_docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$IMAGE")"
+fi
+builder_id="${builder_info%% *}"
+cache_volume="nvpn-musl-${TARGET}-$(id -u)-$(id -g)-${builder_id#sha256:}"
+run_builder_container -u 0 -v "$cache_volume:/tmp/nvpn-cache" \
+  --entrypoint chown "$builder_id" "$(id -u):$(id -g)" /tmp/nvpn-cache
+
 mkdir -p "$TARGET_DIR/$TARGET/release"
 rm -f "$TARGET_DIR/$TARGET/release/nvpn"
 run_builder_container \
   -u "$(id -u):$(id -g)" \
   -v "$WORK_DIR":/home/rust/src \
   -v "$TARGET_DIR":/home/rust/output \
-  -e CARGO_HOME=/home/rust/src/.cargo-docker \
+  -v "$cache_volume":/tmp/nvpn-cache \
+  -e CARGO_HOME=/tmp/nvpn-cache/cargo \
   -e HOME=/home/rust/src \
   -e SOURCE_DATE_EPOCH \
   -e CARGO_INCREMENTAL \
@@ -184,7 +199,7 @@ run_builder_container \
   -e LC_ALL \
   -e TZ \
   "${DOCKER_ENV[@]}" \
-  "$IMAGE" \
+  "$builder_id" \
   bash -se -- "$TARGET" <<'CONTAINER'
 set -euo pipefail
 
@@ -194,7 +209,10 @@ cd /home/rust/src
 # Docker Desktop bind mounts can expose a just-renamed rmeta file before its
 # contents are readable by another parallel rustc process. Only copy the
 # completed binary through the host bind mount.
-export CARGO_TARGET_DIR=/tmp/nvpn-target
+export CARGO_TARGET_DIR=/tmp/nvpn-cache/target
+# Hold the cache through the output copy, including builds from other worktrees.
+exec 9>/tmp/nvpn-cache/build.lock
+flock 9
 OUTPUT_ROOT=/home/rust/output
 
 cargo_config_args=()
@@ -345,12 +363,12 @@ if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
 fi
 cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" \
   "${cargo_feature_args[@]}" -p nvpn --bin nvpn --release --target "$TARGET"
-if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
-  "${TARGET}-strip" "$CARGO_TARGET_DIR/$TARGET/release/nvpn"
-fi
 install -D -m 0755 \
   "$CARGO_TARGET_DIR/$TARGET/release/nvpn" \
   "$OUTPUT_ROOT/$TARGET/release/nvpn"
+if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
+  "${TARGET}-strip" "$OUTPUT_ROOT/$TARGET/release/nvpn"
+fi
 CONTAINER
 
 BIN="$TARGET_DIR/$TARGET/release/nvpn"
