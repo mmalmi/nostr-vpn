@@ -489,6 +489,14 @@ fn fips_tunnel_config_from_app(
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let _ = underlay_interface;
     config.ethernet_underlay = ethernet_underlay.cloned();
+    // Resolve bypass hosts only after the IP underlay is known. Browser-backed
+    // Ethernet cannot use physical IP routes or DNS before the tunnel starts.
+    #[cfg(target_os = "linux")]
+    if (ethernet_underlay.is_none() || underlay_interface.is_some())
+        && route_targets_require_endpoint_bypass(&config.route_targets)
+    {
+        config.control_plane_bypass_hosts = control_plane_bypass_ipv4_hosts(app);
+    }
     for (kind, recipient) in pending_control_recipients {
         match crate::fips_private_mesh::prioritize_fips_control_recipient(
             config.endpoint_peers.clone(),
