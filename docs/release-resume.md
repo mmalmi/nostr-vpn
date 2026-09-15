@@ -85,6 +85,16 @@ to chase the prompt. Grouping tests reduces idle gaps but does not guarantee a
 single prompt. Simulator tests remain independent of physical devices and cannot
 replace the real-device VPN evidence.
 
+A device passcode is not mandatory for UI automation. For a dedicated test phone,
+the owner can remove it in Settings > Face ID & Passcode > Turn Passcode Off.
+[Apple's developer guidance](https://developer.apple.com/forums/thread/693273)
+confirms that this removes the recurring automation passcode prompt; there is no
+supported way to automate entering an enabled passcode. Removing it also removes
+the phone's passcode protection. Do not change a personal phone's security
+settings automatically. With a passcode retained, arrange an attended testing
+window and start the prepared runner while the owner is ready to answer Apple's
+prompt; an unlocked screen alone does not establish automation authorization.
+
 ## Inspecting and resuming a gate
 
 Inspect actual phase status without reading long logs:
