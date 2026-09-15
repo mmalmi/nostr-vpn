@@ -168,17 +168,26 @@ test('full gate completes and seals one serial phone window before the unattende
   assert.match(result.stdout, /Release gate passed/)
 })
 
-test('cold desktop peer preparation joins before network timing starts', () => {
+test('desktop peer reuse follows native preparation and precedes network timing', () => {
   const result = runRoute('main', { full: true })
   assert.equal(result.status, 0, result.stderr)
   const events = result.stdout.split('\n')
-  const peer = events.indexOf('lane:Desktop underlay peer preparation')
-  const joined = events.indexOf('joined-functional-lanes')
+  const nativePrepared = events.indexOf('joined-functional-lanes')
+  const peer = events.indexOf('check:prepare_desktop_underlay_peer')
+  const joined = events.indexOf('joined-functional-lanes', peer + 1)
   const timing = events.indexOf('check:run_local_fips_websocket_timing_regression_gate')
   const desktop = events.indexOf('lane:macOS post-build UI, idle CPU, and desktop network')
-  assert.ok(peer >= 0 && peer < joined, 'cold peer compilation must join platform preparation')
+  assert.ok(nativePrepared >= 0 && nativePrepared < peer && peer < joined,
+    'peer reuse must follow completed native preparation and precede validation')
   assert.ok(joined < timing && timing < desktop, 'network measurements must follow joined builds')
-  assert.equal(events.filter(event => event === 'lane:Desktop underlay peer preparation').length, 1)
+  assert.equal(events.filter(event => event === 'check:prepare_desktop_underlay_peer').length, 1)
+})
+
+test('desktop peer preparation failure stops before network measurements', () => {
+  const result = runRoute('main', { full: true, failCheck: 'prepare_desktop_underlay_peer' })
+  assert.equal(result.status, 75, result.stderr)
+  assert.doesNotMatch(result.stdout, /check:run_local_fips_websocket_timing_regression_gate/)
+  assert.doesNotMatch(result.stdout, /lane:macOS post-build UI, idle CPU, and desktop network/)
 })
 
 test('desktop peer preparation builds once for reachable enabled consumers and propagates failure', () => {
