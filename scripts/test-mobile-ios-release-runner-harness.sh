@@ -518,7 +518,8 @@ set +e
     "$TEMP_ROOT/device-no-marker.log" \
     "$TEMP_ROOT/device-no-marker-host-markers.tsv" \
     fixture-device "" \
-    bash -c 'cat "$1"; sleep 10' _ "$stale_device_marker"
+    bash -c 'cat "$1"; sleep 10 & printf "%s\n" "$!" >"$2"; wait' _ \
+      "$stale_device_marker" "$TEMP_ROOT/device-no-marker-child.pid"
 )
 device_no_marker_status=$?
 set -e
@@ -543,10 +544,12 @@ run_bounded missing-marker 5 2 NEVER \
   bash -c 'printf "ordinary failure\n"; exit 7'
 missing_status=$?
 run_bounded launch-timeout 5 1 FIRST \
-  bash -c 'sleep 10'
+  bash -c 'sleep 10 & printf "%s\n" "$!" >"$1"; wait' _ \
+    "$TEMP_ROOT/launch-timeout-child.pid"
 launch_status=$?
 run_bounded total-timeout 1 5 FIRST \
-  bash -c 'trap "" TERM; printf "FIRST\n"; (trap "" TERM; sleep 10) & wait'
+  bash -c 'trap "" TERM; printf "FIRST\n"; (trap "" TERM; exec sleep 10) & printf "%s\n" "$!" >"$1"; wait' _ \
+    "$TEMP_ROOT/total-timeout-child.pid"
 total_status=$?
 set -e
 [[ "$missing_status" -eq 125 ]] \
@@ -555,9 +558,15 @@ set -e
   || fail "launch timeout returned $launch_status instead of 125"
 [[ "$total_status" -eq 124 ]] \
   || fail "total timeout returned $total_status instead of 124"
-if ps -axo command= | grep -F 'sleep 10' | grep -v grep >/dev/null; then
-  fail "bounded runner left its fixture child running"
-fi
+for phase in device-no-marker launch-timeout total-timeout; do
+  [[ -s "$TEMP_ROOT/$phase-child.pid" ]] || fail "$phase did not record its child"
+  fixture_child_pid="$(<"$TEMP_ROOT/$phase-child.pid")"
+  [[ "$fixture_child_pid" =~ ^[1-9][0-9]*$ ]] || fail "$phase recorded an invalid child"
+  if ps -o stat= -p "$fixture_child_pid" 2>/dev/null \
+    | awk 'NF && $1 !~ /^Z/ { alive = 1 } END { exit !alive }'; then
+    fail "bounded runner left its $phase fixture child running"
+  fi
+done
 
 spec="$(
   python3 - <<'PY'
