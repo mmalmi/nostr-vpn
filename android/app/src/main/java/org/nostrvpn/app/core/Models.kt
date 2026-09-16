@@ -159,6 +159,7 @@ data class PaidExitSellerState(
     val graceUnits: Long = 0,
     val graceText: String = "",
     val countryCode: String = "",
+    val networkClass: String = "unknown",
     val asn: Int = 0,
     val ipv4: Boolean = false,
     val ipv6: Boolean = false,
@@ -248,6 +249,10 @@ data class PaidRoutePaymentActionState(
 )
 
 data class PaidRouteOfferState(
+    val personalRating: Long = 0,
+    val canRate: Boolean = false,
+    val hasRating: Boolean = false,
+    val ratingScore: Long = 0,
     val key: String = "",
     val offerId: String = "",
     val sellerNpub: String = "",
@@ -262,6 +267,7 @@ data class PaidRouteOfferState(
     val graceUnits: Long = 0,
     val graceText: String = "",
     val countryCode: String = "",
+    val networkClass: String = "unknown",
     val asn: Int = 0,
     val ipv4: Boolean = false,
     val ipv6: Boolean = false,
@@ -296,6 +302,9 @@ data class PaidRouteChannelState(
 )
 
 data class PaidRouteSessionState(
+    val sellerNpub: String = "",
+    val personalRating: Long = 0,
+    val canRate: Boolean = false,
     val sessionId: String = "",
     val leaseId: String = "",
     val channelId: String = "",
@@ -538,6 +547,7 @@ private fun JSONObject?.toPaidExitSellerState(): PaidExitSellerState {
         graceUnits = optLong("graceUnits"),
         graceText = optString("graceText"),
         countryCode = optString("countryCode"),
+        networkClass = optString("networkClass", "unknown"),
         asn = optInt("asn"),
         ipv4 = optBoolean("ipv4"),
         ipv6 = optBoolean("ipv6"),
@@ -673,6 +683,10 @@ private fun JSONArray?.toPaidRouteWalletMintList(): List<PaidRouteWalletMintStat
 
 private fun JSONArray?.toPaidRouteOfferList(): List<PaidRouteOfferState> = mapObjects { item ->
     PaidRouteOfferState(
+        personalRating = item.optLong("personalRating"),
+        canRate = item.optBoolean("canRate"),
+        hasRating = item.optBoolean("hasRating"),
+        ratingScore = item.optLong("ratingScore"),
         key = item.optString("key"),
         offerId = item.optString("offerId"),
         sellerNpub = item.optString("sellerNpub"),
@@ -687,6 +701,7 @@ private fun JSONArray?.toPaidRouteOfferList(): List<PaidRouteOfferState> = mapOb
         graceUnits = item.optLong("graceUnits"),
         graceText = item.optString("graceText"),
         countryCode = item.optString("countryCode"),
+        networkClass = item.optString("networkClass", "unknown"),
         asn = item.optInt("asn"),
         ipv4 = item.optBoolean("ipv4"),
         ipv6 = item.optBoolean("ipv6"),
@@ -725,6 +740,9 @@ private fun JSONArray?.toPaidRouteChannelList(): List<PaidRouteChannelState> = m
 
 private fun JSONArray?.toPaidRouteSessionList(): List<PaidRouteSessionState> = mapObjects { item ->
     PaidRouteSessionState(
+        sellerNpub = item.optString("sellerNpub"),
+        personalRating = item.optLong("personalRating"),
+        canRate = item.optBoolean("canRate"),
         sessionId = item.optString("sessionId"),
         leaseId = item.optString("leaseId"),
         channelId = item.optString("channelId"),

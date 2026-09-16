@@ -56,6 +56,20 @@ extension RootView {
                         manager.selectPaidAutomaticExit()
                     }
 
+                    if state.internetSource == "paid_automatic" && !state.exitNode.isEmpty {
+                        HStack(spacing: 14) {
+                            if state.exitNodeActive,
+                               let session = state.paidRouteMarket.sessions.first(where: { $0.sellerNpub == state.exitNode && $0.canRate }) {
+                                paidExitRatingButtons(seller: session.sellerNpub, rating: session.personalRating)
+                            }
+                            Button("Try another") { manager.reselectPaidExit() }
+                                .disabled(manager.actionInFlight)
+                                .accessibilityIdentifier("paid-exit-reselect")
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                    }
+
                     routeChoice(
                         title: "Paid Internet · Manual",
                         subtitle: state.internetSource == "paid_manual"

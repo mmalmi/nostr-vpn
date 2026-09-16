@@ -189,7 +189,7 @@ async fn run_command(command: Command) -> Result<()> {
                     let peers = configured_fips_peer_announcements(&app, &network_id);
                     let expected = expected_peer_count(&app);
                     (peers, expected, 0, false, "config")
-            };
+                };
 
             if args.json {
                 let endpoint = status_endpoint(&app, &daemon);
@@ -402,6 +402,16 @@ async fn run_command(command: Command) -> Result<()> {
                     .parse::<InternetSource>()
                     .map_err(anyhow::Error::msg)?;
                 app.set_internet_source(source);
+                #[cfg(feature = "paid-exit")]
+                if source != InternetSource::PaidAutomatic {
+                    let path = paid_route_store_file_path(&config_path);
+                    if path.exists() {
+                        update_paid_route_store(&path, |store| {
+                            store.automatic_reselect_from.clear();
+                            Ok(())
+                        })?;
+                    }
+                }
             }
             if let Some(value) = args.network_id {
                 app.set_active_network_id(&value)?;
@@ -464,16 +474,12 @@ async fn run_command(command: Command) -> Result<()> {
                     app.paid_exit.channel.channel_expiry_secs = value;
                 }
                 if let Some(value) = args.paid_exit_free_probe_units.as_deref() {
-                    app.paid_exit.channel.free_probe_units = paid_exit_parse_traffic_units_arg(
-                        value,
-                        "--paid-exit-free-probe-units",
-                    )?;
+                    app.paid_exit.channel.free_probe_units =
+                        paid_exit_parse_traffic_units_arg(value, "--paid-exit-free-probe-units")?;
                 }
                 if let Some(value) = args.paid_exit_grace_units.as_deref() {
-                    app.paid_exit.channel.grace_units = paid_exit_parse_traffic_units_arg(
-                        value,
-                        "--paid-exit-grace-units",
-                    )?;
+                    app.paid_exit.channel.grace_units =
+                        paid_exit_parse_traffic_units_arg(value, "--paid-exit-grace-units")?;
                 }
             }
             if let Some(value) = args.wireguard_exit_enabled {
@@ -539,7 +545,9 @@ async fn run_command(command: Command) -> Result<()> {
                 || args.exit_dns_custom_doh_bootstrap_ips.is_some()
                 || args.exit_dns_through_exit_servers.is_some();
             if let Some(value) = args.exit_dns_mode {
-                app.exit_dns.mode = value.parse::<ExitDnsMode>().map_err(|error| anyhow!(error))?;
+                app.exit_dns.mode = value
+                    .parse::<ExitDnsMode>()
+                    .map_err(|error| anyhow!(error))?;
             }
             if let Some(value) = args.exit_dns_doh_provider {
                 app.exit_dns.doh_provider = value
@@ -726,7 +734,10 @@ async fn run_command(command: Command) -> Result<()> {
                 })?;
                 let event: nostr_sdk::prelude::Event = serde_json::from_slice(&bytes)
                     .with_context(|| {
-                        format!("failed to decode signed Nostr event {}", args.event.display())
+                        format!(
+                            "failed to decode signed Nostr event {}",
+                            args.event.display()
+                        )
                     })?;
                 let queued = crate::control_pubsub_runtime::queue_control_pubsub_event(
                     &config_path,

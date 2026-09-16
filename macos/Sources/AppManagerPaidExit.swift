@@ -4,6 +4,14 @@ import Foundation
 import SwiftUI
 
 extension AppManager {
+    func reselectPaidExit() {
+        dispatch(.reselectPaidExit, status: "Finding another provider")
+    }
+
+    func ratePaidExit(_ seller: String, rating: Int64) {
+        dispatch(.ratePaidExit(sellerNpub: seller, rating: rating), status: "Saving public rating")
+    }
+
     func setAdvertiseExitNode(_ enabled: Bool) {
         dispatch(.updateSettings(patch: settingsPatch(advertiseExitNode: enabled)), status: "Saving routing")
     }
@@ -21,6 +29,7 @@ extension AppManager {
         freeProbeUnits: String,
         graceUnits: String,
         countryCode: String,
+        networkClass: String,
         asn: String
     ) {
         guard let priceMsatPerGb = UInt64(priceMsatPerGb.trimmingCharacters(in: .whitespacesAndNewlines)) else {
@@ -36,6 +45,7 @@ extension AppManager {
             paidExitFreeProbeUnits: Self.parsePaidExitTrafficUnits(freeProbeUnits),
             paidExitGraceUnits: Self.parsePaidExitTrafficUnits(graceUnits),
             paidExitCountryCode: countryCode,
+            paidExitNetworkClass: networkClass,
             paidExitAsn: asn
         )), status: "Saving seller settings")
     }

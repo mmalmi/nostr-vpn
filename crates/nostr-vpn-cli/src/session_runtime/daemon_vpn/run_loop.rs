@@ -25,6 +25,8 @@ loop {
             }
             drain_platform_network_changes(&mut platform_network_change_rx);
             network_event_pending = true;
+            #[cfg(feature = "paid-exit")]
+            exit_probe_feedback.reset();
             last_network_sample_diagnostic.clear();
             eprintln!(
                 "daemon: platform network change event; sampling physical route; received_unix_ms={}",
@@ -255,6 +257,8 @@ loop {
                     continue;
                 };
                 network_settle_rechecks = 0;
+                #[cfg(feature = "paid-exit")]
+                exit_probe_feedback.reset();
                 network_refresh_attempt = Some(attempt);
             }
             if platform_network_refresh_waits_for_underlay(

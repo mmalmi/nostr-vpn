@@ -120,10 +120,7 @@ extension AppManager {
     }
 
     func selectPaidManualExit() {
-        dispatch(
-            .updateSettings(patch: settingsPatch(internetSource: "paid_manual")),
-            status: "Selecting paid internet"
-        )
+        paidExitChooserRequested = true
     }
 
     func setWalletFiatEnabled(_ enabled: Bool) {

@@ -37,6 +37,10 @@ public static class NativeActions
     public static string SetManualPaidExitProvider(string provider) => AppCoreClient.Action(new { type = "set_manual_paid_exit_provider", provider });
     public static string ClearManualPaidExitProvider() => AppCoreClient.Action(new { type = "clear_manual_paid_exit_provider" });
     public static string SelectPaidRouteSession(string sessionId, bool connect) => AppCoreClient.Action(new { type = "select_paid_route_session", sessionId, connect });
+    public static string ReselectPaidExit() => AppCoreClient.Action(new { type = "reselect_paid_exit" });
+
+    public static string RatePaidExit(string sellerNpub, long rating) => AppCoreClient.Action(new { type = "rate_paid_exit", sellerNpub, rating });
+
     public static string ProbePaidRouteSession(string sessionId, ulong timeoutSecs = 5) => AppCoreClient.Action(new { type = "probe_paid_route_session", sessionId, timeoutSecs });
     public static string OpenPaidRouteChannelFromWallet(string sessionId, string? mintUrl = null, ulong? paidMsat = null, ulong? maxAmountPerOutput = null, string? keysetId = null) => AppCoreClient.Action(new { type = "open_paid_route_channel_from_wallet", sessionId, mintUrl, paidMsat, maxAmountPerOutput, keysetId });
     public static string SignPaidRoutePaymentEnvelopeFromWallet(string sessionId, string kind = "balance-update", ulong? deliveredUnits = null, ulong? paidMsat = null) => AppCoreClient.Action(new { type = "sign_paid_route_payment_envelope_from_wallet", sessionId, kind, deliveredUnits, paidMsat });

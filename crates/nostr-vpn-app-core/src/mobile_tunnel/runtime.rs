@@ -48,8 +48,8 @@ impl MobileTunnel {
                 launch.signed_roster,
                 non_empty_path(&launch.private_state_config_path),
             ))
-                .await
-                .context("mobile FIPS startup task failed")?
+            .await
+            .context("mobile FIPS startup task failed")?
         })?;
         mobile_debug_log("MobileTunnel::start start_async returned");
         Ok(Self {
@@ -100,8 +100,7 @@ impl MobileTunnel {
         let scope = mobile_lan_discovery_scope(&config.network_id);
         let initial_peers = config.peers.clone();
         let config_path = non_empty_path(&config.config_path);
-        let private_state_config_path =
-            private_state_config_path.or_else(|| config_path.clone());
+        let private_state_config_path = private_state_config_path.or_else(|| config_path.clone());
         let runtime_state_path = private_state_config_path
             .as_deref()
             .and_then(mobile_runtime_state_path);
@@ -169,18 +168,17 @@ impl MobileTunnel {
             .as_deref()
             .map(nostr_vpn_core::paid_route_store::paid_route_store_file_path)
         {
-            let provider = app_config
+            let pubsub_app = app_config
                 .read()
                 .map_err(|_| anyhow!("mobile app config lock poisoned"))?
-                .manual_paid_exit_provider
                 .clone();
-            if !provider.is_default() {
+            if pubsub_app.nostr.pubsub.enabled() {
                 let endpoint = Arc::clone(&endpoint);
                 tasks.push(tokio::spawn(async move {
                     if let Err(error) =
-                        import_mobile_manual_paid_exit_offer(endpoint, provider, store_path).await
+                        run_mobile_paid_exit_pubsub(endpoint, pubsub_app, store_path).await
                     {
-                        tracing::warn!(?error, "mobile: manual paid exit offer import stopped");
+                        tracing::warn!(?error, "mobile: paid exit pubsub stopped");
                     }
                 }));
             }
@@ -485,11 +483,9 @@ impl MobileTunnel {
                 };
                 let mut roster_sync = MobileRosterSyncState::default();
                 loop {
-                    if let Err(error) = sync_mobile_signed_roster_with_connected_peers(
-                        &context,
-                        &mut roster_sync,
-                    )
-                    .await
+                    if let Err(error) =
+                        sync_mobile_signed_roster_with_connected_peers(&context, &mut roster_sync)
+                            .await
                     {
                         tracing::warn!(?error, "mobile: failed to sync signed roster");
                     }
@@ -655,17 +651,8 @@ impl MobileTunnel {
     }
 
     #[cfg(target_os = "ios")]
-    pub(crate) fn send_packet_flow_batch(
-        &self,
-        bytes: &[u8],
-        lengths: &[usize],
-    ) -> Result<()> {
-        send_ios_packet_flow_batch(
-            &self.outbound_tx,
-            &self.tun_counters,
-            bytes,
-            lengths,
-        )
+    pub(crate) fn send_packet_flow_batch(&self, bytes: &[u8], lengths: &[usize]) -> Result<()> {
+        send_ios_packet_flow_batch(&self.outbound_tx, &self.tun_counters, bytes, lengths)
     }
 
     pub(crate) fn handle_underlay_network_change(&self) -> Result<MobileNetworkChangeOutcome> {

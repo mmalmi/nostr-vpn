@@ -98,6 +98,11 @@ object NativeActions {
     fun selectPaidRouteSession(sessionId: String, connect: Boolean) =
         action("select_paid_route_session", "sessionId" to sessionId, "connect" to connect)
 
+    fun reselectPaidExit() = action("reselect_paid_exit")
+
+    fun ratePaidExit(sellerNpub: String, rating: Long) =
+        action("rate_paid_exit").put("sellerNpub", sellerNpub).put("rating", rating)
+
     fun probePaidRouteSession(sessionId: String, timeoutSecs: Long) =
         action("probe_paid_route_session", "sessionId" to sessionId, "timeoutSecs" to timeoutSecs)
 

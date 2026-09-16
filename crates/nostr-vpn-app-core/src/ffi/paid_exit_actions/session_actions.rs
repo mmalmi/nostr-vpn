@@ -1,4 +1,74 @@
 impl NativeAppRuntime {
+    pub(super) fn reselect_paid_exit(&mut self) -> Result<()> {
+        update_paid_route_store(&self.paid_route_store_path(), |store| {
+            store.request_exit_reselection(&self.config, unix_timestamp())
+        })?;
+        // Keep the current route until the daemon can safely replace it.
+        self.config.exit_node_leak_protection = true;
+        self.save_reload_and_refresh()?;
+        if self.mobile_runtime {
+            self.select_mobile_automatic_paid_exit()?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn rate_paid_exit(&mut self, seller_npub: &str, rating: i64) -> Result<()> {
+        update_paid_route_store(&self.paid_route_store_path(), |store| {
+            store.rate_exit(&mut self.config, seller_npub, rating, unix_timestamp())
+        })?;
+        self.save_reload_and_refresh()?;
+        if self.mobile_runtime
+            && rating < 0
+            && self.config.exit_node.is_empty()
+            && self.config.internet_source == InternetSource::PaidAutomatic
+        {
+            self.select_mobile_automatic_paid_exit()?;
+        }
+        Ok(())
+    }
+
+    fn select_mobile_automatic_paid_exit(&mut self) -> Result<()> {
+        let path = self.paid_route_store_path();
+        let store = load_paid_route_store(&path)?;
+        let Ok(selection) = store.select_automatic_offer(unix_timestamp()) else {
+            return Ok(());
+        };
+        // Reuse a paid session when possible; never discard its channel funds.
+        let existing = store
+            .sessions
+            .values()
+            .find(|record| {
+                let Some(channel) = store.channels.get(&record.session.payment.channel_id) else {
+                    return false;
+                };
+                channel.role == PaidRouteChannelRole::Buyer
+                    && nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+                        &channel.counterparty_npub,
+                        &channel.offer_id,
+                    ) == selection.offer_key
+                    && store
+                        .buyer_session_allows_routing(&record.session.session_id, unix_timestamp())
+                        .unwrap_or(false)
+            })
+            .map(|record| record.session.session_id.clone());
+        if let Some(session) = existing {
+            self.select_paid_route_session(&session, true, InternetSource::PaidAutomatic)?;
+        } else {
+            self.buy_paid_route_offer(
+                &selection.offer_key,
+                Some(&selection.mint_url),
+                Some(selection.channel_capacity_sat),
+                InternetSource::PaidAutomatic,
+            )?;
+        }
+        update_paid_route_store(&path, |current| {
+            if current.automatic_reselect_from == store.automatic_reselect_from {
+                current.automatic_reselect_from.clear();
+            }
+            Ok(())
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn record_paid_route_probe(
         &mut self,
@@ -107,59 +177,59 @@ impl NativeAppRuntime {
 
         #[cfg(any(target_os = "ios", target_os = "android"))]
         {
-        let buyer_npub = self
-            .config
-            .nostr_keys()?
-            .public_key()
-            .to_bech32()
-            .context("failed to encode buyer npub")?;
-        let store_path = self.paid_route_store_path();
-        let store = load_paid_route_store(&store_path)?;
-        let request = paid_route_wallet_channel_open_request(
-            &store,
-            session_id,
-            mint_url,
-            paid_msat,
-            max_amount_per_output,
-            keyset_id,
-        )?;
-        let opened = self.cashu_wallet()?.open_spilman_channel(request)?;
-        let payment = update_paid_route_store(&store_path, |store| {
-            store.attach_buyer_spilman_channel(AttachPaidRouteBuyerSpilmanChannelRequest {
-                session_id: session_id.to_string(),
-                channel_id: opened.channel.channel_id.clone(),
-                cashu_unit: opened.channel.unit.clone(),
-                capacity_sat: opened.channel.capacity_sat,
-                paid_msat: Some(opened.channel.opening_paid_msat),
-                payment: opened.channel.payment.clone(),
-                now_unix: unix_timestamp(),
+            let buyer_npub = self
+                .config
+                .nostr_keys()?
+                .public_key()
+                .to_bech32()
+                .context("failed to encode buyer npub")?;
+            let store_path = self.paid_route_store_path();
+            let store = load_paid_route_store(&store_path)?;
+            let request = paid_route_wallet_channel_open_request(
+                &store,
+                session_id,
+                mint_url,
+                paid_msat,
+                max_amount_per_output,
+                keyset_id,
+            )?;
+            let opened = self.cashu_wallet()?.open_spilman_channel(request)?;
+            let payment = update_paid_route_store(&store_path, |store| {
+                store.attach_buyer_spilman_channel(AttachPaidRouteBuyerSpilmanChannelRequest {
+                    session_id: session_id.to_string(),
+                    channel_id: opened.channel.channel_id.clone(),
+                    cashu_unit: opened.channel.unit.clone(),
+                    capacity_sat: opened.channel.capacity_sat,
+                    paid_msat: Some(opened.channel.opening_paid_msat),
+                    payment: opened.channel.payment.clone(),
+                    now_unix: unix_timestamp(),
+                })?;
+                store.build_buyer_payment_envelope(BuildPaidRouteBuyerPaymentEnvelopeRequest {
+                    session_id: session_id.to_string(),
+                    buyer_npub: buyer_npub.clone(),
+                    kind: BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
+                    payment: opened.channel.payment.clone(),
+                    delivered_units: None,
+                    paid_msat: Some(opened.channel.opening_paid_msat),
+                    now_unix: unix_timestamp(),
+                })
             })?;
-            store.build_buyer_payment_envelope(BuildPaidRouteBuyerPaymentEnvelopeRequest {
-                session_id: session_id.to_string(),
-                buyer_npub: buyer_npub.clone(),
-                kind: BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
-                payment: opened.channel.payment.clone(),
-                delivered_units: None,
-                paid_msat: Some(opened.channel.opening_paid_msat),
-                now_unix: unix_timestamp(),
-            })
-        })?;
-        self.paid_route_payment_last_action =
-            paid_route_payment_action_state("open_channel", &json!({ "payment": payment }))?;
-        let amount_sat = opened.wallet_send.amount_sat;
-        let fee_sat = opened.wallet_send.send_fee_sat;
-        self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
-            kind: "open_channel".to_string(),
-            status_text: format!("Opened payment channel with {amount_sat} sat"),
-            mint_url: opened.wallet_send.mint_url,
-            amount_sat,
-            amount_text: paid_route_sat_text(amount_sat),
-            fee_sat,
-            fee_text: paid_route_fee_text(fee_sat),
-            operation_id: opened.wallet_send.operation_id,
-            ..NativePaidRouteWalletActionState::default()
-        };
-        Ok(())
+            self.paid_route_payment_last_action =
+                paid_route_payment_action_state("open_channel", &json!({ "payment": payment }))?;
+            let amount_sat = opened.wallet_send.amount_sat;
+            let fee_sat = opened.wallet_send.send_fee_sat;
+            self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
+                kind: "open_channel".to_string(),
+                status_text: format!("Opened payment channel with {amount_sat} sat"),
+                mint_url: opened.wallet_send.mint_url,
+                amount_sat,
+                amount_text: paid_route_sat_text(amount_sat),
+                fee_sat,
+                fee_text: paid_route_fee_text(fee_sat),
+                operation_id: opened.wallet_send.operation_id,
+                ..NativePaidRouteWalletActionState::default()
+            };
+            Ok(())
         }
     }
 
@@ -195,8 +265,7 @@ impl NativeAppRuntime {
             args.extend(["--keyset-id".to_string(), keyset_id.to_string()]);
         }
         let output = self.run_nvpn_vec(&args)?;
-        let value =
-            decode_paid_route_command_json_output(output, "nvpn paid-exit create-payment")?;
+        let value = decode_paid_route_command_json_output(output, "nvpn paid-exit create-payment")?;
         self.paid_route_payment_last_action =
             paid_route_payment_action_state("open_channel", &value)?;
         let wallet_send = value

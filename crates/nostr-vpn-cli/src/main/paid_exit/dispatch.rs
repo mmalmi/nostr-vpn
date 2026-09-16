@@ -1,7 +1,8 @@
-
 async fn run_paid_exit_command(args: PaidExitArgs) -> Result<()> {
     match args.command {
         PaidExitCommand::Status(args) => paid_exit_status_command(args),
+        PaidExitCommand::Rate(args) => paid_exit_rate_command(args),
+        PaidExitCommand::Reselect(args) => paid_exit_reselect_command(args),
         PaidExitCommand::Run(args) => paid_exit_run_command(args).await,
         PaidExitCommand::Offer(args) => paid_exit_offer_command(args).await,
         PaidExitCommand::ImportOffer(args) => paid_exit_import_offer_command(args),
@@ -42,5 +43,47 @@ fn paid_exit_status_command(args: PaidExitStatusArgs) -> Result<()> {
         print_paid_exit_status_snapshot(&app, &store_path, &store)?;
     }
 
+    Ok(())
+}
+
+fn paid_exit_rate_command(args: PaidExitRateArgs) -> Result<()> {
+    let path = args.config.unwrap_or_else(default_config_path);
+    let mut app = load_config_read_only(&path)?;
+    let seller = args.provider.unwrap_or_else(|| app.exit_node.clone());
+    let vote = match args.opinion {
+        PaidExitOpinion::Up => 1,
+        PaidExitOpinion::Down => -1,
+        PaidExitOpinion::Clear => 0,
+    };
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        store.rate_exit(&mut app, &seller, vote, unix_timestamp())
+    })?;
+    app.save(&path)?;
+    maybe_reload_running_daemon(&path);
+    if args.json {
+        println!(
+            "{}",
+            json!({"provider": seller, "rating": vote, "saved": true})
+        );
+    } else {
+        println!("Rating saved for automatic publication.");
+    }
+    Ok(())
+}
+
+fn paid_exit_reselect_command(args: PaidExitStatusArgs) -> Result<()> {
+    let path = args.config.unwrap_or_else(default_config_path);
+    let mut app = load_config_read_only(&path)?;
+    update_paid_route_store(&paid_route_store_file_path(&path), |store| {
+        store.request_exit_reselection(&app, unix_timestamp())
+    })?;
+    app.exit_node_leak_protection = true;
+    app.save(&path)?;
+    maybe_reload_running_daemon(&path);
+    if args.json {
+        println!("{}", json!({"reselection_requested": true}));
+    } else {
+        println!("Requested another provider; the running daemon will switch when ready.");
+    }
     Ok(())
 }

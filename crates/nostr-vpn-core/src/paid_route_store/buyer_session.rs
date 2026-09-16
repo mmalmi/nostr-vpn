@@ -13,6 +13,9 @@ impl PaidRouteStore {
             ));
         }
         let offer = record.offer.clone();
+        if self.exit_provider_is_avoided(&offer.seller_npub) {
+            return Err(anyhow!("clear your downvote before using this provider"));
+        }
         let accepted_terms = PaidExitConfig::from_paid_route_offer(&offer);
         let buyer_npub = normalize_paid_route_npub(&request.buyer_npub, "buyer")?;
         let mint_url = select_buyer_mint(&offer, &self.wallet, request.mint_url.as_deref())?;
@@ -194,6 +197,9 @@ impl PaidRouteStore {
             return Ok(false);
         }
         let offer = self.buyer_offer_for_session(lease_record, channel)?;
+        if self.exit_provider_is_avoided(&offer.seller_npub) {
+            return Ok(false);
+        }
         let config = PaidExitConfig::from_paid_route_offer(&offer);
         let decision = record.session.routing_decision(&config);
         if !paid_route_lifecycle_allows_routing(lease_record.status)

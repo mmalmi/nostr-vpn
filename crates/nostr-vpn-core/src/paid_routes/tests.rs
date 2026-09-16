@@ -24,6 +24,7 @@ fn paid_exit_config_normalizes_operator_hints() {
             grace_units: 20,
         },
         location: PaidRouteLocationHint {
+            network_class: ExitNetworkClass::Unknown,
             country_code: "fi".to_string(),
             asn: Some(12_345),
         },
@@ -70,7 +71,7 @@ fn paid_exit_config_normalizes_operator_hints() {
     );
     assert_eq!(
         config.rating_discovery.scope,
-        DEFAULT_FIPS_PEER_RATING_SCOPE
+        DEFAULT_PAID_EXIT_RATING_SCOPE
     );
 }
 
@@ -256,6 +257,7 @@ fn offer_json_does_not_publish_raw_exit_ip() {
         pricing: PaidRoutePricing::default(),
         channel: PaidRouteChannelTerms::default(),
         location: PaidRouteLocationHint {
+            network_class: ExitNetworkClass::Unknown,
             country_code: "FI".to_string(),
             ..PaidRouteLocationHint::default()
         },
@@ -668,6 +670,7 @@ fn sample_paid_exit_config() -> PaidExitConfig {
             grace_units: 262_144,
         },
         location: PaidRouteLocationHint {
+            network_class: ExitNetworkClass::Unknown,
             country_code: "FI".to_string(),
             asn: Some(14593),
         },

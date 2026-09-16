@@ -261,6 +261,20 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void RatePaidExit_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button) return;
+        var vote = button.Name == "ExitThumbDown" ? -1L : 1L;
+        var (seller, current) = button.Tag switch
+        {
+            NativePaidRouteOfferState offer => (offer.SellerNpub, offer.PersonalRating),
+            NativePaidRouteSessionState session => (session.SellerNpub, session.PersonalRating),
+            _ => ("", 0L),
+        };
+        if (!string.IsNullOrEmpty(seller))
+            await ViewModel.RatePaidExitAsync(seller, current == vote ? 0 : vote);
+    }
+
     private async void ProbePaidRouteSession_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: NativePaidRouteSessionState session })
@@ -324,6 +338,11 @@ public partial class MainWindow : Window
     private async void WireguardExit_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.SelectWireGuardUpstreamExitAsync();
+    }
+
+    private async void ReselectPaidExit_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.ReselectPaidExitAsync();
     }
 
     private async void PaidAutomaticExit_Click(object sender, RoutedEventArgs e)

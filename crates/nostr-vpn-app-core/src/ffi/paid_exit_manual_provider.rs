@@ -20,10 +20,7 @@ impl NativeAppRuntime {
                     && record.offer.seller_npub == provider.npub
             })
             .filter_map(|(key, record)| match provider.accepts(&record.offer) {
-                Ok(()) => Some((
-                    record.signed_offer.event.created_at.as_secs(),
-                    key.clone(),
-                )),
+                Ok(()) => Some((record.signed_offer.event.created_at.as_secs(), key.clone())),
                 Err(error) => {
                     rejected = Some(error);
                     None
@@ -37,7 +34,7 @@ impl NativeAppRuntime {
             }
             return Ok(false);
         };
-        self.buy_paid_route_offer(&offer_key, None, None)?;
+        self.buy_paid_route_offer(&offer_key, None, None, InternetSource::PaidManual)?;
         Ok(true)
     }
 

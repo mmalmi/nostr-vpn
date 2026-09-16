@@ -32,6 +32,9 @@ const CURRENT_VERSION: u8 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteStore {
+    /// Latest locally authored social-memory rating and its publication state.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub exit_ratings: BTreeMap<String, crate::paid_route_ratings::LocalExitRating>,
     #[serde(default = "default_version")]
     pub version: u8,
     #[serde(default)]
@@ -56,6 +59,9 @@ pub struct PaidRouteStore {
     pub buyer_session_renewal_starts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub selected_buyer_session_id: String,
+    /// Local request to choose a different seller once, without publishing a rating.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub automatic_reselect_from: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_open_attempts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -67,6 +73,8 @@ pub struct PaidRouteStore {
 impl Default for PaidRouteStore {
     fn default() -> Self {
         Self {
+            exit_ratings: BTreeMap::new(),
+            automatic_reselect_from: String::new(),
             version: CURRENT_VERSION,
             wallet: PaidRouteWalletState::default(),
             buyer_mint_retries: BTreeMap::new(),

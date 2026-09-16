@@ -643,6 +643,18 @@ private fun PaidRoutePaymentActionResult(
 }
 
 @Composable
+private fun PaidExitRatingButtons(seller: String, rating: Long, dispatch: (JSONObject) -> Unit) {
+    Row {
+        TextButton(onClick = { dispatch(NativeActions.ratePaidExit(seller, if (rating > 0) 0 else 1)) }) {
+            Text(if (rating > 0) "👍 ✓" else "👍")
+        }
+        TextButton(onClick = { dispatch(NativeActions.ratePaidExit(seller, if (rating < 0) 0 else -1)) }) {
+            Text(if (rating < 0) "👎 ✓" else "👎")
+        }
+    }
+}
+
+@Composable
 private fun PaidRouteOfferRow(
     state: AppState,
     offer: PaidRouteOfferState,
@@ -680,11 +692,16 @@ private fun PaidRouteOfferRow(
             }
         }
             Button(
-                enabled = offer.key.isNotBlank() && compatibleMint && !active,
+                enabled = offer.key.isNotBlank() && compatibleMint && !active && offer.personalRating >= 0,
                 onClick = { dispatch(NativeActions.buyPaidRouteOffer(offer.key)) },
             ) {
                 Text(if (active) "Active" else "Connect")
             }
+        }
+        if (offer.hasRating) { Text("Rating ${offer.ratingScore}", style = MaterialTheme.typography.bodySmall, color = Muted) }
+        if (offer.canRate) {
+            PaidExitRatingButtons(offer.sellerNpub, offer.personalRating, dispatch)
+            Text("Public rating · thumbs down stops this provider", style = MaterialTheme.typography.bodySmall, color = Muted)
         }
         if (!compatibleMint) {
             Text(
@@ -763,11 +780,12 @@ private fun PaidRouteSessionRow(
                 }
             }
         }
+        if (session.canRate) { PaidExitRatingButtons(session.sellerNpub, session.personalRating, dispatch) }
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = {
                     dispatch(NativeActions.selectPaidRouteSession(session.sessionId, connect = true))
-                }) {
+                }, enabled = session.personalRating >= 0) {
                     Text("Connect")
                 }
                 OutlinedButton(onClick = {

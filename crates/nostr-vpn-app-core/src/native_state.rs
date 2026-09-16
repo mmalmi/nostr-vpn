@@ -151,6 +151,7 @@ pub struct NativePaidExitSellerState {
     pub grace_units: u64,
     pub grace_text: String,
     pub country_code: String,
+    pub network_class: String,
     pub asn: u32,
     pub ipv4: bool,
     pub ipv6: bool,
@@ -267,9 +268,12 @@ pub struct NativePaidRouteOfferState {
     pub grace_units: u64,
     pub grace_text: String,
     pub country_code: String,
+    pub network_class: String,
     pub asn: u32,
     pub ipv4: bool,
     pub ipv6: bool,
+    pub personal_rating: i64,
+    pub can_rate: bool,
     pub has_rating: bool,
     pub rating_score: i64,
     pub rating_updated_at_unix: u64,
@@ -332,6 +336,9 @@ pub struct NativePaidRouteChannelState {
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativePaidRouteSessionState {
+    pub seller_npub: String,
+    pub personal_rating: i64,
+    pub can_rate: bool,
     pub session_id: String,
     pub lease_id: String,
     pub channel_id: String,

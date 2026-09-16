@@ -255,6 +255,39 @@ fn normalize_paid_route_country_input(value: &str) -> String {
         .to_ascii_uppercase()
 }
 
+fn paid_exit_rating_buttons(app: &AppRef, parent: &gtk::Box, seller: &str, rating: i64) {
+    for (label, value, help) in [
+        ("👍", 1, "Publish a positive rating"),
+        (
+            "👎",
+            -1,
+            "Publish a negative rating and stop using this provider",
+        ),
+    ] {
+        let button = gtk::Button::with_label(label);
+        button.set_tooltip_text(Some(if rating == value {
+            "Clear your public rating"
+        } else {
+            help
+        }));
+        if rating == value {
+            button.add_css_class("suggested-action");
+        }
+        let app = app.clone();
+        let seller = seller.to_string();
+        button.connect_clicked(move |_| {
+            dispatch(
+                &app,
+                NativeAppAction::RatePaidExit {
+                    seller_npub: seller.clone(),
+                    rating: if rating == value { 0 } else { value },
+                },
+            );
+        });
+        parent.append(&button);
+    }
+}
+
 fn paid_route_offer_row(
     app: &AppRef,
     parent: &gtk::Box,
@@ -270,7 +303,11 @@ fn paid_route_offer_row(
     title.add_css_class("heading");
     title.set_xalign(0.0);
     text.append(&title);
-    let status = gtk::Label::new(Some(&non_empty_or(&offer.status_text, &offer.seller_npub)));
+    let mut status_text = non_empty_or(&offer.status_text, &offer.seller_npub);
+    if offer.has_rating {
+        status_text.push_str(&format!(" · Rating {}", offer.rating_score));
+    }
+    let status = gtk::Label::new(Some(&status_text));
     status.add_css_class("caption");
     status.add_css_class("dim-label");
     status.set_xalign(0.0);
@@ -292,16 +329,29 @@ fn paid_route_offer_row(
     }
     row.append(&text);
 
+    if offer.can_rate {
+        paid_exit_rating_buttons(app, &row, &offer.seller_npub, offer.personal_rating);
+    }
     let active = state.internet_source == "paid_manual" && state.exit_node == offer.seller_npub;
-    let compatible_mint = offer
-        .accepted_mints
-        .iter()
-        .any(|accepted| state.paid_route_market.wallet.mints.iter().any(|mint| mint.url == *accepted));
+    let compatible_mint = offer.accepted_mints.iter().any(|accepted| {
+        state
+            .paid_route_market
+            .wallet
+            .mints
+            .iter()
+            .any(|mint| mint.url == *accepted)
+    });
     let connect = icon_text_button(
         if active { "Active" } else { "Connect" },
-        if active { "emblem-ok-symbolic" } else { "go-next-symbolic" },
+        if active {
+            "emblem-ok-symbolic"
+        } else {
+            "go-next-symbolic"
+        },
     );
-    connect.set_sensitive(!active && compatible_mint && !offer.key.is_empty());
+    connect.set_sensitive(
+        !active && compatible_mint && !offer.key.is_empty() && offer.personal_rating >= 0,
+    );
     {
         let app = app.clone();
         let offer_key = offer.key.clone();
@@ -360,6 +410,9 @@ fn paid_route_session_row(
     row.append(&text);
 
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    if !seller_view && session.can_rate {
+        paid_exit_rating_buttons(app, &buttons, &session.seller_npub, session.personal_rating);
+    }
     if seller_view {
         let collect = icon_text_button(
             &non_empty_or(&session.collect_action_text, "Collect"),
@@ -381,6 +434,7 @@ fn paid_route_session_row(
         buttons.append(&collect);
     } else {
         let connect = icon_text_button("Connect", "go-next-symbolic");
+        connect.set_sensitive(session.personal_rating >= 0);
         {
             let app = app.clone();
             let session_id = session.session_id.clone();
@@ -499,6 +553,7 @@ fn paid_exit_seller_settings_patch(drafts: &Drafts) -> Result<SettingsPatch, &'s
         .map_err(|_| PAID_EXIT_PRICE_ERROR)?;
     Ok(SettingsPatch {
         paid_exit_price_msat_per_gb: Some(price),
+        paid_exit_network_class: Some(drafts.paid_exit_network_class.clone()),
         paid_exit_country_code: Some(normalize_paid_route_country_input(
             &drafts.paid_exit_country_code,
         )),
@@ -560,10 +615,7 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
     let price_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     price_row.set_valign(gtk::Align::Center);
     price_row.append(&gtk::Label::new(Some("Price (msat/GB)")));
-    let price = entry(
-        "0",
-        &app.borrow().drafts.paid_exit_price_msat_per_gb,
-    );
+    let price = entry("0", &app.borrow().drafts.paid_exit_price_msat_per_gb);
     price.update_property(&[gtk::accessible::Property::Label(
         "nvpn-paid-exit-price-msat-per-gb",
     )]);
@@ -576,6 +628,32 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
     country.set_hexpand(false);
     country.set_width_chars(4);
     price_row.append(&country);
+    const NETWORK_CLASSES: [&str; 5] =
+        ["unknown", "residential", "datacenter", "mobile", "business"];
+    let network_class = gtk::DropDown::from_strings(&[
+        "Unspecified",
+        "Residential",
+        "Datacenter",
+        "Mobile",
+        "Business",
+    ]);
+    network_class.set_selected(
+        NETWORK_CLASSES
+            .iter()
+            .position(|value| *value == app.borrow().drafts.paid_exit_network_class)
+            .unwrap_or(0) as u32,
+    );
+    network_class.set_tooltip_text(Some("Network type declared to buyers"));
+    {
+        let app = app.clone();
+        network_class.connect_selected_notify(move |dropdown| {
+            app.borrow_mut().drafts.paid_exit_network_class = NETWORK_CLASSES
+                .get(dropdown.selected() as usize)
+                .unwrap_or(&"unknown")
+                .to_string();
+        });
+    }
+    price_row.append(&network_class);
     seller_card.append(&price_row);
 
     let mints_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);

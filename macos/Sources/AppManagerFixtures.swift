@@ -63,6 +63,7 @@ extension AppManager {
         let androidHex = "b94e73004cbf0a75be6a5121ecae5847b1d8c61e3d9bdaef940a7abb88a6b7f6"
         let ubuntuHex = "69bf3737c734af9c46ff160e074b9829dd5f5d872dae8470e4b3c930d9d5c08d"
         let joinHex = "34d9cd8f509f19ff2f0effe36115d32552295cbc75f7cab757c2aeee1876d300"
+        let fixtureNow = UInt64(Date().timeIntervalSince1970)
         let automaticExit = CommandLine.arguments.contains("--nvpn-screenshot-paid-automatic")
         let networkId = "demo-mesh"
 
@@ -322,7 +323,7 @@ extension AppManager {
             exitNodeBlocked: false,
             exitNodeNeedsAttention: false,
             exitNodeStatusText: automaticExit
-                ? "Automatic paid exit · FI · 2500 sat/GB · 198.51.100.42 · Active"
+                ? "Automatic paid exit · FI · 25 sat/GB · 198.51.100.42 · Active"
                 : sellerScreenshot ? "" : "Using paid internet: FI",
             exitDnsMode: "automatic",
             exitDnsDohProvider: "cloudflare",
@@ -351,13 +352,13 @@ extension AppManager {
                 supported: true,
                 enabled: true,
                 statusText: "Selling public internet",
-                providerLink: "nvpn://paid-exit/npub1paidexitfinlanddemo?maxMsatPerGb=2500000&mint=https%3A%2F%2Fmint.minibits.cash%2FBitcoin",
+                providerLink: "nvpn://paid-exit/npub1paidexitfinlanddemo?maxMsatPerGb=25000&mint=https%3A%2F%2Fmint.minibits.cash%2FBitcoin",
                 upstream: "host_default",
                 privateVpnAccess: "denied",
                 internetText: "My internet",
                 publicIpText: "203.0.113.8",
-                priceText: "2500 sat/GB",
-                priceMsatPerGb: 2_500_000,
+                priceText: "25 sat/GB",
+                priceMsatPerGb: 25_000,
                 acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
                 maxChannelCapacitySat: 250,
                 channelExpirySecs: 86_400,
@@ -368,6 +369,7 @@ extension AppManager {
                 graceUnits: 262_144,
                 graceText: "256 KB",
                 countryCode: "FI",
+                networkClass: "residential",
                 asn: 12345,
                 ipv4: true,
                 ipv6: false,
@@ -397,13 +399,16 @@ extension AppManager {
                         capacityText: "250 sat",
                         paidMsat: 35_000,
                         paidText: "35 sat paid",
-                        updatedAtUnix: 1_780_650_010,
-                        expiresAtUnix: 1_780_650_900,
+                        updatedAtUnix: fixtureNow - 110,
+                        expiresAtUnix: fixtureNow + 900,
                         error: ""
                     )
                 ],
                 sessions: [
                     NativePaidRouteSessionState(
+                        sellerNpub: "",
+                        personalRating: 0,
+                        canRate: false,
                         sessionId: "seller-session-demo",
                         leaseId: "seller-lease-demo",
                         channelId: "seller-channel-demo",
@@ -444,8 +449,8 @@ extension AppManager {
                         packetLossPpm: 500,
                         downBps: 25_000_000,
                         upBps: 5_000_000,
-                        updatedAtUnix: 1_780_650_010,
-                        expiresAtUnix: 1_780_650_900
+                        updatedAtUnix: fixtureNow - 110,
+                        expiresAtUnix: fixtureNow + 900
                     )
                 ]
             ),
@@ -469,7 +474,7 @@ extension AppManager {
                     exchangeRateStatus: "Coinbase · Kraken",
                     exchangeRateSources: "coinbase,kraken",
                     exchangeRateStale: false,
-                    exchangeRateUpdatedAtUnix: 1_780_650_000,
+                    exchangeRateUpdatedAtUnix: fixtureNow - 120,
                     mints: [
                         NativePaidRouteWalletMintState(
                             url: "https://mint.coinos.io",
@@ -478,7 +483,7 @@ extension AppManager {
                             balanceKnown: true,
                             balanceMsat: 3_000,
                             balanceText: "3 sat",
-                            lastCheckedUnix: 1_780_650_000
+                            lastCheckedUnix: fixtureNow - 120
                         ),
                         NativePaidRouteWalletMintState(
                             url: "https://mint.minibits.cash/Bitcoin",
@@ -487,7 +492,7 @@ extension AppManager {
                             balanceKnown: true,
                             balanceMsat: 120_000,
                             balanceText: "120 sat",
-                            lastCheckedUnix: 1_780_650_000
+                            lastCheckedUnix: fixtureNow - 120
                         )
                     ],
                     lastAction: NativePaidRouteWalletActionState(
@@ -542,9 +547,9 @@ extension AppManager {
                         key: "seller-fi:internet-exit",
                         offerId: "internet-exit",
                         sellerNpub: "npub1paidexitfinlanddemo",
-                        statusText: "FI - 42 ms - seen 2m ago",
-                        priceText: "2500 sat/GB",
-                        priceMsatPerGb: 2_500_000,
+                        statusText: "Selected · FI · Residential · 42 ms · seen 2m ago",
+                        priceText: "25 sat/GB",
+                        priceMsatPerGb: 25_000,
                         acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
                         maxChannelCapacitySat: 250,
                         channelExpirySecs: 900,
@@ -553,9 +558,12 @@ extension AppManager {
                         graceUnits: 262_144,
                         graceText: "256 KB",
                         countryCode: "FI",
+                networkClass: "residential",
                         asn: 14593,
                         ipv4: true,
                         ipv6: false,
+                        personalRating: 0,
+                        canRate: true,
                         hasRating: true,
                         ratingScore: 72,
                         ratingUpdatedAtUnix: 1_780_649_900,
@@ -569,16 +577,16 @@ extension AppManager {
                         upBps: 5_000_000,
                         uptimeSecs: 3_600,
                         firstSeenUnix: 1_780_649_000,
-                        lastSeenUnix: 1_780_650_000,
+                        lastSeenUnix: fixtureNow - 120,
                         relayUrls: ["wss://relay.damus.io"]
                     ),
                     NativePaidRouteOfferState(
                         key: "seller-de:internet-exit",
                         offerId: "internet-exit",
                         sellerNpub: "npub1paidexitgermanydemo",
-                        statusText: "DE - 18 ms - seen 5m ago",
-                        priceText: "800 sat/GB",
-                        priceMsatPerGb: 800_000,
+                        statusText: "DE · Datacenter · 18 ms · seen 5m ago",
+                        priceText: "8 sat/GB",
+                        priceMsatPerGb: 8_000,
                         acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
                         maxChannelCapacitySat: 500,
                         channelExpirySecs: 900,
@@ -587,9 +595,12 @@ extension AppManager {
                         graceUnits: 262_144,
                         graceText: "256 KB",
                         countryCode: "DE",
+                        networkClass: "datacenter",
                         asn: 12_345,
                         ipv4: true,
                         ipv6: true,
+                        personalRating: 0,
+                        canRate: false,
                         hasRating: false,
                         ratingScore: 0,
                         ratingUpdatedAtUnix: 0,
@@ -622,13 +633,16 @@ extension AppManager {
                         capacityText: "250 sat",
                         paidMsat: 25_000,
                         paidText: "25 sat paid",
-                        updatedAtUnix: 1_780_650_000,
-                        expiresAtUnix: 1_780_650_900,
+                        updatedAtUnix: fixtureNow - 120,
+                        expiresAtUnix: fixtureNow + 900,
                         error: ""
                     )
                 ],
                 sessions: [
                     NativePaidRouteSessionState(
+                        sellerNpub: "npub1paidexitfinlanddemo",
+                        personalRating: 0,
+                        canRate: true,
                         sessionId: "session-fi-1",
                         leaseId: "lease-fi-1",
                         channelId: "channel-fi-1",
@@ -669,8 +683,8 @@ extension AppManager {
                         packetLossPpm: 500,
                         downBps: 25_000_000,
                         upBps: 5_000_000,
-                        updatedAtUnix: 1_780_650_000,
-                        expiresAtUnix: 1_780_650_900
+                        updatedAtUnix: fixtureNow - 120,
+                        expiresAtUnix: fixtureNow + 900
                     )
                 ]
             ),

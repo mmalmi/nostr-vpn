@@ -64,6 +64,7 @@ pub struct SimulationReport {
     pub attacker_count: usize,
     pub connected_node_count: usize,
     pub baseline_honest_deliveries: usize,
+    pub exit_rating_honest_deliveries: usize,
     pub baseline_delivery_basis_points: u32,
     pub post_attack_honest_deliveries: usize,
     pub post_attack_delivery_basis_points: u32,
@@ -193,6 +194,8 @@ impl SimulationRuntime {
             .await;
         tokio::time::sleep(Duration::from_millis(250)).await;
 
+        let exit_rating_honest_deliveries =
+            self.verify_exit_rating_delivery(honest_node_count).await?;
         let mut total_events_stored = 0usize;
         let mut max_events_stored_per_node = 0usize;
         for runtime in &self.pubsub {
@@ -207,6 +210,7 @@ impl SimulationRuntime {
             attacker_count: self.config.attacker_count,
             connected_node_count: self.config.node_count,
             baseline_honest_deliveries,
+            exit_rating_honest_deliveries,
             baseline_delivery_basis_points: basis_points(
                 baseline_honest_deliveries,
                 honest_node_count,
@@ -336,6 +340,52 @@ impl SimulationRuntime {
             }
         }
         Ok((attempted, sent))
+    }
+
+    async fn verify_exit_rating_delivery(&self, honest_count: usize) -> Result<usize> {
+        use nostr_sdk::ToBech32;
+        use nostr_vpn_core::paid_route_ratings::{
+            exit_rating_event, exit_rating_scores, trust_exit_rating_authors,
+        };
+        let now = Timestamp::now().as_secs();
+        let seller = self.keys[2].public_key().to_bech32()?;
+        let mut local = nostr_vpn_core::paid_route_store::PaidRouteStore::default();
+        local.record_exit_rating(&self.keys[0], &seller, 80, false, now)?;
+        let event = local
+            .pending_exit_ratings()
+            .pop()
+            .context("pending automatic rating")?;
+        self.pubsub[0].publish(event.clone()).await?;
+        let delivered = self.wait_for_honest_delivery(&event, honest_count).await;
+        if delivered * 10 < honest_count * 8 {
+            bail!("automatic exit rating did not reach honest peers");
+        }
+        for attacker in honest_count..self.keys.len() {
+            let spam = exit_rating_event(&self.keys[attacker], &seller, -100, true, now)?;
+            self.pubsub[attacker].publish(spam).await?;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        for index in 1..honest_count {
+            let events = self.pubsub[index].events().await;
+            if !events.iter().any(|stored| stored.id == event.id) {
+                continue;
+            }
+            let mut graph =
+                nostr_social_graph::SocialGraph::new(&self.keys[index].public_key().to_hex());
+            trust_exit_rating_authors(&mut graph, &[self.keys[0].public_key().to_hex()])?;
+            let scores = exit_rating_scores(&events, &graph, now);
+            let score = scores
+                .get(&seller)
+                .context("received automatic exit rating")?;
+            if score.score != 80 || score.authors != 1 {
+                bail!("untrusted exit ratings changed reputation");
+            }
+            let fact = rating_from_event(&event)?;
+            if !fact.evidence.is_empty() || fact.window_start.is_some() {
+                bail!("measurement leaked into rating");
+            }
+        }
+        Ok(delivered)
     }
 
     async fn publish_rating_spam(&self) -> Result<usize> {

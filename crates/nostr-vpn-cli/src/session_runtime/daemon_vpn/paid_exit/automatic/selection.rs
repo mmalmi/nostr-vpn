@@ -18,14 +18,39 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         .values()
         .map(|record| record.signed_offer.event.id)
         .collect::<HashSet<_>>();
-    let received_offers = crate::control_pubsub_runtime::load_control_pubsub_events(config_path)?
-        .into_iter()
+    let events = crate::control_pubsub_runtime::load_control_pubsub_events(config_path)?;
+    let graph = nostr_vpn_core::paid_route_ratings::exit_rating_graph(
+        &app.nostr_keys()?.public_key().to_hex(),
+        &events,
+        &app.paid_exit.rating_discovery.trusted_authors,
+        now_unix,
+    )?;
+    let received_offers = events
+        .iter()
+        .cloned()
         .filter(|event| !known_events.contains(&event.id))
         .filter_map(|event| SignedPaidRouteOffer::from_event(event).ok())
         .collect::<Vec<_>>();
     if !received_offers.is_empty() {
         persist_paid_exit_discovered_offers(&store_path, &received_offers, &[], None)?;
-        store = load_paid_route_store(&store_path)?;
+    }
+    update_paid_route_store(&store_path, |store| {
+        store.refresh_exit_reputation(&events, &graph, now_unix);
+        Ok(())
+    })?;
+    store = load_paid_route_store(&store_path)?;
+    let reselect_from = store.automatic_reselect_from.clone();
+    if automatic.candidate.as_ref().is_some_and(|candidate| {
+        store.exit_provider_is_avoided(&candidate.seller_pubkey)
+            || normalize_nostr_pubkey(&reselect_from).ok().as_deref()
+                == Some(candidate.seller_pubkey.as_str())
+    }) {
+        // Finish any wallet operation before replacing its candidate. The
+        // routing gate already rejects the downvoted provider immediately.
+        if automatic.funding.is_some() {
+            return Ok(false);
+        }
+        automatic.cancel_candidate(false, now_unix);
     }
     let selection = match automatic.selection(&store, now_unix) {
         Ok(selection) => selection,
@@ -107,6 +132,7 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 .expect("recovered candidate")
                 .funding_attempted = true;
         }
+        finish_automatic_reselection(&store_path, &reselect_from)?;
         return Ok(changing_mint || exhausted || route_changed);
     }
 
@@ -151,7 +177,20 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         false,
         now_unix,
     );
+    finish_automatic_reselection(&store_path, &reselect_from)?;
     Ok(true)
+}
+
+fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()> {
+    if !requested.is_empty() {
+        update_paid_route_store(store_path, |store| {
+            if store.automatic_reselect_from == requested {
+                store.automatic_reselect_from.clear();
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 
 /// Keep configuration in sync even when Automatic already has a candidate.

@@ -361,6 +361,7 @@ struct PaidExitSellerState: Decodable, Equatable {
     var graceUnits: UInt64 = 0
     var graceText = ""
     var countryCode = ""
+    var networkClass = "unknown"
     var asn: UInt32 = 0
     var ipv4 = false
     var ipv6 = false
@@ -461,6 +462,10 @@ struct PaidRoutePaymentActionState: Decodable, Equatable {
 }
 
 struct PaidRouteOfferState: Decodable, Identifiable, Equatable {
+    var personalRating: Int64 = 0
+    var canRate = false
+    var hasRating = false
+    var ratingScore: Int64 = 0
     var id: String { key.isEmpty ? "\(sellerNpub):\(offerId)" : key }
     var key = ""
     var offerId = ""
@@ -476,6 +481,7 @@ struct PaidRouteOfferState: Decodable, Identifiable, Equatable {
     var graceUnits: UInt64 = 0
     var graceText = ""
     var countryCode = ""
+    var networkClass = "unknown"
     var asn: UInt32 = 0
     var ipv4 = false
     var ipv6 = false
@@ -515,6 +521,9 @@ struct PaidRouteChannelState: Decodable, Identifiable, Equatable {
 }
 
 struct PaidRouteSessionState: Decodable, Identifiable, Equatable {
+    var sellerNpub = ""
+    var personalRating: Int64 = 0
+    var canRate = false
     var id: String { sessionId }
     var sessionId = ""
     var leaseId = ""

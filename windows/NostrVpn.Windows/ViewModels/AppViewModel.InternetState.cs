@@ -210,6 +210,12 @@ public sealed partial class AppViewModel
 
     public string WireguardExitMarker => State.InternetSource == "wireguard" ? "●" : "○";
 
+    public bool AutomaticProviderSelected => State.InternetSource == "paid_automatic" && !string.IsNullOrEmpty(State.ExitNode);
+    public IEnumerable<NativePaidRouteSessionState> ActiveAutomaticPaidSessions =>
+        AutomaticProviderSelected && State.ExitNodeActive
+            ? State.PaidRouteMarket.Sessions.Where(session => session.SellerNpub == State.ExitNode && session.CanRate).Take(1)
+            : [];
+
     public string PaidAutomaticExitMarker => State.InternetSource == "paid_automatic" ? "●" : "○";
 
     public string PaidManualExitMarker => State.InternetSource == "paid_manual" ? "●" : "○";

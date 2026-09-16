@@ -737,9 +737,9 @@ fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() 
     assert_eq!(
         store
             .select_automatic_offer(now_unix)
-            .expect("price precedes imported rating")
+            .expect("trusted rating precedes price within the safety cap")
             .offer_key,
-        expected[3].0
+        expected[0].0
     );
 
     store
@@ -752,9 +752,9 @@ fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() 
     assert_eq!(
         store
             .select_automatic_offer(now_unix)
-            .expect("fresh unrated exploration candidate")
+            .expect("trusted rating precedes announcement recency")
             .offer_key,
-        expected[2].0
+        expected[0].0
     );
 }
 

@@ -1,4 +1,3 @@
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PaidExitRatingScore {
     score: i64,
@@ -78,10 +77,7 @@ fn paid_exit_rating_records(
             .collect());
     }
 
-    if let Some(records) = value
-        .get("ratings")
-        .and_then(|ratings| ratings.as_array())
-    {
+    if let Some(records) = value.get("ratings").and_then(|ratings| ratings.as_array()) {
         return Ok(records
             .iter()
             .filter(|record| paid_exit_rating_record_author_is_trusted(record, trusted_authors))
@@ -175,90 +171,21 @@ fn paid_exit_verified_rating_fact_event(event_value: &serde_json::Value) -> Resu
 }
 
 fn paid_exit_rating_record_from_verified_fact_event(event: &Event) -> Result<serde_json::Value> {
-    let event_value = serde_json::to_value(event).context("failed to encode rating fact event JSON")?;
-    let event_value = &event_value;
-
-    let record_type = paid_exit_fact_scalar(event_value, "type")?;
-    if record_type != RATING_FACT_TYPE {
-        return Err(anyhow!("unexpected rating fact event type {record_type}"));
-    }
-    let schema = paid_exit_fact_scalar(event_value, "schema")?;
-    if schema != RATING_FACT_SCHEMA {
-        return Err(anyhow!("unsupported rating fact schema {schema}"));
-    }
-
-    let id = paid_exit_fact_subject_id(event_value)
-        .or_else(|| event_value.get("id").and_then(|value| value.as_str()).map(ToOwned::to_owned))
-        .ok_or_else(|| anyhow!("rating fact event is missing subject id"))?;
-    let created_at = paid_exit_fact_optional_scalar(event_value, "created_at")
-        .and_then(|value| value.parse::<u64>().ok())
-        .or_else(|| event_value.get("created_at").and_then(|value| value.as_u64()))
-        .unwrap_or_default();
-    let mut record = json!({
-        "id": id,
-        "rater": paid_exit_fact_scalar(event_value, "rater")?,
-        "subject": paid_exit_fact_scalar(event_value, "subject")?,
-        "rating": paid_exit_fact_scalar(event_value, "rating")?.parse::<i64>()
-            .context("rating fact event has invalid integer rating")?,
-        "min_rating": paid_exit_fact_scalar(event_value, "min_rating")?.parse::<i64>()
-            .context("rating fact event has invalid integer min_rating")?,
-        "max_rating": paid_exit_fact_scalar(event_value, "max_rating")?.parse::<i64>()
-            .context("rating fact event has invalid integer max_rating")?,
-        "created_at": created_at,
-    });
-    if let Some(scope) = paid_exit_fact_optional_scalar(event_value, "scope") {
-        record["scope"] = json!(scope);
-    }
-    if let Some(sample_count) = paid_exit_fact_optional_scalar(event_value, "sample_count")
-        .and_then(|value| value.parse::<u64>().ok())
+    let rating = nostr_social_memory::rating_from_event(event)?;
+    if rating.scope.as_deref() == Some("vpn.exit")
+        && PublicKey::parse(&rating.rater)? != event.pubkey
     {
-        record["sample_count"] = json!(sample_count);
+        return Err(anyhow!("exit rating author does not match its signer"));
     }
-    if let Some(window_start) = paid_exit_fact_optional_scalar(event_value, "window_start")
-        .and_then(|value| value.parse::<u64>().ok())
-    {
-        record["window_start"] = json!(window_start);
-    }
-    if let Some(window_end) = paid_exit_fact_optional_scalar(event_value, "window_end")
-        .and_then(|value| value.parse::<u64>().ok())
-    {
-        record["window_end"] = json!(window_end);
-    }
-    if let Some(reason) = paid_exit_fact_optional_scalar(event_value, "reason") {
-        record["reason"] = json!(reason);
-    }
-    let tags = paid_exit_fact_values(event_value, "tag");
-    if !tags.is_empty() {
-        record["tags"] = json!(tags);
-    }
-    let evidence = paid_exit_fact_values(event_value, "evidence");
-    if !evidence.is_empty() {
-        record["evidence"] = json!(evidence);
-    }
-    Ok(record)
+    Ok(serde_json::to_value(rating)?)
 }
 
-fn paid_exit_fact_subject_id(event_value: &serde_json::Value) -> Option<String> {
-    paid_exit_fact_tags(event_value).into_iter().find_map(|tag| {
-        let parts = tag.as_array()?;
-        let name = parts.first()?.as_str()?;
-        if name == "i" && parts.get(2).and_then(|value| value.as_str()) == Some("subject") {
-            parts.get(1)?.as_str().map(ToOwned::to_owned)
-        } else {
-            None
-        }
-    })
-}
-
-fn paid_exit_fact_scalar(event_value: &serde_json::Value, key: &str) -> Result<String> {
-    paid_exit_fact_optional_scalar(event_value, key)
-        .ok_or_else(|| anyhow!("rating fact event is missing scalar tag {key}"))
-}
-
+#[cfg(test)]
 fn paid_exit_fact_optional_scalar(event_value: &serde_json::Value, key: &str) -> Option<String> {
     paid_exit_fact_values(event_value, key).into_iter().next()
 }
 
+#[cfg(test)]
 fn paid_exit_fact_values(event_value: &serde_json::Value, key: &str) -> Vec<String> {
     paid_exit_fact_tags(event_value)
         .into_iter()
@@ -274,6 +201,7 @@ fn paid_exit_fact_values(event_value: &serde_json::Value, key: &str) -> Vec<Stri
         .collect()
 }
 
+#[cfg(test)]
 fn paid_exit_fact_tags(event_value: &serde_json::Value) -> Vec<&serde_json::Value> {
     event_value
         .get("tags")
@@ -323,15 +251,9 @@ fn paid_exit_rating_u64_field(rating: &serde_json::Value, key: &str) -> Option<u
     rating.get(key).and_then(|value| value.as_u64())
 }
 
-fn paid_exit_normalized_rating_score(
-    rating: i64,
-    min_rating: i64,
-    max_rating: i64,
-) -> Result<i64> {
+fn paid_exit_normalized_rating_score(rating: i64, min_rating: i64, max_rating: i64) -> Result<i64> {
     if min_rating >= max_rating {
-        return Err(anyhow!(
-            "invalid rating range {min_rating}..{max_rating}"
-        ));
+        return Err(anyhow!("invalid rating range {min_rating}..{max_rating}"));
     }
     if rating < min_rating || rating > max_rating {
         return Err(anyhow!(
@@ -351,13 +273,19 @@ fn paid_exit_sort_offers_by_rating(
     rating_scores: &HashMap<String, PaidExitRatingScore>,
 ) {
     offers.sort_by(|left, right| {
-        let left_score = paid_exit_signed_offer_rating_score(left, rating_scores)
-            .map_or(0, |score| score.score);
+        let left_score =
+            paid_exit_signed_offer_rating_score(left, rating_scores).map_or(0, |score| score.score);
         let right_score = paid_exit_signed_offer_rating_score(right, rating_scores)
             .map_or(0, |score| score.score);
         right_score
             .cmp(&left_score)
-            .then_with(|| right.event.created_at.as_secs().cmp(&left.event.created_at.as_secs()))
+            .then_with(|| {
+                right
+                    .event
+                    .created_at
+                    .as_secs()
+                    .cmp(&left.event.created_at.as_secs())
+            })
             .then_with(|| left.event.id.to_string().cmp(&right.event.id.to_string()))
     });
 }

@@ -225,6 +225,8 @@ public sealed partial class AppViewModel
         OnPropertyChanged(nameof(DirectExitMarker));
         OnPropertyChanged(nameof(WireguardExitMarker));
         OnPropertyChanged(nameof(PaidAutomaticExitMarker));
+        OnPropertyChanged(nameof(AutomaticProviderSelected));
+        OnPropertyChanged(nameof(ActiveAutomaticPaidSessions));
         OnPropertyChanged(nameof(PaidManualExitMarker));
         OnPropertyChanged(nameof(WireguardExitSubtitle));
         OnPropertyChanged(nameof(PaidRouteMarketVisible));

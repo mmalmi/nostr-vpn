@@ -14,6 +14,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +33,8 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
     network: NetworkState?,
     dispatch: (JSONObject) -> Unit,
     importWireGuardConfigFile: () -> Unit,
+    manualExitChooserOpen: Boolean,
+    setManualExitChooserOpen: (Boolean) -> Unit,
 ) {
     item {
         AppCard {
@@ -53,7 +56,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
                         description = "Internet source picker",
                     ),
                 ) {
-                    Text(sourceOptions.firstOrNull { it.first == state.internetSource }?.second ?: "This device")
+                    Text(sourceOptions.firstOrNull { it.first == if (manualExitChooserOpen) "paid_manual" else state.internetSource }?.second ?: "This device")
                 }
                 DropdownMenu(
                     expanded = sourceMenuExpanded,
@@ -68,7 +71,10 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
                             ),
                             onClick = {
                                 sourceMenuExpanded = false
-                                dispatch(NativeActions.updateSettings("internetSource" to source))
+                                setManualExitChooserOpen(source == "paid_manual")
+                                if (source != "paid_manual") {
+                                    dispatch(NativeActions.updateSettings("internetSource" to source))
+                                }
                             },
                         )
                     }
@@ -129,7 +135,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
             }
         }
     }
-    if (state.internetSource == "paid_automatic") {
+    if (state.internetSource == "paid_automatic" && !manualExitChooserOpen) {
         item {
             AppCard {
                 Text("Automatic paid provider", style = MaterialTheme.typography.titleMedium)
@@ -139,9 +145,19 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (state.exitNode.isNotEmpty()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        val session = state.paidRouteMarket.sessions.firstOrNull { it.sellerNpub == state.exitNode && it.canRate }
+                        if (state.exitNodeActive && session != null) {
+                            TextButton(onClick = { dispatch(NativeActions.ratePaidExit(session.sellerNpub, if (session.personalRating > 0) 0 else 1)) }, modifier = Modifier.mobileUiSelector(id = "paid-exit-thumbs-up", description = "Public positive provider rating")) { Text(if (session.personalRating > 0) "👍 ✓" else "👍") }
+                            TextButton(onClick = { dispatch(NativeActions.ratePaidExit(session.sellerNpub, if (session.personalRating < 0) 0 else -1)) }, modifier = Modifier.mobileUiSelector(id = "paid-exit-thumbs-down", description = "Public negative rating and stop using this provider")) { Text(if (session.personalRating < 0) "👎 ✓" else "👎") }
+                        }
+                        TextButton(onClick = { dispatch(NativeActions.reselectPaidExit()) }) { Text("Try another") }
+                    }
+                }
             }
         }
-    } else if (state.internetSource == "paid_manual") {
+    } else if (state.internetSource == "paid_manual" || manualExitChooserOpen) {
         item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Market) }
     }
     item {

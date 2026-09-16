@@ -2300,6 +2300,7 @@ public struct NativePaidExitSellerState {
     public var graceUnits: UInt64
     public var graceText: String
     public var countryCode: String
+    public var networkClass: String
     public var asn: UInt32
     public var ipv4: Bool
     public var ipv6: Bool
@@ -2322,7 +2323,7 @@ public struct NativePaidExitSellerState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(supported: Bool, enabled: Bool, statusText: String, providerLink: String, upstream: String, privateVpnAccess: String, internetText: String, publicIpText: String, priceText: String, priceMsatPerGb: UInt64, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, channelExpiryText: String, settlementText: String, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, asn: UInt32, ipv4: Bool, ipv6: Bool, channelCreditMsat: UInt64, channelCreditText: String, channelCreditTitleText: String, channelCreditHelpText: String, currentConnectionCount: UInt64, pastConnectionCount: UInt64, totalBillableBytes: UInt64, totalTrafficText: String, totalPaidMsat: UInt64, totalPaidText: String, totalDueMsat: UInt64, totalDueText: String, totalUnpaidMsat: UInt64, totalUnpaidText: String, channels: [NativePaidRouteChannelState], sessions: [NativePaidRouteSessionState]) {
+    public init(supported: Bool, enabled: Bool, statusText: String, providerLink: String, upstream: String, privateVpnAccess: String, internetText: String, publicIpText: String, priceText: String, priceMsatPerGb: UInt64, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, channelExpiryText: String, settlementText: String, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, networkClass: String, asn: UInt32, ipv4: Bool, ipv6: Bool, channelCreditMsat: UInt64, channelCreditText: String, channelCreditTitleText: String, channelCreditHelpText: String, currentConnectionCount: UInt64, pastConnectionCount: UInt64, totalBillableBytes: UInt64, totalTrafficText: String, totalPaidMsat: UInt64, totalPaidText: String, totalDueMsat: UInt64, totalDueText: String, totalUnpaidMsat: UInt64, totalUnpaidText: String, channels: [NativePaidRouteChannelState], sessions: [NativePaidRouteSessionState]) {
         self.supported = supported
         self.enabled = enabled
         self.statusText = statusText
@@ -2343,6 +2344,7 @@ public struct NativePaidExitSellerState {
         self.graceUnits = graceUnits
         self.graceText = graceText
         self.countryCode = countryCode
+        self.networkClass = networkClass
         self.asn = asn
         self.ipv4 = ipv4
         self.ipv6 = ipv6
@@ -2432,6 +2434,9 @@ extension NativePaidExitSellerState: Equatable, Hashable {
         if lhs.countryCode != rhs.countryCode {
             return false
         }
+        if lhs.networkClass != rhs.networkClass {
+            return false
+        }
         if lhs.asn != rhs.asn {
             return false
         }
@@ -2513,6 +2518,7 @@ extension NativePaidExitSellerState: Equatable, Hashable {
         hasher.combine(graceUnits)
         hasher.combine(graceText)
         hasher.combine(countryCode)
+        hasher.combine(networkClass)
         hasher.combine(asn)
         hasher.combine(ipv4)
         hasher.combine(ipv6)
@@ -2564,6 +2570,7 @@ public struct FfiConverterTypeNativePaidExitSellerState: FfiConverterRustBuffer 
                 graceUnits: FfiConverterUInt64.read(from: &buf),
                 graceText: FfiConverterString.read(from: &buf),
                 countryCode: FfiConverterString.read(from: &buf),
+                networkClass: FfiConverterString.read(from: &buf),
                 asn: FfiConverterUInt32.read(from: &buf),
                 ipv4: FfiConverterBool.read(from: &buf),
                 ipv6: FfiConverterBool.read(from: &buf),
@@ -2607,6 +2614,7 @@ public struct FfiConverterTypeNativePaidExitSellerState: FfiConverterRustBuffer 
         FfiConverterUInt64.write(value.graceUnits, into: &buf)
         FfiConverterString.write(value.graceText, into: &buf)
         FfiConverterString.write(value.countryCode, into: &buf)
+        FfiConverterString.write(value.networkClass, into: &buf)
         FfiConverterUInt32.write(value.asn, into: &buf)
         FfiConverterBool.write(value.ipv4, into: &buf)
         FfiConverterBool.write(value.ipv6, into: &buf)
@@ -3086,9 +3094,12 @@ public struct NativePaidRouteOfferState {
     public var graceUnits: UInt64
     public var graceText: String
     public var countryCode: String
+    public var networkClass: String
     public var asn: UInt32
     public var ipv4: Bool
     public var ipv6: Bool
+    public var personalRating: Int64
+    public var canRate: Bool
     public var hasRating: Bool
     public var ratingScore: Int64
     public var ratingUpdatedAtUnix: UInt64
@@ -3107,7 +3118,7 @@ public struct NativePaidRouteOfferState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(key: String, offerId: String, sellerNpub: String, statusText: String, priceText: String, priceMsatPerGb: UInt64, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, asn: UInt32, ipv4: Bool, ipv6: Bool, hasRating: Bool, ratingScore: Int64, ratingUpdatedAtUnix: UInt64, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, uptimeSecs: UInt64, firstSeenUnix: UInt64, lastSeenUnix: UInt64, relayUrls: [String]) {
+    public init(key: String, offerId: String, sellerNpub: String, statusText: String, priceText: String, priceMsatPerGb: UInt64, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, networkClass: String, asn: UInt32, ipv4: Bool, ipv6: Bool, personalRating: Int64, canRate: Bool, hasRating: Bool, ratingScore: Int64, ratingUpdatedAtUnix: UInt64, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, uptimeSecs: UInt64, firstSeenUnix: UInt64, lastSeenUnix: UInt64, relayUrls: [String]) {
         self.key = key
         self.offerId = offerId
         self.sellerNpub = sellerNpub
@@ -3122,9 +3133,12 @@ public struct NativePaidRouteOfferState {
         self.graceUnits = graceUnits
         self.graceText = graceText
         self.countryCode = countryCode
+        self.networkClass = networkClass
         self.asn = asn
         self.ipv4 = ipv4
         self.ipv6 = ipv6
+        self.personalRating = personalRating
+        self.canRate = canRate
         self.hasRating = hasRating
         self.ratingScore = ratingScore
         self.ratingUpdatedAtUnix = ratingUpdatedAtUnix
@@ -3192,6 +3206,9 @@ extension NativePaidRouteOfferState: Equatable, Hashable {
         if lhs.countryCode != rhs.countryCode {
             return false
         }
+        if lhs.networkClass != rhs.networkClass {
+            return false
+        }
         if lhs.asn != rhs.asn {
             return false
         }
@@ -3199,6 +3216,12 @@ extension NativePaidRouteOfferState: Equatable, Hashable {
             return false
         }
         if lhs.ipv6 != rhs.ipv6 {
+            return false
+        }
+        if lhs.personalRating != rhs.personalRating {
+            return false
+        }
+        if lhs.canRate != rhs.canRate {
             return false
         }
         if lhs.hasRating != rhs.hasRating {
@@ -3264,9 +3287,12 @@ extension NativePaidRouteOfferState: Equatable, Hashable {
         hasher.combine(graceUnits)
         hasher.combine(graceText)
         hasher.combine(countryCode)
+        hasher.combine(networkClass)
         hasher.combine(asn)
         hasher.combine(ipv4)
         hasher.combine(ipv6)
+        hasher.combine(personalRating)
+        hasher.combine(canRate)
         hasher.combine(hasRating)
         hasher.combine(ratingScore)
         hasher.combine(ratingUpdatedAtUnix)
@@ -3308,9 +3334,12 @@ public struct FfiConverterTypeNativePaidRouteOfferState: FfiConverterRustBuffer 
                 graceUnits: FfiConverterUInt64.read(from: &buf),
                 graceText: FfiConverterString.read(from: &buf),
                 countryCode: FfiConverterString.read(from: &buf),
+                networkClass: FfiConverterString.read(from: &buf),
                 asn: FfiConverterUInt32.read(from: &buf),
                 ipv4: FfiConverterBool.read(from: &buf),
                 ipv6: FfiConverterBool.read(from: &buf),
+                personalRating: FfiConverterInt64.read(from: &buf),
+                canRate: FfiConverterBool.read(from: &buf),
                 hasRating: FfiConverterBool.read(from: &buf),
                 ratingScore: FfiConverterInt64.read(from: &buf),
                 ratingUpdatedAtUnix: FfiConverterUInt64.read(from: &buf),
@@ -3344,9 +3373,12 @@ public struct FfiConverterTypeNativePaidRouteOfferState: FfiConverterRustBuffer 
         FfiConverterUInt64.write(value.graceUnits, into: &buf)
         FfiConverterString.write(value.graceText, into: &buf)
         FfiConverterString.write(value.countryCode, into: &buf)
+        FfiConverterString.write(value.networkClass, into: &buf)
         FfiConverterUInt32.write(value.asn, into: &buf)
         FfiConverterBool.write(value.ipv4, into: &buf)
         FfiConverterBool.write(value.ipv6, into: &buf)
+        FfiConverterInt64.write(value.personalRating, into: &buf)
+        FfiConverterBool.write(value.canRate, into: &buf)
         FfiConverterBool.write(value.hasRating, into: &buf)
         FfiConverterInt64.write(value.ratingScore, into: &buf)
         FfiConverterUInt64.write(value.ratingUpdatedAtUnix, into: &buf)
@@ -3580,6 +3612,9 @@ public func FfiConverterTypeNativePaidRoutePaymentActionState_lower(_ value: Nat
 
 
 public struct NativePaidRouteSessionState {
+    public var sellerNpub: String
+    public var personalRating: Int64
+    public var canRate: Bool
     public var sessionId: String
     public var leaseId: String
     public var channelId: String
@@ -3625,7 +3660,10 @@ public struct NativePaidRouteSessionState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sessionId: String, leaseId: String, channelId: String, statusText: String, lifecycleStatus: String, accessState: String, titleText: String, detailText: String, settlementText: String, collectActionText: String, collectActionHelpText: String, paymentChannelReady: Bool, allowRouting: Bool, deliveredUnits: UInt64, usageText: String, amountDueMsat: UInt64, amountDueText: String, paidMsat: UInt64, paidText: String, channelBalanceMsat: UInt64, channelBalanceText: String, unpaidMsat: UInt64, unpaidText: String, activeMillis: UInt64, bytes: UInt64, packets: UInt64, realizedExitIp: String, claimedCountryCode: String, observedCountryCode: String, countryClaimStatus: String, locationText: String, observedAsn: UInt32, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, updatedAtUnix: UInt64, expiresAtUnix: UInt64) {
+    public init(sellerNpub: String, personalRating: Int64, canRate: Bool, sessionId: String, leaseId: String, channelId: String, statusText: String, lifecycleStatus: String, accessState: String, titleText: String, detailText: String, settlementText: String, collectActionText: String, collectActionHelpText: String, paymentChannelReady: Bool, allowRouting: Bool, deliveredUnits: UInt64, usageText: String, amountDueMsat: UInt64, amountDueText: String, paidMsat: UInt64, paidText: String, channelBalanceMsat: UInt64, channelBalanceText: String, unpaidMsat: UInt64, unpaidText: String, activeMillis: UInt64, bytes: UInt64, packets: UInt64, realizedExitIp: String, claimedCountryCode: String, observedCountryCode: String, countryClaimStatus: String, locationText: String, observedAsn: UInt32, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, updatedAtUnix: UInt64, expiresAtUnix: UInt64) {
+        self.sellerNpub = sellerNpub
+        self.personalRating = personalRating
+        self.canRate = canRate
         self.sessionId = sessionId
         self.leaseId = leaseId
         self.channelId = channelId
@@ -3678,6 +3716,15 @@ extension NativePaidRouteSessionState: Sendable {}
 
 extension NativePaidRouteSessionState: Equatable, Hashable {
     public static func ==(lhs: NativePaidRouteSessionState, rhs: NativePaidRouteSessionState) -> Bool {
+        if lhs.sellerNpub != rhs.sellerNpub {
+            return false
+        }
+        if lhs.personalRating != rhs.personalRating {
+            return false
+        }
+        if lhs.canRate != rhs.canRate {
+            return false
+        }
         if lhs.sessionId != rhs.sessionId {
             return false
         }
@@ -3808,6 +3855,9 @@ extension NativePaidRouteSessionState: Equatable, Hashable {
     }
 
     public func hash(into hasher: inout Hasher) {
+        hasher.combine(sellerNpub)
+        hasher.combine(personalRating)
+        hasher.combine(canRate)
         hasher.combine(sessionId)
         hasher.combine(leaseId)
         hasher.combine(channelId)
@@ -3862,6 +3912,9 @@ public struct FfiConverterTypeNativePaidRouteSessionState: FfiConverterRustBuffe
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NativePaidRouteSessionState {
         return
             try NativePaidRouteSessionState(
+                sellerNpub: FfiConverterString.read(from: &buf),
+                personalRating: FfiConverterInt64.read(from: &buf),
+                canRate: FfiConverterBool.read(from: &buf),
                 sessionId: FfiConverterString.read(from: &buf),
                 leaseId: FfiConverterString.read(from: &buf),
                 channelId: FfiConverterString.read(from: &buf),
@@ -3908,6 +3961,9 @@ public struct FfiConverterTypeNativePaidRouteSessionState: FfiConverterRustBuffe
     }
 
     public static func write(_ value: NativePaidRouteSessionState, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sellerNpub, into: &buf)
+        FfiConverterInt64.write(value.personalRating, into: &buf)
+        FfiConverterBool.write(value.canRate, into: &buf)
         FfiConverterString.write(value.sessionId, into: &buf)
         FfiConverterString.write(value.leaseId, into: &buf)
         FfiConverterString.write(value.channelId, into: &buf)
@@ -5274,6 +5330,7 @@ public struct SettingsPatch {
     public var paidExitFreeProbeUnits: UInt64?
     public var paidExitGraceUnits: UInt64?
     public var paidExitCountryCode: String?
+    public var paidExitNetworkClass: String?
     public var paidExitAsn: String?
     public var paidExitIpv4: Bool?
     public var paidExitIpv6: Bool?
@@ -5294,7 +5351,7 @@ public struct SettingsPatch {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, nostrPubsubMode: String?, nostrPubsubFanout: UInt32?, nostrPubsubMaxHops: UInt8?, nostrPubsubMaxEventBytes: UInt32?, internetSource: String?, exitNode: String?, exitNodeLeakProtection: Bool?, exitDnsMode: String?, exitDnsDohProvider: String?, exitDnsCustomDohUrl: String?, exitDnsCustomDohBootstrapIps: String?, exitDnsThroughExitServers: String?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, walletFiatEnabled: Bool?, walletFiatCurrency: String?, paidExitEnabled: Bool?, paidExitUpstream: String?, paidExitPriceMsatPerGb: UInt64?, paidExitAcceptedMints: String?, paidExitMaxChannelCapacitySat: UInt64?, paidExitChannelExpirySecs: UInt64?, paidExitFreeProbeUnits: UInt64?, paidExitGraceUnits: UInt64?, paidExitCountryCode: String?, paidExitAsn: String?, paidExitIpv4: Bool?, paidExitIpv6: Bool?, paidExitRatingFile: String?, paidExitRatingRelays: [String]?, paidExitTrustedRatingAuthors: [String]?, paidExitRatingScope: String?, fipsHostTunnelEnabled: Bool?, connectToNonRosterFipsPeers: Bool?, fipsNostrDiscoveryEnabled: Bool?, fipsWebrtcEnabled: Bool?, fipsBootstrapEnabled: Bool?, fipsBootstrapPeers: [String: [String]]?, fipsHostInboundTcpPorts: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
+    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, nostrPubsubMode: String?, nostrPubsubFanout: UInt32?, nostrPubsubMaxHops: UInt8?, nostrPubsubMaxEventBytes: UInt32?, internetSource: String?, exitNode: String?, exitNodeLeakProtection: Bool?, exitDnsMode: String?, exitDnsDohProvider: String?, exitDnsCustomDohUrl: String?, exitDnsCustomDohBootstrapIps: String?, exitDnsThroughExitServers: String?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, walletFiatEnabled: Bool?, walletFiatCurrency: String?, paidExitEnabled: Bool?, paidExitUpstream: String?, paidExitPriceMsatPerGb: UInt64?, paidExitAcceptedMints: String?, paidExitMaxChannelCapacitySat: UInt64?, paidExitChannelExpirySecs: UInt64?, paidExitFreeProbeUnits: UInt64?, paidExitGraceUnits: UInt64?, paidExitCountryCode: String?, paidExitNetworkClass: String?, paidExitAsn: String?, paidExitIpv4: Bool?, paidExitIpv6: Bool?, paidExitRatingFile: String?, paidExitRatingRelays: [String]?, paidExitTrustedRatingAuthors: [String]?, paidExitRatingScope: String?, fipsHostTunnelEnabled: Bool?, connectToNonRosterFipsPeers: Bool?, fipsNostrDiscoveryEnabled: Bool?, fipsWebrtcEnabled: Bool?, fipsBootstrapEnabled: Bool?, fipsBootstrapPeers: [String: [String]]?, fipsHostInboundTcpPorts: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
         self.nodeName = nodeName
         self.endpoint = endpoint
         self.tunnelIp = tunnelIp
@@ -5338,6 +5395,7 @@ public struct SettingsPatch {
         self.paidExitFreeProbeUnits = paidExitFreeProbeUnits
         self.paidExitGraceUnits = paidExitGraceUnits
         self.paidExitCountryCode = paidExitCountryCode
+        self.paidExitNetworkClass = paidExitNetworkClass
         self.paidExitAsn = paidExitAsn
         self.paidExitIpv4 = paidExitIpv4
         self.paidExitIpv6 = paidExitIpv6
@@ -5494,6 +5552,9 @@ extension SettingsPatch: Equatable, Hashable {
         if lhs.paidExitCountryCode != rhs.paidExitCountryCode {
             return false
         }
+        if lhs.paidExitNetworkClass != rhs.paidExitNetworkClass {
+            return false
+        }
         if lhs.paidExitAsn != rhs.paidExitAsn {
             return false
         }
@@ -5592,6 +5653,7 @@ extension SettingsPatch: Equatable, Hashable {
         hasher.combine(paidExitFreeProbeUnits)
         hasher.combine(paidExitGraceUnits)
         hasher.combine(paidExitCountryCode)
+        hasher.combine(paidExitNetworkClass)
         hasher.combine(paidExitAsn)
         hasher.combine(paidExitIpv4)
         hasher.combine(paidExitIpv6)
@@ -5664,6 +5726,7 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
                 paidExitFreeProbeUnits: FfiConverterOptionUInt64.read(from: &buf),
                 paidExitGraceUnits: FfiConverterOptionUInt64.read(from: &buf),
                 paidExitCountryCode: FfiConverterOptionString.read(from: &buf),
+                paidExitNetworkClass: FfiConverterOptionString.read(from: &buf),
                 paidExitAsn: FfiConverterOptionString.read(from: &buf),
                 paidExitIpv4: FfiConverterOptionBool.read(from: &buf),
                 paidExitIpv6: FfiConverterOptionBool.read(from: &buf),
@@ -5728,6 +5791,7 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
         FfiConverterOptionUInt64.write(value.paidExitFreeProbeUnits, into: &buf)
         FfiConverterOptionUInt64.write(value.paidExitGraceUnits, into: &buf)
         FfiConverterOptionString.write(value.paidExitCountryCode, into: &buf)
+        FfiConverterOptionString.write(value.paidExitNetworkClass, into: &buf)
         FfiConverterOptionString.write(value.paidExitAsn, into: &buf)
         FfiConverterOptionBool.write(value.paidExitIpv4, into: &buf)
         FfiConverterOptionBool.write(value.paidExitIpv6, into: &buf)
@@ -5840,6 +5904,9 @@ public enum NativeAppAction {
     )
     case clearManualPaidExitProvider
     case selectPaidRouteSession(sessionId: String, connect: Bool
+    )
+    case reselectPaidExit
+    case ratePaidExit(sellerNpub: String, rating: Int64
     )
     case probePaidRouteSession(sessionId: String, timeoutSecs: UInt64
     )
@@ -5998,52 +6065,57 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
         case 40: return .selectPaidRouteSession(sessionId: try FfiConverterString.read(from: &buf), connect: try FfiConverterBool.read(from: &buf)
         )
 
-        case 41: return .probePaidRouteSession(sessionId: try FfiConverterString.read(from: &buf), timeoutSecs: try FfiConverterUInt64.read(from: &buf)
+        case 41: return .reselectPaidExit
+
+        case 42: return .ratePaidExit(sellerNpub: try FfiConverterString.read(from: &buf), rating: try FfiConverterInt64.read(from: &buf)
         )
 
-        case 42: return .recordPaidRouteProbe(sessionId: try FfiConverterString.read(from: &buf), realizedExitIp: try FfiConverterOptionString.read(from: &buf), observedCountryCode: try FfiConverterOptionString.read(from: &buf), observedAsn: try FfiConverterOptionUInt32.read(from: &buf), latencyMs: try FfiConverterOptionUInt32.read(from: &buf), jitterMs: try FfiConverterOptionUInt32.read(from: &buf), packetLossPpm: try FfiConverterOptionUInt32.read(from: &buf), downBps: try FfiConverterOptionUInt64.read(from: &buf), upBps: try FfiConverterOptionUInt64.read(from: &buf), uptimeSecs: try FfiConverterOptionUInt64.read(from: &buf), lastSeenUnix: try FfiConverterOptionUInt64.read(from: &buf)
+        case 43: return .probePaidRouteSession(sessionId: try FfiConverterString.read(from: &buf), timeoutSecs: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 43: return .createPaidRoutePaymentEnvelope(sessionId: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), paymentJson: try FfiConverterString.read(from: &buf), deliveredUnits: try FfiConverterOptionUInt64.read(from: &buf), paidMsat: try FfiConverterOptionUInt64.read(from: &buf)
+        case 44: return .recordPaidRouteProbe(sessionId: try FfiConverterString.read(from: &buf), realizedExitIp: try FfiConverterOptionString.read(from: &buf), observedCountryCode: try FfiConverterOptionString.read(from: &buf), observedAsn: try FfiConverterOptionUInt32.read(from: &buf), latencyMs: try FfiConverterOptionUInt32.read(from: &buf), jitterMs: try FfiConverterOptionUInt32.read(from: &buf), packetLossPpm: try FfiConverterOptionUInt32.read(from: &buf), downBps: try FfiConverterOptionUInt64.read(from: &buf), upBps: try FfiConverterOptionUInt64.read(from: &buf), uptimeSecs: try FfiConverterOptionUInt64.read(from: &buf), lastSeenUnix: try FfiConverterOptionUInt64.read(from: &buf)
         )
 
-        case 44: return .openPaidRouteChannelFromWallet(sessionId: try FfiConverterString.read(from: &buf), mintUrl: try FfiConverterOptionString.read(from: &buf), paidMsat: try FfiConverterOptionUInt64.read(from: &buf), maxAmountPerOutput: try FfiConverterOptionUInt64.read(from: &buf), keysetId: try FfiConverterOptionString.read(from: &buf)
+        case 45: return .createPaidRoutePaymentEnvelope(sessionId: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), paymentJson: try FfiConverterString.read(from: &buf), deliveredUnits: try FfiConverterOptionUInt64.read(from: &buf), paidMsat: try FfiConverterOptionUInt64.read(from: &buf)
         )
 
-        case 45: return .signPaidRoutePaymentEnvelopeFromWallet(sessionId: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), deliveredUnits: try FfiConverterOptionUInt64.read(from: &buf), paidMsat: try FfiConverterOptionUInt64.read(from: &buf)
+        case 46: return .openPaidRouteChannelFromWallet(sessionId: try FfiConverterString.read(from: &buf), mintUrl: try FfiConverterOptionString.read(from: &buf), paidMsat: try FfiConverterOptionUInt64.read(from: &buf), maxAmountPerOutput: try FfiConverterOptionUInt64.read(from: &buf), keysetId: try FfiConverterOptionString.read(from: &buf)
         )
 
-        case 46: return .closePaidRouteChannelFromWallet(sessionId: try FfiConverterString.read(from: &buf), publish: try FfiConverterBool.read(from: &buf)
+        case 47: return .signPaidRoutePaymentEnvelopeFromWallet(sessionId: try FfiConverterString.read(from: &buf), kind: try FfiConverterString.read(from: &buf), deliveredUnits: try FfiConverterOptionUInt64.read(from: &buf), paidMsat: try FfiConverterOptionUInt64.read(from: &buf)
         )
 
-        case 47: return .applyPaidRoutePaymentEnvelope(envelopeJson: try FfiConverterString.read(from: &buf)
+        case 48: return .closePaidRouteChannelFromWallet(sessionId: try FfiConverterString.read(from: &buf), publish: try FfiConverterBool.read(from: &buf)
         )
 
-        case 48: return .sendPaidRoutePaymentEnvelope(envelopeJson: try FfiConverterString.read(from: &buf)
+        case 49: return .applyPaidRoutePaymentEnvelope(envelopeJson: try FfiConverterString.read(from: &buf)
         )
 
-        case 49: return .streamPaidRoutePayments(publish: try FfiConverterBool.read(from: &buf), minIncrementMsat: try FfiConverterUInt64.read(from: &buf), limit: try FfiConverterUInt64.read(from: &buf)
+        case 50: return .sendPaidRoutePaymentEnvelope(envelopeJson: try FfiConverterString.read(from: &buf)
         )
 
-        case 50: return .clearPaidRouteActivity
-
-        case 51: return .receivePaidRoutePayments(durationSecs: try FfiConverterUInt64.read(from: &buf)
+        case 51: return .streamPaidRoutePayments(publish: try FfiConverterBool.read(from: &buf), minIncrementMsat: try FfiConverterUInt64.read(from: &buf), limit: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 52: return .collectPaidExitChannel(channelId: try FfiConverterString.read(from: &buf)
+        case 52: return .clearPaidRouteActivity
+
+        case 53: return .receivePaidRoutePayments(durationSecs: try FfiConverterUInt64.read(from: &buf)
         )
 
-        case 53: return .collectDuePaidExitChannels
-
-        case 54: return .publishPaidExitOffer
-
-        case 55: return .setPaidRouteMarketFilter(query: try FfiConverterString.read(from: &buf), countryCode: try FfiConverterString.read(from: &buf), mintUrl: try FfiConverterString.read(from: &buf), requireIpv4: try FfiConverterBool.read(from: &buf), requireIpv6: try FfiConverterBool.read(from: &buf), sort: try FfiConverterString.read(from: &buf)
+        case 54: return .collectPaidExitChannel(channelId: try FfiConverterString.read(from: &buf)
         )
 
-        case 56: return .discoverPaidRouteOffers(durationSecs: try FfiConverterUInt64.read(from: &buf)
+        case 55: return .collectDuePaidExitChannels
+
+        case 56: return .publishPaidExitOffer
+
+        case 57: return .setPaidRouteMarketFilter(query: try FfiConverterString.read(from: &buf), countryCode: try FfiConverterString.read(from: &buf), mintUrl: try FfiConverterString.read(from: &buf), requireIpv4: try FfiConverterBool.read(from: &buf), requireIpv6: try FfiConverterBool.read(from: &buf), sort: try FfiConverterString.read(from: &buf)
         )
 
-        case 57: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
+        case 58: return .discoverPaidRouteOffers(durationSecs: try FfiConverterUInt64.read(from: &buf)
+        )
+
+        case 59: return .updateSettings(patch: try FfiConverterTypeSettingsPatch.read(from: &buf)
         )
 
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -6265,14 +6337,24 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
             FfiConverterBool.write(connect, into: &buf)
 
 
-        case let .probePaidRouteSession(sessionId,timeoutSecs):
+        case .reselectPaidExit:
             writeInt(&buf, Int32(41))
+
+
+        case let .ratePaidExit(sellerNpub,rating):
+            writeInt(&buf, Int32(42))
+            FfiConverterString.write(sellerNpub, into: &buf)
+            FfiConverterInt64.write(rating, into: &buf)
+
+
+        case let .probePaidRouteSession(sessionId,timeoutSecs):
+            writeInt(&buf, Int32(43))
             FfiConverterString.write(sessionId, into: &buf)
             FfiConverterUInt64.write(timeoutSecs, into: &buf)
 
 
         case let .recordPaidRouteProbe(sessionId,realizedExitIp,observedCountryCode,observedAsn,latencyMs,jitterMs,packetLossPpm,downBps,upBps,uptimeSecs,lastSeenUnix):
-            writeInt(&buf, Int32(42))
+            writeInt(&buf, Int32(44))
             FfiConverterString.write(sessionId, into: &buf)
             FfiConverterOptionString.write(realizedExitIp, into: &buf)
             FfiConverterOptionString.write(observedCountryCode, into: &buf)
@@ -6287,7 +6369,7 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
 
 
         case let .createPaidRoutePaymentEnvelope(sessionId,kind,paymentJson,deliveredUnits,paidMsat):
-            writeInt(&buf, Int32(43))
+            writeInt(&buf, Int32(45))
             FfiConverterString.write(sessionId, into: &buf)
             FfiConverterString.write(kind, into: &buf)
             FfiConverterString.write(paymentJson, into: &buf)
@@ -6296,7 +6378,7 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
 
 
         case let .openPaidRouteChannelFromWallet(sessionId,mintUrl,paidMsat,maxAmountPerOutput,keysetId):
-            writeInt(&buf, Int32(44))
+            writeInt(&buf, Int32(46))
             FfiConverterString.write(sessionId, into: &buf)
             FfiConverterOptionString.write(mintUrl, into: &buf)
             FfiConverterOptionUInt64.write(paidMsat, into: &buf)
@@ -6305,7 +6387,7 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
 
 
         case let .signPaidRoutePaymentEnvelopeFromWallet(sessionId,kind,deliveredUnits,paidMsat):
-            writeInt(&buf, Int32(45))
+            writeInt(&buf, Int32(47))
             FfiConverterString.write(sessionId, into: &buf)
             FfiConverterString.write(kind, into: &buf)
             FfiConverterOptionUInt64.write(deliveredUnits, into: &buf)
@@ -6313,52 +6395,52 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
 
 
         case let .closePaidRouteChannelFromWallet(sessionId,publish):
-            writeInt(&buf, Int32(46))
+            writeInt(&buf, Int32(48))
             FfiConverterString.write(sessionId, into: &buf)
             FfiConverterBool.write(publish, into: &buf)
 
 
         case let .applyPaidRoutePaymentEnvelope(envelopeJson):
-            writeInt(&buf, Int32(47))
+            writeInt(&buf, Int32(49))
             FfiConverterString.write(envelopeJson, into: &buf)
 
 
         case let .sendPaidRoutePaymentEnvelope(envelopeJson):
-            writeInt(&buf, Int32(48))
+            writeInt(&buf, Int32(50))
             FfiConverterString.write(envelopeJson, into: &buf)
 
 
         case let .streamPaidRoutePayments(publish,minIncrementMsat,limit):
-            writeInt(&buf, Int32(49))
+            writeInt(&buf, Int32(51))
             FfiConverterBool.write(publish, into: &buf)
             FfiConverterUInt64.write(minIncrementMsat, into: &buf)
             FfiConverterUInt64.write(limit, into: &buf)
 
 
         case .clearPaidRouteActivity:
-            writeInt(&buf, Int32(50))
+            writeInt(&buf, Int32(52))
 
 
         case let .receivePaidRoutePayments(durationSecs):
-            writeInt(&buf, Int32(51))
+            writeInt(&buf, Int32(53))
             FfiConverterUInt64.write(durationSecs, into: &buf)
 
 
         case let .collectPaidExitChannel(channelId):
-            writeInt(&buf, Int32(52))
+            writeInt(&buf, Int32(54))
             FfiConverterString.write(channelId, into: &buf)
 
 
         case .collectDuePaidExitChannels:
-            writeInt(&buf, Int32(53))
+            writeInt(&buf, Int32(55))
 
 
         case .publishPaidExitOffer:
-            writeInt(&buf, Int32(54))
+            writeInt(&buf, Int32(56))
 
 
         case let .setPaidRouteMarketFilter(query,countryCode,mintUrl,requireIpv4,requireIpv6,sort):
-            writeInt(&buf, Int32(55))
+            writeInt(&buf, Int32(57))
             FfiConverterString.write(query, into: &buf)
             FfiConverterString.write(countryCode, into: &buf)
             FfiConverterString.write(mintUrl, into: &buf)
@@ -6368,12 +6450,12 @@ public struct FfiConverterTypeNativeAppAction: FfiConverterRustBuffer {
 
 
         case let .discoverPaidRouteOffers(durationSecs):
-            writeInt(&buf, Int32(56))
+            writeInt(&buf, Int32(58))
             FfiConverterUInt64.write(durationSecs, into: &buf)
 
 
         case let .updateSettings(patch):
-            writeInt(&buf, Int32(57))
+            writeInt(&buf, Int32(59))
             FfiConverterTypeSettingsPatch.write(patch, into: &buf)
 
         }

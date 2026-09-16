@@ -1,4 +1,3 @@
-
 struct PaidExitRunResult {
     config_path: PathBuf,
     store_path: PathBuf,
@@ -91,6 +90,9 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
     if let Some(value) = args.country_code.as_deref() {
         app.paid_exit.location.country_code = value.to_string();
     }
+    if let Some(value) = args.network_class {
+        app.paid_exit.location.network_class = value;
+    }
     if let Some(value) = args.asn {
         app.paid_exit.location.asn = Some(value);
     }
@@ -101,10 +103,8 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
         app.paid_exit.channel.channel_expiry_secs = value;
     }
     if let Some(value) = args.free_probe_units.as_deref() {
-        app.paid_exit.channel.free_probe_units = paid_exit_parse_traffic_units_arg(
-            value,
-            "--free-probe-units",
-        )?;
+        app.paid_exit.channel.free_probe_units =
+            paid_exit_parse_traffic_units_arg(value, "--free-probe-units")?;
     }
     if let Some(value) = args.grace_units.as_deref() {
         app.paid_exit.channel.grace_units =

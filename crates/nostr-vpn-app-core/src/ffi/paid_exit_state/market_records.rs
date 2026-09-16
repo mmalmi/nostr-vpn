@@ -95,6 +95,7 @@ include!("wallet_balance.rs");
 fn paid_route_offer_state(
     key: &str,
     record: &nostr_vpn_core::paid_route_store::PaidRouteOfferRecord,
+    store: &PaidRouteStore,
 ) -> NativePaidRouteOfferState {
     let offer = &record.offer;
     let quality = offer.quality.as_ref();
@@ -113,9 +114,12 @@ fn paid_route_offer_state(
         grace_units: offer.channel.grace_units,
         grace_text: paid_route_binary_bytes_text(offer.channel.grace_units),
         country_code: normalize_paid_route_country_code(&offer.location.country_code),
+        network_class: offer.location.network_class.as_str().into(),
         asn: offer.location.asn.unwrap_or_default(),
         ipv4: offer.ip_support.ipv4,
         ipv6: offer.ip_support.ipv6,
+        personal_rating: store.personal_exit_rating(&offer.seller_npub),
+        can_rate: store.can_rate_exit(&offer.seller_npub),
         has_rating: record.rating_score.is_some(),
         rating_score: record.rating_score.unwrap_or_default(),
         rating_updated_at_unix: record.rating_updated_at_unix,
@@ -134,7 +138,9 @@ fn paid_route_offer_state(
         down_bps: quality
             .and_then(|quality| quality.down_bps)
             .unwrap_or_default(),
-        up_bps: quality.and_then(|quality| quality.up_bps).unwrap_or_default(),
+        up_bps: quality
+            .and_then(|quality| quality.up_bps)
+            .unwrap_or_default(),
         uptime_secs: quality
             .and_then(|quality| quality.uptime_secs)
             .unwrap_or_default(),
@@ -149,6 +155,9 @@ fn paid_route_offer_status_text(offer: &PaidRouteOffer, last_seen_unix: u64) -> 
     let country_code = normalize_paid_route_country_code(&offer.location.country_code);
     if !country_code.is_empty() {
         parts.push(country_code);
+    }
+    if !offer.location.network_class.is_unknown() {
+        parts.push(offer.location.network_class.label().to_string());
     }
     if let Some(latency_ms) = offer
         .quality
@@ -308,7 +317,11 @@ fn paid_route_session_state_with_decision(
     let allow_routing = decision_allows_routing
         && lifecycle_allows_routing
         && time_allows_routing
-        && payment_allows_routing;
+        && payment_allows_routing
+        && channel.is_none_or(|c| {
+            c.role != PaidRouteChannelRole::Buyer
+                || !store.exit_provider_is_avoided(&c.counterparty_npub)
+        });
     let delivered_units = decision.map_or(0, |decision| decision.delivered_units);
     let amount_due_msat = decision.map_or(0, |decision| decision.amount_due_msat);
     let unpaid_msat = decision.map_or(0, |decision| decision.unpaid_msat);
@@ -326,7 +339,14 @@ fn paid_route_session_state_with_decision(
     let collection_available = collection.is_some_and(|state| state.manual_collect);
     let auto_collect_due = collection.is_some_and(|state| state.auto_collect_due);
 
+    let seller_npub = channel
+        .filter(|c| c.role == PaidRouteChannelRole::Buyer)
+        .map(|c| c.counterparty_npub.clone())
+        .unwrap_or_default();
     NativePaidRouteSessionState {
+        personal_rating: store.personal_exit_rating(&seller_npub),
+        can_rate: store.can_rate_exit(&seller_npub),
+        seller_npub,
         session_id: session.session_id.clone(),
         lease_id: session.lease_id.clone(),
         channel_id: session.payment.channel_id.clone(),
@@ -411,7 +431,9 @@ fn paid_route_session_state_with_decision(
         down_bps: quality
             .and_then(|quality| quality.down_bps)
             .unwrap_or_default(),
-        up_bps: quality.and_then(|quality| quality.up_bps).unwrap_or_default(),
+        up_bps: quality
+            .and_then(|quality| quality.up_bps)
+            .unwrap_or_default(),
         updated_at_unix: record.updated_at_unix,
         expires_at_unix,
     }

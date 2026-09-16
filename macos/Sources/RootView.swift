@@ -35,6 +35,7 @@ struct RootView: View {
     @State var paidExitFreeProbeUnits = ""
     @State var paidExitGraceUnits = ""
     @State var paidExitCountryCode = ""
+    @State var paidExitNetworkClass = "unknown"
     @State var paidExitAsn = ""
     @State var paidRouteMintUrl = ""
     @State var paidRouteWalletFlow: PaidRouteWalletFlow?
@@ -179,6 +180,12 @@ struct RootView: View {
         .onAppear {
             syncDrafts()
             normalizeSidebarSelection()
+        }
+        .onChange(of: manager.paidExitChooserRequested, initial: true) { _, requested in
+            if requested {
+                selectedSidebarItem = .publicExits
+                manager.paidExitChooserRequested = false
+            }
         }
         .onChange(of: state.rev) { _, _ in
             syncDrafts()

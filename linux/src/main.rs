@@ -7,8 +7,8 @@ mod updater;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use adw::prelude::*;
@@ -120,6 +120,7 @@ struct Drafts {
     manual_paid_exit_provider: String,
     paid_exit_price_msat_per_gb: String,
     paid_exit_country_code: String,
+    paid_exit_network_class: String,
     paid_exit_accepted_mints: String,
     paid_route_mint_url: String,
     paid_route_top_up_amount: String,
@@ -145,6 +146,7 @@ impl Drafts {
         self.manual_paid_exit_provider = state.paid_route_market.manual_provider_link.clone();
         self.paid_exit_price_msat_per_gb = state.paid_exit_seller.price_msat_per_gb.to_string();
         self.paid_exit_country_code = state.paid_exit_seller.country_code.clone();
+        self.paid_exit_network_class = state.paid_exit_seller.network_class.clone();
         self.paid_exit_accepted_mints = state.paid_exit_seller.accepted_mints.join(", ");
         if let Some(network) = active_network(state) {
             self.network_name = display_network_name(network);

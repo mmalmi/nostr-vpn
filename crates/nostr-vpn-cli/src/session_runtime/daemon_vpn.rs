@@ -18,7 +18,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut last_paid_exit_usage_flush_at = Instant::now();
     let mut paid_exit_offer_refresh_interval =
         tokio::time::interval(Duration::from_secs(paid_exit_offer_refresh_secs()));
-    paid_exit_offer_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    paid_exit_offer_refresh_interval
+        .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_runtime_heartbeat_at = WallTimeJumpObserver::new(unix_timestamp());
     let mut platform_network_change_rx = spawn_platform_network_change_monitor();
     let mut terminate_wait = daemon_termination_wait()?;
@@ -57,8 +58,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let daemon_cashu_wallet_worker =
         crate::cashu_wallet_daemon::DaemonCashuWalletWorker::start(config_path.clone())?;
     #[cfg(feature = "paid-exit")]
-    if let Some(signer) = FileSpilmanPaymentSigner::try_load(&paid_exit_wallet_data_dir(&config_path))
-        .map_err(|error| anyhow!("{error}"))?
+    if let Some(signer) =
+        FileSpilmanPaymentSigner::try_load(&paid_exit_wallet_data_dir(&config_path))
+            .map_err(|error| anyhow!("{error}"))?
     {
         drop(signer);
     }
@@ -81,6 +83,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
     #[cfg(feature = "paid-exit")]
+    let mut exit_probe_feedback = nostr_vpn_core::paid_route_ratings::ExitProbeFeedback::default();
+    #[cfg(feature = "paid-exit")]
     let mut manual_paid_exit = PaidExitManualBuyer::default();
     #[cfg(feature = "paid-exit")]
     let mut last_paid_exit_session_open_at =
@@ -101,7 +105,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         crate::join_request_ipc::JoinRequestIpcServer::spawn(&config_path, join_request_ipc_tx)?;
     #[cfg(not(unix))]
     let _join_request_ipc_keepalive = join_request_ipc_tx;
-macro_rules! handle_daemon_state_tick {
+    macro_rules! handle_daemon_state_tick {
     ($background_ready:expr) => {{
             #[cfg(feature = "paid-exit")]
             let pending_control_request =
@@ -347,6 +351,7 @@ macro_rules! handle_daemon_state_tick {
                             }
                             match update_automatic_paid_exit(
                                 &mut automatic_paid_exit,
+                                &mut exit_probe_feedback,
                                 runtime,
                                 &mut app,
                                 &config_path,
@@ -362,6 +367,7 @@ macro_rules! handle_daemon_state_tick {
                             }
                             match update_manual_paid_exit(
                                 &mut manual_paid_exit,
+                                &mut exit_probe_feedback,
                                 runtime,
                                 &mut app,
                                 &config_path,
@@ -411,6 +417,11 @@ macro_rules! handle_daemon_state_tick {
                     }
                     let outbox_now = Instant::now();
                     if paid_exit_payment_outbox_retry.due(outbox_now) {
+                        if app.nostr.pubsub.enabled()
+                            && let Err(error) = crate::control_pubsub_runtime::flush_exit_ratings(&config_path)
+                        {
+                            tracing::warn!(%error, "exit rating publication will retry");
+                        }
                         let flushed = flush_paid_exit_payment_outbox(runtime, &config_path).await;
                         if paid_exit_payment_outbox_retry.record_flush(
                             outbox_now,

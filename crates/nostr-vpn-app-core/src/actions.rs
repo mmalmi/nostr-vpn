@@ -133,6 +133,11 @@ pub enum NativeAppAction {
         session_id: String,
         connect: bool,
     },
+    ReselectPaidExit,
+    RatePaidExit {
+        seller_npub: String,
+        rating: i64,
+    },
     ProbePaidRouteSession {
         session_id: String,
         timeout_secs: u64,

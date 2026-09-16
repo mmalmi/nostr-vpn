@@ -10,7 +10,7 @@ readme = "README.md"
 
 [features]
 default = ["paid-exit"]
-paid-exit = ["dep:cashu-service"]
+paid-exit = ["dep:cashu-service", "dep:nostr-social-graph", "dep:nostr-social-memory"]
 cashu-wallet = ["dep:cashu-service", "cashu-service/wallet"]
 updater = [
   "dep:hashtree-updater",
@@ -33,6 +33,8 @@ fips-tcp.workspace = true
 fips-tcp-endpoint.workspace = true
 nostr-sdk.workspace = true
 nostr-identity.workspace = true
+nostr-social-graph = { workspace = true, optional = true }
+nostr-social-memory = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

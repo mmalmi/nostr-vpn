@@ -168,6 +168,52 @@ fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session(
         load_paid_route_store(&store_path).unwrap().sessions.len(),
         1
     );
+    // An explicit reselection preserves the old channel and never creates a rating.
+    assert!(
+        update_paid_route_store(&store_path, |store| store
+            .request_exit_reselection(&app, now + 2))
+        .is_err()
+    );
+    let alternative = Keys::generate();
+    let alternate_offer = nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
+        "alternative", &alternative, &offer_config, None, &["8.8.8.8:2122".to_string()], None, now,
+    ).unwrap();
+    update_paid_route_store(&store_path, |store| {
+        store.upsert_signed_offer(alternate_offer, vec![], now)?;
+        store.request_exit_reselection(&app, now + 2)
+    })
+    .unwrap();
+    let channels_before = load_paid_route_store(&store_path).unwrap().channels;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    recovered.funding = Some(runtime.spawn(std::future::pending::<Result<()>>()));
+    assert!(
+        !reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 2)
+            .unwrap()
+    );
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(seller_pubkey.clone()),
+        "wallet operation must finish before switching"
+    );
+    recovered.funding.take().unwrap().abort();
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 3)
+            .unwrap()
+    );
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(alternative.public_key().to_hex())
+    );
+    let after = load_paid_route_store(&store_path).unwrap();
+    assert!(after.automatic_reselect_from.is_empty());
+    assert!(after.exit_ratings.is_empty());
+    for (key, channel) in channels_before {
+        assert_eq!(after.channels[&key], channel);
+    }
+    assert_eq!(after.sessions.len(), 2);
     let _ = fs::remove_dir_all(directory);
 }
 

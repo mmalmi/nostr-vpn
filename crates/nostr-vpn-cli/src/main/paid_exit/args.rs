@@ -4,9 +4,11 @@ struct PaidExitArgs {
     command: PaidExitCommand,
 }
 
-const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
+const DEFAULT_PAID_EXIT_RATING_SCOPE: &str = "vpn.exit";
 const RATING_FACT_KIND: u64 = 7368;
+#[cfg(test)]
 const RATING_FACT_TYPE: &str = "rating";
+#[cfg(test)]
 const RATING_FACT_SCHEMA: &str = "1";
 #[cfg(test)]
 const PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT: usize = 500;
@@ -16,6 +18,10 @@ const PAID_EXIT_OFFER_EVENT_CACHE_LIMIT: usize = 512;
 enum PaidExitCommand {
     /// Show paid-exit seller config, wallet, offers, channels, and sessions.
     Status(PaidExitStatusArgs),
+    /// Rate a previously used provider; down stops and avoids it. Ratings publish automatically.
+    Rate(PaidExitRateArgs),
+    /// Ask Automatic mode to try another eligible provider without casting a vote.
+    Reselect(PaidExitStatusArgs),
     /// Enable this machine as a paid-exit seller, refresh its offer, and optionally publish it.
     Run(PaidExitRunArgs),
     /// Build/sign the local paid-exit offer, and optionally publish it.
@@ -62,6 +68,26 @@ enum PaidExitCommand {
     Wallet(PaidExitWalletArgs),
 }
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum PaidExitOpinion {
+    Up,
+    Down,
+    Clear,
+}
+
+#[derive(Debug, Args)]
+struct PaidExitRateArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Defaults to the currently selected provider.
+    #[arg(long)]
+    provider: Option<String>,
+    #[arg(value_enum)]
+    opinion: PaidExitOpinion,
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Debug, Args)]
 struct PaidExitStatusArgs {
     #[arg(long)]
@@ -95,6 +121,9 @@ struct PaidExitRunArgs {
     accepted_mint: Vec<String>,
     #[arg(long)]
     country_code: Option<String>,
+    /// Provider-declared residential, datacenter, mobile, business, or unknown network.
+    #[arg(long)]
+    network_class: Option<nostr_vpn_core::paid_routes::ExitNetworkClass>,
     #[arg(long)]
     asn: Option<u32>,
     #[arg(long)]
@@ -164,7 +193,7 @@ struct PaidExitDiscoverArgs {
     #[arg(long = "trusted-rating-author", value_name = "NPUB_OR_HEX")]
     trusted_rating_authors: Vec<String>,
     /// Rating scope to read from the ratings file.
-    #[arg(long = "rating-scope", default_value = DEFAULT_FIPS_PEER_RATING_SCOPE)]
+    #[arg(long = "rating-scope", default_value = DEFAULT_PAID_EXIT_RATING_SCOPE)]
     rating_scope: String,
     #[arg(long)]
     json: bool,
@@ -313,7 +342,7 @@ struct PaidExitRatingsExportArgs {
     #[arg(long)]
     session: String,
     /// Rating scope to write into the fact event.
-    #[arg(long = "rating-scope", default_value = DEFAULT_FIPS_PEER_RATING_SCOPE)]
+    #[arg(long = "rating-scope", default_value = DEFAULT_PAID_EXIT_RATING_SCOPE)]
     rating_scope: String,
     /// Write `{ "events": [...] }` JSON to this path instead of stdout.
     #[arg(long)]
@@ -330,7 +359,7 @@ struct PaidExitRatingsPublishArgs {
     #[arg(long)]
     session: String,
     /// Rating scope to write into the fact event.
-    #[arg(long = "rating-scope", default_value = DEFAULT_FIPS_PEER_RATING_SCOPE)]
+    #[arg(long = "rating-scope", default_value = DEFAULT_PAID_EXIT_RATING_SCOPE)]
     rating_scope: String,
     #[arg(long)]
     json: bool,

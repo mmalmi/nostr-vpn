@@ -363,6 +363,12 @@ pub(super) fn paid_route_offer_tags(offer: &PaidRouteOffer) -> Result<Vec<Tag>> 
             normalize_receiver_pubkey_hex(&offer.receiver_pubkey_hex)?,
         ])?);
     }
+    if offer.location.network_class != ExitNetworkClass::Unknown {
+        tags.push(paid_route_tag(&[
+            "network_class",
+            offer.location.network_class.as_str(),
+        ])?);
+    }
 
     for endpoint in &offer.fips_endpoints {
         tags.push(paid_route_owned_tag(vec![
@@ -550,6 +556,15 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
                     ));
                 }
                 receiver_ok = true;
+            }
+            "network_class" => {
+                let value = parts
+                    .get(1)
+                    .ok_or_else(|| anyhow!("empty network class tag"))?;
+                let class = value.parse::<ExitNetworkClass>().unwrap_or_default();
+                if class != offer.location.network_class {
+                    return Err(anyhow!("network class tag does not match offer"));
+                }
             }
             "fips_endpoint" => {
                 let Some(value) = parts.get(1) else {

@@ -139,7 +139,9 @@ impl ControlPubsubFipsRuntime {
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
-        let event_store = ControlEventStore::load(store_path, update_events.clone())?;
+        let graph_root = PublicKey::parse(endpoint.npub())?;
+        let event_store =
+            ControlEventStore::load_for_owner(store_path, update_events.clone(), Some(graph_root))?;
         let stored_events = event_store.snapshot();
         let pubsub_policy = FipsPubsubPolicy::new(
             Arc::clone(&endpoint),
@@ -160,9 +162,14 @@ impl ControlPubsubFipsRuntime {
             .await
             .context("failed to bind standard FIPS Nostr pubsub service")?,
         );
-        let relay =
-            RelayProvider::start(config.mode, relays, &update_events, &target_advert_authors)
-                .await?;
+        let relay = RelayProvider::start(
+            config.mode,
+            relays,
+            &update_events,
+            &target_advert_authors,
+            graph_root,
+        )
+        .await?;
         let relay_client = relay.as_ref().map(|provider| provider.bus.client().clone());
         let mut pubsub =
             NostrPubsubRouter::new(event_policy).with_publish_source(RouterPublishSource::new(
@@ -292,6 +299,7 @@ impl RelayProvider {
         relays: Vec<String>,
         update_events: &UpdateEventCache,
         target_advert_authors: &[PublicKey],
+        graph_root: PublicKey,
     ) -> Result<Option<Self>> {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
@@ -304,7 +312,11 @@ impl RelayProvider {
         let (notification_tx, notifications) = mpsc::channel(RELAY_REPLAY_LIMIT * 5);
         let subscription = NostrEventSubscriber::subscribe(
             bus.as_ref(),
-            relay_subscription_filters(update_events, target_advert_authors),
+            {
+                let mut filters = relay_subscription_filters(update_events, target_advert_authors);
+                filters.push(exit_graph_filter(graph_root));
+                filters
+            },
             Arc::new(move |event| {
                 if notification_tx.try_send(event).is_err() {
                     tracing::warn!("dropping control pubsub relay event because the bounded ingress queue is full");
@@ -792,7 +804,10 @@ async fn sync_fips_subscription(
     if !should_create_fips_subscription(subscription_exists, peers.len()) {
         return;
     }
-    let filters = fips_subscription_filters(update_events);
+    let mut filters = fips_subscription_filters(update_events);
+    if let Ok(root) = PublicKey::parse(endpoint.npub()) {
+        filters.push(exit_graph_filter(root));
+    }
     let next = match fips_pubsub.subscribe(filters).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -916,6 +931,13 @@ async fn relay_notification(relay: &mut Option<RelayProvider>) -> Option<QueryEv
     relay.notifications.recv().await
 }
 
+fn exit_graph_filter(root: PublicKey) -> Filter {
+    Filter::new()
+        .author(root)
+        .kinds([Kind::ContactList, Kind::MuteList])
+        .limit(2)
+}
+
 fn control_kinds() -> [Kind; 2] {
     [
         Kind::Custom(PAID_EXIT_OFFER_KIND),
@@ -954,13 +976,14 @@ fn relay_subscription_filters(
 fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
     matches!(
         u16::from(event.kind),
-        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND
+        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND | 3 | 10_000
     ) || update_events
         .filter()
         .match_event(event, MatchEventOptions::new())
 }
 
 include!("control_pubsub_runtime/outbox.rs");
+include!("control_pubsub_runtime/exit_ratings.rs");
 
 #[cfg(test)]
 #[path = "control_pubsub_runtime/tests.rs"]

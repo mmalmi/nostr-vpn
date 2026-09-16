@@ -19,6 +19,7 @@ struct Candidate {
     local_probe: Option<LocalProbeRank>,
     local_probe_count: u32,
     previously_verified: bool,
+    personal_rating: i64,
     rating_score: i64,
     price_msat_per_gb: u64,
     signed_at_unix: u64,
@@ -26,6 +27,7 @@ struct Candidate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct LocalProbeRank {
+    usable: bool,
     retained_packets_ppm: u32,
     inverse_latency_ms: u32,
     inverse_jitter_ms: u32,
@@ -64,6 +66,8 @@ impl PaidRouteStore {
         let offer = record.signed_offer.offer().ok()?;
         let signed_at_unix = record.signed_offer.event.created_at.as_secs();
         if offer != record.offer
+            || self.exit_provider_is_avoided(&offer.seller_npub)
+            || offer.seller_npub == self.automatic_reselect_from
             || paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id) != key
             || !record.signed_offer.is_live_at(now_unix)
             || !offer.ip_support.ipv4
@@ -101,6 +105,7 @@ impl PaidRouteStore {
             local_probe,
             local_probe_count,
             previously_verified,
+            personal_rating: self.personal_exit_rating(&offer.seller_npub),
             rating_score: record.rating_score.unwrap_or_default(),
             price_msat_per_gb: offer.pricing.price_msat_per_gb,
             signed_at_unix,
@@ -199,34 +204,49 @@ impl PaidRouteStore {
 }
 
 impl PaidRouteSessionRecord {
-    pub(super) fn successful_probe_unix(&self) -> u64 {
+    pub(crate) fn successful_probe_unix(&self) -> u64 {
         // Backfill legacy stores from locally observed exit IP and successful
         // measurements, never from an advert or another buyer's rating.
-        let observed = self
+        let observed = if self
             .session
-            .quality
+            .realized_exit_ip
             .as_ref()
-            .filter(|quality| {
-                self.session
-                    .realized_exit_ip
-                    .as_ref()
-                    .is_some_and(|ip| ip.parse::<std::net::IpAddr>().is_ok())
-                    && quality.packet_loss_ppm.unwrap_or(0) < 1_000_000
-                    && (quality.latency_ms.is_some() || quality.packet_loss_ppm.is_some())
-            })
-            .and_then(|quality| quality.last_seen_unix)
-            .unwrap_or(0);
+            .is_some_and(|ip| ip.parse::<std::net::IpAddr>().is_ok())
+            && self
+                .session
+                .quality
+                .as_ref()
+                .is_none_or(|quality| quality.packet_loss_ppm != Some(1_000_000))
+        {
+            self.session
+                .quality
+                .as_ref()
+                .and_then(|quality| quality.last_seen_unix)
+                .unwrap_or(self.updated_at_unix)
+        } else {
+            0
+        };
         self.last_successful_probe_unix.max(observed)
     }
 }
 
 fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {
-    left.local_probe
-        .cmp(&right.local_probe)
+    // A known failed probe cannot be rescued by a vote. Within the same
+    // health class, explicit preference wins, then local measurements and
+    // trusted reputation, before price and announcement recency.
+    let health = |candidate: &Candidate| {
+        candidate
+            .local_probe
+            .map_or(1, |probe| if probe.usable { 2 } else { 0 })
+    };
+    health(left)
+        .cmp(&health(right))
+        .then_with(|| left.personal_rating.cmp(&right.personal_rating))
+        .then_with(|| left.local_probe.cmp(&right.local_probe))
+        .then_with(|| left.rating_score.cmp(&right.rating_score))
         .then_with(|| left.local_probe_count.cmp(&right.local_probe_count))
         .then_with(|| right.price_msat_per_gb.cmp(&left.price_msat_per_gb))
         .then_with(|| left.signed_at_unix.cmp(&right.signed_at_unix))
-        .then_with(|| left.rating_score.cmp(&right.rating_score))
         .then_with(|| right.offer_key.cmp(&left.offer_key))
 }
 
@@ -237,6 +257,7 @@ fn probe_rank(quality: &PaidRouteQualityMetrics) -> Option<LocalProbeRank> {
         || quality.down_bps.is_some()
         || quality.up_bps.is_some())
     .then(|| LocalProbeRank {
+        usable: quality.packet_loss_ppm != Some(1_000_000),
         retained_packets_ppm: 1_000_000_u32
             .saturating_sub(quality.packet_loss_ppm.unwrap_or(1_000_000).min(1_000_000)),
         inverse_latency_ms: u32::MAX.saturating_sub(quality.latency_ms.unwrap_or(u32::MAX)),

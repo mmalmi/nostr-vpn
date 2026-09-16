@@ -27,8 +27,9 @@ impl NativeAppRuntime {
         }
         self.apply_relay_settings_patch(patch.relays, patch.disabled_relays);
         if let Some(value) = patch.nostr_pubsub_mode {
-            self.config.nostr.pubsub.mode =
-                value.parse::<NostrPubsubMode>().map_err(|error| anyhow!(error))?;
+            self.config.nostr.pubsub.mode = value
+                .parse::<NostrPubsubMode>()
+                .map_err(|error| anyhow!(error))?;
         }
         if let Some(value) = patch.nostr_pubsub_fanout {
             self.config.nostr.pubsub.fanout = value as usize;
@@ -44,6 +45,17 @@ impl NativeAppRuntime {
                 .parse::<InternetSource>()
                 .map_err(|error| anyhow!(error))?;
             self.config.set_internet_source(source);
+            #[cfg(feature = "paid-exit")]
+            if source != InternetSource::PaidAutomatic {
+                let path =
+                    nostr_vpn_core::paid_route_store::paid_route_store_file_path(&self.config_path);
+                if path.exists() {
+                    nostr_vpn_core::paid_route_store::update_paid_route_store(&path, |store| {
+                        store.automatic_reselect_from.clear();
+                        Ok(())
+                    })?;
+                }
+            }
         }
 
         // Keep the old individual fields as an input compatibility boundary.
@@ -63,8 +75,7 @@ impl NativeAppRuntime {
                         self.config.exit_node_public_paid_exit = false;
                     }
                     InternetSource::PaidAutomatic | InternetSource::PaidManual => {
-                        self.config.exit_node_public_paid_exit =
-                            !self.config.exit_node.is_empty();
+                        self.config.exit_node_public_paid_exit = !self.config.exit_node.is_empty();
                     }
                     InternetSource::Direct | InternetSource::WireGuard
                         if !self.config.exit_node.is_empty() =>
@@ -219,8 +230,11 @@ impl NativeAppRuntime {
             self.config.paid_exit.channel.grace_units = value;
         }
         if let Some(value) = patch.paid_exit_country_code {
-            self.config.paid_exit.location.country_code =
-                normalize_paid_route_country_code(&value);
+            self.config.paid_exit.location.country_code = normalize_paid_route_country_code(&value);
+        }
+        if let Some(value) = patch.paid_exit_network_class {
+            self.config.paid_exit.location.network_class =
+                value.parse().map_err(|error: String| anyhow!(error))?;
         }
         if let Some(value) = patch.paid_exit_asn {
             self.config.paid_exit.location.asn = parse_optional_asn(&value)?;
@@ -602,14 +616,12 @@ impl NativeAppRuntime {
             {
                 if self.daemon_running {
                     *_reload_attempted = true;
-                    let output =
-                        self.run_nvpn(["reload", "--config", self.config_path_str()?])?;
+                    let output = self.run_nvpn(["reload", "--config", self.config_path_str()?])?;
                     ensure_success("nvpn reload", &output)?;
                     return self.refresh_status();
                 }
                 if self.service_running {
-                    let message =
-                        "background service is running but daemon status is unavailable";
+                    let message = "background service is running but daemon status is unavailable";
                     return match status_result {
                         Ok(()) => Err(anyhow!(message)),
                         Err(error) => Err(error.context(message)),
@@ -872,5 +884,4 @@ impl NativeAppRuntime {
         self.refresh_expected_service_binary_version();
         Ok(())
     }
-
 }

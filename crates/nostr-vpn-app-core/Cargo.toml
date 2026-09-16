@@ -20,6 +20,7 @@ paid-exit = [
   "dep:cashu-service",
   "dep:cashu",
   "dep:nostr-pubsub-fips",
+  "dep:nostr-pubsub",
 ]
 updater = ["nostr-vpn-core/updater"]
 
@@ -37,6 +38,7 @@ fips-core.workspace = true
 fips-endpoint.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
+nostr-pubsub = { workspace = true, optional = true }
 nostr-pubsub-fips = { workspace = true, optional = true }
 nostr-identity.workspace = true
 nostr-vpn-core = { workspace = true, features = ["secure-dns"] }

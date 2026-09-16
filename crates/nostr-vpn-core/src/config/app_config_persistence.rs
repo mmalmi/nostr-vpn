@@ -30,6 +30,7 @@ impl AppConfig {
                 self.exit_node_public_paid_exit = false;
             }
             InternetSource::PaidAutomatic => {
+                self.clear_manual_paid_exit_provider();
                 self.exit_node.clear();
                 self.exit_node_public_paid_exit = false;
             }
@@ -261,7 +262,6 @@ impl AppConfig {
 
         toml::to_string_pretty(&to_write).with_context(|| "failed to encode TOML")
     }
-
 }
 
 #[cfg(test)]
@@ -277,7 +277,10 @@ mod public_paid_exit_tests {
             .expect("select public paid exit");
         app.fips_nostr_discovery_enabled = false;
 
-        assert_eq!(app.public_paid_exit_node_pubkey_hex().as_deref(), Some(seller));
+        assert_eq!(
+            app.public_paid_exit_node_pubkey_hex().as_deref(),
+            Some(seller)
+        );
     }
 
     #[test]
@@ -312,8 +315,7 @@ mod public_paid_exit_tests {
             let mut app = AppConfig::generated();
             app.internet_source = source;
             app.exit_node = if source == InternetSource::PrivateVpn {
-                "2222222222222222222222222222222222222222222222222222222222222222"
-                    .to_string()
+                "2222222222222222222222222222222222222222222222222222222222222222".to_string()
             } else {
                 String::new()
             };

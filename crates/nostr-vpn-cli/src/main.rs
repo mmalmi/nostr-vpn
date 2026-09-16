@@ -77,9 +77,9 @@ use cashu_service::{
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 #[cfg(all(feature = "paid-exit", test))]
-use nostr_sdk::prelude::{Alphabet, Filter, SingleLetterTag};
+use nostr_sdk::prelude::{Alphabet, Filter, SingleLetterTag, Timestamp};
 #[cfg(feature = "paid-exit")]
-use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp, ToBech32};
+use nostr_sdk::prelude::{Event, Keys, Kind, PublicKey, ToBech32};
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::config::normalize_relay_urls;
 #[cfg(feature = "paid-exit")]

@@ -134,6 +134,7 @@ internal fun NostrVpnApp(
     importWireGuardConfigFile: () -> Unit,
 ) {
     var page by remember { mutableStateOf(Page.Devices) }
+    var manualExitChooserOpen by remember { mutableStateOf(false) }
     var showAddDevice by remember { mutableStateOf(false) }
     var showAddNetwork by remember { mutableStateOf(false) }
     var pendingNetworkRemoval by remember { mutableStateOf<NetworkState?>(null) }
@@ -239,7 +240,7 @@ internal fun NostrVpnApp(
                         onAddDevice = { showAddDevice = true },
                         onDeleteNetwork = { pendingNetworkRemoval = network },
                     )
-                    Page.Internet -> internetPage(state, network, dispatch, importWireGuardConfigFile)
+                    Page.Internet -> internetPage(state, network, dispatch, importWireGuardConfigFile, manualExitChooserOpen) { manualExitChooserOpen = it }
                     Page.Wallet -> walletPage(state, qrJson, dispatch)
                     Page.Settings -> settingsPage(state, network, dispatch, selfUpdateState, selfUpdateActions)
                 }

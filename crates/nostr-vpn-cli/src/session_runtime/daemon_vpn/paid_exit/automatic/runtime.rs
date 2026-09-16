@@ -51,6 +51,7 @@ pub(super) fn automatic_probe_observed_public_ip(measurement: &PaidRouteProbeMea
 
 pub(crate) async fn update_automatic_paid_exit(
     automatic: &mut PaidExitAutomaticBuyer,
+    feedback: &mut nostr_vpn_core::paid_route_ratings::ExitProbeFeedback,
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &mut AppConfig,
     config_path: &Path,
@@ -95,6 +96,7 @@ pub(crate) async fn update_automatic_paid_exit(
             candidate.last_rx_at = None;
         }
         automatic.probe = Some(PaidExitAutomaticProbe {
+            feedback_generation: feedback.generation(),
             generation: automatic.generation,
             task: tokio::spawn(async move {
                 paid_exit_route_probe_measurement(
@@ -127,6 +129,14 @@ pub(crate) async fn update_automatic_paid_exit(
                         .map(|candidate| candidate.session_id.clone())
                         .ok_or_else(|| anyhow!("automatic paid exit probe lost its candidate"))?;
                     record_paid_exit_probe(config_path, &session_id, measurement, now_unix)?;
+                    record_paid_exit_feedback(
+                        feedback,
+                        config_path,
+                        &session_id,
+                        false,
+                        now_unix,
+                        probe.feedback_generation,
+                    );
                     if let Some(candidate) = automatic.candidate.as_mut() {
                         candidate.probe_succeeded = true;
                         candidate.unanswered_since = None;
@@ -134,6 +144,16 @@ pub(crate) async fn update_automatic_paid_exit(
                 }
                 Err(error) => {
                     eprintln!("paid-exit: automatic free probe failed: {error}");
+                    if let Some(candidate) = &automatic.candidate {
+                        record_paid_exit_feedback(
+                            feedback,
+                            config_path,
+                            &candidate.session_id,
+                            true,
+                            now_unix,
+                            probe.feedback_generation,
+                        );
+                    }
                     if let Some(candidate) = automatic.candidate.as_mut() {
                         candidate.failed = true;
                     }
@@ -171,6 +191,7 @@ pub(crate) fn record_paid_exit_probe(
     now_unix: u64,
 ) -> Result<()> {
     let store_path = paid_route_store_file_path(config_path);
+    let keys = load_or_default_config(config_path)?.nostr_keys()?;
     update_paid_route_store(&store_path, |store| {
         store.update_session_probe(UpdatePaidRouteSessionProbeRequest {
             session_id: session_id.to_string(),
@@ -180,6 +201,9 @@ pub(crate) fn record_paid_exit_probe(
             quality: Some(measurement.quality),
             now_unix,
         })?;
+        if let Err(error) = store.record_exit_probe_rating(&keys, session_id, now_unix) {
+            eprintln!("paid-exit: could not save automatic rating: {error}");
+        }
         Ok(())
     })
 }
@@ -247,5 +271,35 @@ mod health_probe_tests {
                 .is_err(),
             "an unavailable paid tunnel must fail instead of falling back"
         );
+    }
+}
+
+pub(crate) fn record_paid_exit_feedback(
+    feedback: &mut nostr_vpn_core::paid_route_ratings::ExitProbeFeedback,
+    config_path: &Path,
+    session_id: &str,
+    failed: bool,
+    now: u64,
+    generation: u64,
+) {
+    let result = (|| -> Result<()> {
+        let keys = load_or_default_config(config_path)?.nostr_keys()?;
+        update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
+            let score = if failed {
+                Some(-100)
+            } else {
+                store
+                    .sessions
+                    .get(session_id)
+                    .and_then(nostr_vpn_core::paid_route_ratings::exit_probe_rating)
+            };
+            if let Some(score) = score {
+                feedback.observe(store, &keys, session_id, score, now, generation)?;
+            }
+            Ok(())
+        })
+    })();
+    if let Err(error) = result {
+        eprintln!("paid-exit: could not save feedback: {error}");
     }
 }

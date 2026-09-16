@@ -164,13 +164,15 @@ impl NativeAppRuntime {
                 alias,
             } => {
                 let was_participant = normalize_nostr_pubkey(&npub).is_ok_and(|candidate| {
-                    self.config.network_by_id(&network_id).is_some_and(|network| {
-                        network
-                            .devices
-                            .iter()
-                            .chain(network.admins.iter())
-                            .any(|participant| participant == &candidate)
-                    })
+                    self.config
+                        .network_by_id(&network_id)
+                        .is_some_and(|network| {
+                            network
+                                .devices
+                                .iter()
+                                .chain(network.admins.iter())
+                                .any(|participant| participant == &candidate)
+                        })
                 });
                 let normalized = self.config.add_participant_to_network(&network_id, &npub)?;
                 if let Some(alias) = alias
@@ -298,7 +300,12 @@ impl NativeAppRuntime {
                 offer_key,
                 mint_url,
                 channel_capacity_sat,
-            } => self.buy_paid_route_offer(&offer_key, mint_url.as_deref(), channel_capacity_sat),
+            } => self.buy_paid_route_offer(
+                &offer_key,
+                mint_url.as_deref(),
+                channel_capacity_sat,
+                InternetSource::PaidManual,
+            ),
             NativeAppAction::BuyBestPaidRouteOffer {
                 mint_url,
                 channel_capacity_sat,
@@ -308,10 +315,7 @@ impl NativeAppRuntime {
                 config.set_manual_paid_exit_provider(&provider)?;
                 #[cfg(feature = "paid-exit")]
                 if !config.manual_paid_exit_provider.mint.is_empty() {
-                    self.add_paid_route_wallet_mint(
-                        &config.manual_paid_exit_provider.mint,
-                        None,
-                    )?;
+                    self.add_paid_route_wallet_mint(&config.manual_paid_exit_provider.mint, None)?;
                 }
                 self.config = config;
                 self.save_reload_and_refresh()?;
@@ -335,7 +339,12 @@ impl NativeAppRuntime {
             NativeAppAction::SelectPaidRouteSession {
                 session_id,
                 connect,
-            } => self.select_paid_route_session(&session_id, connect),
+            } => self.select_paid_route_session(&session_id, connect, InternetSource::PaidManual),
+            NativeAppAction::ReselectPaidExit => self.reselect_paid_exit(),
+            NativeAppAction::RatePaidExit {
+                seller_npub,
+                rating,
+            } => self.rate_paid_exit(&seller_npub, rating),
             NativeAppAction::ProbePaidRouteSession {
                 session_id,
                 timeout_secs,
@@ -418,8 +427,7 @@ impl NativeAppRuntime {
                 limit,
             } => self.stream_paid_route_payments(publish, min_increment_msat, limit),
             NativeAppAction::ClearPaidRouteActivity => {
-                self.paid_route_payment_last_action =
-                    NativePaidRoutePaymentActionState::default();
+                self.paid_route_payment_last_action = NativePaidRoutePaymentActionState::default();
                 Ok(())
             }
             NativeAppAction::ReceivePaidRoutePayments { duration_secs } => {
@@ -579,5 +587,4 @@ impl NativeAppRuntime {
 
         self.add_join_requester_to_network(network_id, &requester, &requester_node_name)
     }
-
 }

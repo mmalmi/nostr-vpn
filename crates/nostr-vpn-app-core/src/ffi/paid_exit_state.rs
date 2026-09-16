@@ -65,6 +65,7 @@ fn paid_exit_seller_state(
         grace_units: config.channel.grace_units,
         grace_text: paid_route_binary_bytes_text(config.channel.grace_units),
         country_code: normalize_paid_route_country_code(&config.location.country_code),
+        network_class: config.location.network_class.as_str().into(),
         asn: config.location.asn.unwrap_or_default(),
         ipv4: config.ip_support.ipv4,
         ipv6: config.ip_support.ipv6,
@@ -168,8 +169,7 @@ fn paid_exit_seller_store_state(
         .filter(|channel| channel.role == PaidRouteChannelRole::Seller)
         .map(|channel| channel.channel_id.clone())
         .collect::<HashSet<_>>();
-    let traffic_summary =
-        paid_exit_seller_traffic_summary(&store, config, &all_seller_channel_ids);
+    let traffic_summary = paid_exit_seller_traffic_summary(&store, config, &all_seller_channel_ids);
     let mut channels = store
         .channels
         .values()
@@ -306,8 +306,7 @@ pub(super) fn paid_exit_seller_status_text(
     } else if matches!(
         app.paid_exit_seller_egress(),
         Ok(PaidExitSellerEgress::WireGuard)
-    )
-        && !wireguard_exit_configured
+    ) && !wireguard_exit_configured
     {
         "Configure WireGuard upstream before advertising".to_string()
     } else if matches!(
@@ -316,8 +315,7 @@ pub(super) fn paid_exit_seller_status_text(
     ) && !daemon_state.is_some_and(|state| state.wireguard_exit_ready)
     {
         "Waiting for the WireGuard handshake".to_string()
-    } else if let Ok(PaidExitSellerEgress::PrivatePeer { pubkey }) =
-        app.paid_exit_seller_egress()
+    } else if let Ok(PaidExitSellerEgress::PrivatePeer { pubkey }) = app.paid_exit_seller_egress()
         && !daemon_state.is_some_and(|state| {
             state.peers.iter().any(|peer| {
                 peer.participant_pubkey == pubkey
@@ -388,17 +386,36 @@ fn paid_route_market_state(
         .offers
         .iter()
         .filter(|(_, record)| record.signed_offer.is_live_at(now_unix))
-        .map(|(key, record)| paid_route_offer_state(key, record))
+        .map(|(key, record)| paid_route_offer_state(key, record, &store))
         .collect::<Vec<_>>();
-    offers.sort_by(|left, right| paid_route_offer_order(left, right, "quality"));
+    let selected_seller = if app.exit_node_public_paid_exit {
+        normalize_nostr_pubkey(&app.exit_node).ok()
+    } else {
+        None
+    };
+    let is_selected = |seller: &str| {
+        selected_seller.is_some() && normalize_nostr_pubkey(seller).ok() == selected_seller
+    };
+    for offer in &mut offers {
+        if is_selected(&offer.seller_npub) {
+            offer.status_text = format!("Selected · {}", offer.status_text);
+        }
+    }
+    offers.sort_by(|left, right| {
+        is_selected(&right.seller_npub)
+            .cmp(&is_selected(&left.seller_npub))
+            .then_with(|| paid_route_offer_order(left, right, "quality"))
+    });
     let filter = normalize_paid_route_market_filter(filter);
     let country_options = paid_route_offer_country_options(&offers);
-    let visible_offers = paid_route_visible_offers(&offers, &filter);
+    let mut visible_offers = paid_route_visible_offers(&offers, &filter);
+    // Always keep the current provider visible above filtered alternatives.
+    if let Some(selected) = offers.iter().find(|offer| is_selected(&offer.seller_npub)) {
+        visible_offers.retain(|offer| offer.key != selected.key);
+        visible_offers.insert(0, selected.clone());
+    }
     let hidden_offer_count = offers.len().saturating_sub(visible_offers.len()) as u64;
-    let manual_provider_link = app
-        .manual_paid_exit_provider
-        .link()
-        .unwrap_or_default();
+    let manual_provider_link = app.manual_paid_exit_provider.link().unwrap_or_default();
     let manual_provider_status_text = manual_paid_exit_provider_status(app, &store, &offers);
 
     let mut channels = store
@@ -426,9 +443,9 @@ fn paid_route_market_state(
         .map(|record| paid_route_session_state(record, &store))
         .collect::<Vec<_>>();
     sessions.sort_by(|left, right| {
-        right
-            .updated_at_unix
-            .cmp(&left.updated_at_unix)
+        is_selected(&right.seller_npub)
+            .cmp(&is_selected(&left.seller_npub))
+            .then_with(|| right.updated_at_unix.cmp(&left.updated_at_unix))
             .then_with(|| left.session_id.cmp(&right.session_id))
     });
 
@@ -482,9 +499,8 @@ fn manual_paid_exit_provider_status(
 fn normalize_paid_route_market_filter(
     filter: &NativePaidRouteMarketFilterState,
 ) -> NativePaidRouteMarketFilterState {
-    let country_code = normalize_paid_route_country_code(&normalize_paid_route_filter_value(
-        &filter.country_code,
-    ));
+    let country_code =
+        normalize_paid_route_country_code(&normalize_paid_route_filter_value(&filter.country_code));
     let sort = match normalize_paid_route_filter_value(&filter.sort)
         .to_lowercase()
         .as_str()

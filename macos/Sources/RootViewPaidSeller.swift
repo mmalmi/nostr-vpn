@@ -144,6 +144,18 @@ extension RootView {
                             )
                         }
                 }
+                paidExitFormRow("Network") {
+                    Picker("Network", selection: $paidExitNetworkClass) {
+                        Text("Unspecified").tag("unknown")
+                        Text("Residential").tag("residential")
+                        Text("Datacenter").tag("datacenter")
+                        Text("Mobile").tag("mobile")
+                        Text("Business").tag("business")
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                    .accessibilityIdentifier("paid-exit-network-class")
+                }
                 paidExitFormRow("Works with") {
                     Text("IPv4")
                 }
@@ -323,6 +335,7 @@ extension RootView {
                 freeProbeUnits: freeProbeUnits,
                 graceUnits: graceUnits,
                 countryCode: countryCode,
+                networkClass: paidExitNetworkClass,
                 asn: asn
             )
         } label: {

@@ -22,6 +22,7 @@ pub(crate) struct PaidExitManualBuyer {
 }
 
 struct PaidExitManualProbe {
+    feedback_generation: u64,
     generation: u64,
     task: tokio::task::JoinHandle<Result<PaidRouteProbeMeasurement>>,
 }
@@ -166,6 +167,7 @@ fn begin_or_retry_funded_manual_session(
 
 pub(crate) async fn update_manual_paid_exit(
     manual: &mut PaidExitManualBuyer,
+    feedback: &mut nostr_vpn_core::paid_route_ratings::ExitProbeFeedback,
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &mut AppConfig,
     config_path: &Path,
@@ -291,6 +293,7 @@ pub(crate) async fn update_manual_paid_exit(
         let dns_health = runtime.paid_exit_dns_health_probe();
         let bind_interface = runtime.iface().to_string();
         manual.probe = Some(PaidExitManualProbe {
+            feedback_generation: feedback.generation(),
             generation: manual.generation,
             task: tokio::spawn(async move {
                 let dns_health = dns_health?;
@@ -338,6 +341,14 @@ pub(crate) async fn update_manual_paid_exit(
             match result {
                 Ok(measurement) => {
                     record_paid_exit_probe(config_path, &session_id, measurement, now_unix)?;
+                    record_paid_exit_feedback(
+                        feedback,
+                        config_path,
+                        &session_id,
+                        false,
+                        now_unix,
+                        probe.feedback_generation,
+                    );
                     manual.record_probe_success(now_unix);
                     eprintln!("paid-exit: selected manual seller Internet egress is healthy");
                     return Ok(false);
@@ -345,6 +356,14 @@ pub(crate) async fn update_manual_paid_exit(
                 Err(error) => {
                     let error = error.to_string();
                     if manual.record_probe_failure(&error, now_unix) {
+                        record_paid_exit_feedback(
+                            feedback,
+                            config_path,
+                            &session_id,
+                            true,
+                            now_unix,
+                            probe.feedback_generation,
+                        );
                         return fail_manual_paid_exit(
                             manual,
                             app,

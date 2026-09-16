@@ -18,8 +18,8 @@ mod paid_exit {
         normalize_paid_route_mint_url, paid_route_store_file_path, update_paid_route_store,
     };
     use nostr_vpn_core::paid_routes::{
-        ManualPaidExitProvider, PaidExitConfig, PaidExitUpstream, PaidRouteAccessState, PaidRouteCountryClaim,
-        PaidRouteOffer, PaidRouteQualityMetrics, PaidRouteRoutingDecision,
+        ManualPaidExitProvider, PaidExitConfig, PaidExitUpstream, PaidRouteAccessState,
+        PaidRouteCountryClaim, PaidRouteOffer, PaidRouteQualityMetrics, PaidRouteRoutingDecision,
         normalize_paid_route_country_code, paid_route_country_claim,
     };
     use serde_json::json;
@@ -31,13 +31,12 @@ mod paid_exit {
 
     use super::{
         AppConfig, Command, CommandWindowExt, Context, DaemonRuntimeState, InternetSource,
-        NVPN_BIN_ENV, NativeAppRuntime,
-        NativePaidExitSellerState, NativePaidRouteMarketFilterState, NativePaidRouteMarketState,
+        NVPN_BIN_ENV, NativeAppRuntime, NativePaidExitSellerState,
+        NativePaidRouteMarketFilterState, NativePaidRouteMarketState,
         NativePaidRoutePaymentActionState, NativePaidRouteWalletActionState,
-        NativePaidRouteWalletState, Output, PaidExitSellerEgress, Path, PathBuf,
-        PortMappingStatus, Result, age_secs_since, anyhow, compact_age_text,
-        ensure_success, extract_json_document, normalize_nostr_pubkey,
-        peer_offers_exit_node, short_pubkey, unix_timestamp,
+        NativePaidRouteWalletState, Output, PaidExitSellerEgress, Path, PathBuf, PortMappingStatus,
+        Result, age_secs_since, anyhow, compact_age_text, ensure_success, extract_json_document,
+        normalize_nostr_pubkey, peer_offers_exit_node, short_pubkey, unix_timestamp,
     };
 
     const PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE: std::time::Duration =
@@ -59,10 +58,7 @@ mod paid_exit {
 
         #[test]
         fn price_text_uses_one_fixed_gigabyte_denominator() {
-            assert_eq!(
-                paid_route_price_text(25_000),
-                "25 sat/GB"
-            );
+            assert_eq!(paid_route_price_text(25_000), "25 sat/GB");
             assert_eq!(paid_route_price_text(0), "free");
             assert_eq!(paid_route_price_text(1_250), "1.25 sat/GB");
             assert_eq!(paid_route_price_text(1), "0.001 sat/GB");
@@ -107,7 +103,12 @@ mod paid_exit {
             runtime.dispatch(crate::NativeAppAction::ClearPaidRouteActivity);
 
             assert!(runtime.paid_route_payment_last_action.kind.is_empty());
-            assert!(runtime.paid_route_payment_last_action.status_text.is_empty());
+            assert!(
+                runtime
+                    .paid_route_payment_last_action
+                    .status_text
+                    .is_empty()
+            );
         }
 
         #[test]
@@ -160,17 +161,10 @@ mod paid_exit {
         #[test]
         fn unchecked_mint_omits_unknown_balance_copy() {
             let mut store = PaidRouteStore::default();
-            assert!(store.upsert_wallet_mint(
-                "https://mint.example",
-                "Example",
-                None,
-                0,
-            ));
+            assert!(store.upsert_wallet_mint("https://mint.example", "Example", None, 0,));
 
-            let state = paid_route_wallet_state(
-                &store,
-                &NativePaidRouteWalletActionState::default(),
-            );
+            let state =
+                paid_route_wallet_state(&store, &NativePaidRouteWalletActionState::default());
 
             assert!(!state.balance_known);
             assert!(state.total_balance_text.is_empty());
@@ -180,23 +174,11 @@ mod paid_exit {
         #[test]
         fn native_wallet_state_keeps_multiple_mints_for_gui_rows() {
             let mut store = PaidRouteStore::default();
-            assert!(store.upsert_wallet_mint(
-                "https://mint-one.example",
-                "One",
-                None,
-                1,
-            ));
-            assert!(store.upsert_wallet_mint(
-                "https://mint-two.example",
-                "Two",
-                None,
-                2,
-            ));
+            assert!(store.upsert_wallet_mint("https://mint-one.example", "One", None, 1,));
+            assert!(store.upsert_wallet_mint("https://mint-two.example", "Two", None, 2,));
 
-            let state = paid_route_wallet_state(
-                &store,
-                &NativePaidRouteWalletActionState::default(),
-            );
+            let state =
+                paid_route_wallet_state(&store, &NativePaidRouteWalletActionState::default());
 
             assert_eq!(state.mints.len(), 2);
             assert_ne!(state.mints[0].url, state.mints[1].url);
@@ -285,10 +267,8 @@ mod paid_exit {
             store
                 .upsert_signed_offer(live, Vec::new(), now)
                 .expect("store live offer");
-            let directory = std::env::temp_dir().join(format!(
-                "nvpn-market-liveness-{}-{now}",
-                std::process::id()
-            ));
+            let directory = std::env::temp_dir()
+                .join(format!("nvpn-market-liveness-{}-{now}", std::process::id()));
             std::fs::create_dir_all(&directory).expect("create market test directory");
             let path = directory.join("paid-routes.json");
             update_paid_route_store(&path, |target| {
@@ -420,6 +400,7 @@ impl NativeAppRuntime {
         _offer_key: &str,
         _mint_url: Option<&str>,
         _channel_capacity_sat: Option<u64>,
+        _source: InternetSource,
     ) -> Result<()> {
         self.paid_exit_not_built()
     }
@@ -432,7 +413,20 @@ impl NativeAppRuntime {
         self.paid_exit_not_built()
     }
 
-    fn select_paid_route_session(&mut self, _session_id: &str, _connect: bool) -> Result<()> {
+    fn select_paid_route_session(
+        &mut self,
+        _session_id: &str,
+        _connect: bool,
+        _source: InternetSource,
+    ) -> Result<()> {
+        self.paid_exit_not_built()
+    }
+
+    fn reselect_paid_exit(&mut self) -> Result<()> {
+        Err(anyhow!("paid exits are unavailable"))
+    }
+
+    fn rate_paid_exit(&mut self, _seller_npub: &str, _rating: i64) -> Result<()> {
         self.paid_exit_not_built()
     }
 

@@ -1,5 +1,6 @@
 fn paid_route_mint_host(mint_url: &str) -> String {
-    nostr_sdk::prelude::Url::parse(mint_url).ok()
+    nostr_sdk::prelude::Url::parse(mint_url)
+        .ok()
         .and_then(|url| url.host_str().map(str::to_owned))
         .unwrap_or_else(|| "payment service".to_string())
 }
@@ -90,7 +91,10 @@ impl NativeAppRuntime {
         let now = unix_timestamp();
         // Renewal can run out of money while the selected channel still has
         // credit. Keep showing that working route until its credit is consumed.
-        if self.active_paid_route_exit_ip(&self.config.exit_node).is_some() {
+        if self
+            .active_paid_route_exit_ip(&self.config.exit_node)
+            .is_some()
+        {
             return None;
         }
         // Selection and recovery can temporarily leave no pending session
@@ -100,10 +104,21 @@ impl NativeAppRuntime {
         if let Some(selection) = selection.as_ref().filter(|selection| !selection.funded)
             && store.buyer_mint_needs_funds(&selection.mint_url, selection.channel_capacity_sat)
         {
-            return Some((format!("More funds needed · {}", paid_route_mint_host(&selection.mint_url)), true));
+            return Some((
+                format!(
+                    "More funds needed · {}",
+                    paid_route_mint_host(&selection.mint_url)
+                ),
+                true,
+            ));
         }
-        if selection.is_none() && !store.wallet.mints.is_empty()
-            && store.wallet.mints.iter().all(|mint| mint.balance_msat == Some(0))
+        if selection.is_none()
+            && !store.wallet.mints.is_empty()
+            && store
+                .wallet
+                .mints
+                .iter()
+                .all(|mint| mint.balance_msat == Some(0))
         {
             return Some(("More funds needed · Wallet empty".to_string(), true));
         }
@@ -113,21 +128,26 @@ impl NativeAppRuntime {
             return None;
         }
         let mint = paid_route_mint_host(&channel.mint_url);
-        Some(if store.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
-            (format!("More funds needed · {mint}"), true)
-        } else if store.buyer_mint_failure_retry_at(&channel.mint_url) > now {
-            let seconds = store.buyer_mint_failure_retry_at(&channel.mint_url) - now;
-            let remaining = if seconds >= 60 {
-                format!("{} min", seconds.div_ceil(60))
+        Some(
+            if store.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
+                (format!("More funds needed · {mint}"), true)
+            } else if store.buyer_mint_failure_retry_at(&channel.mint_url) > now {
+                let seconds = store.buyer_mint_failure_retry_at(&channel.mint_url) - now;
+                let remaining = if seconds >= 60 {
+                    format!("{} min", seconds.div_ceil(60))
+                } else {
+                    format!("{seconds} s")
+                };
+                (
+                    format!("Payment unavailable · {mint} · Retrying in {remaining}"),
+                    true,
+                )
+            } else if channel.error.is_empty() {
+                (format!("Setting up payment · {mint}"), false)
             } else {
-                format!("{seconds} s")
-            };
-            (format!("Payment unavailable · {mint} · Retrying in {remaining}"), true)
-        } else if channel.error.is_empty() {
-            (format!("Setting up payment · {mint}"), false)
-        } else {
-            (format!("Payment unavailable · {mint} · Retrying"), true)
-        })
+                (format!("Payment unavailable · {mint} · Retrying"), true)
+            },
+        )
     }
 
     pub(super) fn active_paid_route_exit_ip(&self, selected_exit_node: &str) -> Option<String> {
@@ -148,10 +168,12 @@ impl NativeAppRuntime {
                     && store
                         .buyer_session_allows_routing(&record.session.session_id, now_unix)
                         .unwrap_or(false))
-                .then(|| (
-                    record.updated_at_unix,
-                    record.session.realized_exit_ip.clone().unwrap_or_default(),
-                ))
+                .then(|| {
+                    (
+                        record.updated_at_unix,
+                        record.session.realized_exit_ip.clone().unwrap_or_default(),
+                    )
+                })
             })
             .max_by_key(|(updated_at, _)| *updated_at)
             .and_then(|(_, realized_exit_ip)| {
@@ -459,6 +481,7 @@ impl NativeAppRuntime {
         offer_key: &str,
         mint_url: Option<&str>,
         channel_capacity_sat: Option<u64>,
+        source: InternetSource,
     ) -> Result<()> {
         let buyer_npub = self
             .config
@@ -508,7 +531,7 @@ impl NativeAppRuntime {
 
         // Persist the authenticated seller before payment, but only install public routes
         // after the seller acknowledges admission.
-        self.select_paid_route_session(&result.session_id, false)?;
+        self.select_paid_route_session(&result.session_id, false, source)?;
 
         if wallet_can_fund {
             self.open_paid_route_channel_from_wallet(
@@ -526,7 +549,7 @@ impl NativeAppRuntime {
 
         let store = load_paid_route_store(&path)?;
         if store.buyer_session_allows_routing(&result.session_id, unix_timestamp())? {
-            self.select_paid_route_session(&result.session_id, true)?;
+            self.select_paid_route_session(&result.session_id, true, source)?;
         } else {
             return Err(anyhow!(
                 "Paid route created but is not ready: the selected mint needs at least {} sat to fund it",
@@ -544,13 +567,19 @@ impl NativeAppRuntime {
     ) -> Result<()> {
         let store = load_paid_route_store(&self.paid_route_store_path())?;
         let offer_key = store.best_rated_offer_key()?;
-        self.buy_paid_route_offer(&offer_key, mint_url, channel_capacity_sat)
+        self.buy_paid_route_offer(
+            &offer_key,
+            mint_url,
+            channel_capacity_sat,
+            InternetSource::PaidManual,
+        )
     }
 
     pub(super) fn select_paid_route_session(
         &mut self,
         session_id: &str,
         connect: bool,
+        source: InternetSource,
     ) -> Result<()> {
         let session_id = session_id.trim();
         if session_id.is_empty() {
@@ -568,12 +597,16 @@ impl NativeAppRuntime {
                     ));
                 }
             }
+            if source != InternetSource::PaidAutomatic {
+                store.automatic_reselect_from.clear();
+            }
             store.begin_buyer_session_open_attempt(session_id, now_unix)?;
             let endpoint_hints = store.buyer_session_seller_fips_endpoints(session_id)?;
             Ok((seller_npub, endpoint_hints))
         })?;
         self.config
             .add_fips_peer_endpoint_hints(&seller_npub, &endpoint_hints)?;
+        self.config.internet_source = source;
         self.config.select_public_paid_exit_node(&seller_npub)?;
         self.save_reload_and_refresh()?;
         if connect && !self.vpn_enabled {
@@ -581,7 +614,6 @@ impl NativeAppRuntime {
         }
         Ok(())
     }
-
 }
 
 include!("paid_exit_actions/session_actions.rs");

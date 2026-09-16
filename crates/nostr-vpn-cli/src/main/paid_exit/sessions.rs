@@ -1,4 +1,3 @@
-
 struct PaidExitBuyResult {
     store_path: PathBuf,
     session: OpenPaidRouteBuyerSessionResult,
@@ -60,6 +59,7 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
         let endpoint_hints = load_paid_route_store(&store_path)?
             .buyer_session_seller_fips_endpoints(&result.session_id)?;
         app.add_fips_peer_endpoint_hints(&result.seller_npub, &endpoint_hints)?;
+        app.internet_source = InternetSource::PaidManual;
         let selected = app.select_public_paid_exit_node(&result.seller_npub)?;
         app.save(&config_path)?;
         let daemon_reload_attempted = !no_reload_daemon;
@@ -135,6 +135,7 @@ fn paid_exit_use_once(args: PaidExitUseArgs) -> Result<PaidExitUseResult> {
         Ok((seller_npub, endpoint_hints))
     })?;
     app.add_fips_peer_endpoint_hints(&seller_npub, &endpoint_hints)?;
+    app.internet_source = InternetSource::PaidManual;
     let selected_exit_node = app.select_public_paid_exit_node(&seller_npub)?;
     app.save(&config_path)?;
     let daemon_reload_attempted = !args.no_reload_daemon;

@@ -3,6 +3,27 @@ import CoreImage
 import SwiftUI
 
 extension RootView {
+    func paidExitRatingButtons(seller: String, rating: Int64) -> some View {
+        HStack(spacing: 8) {
+            Button { manager.ratePaidExit(seller, rating: rating > 0 ? 0 : 1) } label: {
+                Image(systemName: "hand.thumbsup.fill")
+                    .foregroundStyle(rating > 0 ? Color.green : Color.secondary)
+            }
+            .help(rating > 0 ? "Clear your public rating" : "Publish a positive rating")
+            .accessibilityLabel("Recommend provider")
+            .accessibilityIdentifier("paid-exit-thumbs-up")
+            Button { manager.ratePaidExit(seller, rating: rating < 0 ? 0 : -1) } label: {
+                Image(systemName: "hand.thumbsdown.fill")
+                    .foregroundStyle(rating < 0 ? Color.red : Color.secondary)
+            }
+            .help(rating < 0 ? "Clear your public rating" : "Publish a negative rating and stop using this provider")
+            .accessibilityLabel("Avoid provider")
+            .accessibilityIdentifier("paid-exit-thumbs-down")
+        }
+        .buttonStyle(.borderless)
+        .disabled(manager.actionInFlight)
+    }
+
     var paidRouteMarketSettings: some View {
         let market = state.paidRouteMarket
         let visibleSessions = paidRouteVisibleSessions(market.sessions)
@@ -23,7 +44,7 @@ extension RootView {
     ) -> some View {
         surface {
             HStack(spacing: 12) {
-                sectionHeader("Current Internet", systemImage: "bolt.horizontal.circle.fill")
+                sectionHeader("Connections", systemImage: "bolt.horizontal.circle.fill")
                 Spacer(minLength: 16)
                 Button {
                     manager.streamPaidRoutePayments()
@@ -178,6 +199,9 @@ extension RootView {
                     .fontWeight(.medium)
                     .lineLimit(1)
                 Spacer(minLength: 12)
+                if offer.canRate {
+                    paidExitRatingButtons(seller: offer.sellerNpub, rating: offer.personalRating)
+                }
                 Text(offer.priceText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -200,11 +224,16 @@ extension RootView {
                         Label("Buy", systemImage: "cart.fill")
                     }
                     .controlSize(.small)
-                    .disabled(manager.actionInFlight || !compatibleMint)
+                    .disabled(manager.actionInFlight || !compatibleMint || offer.personalRating < 0)
                 }
             }
             HStack(spacing: 10) {
                 Text(offer.statusText)
+                    .help("Network type is declared by the provider")
+                if offer.hasRating {
+                    Text("Rating \(offer.ratingScore)").help("Ratings from you and people you trust")
+                }
+                if offer.personalRating < 0 { Text("Avoided").foregroundStyle(.red) }
                 let metricText = paidRouteMetricText(
                     fallbackText(
                         offer.qualityText,
@@ -323,6 +352,9 @@ extension RootView {
                 Text(paidRouteBuyerSessionTitle(session, selected: selected))
                     .fontWeight(.medium)
                 Spacer(minLength: 12)
+                if session.canRate {
+                    paidExitRatingButtons(seller: session.sellerNpub, rating: session.personalRating)
+                }
                 if selected {
                     Button {
                         manager.selectDirectExit()
@@ -339,7 +371,7 @@ extension RootView {
                         Label("Connect", systemImage: "arrow.right.circle.fill")
                     }
                     .controlSize(.small)
-                    .disabled(manager.actionInFlight || !paidRouteSessionCanConnect(session))
+                    .disabled(manager.actionInFlight || !paidRouteSessionCanConnect(session) || session.personalRating < 0)
                     .help("Use this seller")
                 }
                 Button {

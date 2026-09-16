@@ -93,9 +93,7 @@ fn paid_exit_status_snapshot_reports_store_sessions_and_routing() {
 fn paid_exit_record_probe_once_persists_session_measurements() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
-    use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, signed_paid_exit_offer_from_config,
-    };
+    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -194,9 +192,7 @@ fn paid_exit_record_probe_once_persists_session_measurements() {
 fn paid_exit_probe_once_measures_and_persists_session() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
-    use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, signed_paid_exit_offer_from_config,
-    };
+    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -322,9 +318,7 @@ fn paid_exit_probe_once_measures_and_persists_session() {
 fn paid_exit_probe_once_uses_stun_for_realized_exit_ip() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
-    use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, signed_paid_exit_offer_from_config,
-    };
+    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -514,6 +508,7 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
         accepted_mints: Some("https://mint.example".to_string()),
         accepted_mint: vec!["https://other-mint.example".to_string()],
         country_code: Some("fi".to_string()),
+        network_class: Some(nostr_vpn_core::paid_routes::ExitNetworkClass::Residential),
         asn: Some(12_345),
         max_channel_capacity_sat: Some(250),
         channel_expiry_secs: Some(300),
@@ -530,6 +525,10 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
         .expect("run paid exit once");
 
     let app = load_or_default_config(&config_path).expect("load saved config");
+    assert_eq!(
+        app.paid_exit.location.network_class,
+        nostr_vpn_core::paid_routes::ExitNetworkClass::Residential
+    );
     let store =
         load_paid_route_store(&paid_route_store_file_path(&config_path)).expect("load store");
 
@@ -580,6 +579,7 @@ fn paid_exit_run_once_rejects_incomplete_wireguard_upstream() {
         accepted_mints: Some("https://mint.example".to_string()),
         accepted_mint: vec![],
         country_code: Some("fi".to_string()),
+        network_class: None,
         asn: None,
         max_channel_capacity_sat: Some(100),
         channel_expiry_secs: Some(600),
@@ -632,6 +632,7 @@ fn paid_exit_run_once_enables_configured_wireguard_upstream() {
             accepted_mints: Some("https://mint.example".to_string()),
             accepted_mint: vec![],
             country_code: Some("fi".to_string()),
+            network_class: None,
             asn: None,
             max_channel_capacity_sat: Some(100),
             channel_expiry_secs: Some(600),

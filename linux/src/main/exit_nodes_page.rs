@@ -90,8 +90,8 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         );
     } else {
         for participant in exit_candidates {
-            let peer_selected = state.internet_source == "private_vpn"
-                && state.exit_node == participant.npub;
+            let peer_selected =
+                state.internet_source == "private_vpn" && state.exit_node == participant.npub;
             route_choice(
                 app,
                 &exit,
@@ -113,6 +113,31 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
             true,
             ExitChoice::PaidAutomatic,
         );
+        if state.internet_source == "paid_automatic" && !state.exit_node.is_empty() {
+            let controls = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+            if state.exit_node_active {
+                if let Some(session) = state
+                    .paid_route_market
+                    .sessions
+                    .iter()
+                    .find(|session| session.seller_npub == state.exit_node && session.can_rate)
+                {
+                    paid_exit_rating_buttons(
+                        app,
+                        &controls,
+                        &session.seller_npub,
+                        session.personal_rating,
+                    );
+                }
+            }
+            let retry = gtk::Button::with_label("Try another");
+            let app = app.clone();
+            retry.connect_clicked(move |_| {
+                dispatch(&app, NativeAppAction::ReselectPaidExit);
+            });
+            controls.append(&retry);
+            exit.append(&controls);
+        }
         route_choice(
             app,
             &exit,
@@ -239,15 +264,12 @@ fn route_choice(
                     internet_source: Some("paid_automatic".to_string()),
                     ..SettingsPatch::default()
                 },
-                ExitChoice::PaidManual => SettingsPatch {
-                    internet_source: Some("paid_manual".to_string()),
-                    ..SettingsPatch::default()
-                },
+                ExitChoice::PaidManual => {
+                    set_page(&app, Page::PaidRoutes);
+                    return;
+                }
             };
             dispatch(&app, NativeAppAction::UpdateSettings { patch });
-            if matches!(choice, ExitChoice::PaidManual) {
-                set_page(&app, Page::PaidRoutes);
-            }
         });
     }
     parent.append(&button);

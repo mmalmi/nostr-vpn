@@ -25,7 +25,7 @@ pub const PAID_ROUTE_OFFER_APP: &str = "fips/paid-route-offer";
 /// Signed seller listings expire if the seller stops refreshing them.
 pub const PAID_ROUTE_OFFER_TTL_SECS: u64 = 3_600;
 const PAID_ROUTE_OFFER_FUTURE_SKEW_SECS: u64 = 5 * 60;
-pub const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
+pub const DEFAULT_PAID_EXIT_RATING_SCOPE: &str = "vpn.exit";
 
 pub const PAID_ROUTE_PRICE_BYTES_PER_GB: u64 = 1_000_000_000;
 const DEFAULT_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
@@ -124,10 +124,65 @@ impl Default for PaidRouteIpSupport {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PaidRouteLocationHint {
+    #[serde(default, skip_serializing_if = "ExitNetworkClass::is_unknown")]
+    pub network_class: ExitNetworkClass,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub country_code: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asn: Option<u32>,
+}
+
+/// Provider-reported classification of the actual Internet-facing exit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExitNetworkClass {
+    Residential,
+    Datacenter,
+    Mobile,
+    Business,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl ExitNetworkClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Residential => "residential",
+            Self::Datacenter => "datacenter",
+            Self::Mobile => "mobile",
+            Self::Business => "business",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Residential => "Residential",
+            Self::Datacenter => "Datacenter",
+            Self::Mobile => "Mobile",
+            Self::Business => "Business",
+            Self::Unknown => "Unspecified",
+        }
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        *self == Self::Unknown
+    }
+}
+
+impl FromStr for ExitNetworkClass {
+    type Err = String;
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "residential" => Ok(Self::Residential),
+            "datacenter" => Ok(Self::Datacenter),
+            "mobile" => Ok(Self::Mobile),
+            "business" => Ok(Self::Business),
+            "" | "unknown" => Ok(Self::Unknown),
+            _ => Err("unsupported exit network class".into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -486,11 +541,11 @@ impl PaidExitConfig {
 }
 
 fn default_fips_peer_rating_scope() -> String {
-    DEFAULT_FIPS_PEER_RATING_SCOPE.to_string()
+    DEFAULT_PAID_EXIT_RATING_SCOPE.to_string()
 }
 
 fn fips_peer_rating_scope_is_default(value: &str) -> bool {
-    value == DEFAULT_FIPS_PEER_RATING_SCOPE
+    value == DEFAULT_PAID_EXIT_RATING_SCOPE
 }
 
 fn paid_route_amount_due_msat(

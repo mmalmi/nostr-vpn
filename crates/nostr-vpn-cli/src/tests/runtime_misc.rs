@@ -209,6 +209,7 @@ fn paid_exit_run_settings_prepare_seller_transport_without_ambient_discovery() {
             accepted_mints: None,
             accepted_mint: Vec::new(),
             country_code: None,
+            network_class: None,
             asn: None,
             max_channel_capacity_sat: None,
             channel_expiry_secs: None,

@@ -17,6 +17,7 @@ pub(crate) struct PaidExitAutomaticBuyer {
 }
 
 pub(super) struct PaidExitAutomaticProbe {
+    pub(super) feedback_generation: u64,
     pub(super) generation: u64,
     pub(super) task: tokio::task::JoinHandle<Result<PaidRouteProbeMeasurement>>,
 }

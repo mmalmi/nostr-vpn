@@ -8,6 +8,7 @@ struct StoredEventsFile {
 
 #[derive(Debug)]
 struct ControlEventStore {
+    graph_root: Option<PublicKey>,
     path: Option<PathBuf>,
     events: HashMap<String, Event>,
     order: VecDeque<String>,
@@ -36,8 +37,17 @@ fn configured_update_events() -> Result<UpdateEventCache> {
 
 impl ControlEventStore {
     fn load(path: Option<PathBuf>, update_events: UpdateEventCache) -> Result<Self> {
+        Self::load_for_owner(path, update_events, None)
+    }
+
+    fn load_for_owner(
+        path: Option<PathBuf>,
+        update_events: UpdateEventCache,
+        graph_root: Option<PublicKey>,
+    ) -> Result<Self> {
         let Some(path) = path else {
             return Ok(Self {
+                graph_root,
                 path: None,
                 events: HashMap::new(),
                 order: VecDeque::new(),
@@ -47,6 +57,7 @@ impl ControlEventStore {
             });
         };
         let mut store = Self {
+            graph_root,
             path: Some(path.clone()),
             events: HashMap::new(),
             order: VecDeque::new(),
@@ -113,6 +124,24 @@ impl ControlEventStore {
             return false;
         }
         let now_secs = now_ms() / 1_000;
+        if matches!(u16::from(event.kind), 3 | 10_000) {
+            if self.graph_root.is_some_and(|root| root != event.pubkey)
+                || event.created_at.as_secs() > now_secs.saturating_add(300)
+            {
+                return false;
+            }
+            if let Some(previous) = self
+                .events
+                .values()
+                .find(|old| old.kind == event.kind && old.pubkey == event.pubkey)
+            {
+                if !paid_offer_supersedes(&event, previous) {
+                    return false;
+                }
+                let previous_id = previous.id.to_hex();
+                self.remove_memory(&previous_id);
+            }
+        }
         let paid_offer = if u16::from(event.kind) == PAID_EXIT_OFFER_KIND {
             let Some(state) = paid_offer_state(&event, now_secs) else {
                 return false;
@@ -133,15 +162,13 @@ impl ControlEventStore {
             }) {
                 self.remove_memory(&stored_id);
             }
-            self.paid_offer_watermarks
-                .insert(coordinate, event.clone());
+            self.paid_offer_watermarks.insert(coordinate, event.clone());
             if !is_live {
                 return true;
             }
         }
         let rating = if u16::from(event.kind) == RATING_FACT_KIND {
-            let Some((rating_key, created_at)) = retained_rating_event(&event, now_secs)
-            else {
+            let Some((rating_key, created_at)) = retained_rating_event(&event, now_secs) else {
                 return false;
             };
             if let Some(stored) = self.rating_events.get(&rating_key).cloned() {
@@ -163,7 +190,11 @@ impl ControlEventStore {
             .filter()
             .match_event(&event, MatchEventOptions::new());
         if is_update_event {
-            if !self.update_events.ingest_event(event.clone()).unwrap_or(false) {
+            if !self
+                .update_events
+                .ingest_event(event.clone())
+                .unwrap_or(false)
+            {
                 return false;
             }
             let replaced = self
@@ -185,14 +216,13 @@ impl ControlEventStore {
                 .order
                 .iter()
                 .position(|stored_id| {
-                    self.events
-                        .get(stored_id)
-                        .is_some_and(|stored| {
-                            !self
+                    self.events.get(stored_id).is_some_and(|stored| {
+                        !matches!(u16::from(stored.kind), 3 | 10_000)
+                            && !self
                                 .update_events
                                 .filter()
                                 .match_event(stored, MatchEventOptions::new())
-                        })
+                    })
                 })
                 .unwrap_or(0);
             let Some(oldest) = self.order.remove(remove_index) else {
@@ -256,7 +286,11 @@ impl ControlEventStore {
             .paid_offer_watermarks
             .iter()
             .filter(|(_, event)| {
-                now_secs >= event.created_at.as_secs().saturating_add(PAID_ROUTE_OFFER_TTL_SECS)
+                now_secs
+                    >= event
+                        .created_at
+                        .as_secs()
+                        .saturating_add(PAID_ROUTE_OFFER_TTL_SECS)
             })
             .map(|(coordinate, event)| (coordinate.clone(), event.id.to_hex()))
             .collect::<Vec<_>>();
@@ -363,6 +397,11 @@ fn rating_event_store_key(event: &Event) -> Option<(RatingEventStoreKey, u64)> {
         return None;
     }
     let rating = rating_from_event(event).ok()?;
+    if rating.scope.as_deref() == Some("vpn.exit")
+        && PublicKey::parse(&rating.rater).ok() != Some(event.pubkey)
+    {
+        return None;
+    }
     let subject = PublicKey::parse(&rating.subject).ok()?.to_hex();
     let scope = rating.scope?.trim().to_string();
     if scope.is_empty() {
@@ -457,8 +496,7 @@ mod tests {
         let seller = Keys::generate();
         let other_seller = Keys::generate();
         let now = now_ms() / 1_000;
-        let mut store =
-            ControlEventStore::load(None, test_update_events()).expect("event store");
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
         let older = paid_offer_event(&seller, "internet-exit", now.saturating_sub(1));
         let newer = paid_offer_event(&seller, "internet-exit", now);
         let other = paid_offer_event(&other_seller, "internet-exit", now);
@@ -478,8 +516,7 @@ mod tests {
     fn expired_replacement_withdraws_the_previous_paid_offer() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
-        let mut store =
-            ControlEventStore::load(None, test_update_events()).expect("event store");
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
         let live = paid_offer_event(&seller, "internet-exit", now.saturating_sub(1));
         let offer = SignedPaidRouteOffer::from_event(live.clone())
             .expect("live signed offer")
@@ -506,8 +543,7 @@ mod tests {
         let tombstone = SignedPaidRouteOffer::sign_expiring_at(offer, &seller, now, now)
             .expect("immediate tombstone")
             .event;
-        let mut store =
-            ControlEventStore::load(None, test_update_events()).expect("event store");
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
 
         assert!(store.insert(tombstone).expect("insert tombstone first"));
         assert!(!store.insert(live).expect("reject older live replay"));
@@ -545,8 +581,8 @@ mod tests {
         ));
         fs::create_dir_all(&directory).expect("event store directory");
         let path = directory.join("control-events.json");
-        let mut store = ControlEventStore::load(Some(path.clone()), test_update_events())
-            .expect("event store");
+        let mut store =
+            ControlEventStore::load(Some(path.clone()), test_update_events()).expect("event store");
 
         assert!(store.insert(tombstone.clone()).expect("persist tombstone"));
         assert!(store.snapshot().is_empty());
@@ -556,8 +592,8 @@ mod tests {
         assert!(saved.events.is_empty());
         assert_eq!(saved.paid_offer_watermarks, vec![tombstone]);
 
-        let mut reloaded = ControlEventStore::load(Some(path), test_update_events())
-            .expect("reload event store");
+        let mut reloaded =
+            ControlEventStore::load(Some(path), test_update_events()).expect("reload event store");
         assert!(reloaded.snapshot().is_empty());
         assert!(!reloaded.insert(live).expect("reject replay after restart"));
         fs::remove_dir_all(directory).expect("remove event store directory");
@@ -567,8 +603,7 @@ mod tests {
     fn maintenance_prunes_expired_paid_offers() {
         let seller = Keys::generate();
         let signed_at = now_ms() / 1_000;
-        let mut store =
-            ControlEventStore::load(None, test_update_events()).expect("event store");
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
         let offer = paid_offer_event(&seller, "internet-exit", signed_at);
 
         assert!(store.insert(offer).expect("insert paid offer"));
@@ -623,8 +658,11 @@ mod tests {
             events: vec![advert, rating.clone()],
             paid_offer_watermarks: Vec::new(),
         };
-        fs::write(&path, serde_json::to_vec(&legacy).expect("encode legacy store"))
-            .expect("write legacy store");
+        fs::write(
+            &path,
+            serde_json::to_vec(&legacy).expect("encode legacy store"),
+        )
+        .expect("write legacy store");
         let reloaded = ControlEventStore::load(Some(path.clone()), test_update_events())
             .expect("reload event store");
         assert_eq!(reloaded.snapshot(), vec![rating.clone()]);
