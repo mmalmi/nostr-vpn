@@ -429,26 +429,36 @@
         assert!(runtime.config.exit_node_public_paid_exit);
         assert!(runtime.state().paid_route_market.visible_offers[0].status_text.starts_with("Selected"));
         assert_eq!(runtime.state().paid_route_market.sessions[0].seller_npub, seller_npub);
-        let before = nostr_vpn_core::paid_route_store::load_paid_route_store(&store_path).unwrap();
+        assert_paid_exit_feedback_preserves_funds(&mut runtime, &store_path, &seller_npub);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+    #[cfg(feature = "paid-exit")]
+    fn assert_paid_exit_feedback_preserves_funds(
+        runtime: &mut NativeAppRuntime,
+        store_path: &Path,
+        seller_npub: &str,
+    ) {
+        let before = nostr_vpn_core::paid_route_store::load_paid_route_store(store_path).unwrap();
         runtime.config.exit_node_leak_protection = false;
-        runtime.dispatch(NativeAppAction::RatePaidExit { seller_npub: seller_npub.clone(), rating: -1 });
+        runtime.dispatch(NativeAppAction::RatePaidExit { seller_npub: seller_npub.to_owned(), rating: -1 });
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert_eq!(runtime.config.internet_source, InternetSource::PaidManual);
         assert!(runtime.config.exit_node.is_empty());
         assert!(runtime.config.exit_node_leak_protection, "downvote must not expose direct traffic");
         assert!(runtime.vpn_enabled);
-        let after = nostr_vpn_core::paid_route_store::load_paid_route_store(&store_path).unwrap();
-        assert!(after.exit_provider_is_avoided(&seller_npub));
+        let after = nostr_vpn_core::paid_route_store::load_paid_route_store(store_path).unwrap();
+        assert!(after.exit_provider_is_avoided(seller_npub));
         assert_eq!(after.channels, before.channels, "feedback cannot discard channel funds");
         assert_eq!(after.pending_exit_ratings().len(), 1);
         assert!(runtime.state().paid_route_market.sessions.iter().all(|s| !s.allow_routing));
-        runtime.dispatch(NativeAppAction::RatePaidExit { seller_npub: seller_npub.clone(), rating: 0 });
+        runtime.dispatch(NativeAppAction::RatePaidExit { seller_npub: seller_npub.to_owned(), rating: 0 });
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert!(runtime.config.exit_node.is_empty(), "clearing a vote does not reconnect");
         assert_eq!(runtime.config.internet_source, InternetSource::PaidManual);
 
-        let _ = fs::remove_dir_all(&dir);
     }
+
     #[cfg(feature = "paid-exit")]
     #[test]
     fn gui_buy_paid_route_offer_failure_reaches_the_ui_error_state() {

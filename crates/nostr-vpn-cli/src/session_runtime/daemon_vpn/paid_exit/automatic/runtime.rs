@@ -208,6 +208,36 @@ pub(crate) fn record_paid_exit_probe(
     })
 }
 
+pub(crate) fn record_paid_exit_feedback(
+    feedback: &mut nostr_vpn_core::paid_route_ratings::ExitProbeFeedback,
+    config_path: &Path,
+    session_id: &str,
+    failed: bool,
+    now: u64,
+    generation: u64,
+) {
+    let result = (|| -> Result<()> {
+        let keys = load_or_default_config(config_path)?.nostr_keys()?;
+        update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
+            let score = if failed {
+                Some(-100)
+            } else {
+                store
+                    .sessions
+                    .get(session_id)
+                    .and_then(nostr_vpn_core::paid_route_ratings::exit_probe_rating)
+            };
+            if let Some(score) = score {
+                feedback.observe(store, &keys, session_id, score, now, generation)?;
+            }
+            Ok(())
+        })
+    })();
+    if let Err(error) = result {
+        eprintln!("paid-exit: could not save feedback: {error}");
+    }
+}
+
 #[cfg(test)]
 mod health_probe_tests {
     use super::*;
@@ -271,35 +301,5 @@ mod health_probe_tests {
                 .is_err(),
             "an unavailable paid tunnel must fail instead of falling back"
         );
-    }
-}
-
-pub(crate) fn record_paid_exit_feedback(
-    feedback: &mut nostr_vpn_core::paid_route_ratings::ExitProbeFeedback,
-    config_path: &Path,
-    session_id: &str,
-    failed: bool,
-    now: u64,
-    generation: u64,
-) {
-    let result = (|| -> Result<()> {
-        let keys = load_or_default_config(config_path)?.nostr_keys()?;
-        update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
-            let score = if failed {
-                Some(-100)
-            } else {
-                store
-                    .sessions
-                    .get(session_id)
-                    .and_then(nostr_vpn_core::paid_route_ratings::exit_probe_rating)
-            };
-            if let Some(score) = score {
-                feedback.observe(store, &keys, session_id, score, now, generation)?;
-            }
-            Ok(())
-        })
-    })();
-    if let Err(error) = result {
-        eprintln!("paid-exit: could not save feedback: {error}");
     }
 }

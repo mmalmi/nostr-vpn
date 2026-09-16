@@ -418,18 +418,7 @@ fn paid_route_market_state(
     let manual_provider_link = app.manual_paid_exit_provider.link().unwrap_or_default();
     let manual_provider_status_text = manual_paid_exit_provider_status(app, &store, &offers);
 
-    let mut channels = store
-        .channels
-        .values()
-        .filter(|channel| channel.role == PaidRouteChannelRole::Buyer)
-        .map(paid_route_channel_state)
-        .collect::<Vec<_>>();
-    channels.sort_by(|left, right| {
-        right
-            .updated_at_unix
-            .cmp(&left.updated_at_unix)
-            .then_with(|| left.channel_id.cmp(&right.channel_id))
-    });
+    let channels = paid_route_buyer_channels(&store);
 
     let mut sessions = store
         .sessions

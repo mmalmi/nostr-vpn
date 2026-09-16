@@ -1,3 +1,19 @@
+fn paid_route_buyer_channels(store: &PaidRouteStore) -> Vec<NativePaidRouteChannelState> {
+    let mut channels = store
+        .channels
+        .values()
+        .filter(|channel| channel.role == PaidRouteChannelRole::Buyer)
+        .map(paid_route_channel_state)
+        .collect::<Vec<_>>();
+    channels.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| left.channel_id.cmp(&right.channel_id))
+    });
+    channels
+}
+
 fn paid_route_wallet_state(
     store: &PaidRouteStore,
     last_action: &NativePaidRouteWalletActionState,

@@ -102,8 +102,10 @@ fn unknown_authors_and_forged_raters_do_not_influence_exit_reputation() {
 fn add_session(store: &mut PaidRouteStore, buyer: &Keys, seller: &Keys, now: u64) -> String {
     use nostr_vpn_core::paid_route_store::OpenPaidRouteBuyerSessionRequest;
     use nostr_vpn_core::paid_routes::*;
-    let mut config = PaidExitConfig::default();
-    config.enabled = true;
+    let mut config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     config.channel.accepted_mints = vec!["https://mint.example".into()];
     let offer_id = seller.public_key().to_hex();
     let signed = signed_paid_exit_offer_from_config(&offer_id, seller, &config, None, now).unwrap();
@@ -434,8 +436,10 @@ fn network_class_roundtrips_as_a_signed_claim_and_old_offers_still_verify() {
         ExitNetworkClass::Business,
         ExitNetworkClass::Unknown,
     ] {
-        let mut config = PaidExitConfig::default();
-        config.enabled = true;
+        let mut config = PaidExitConfig {
+            enabled: true,
+            ..PaidExitConfig::default()
+        };
         config.pricing.price_msat_per_gb = 0;
         config.location.network_class = class;
         let signed = signed_paid_exit_offer_from_config("test", &keys, &config, None, now).unwrap();
@@ -468,8 +472,10 @@ fn reputation_cannot_override_price_limits_and_downvotes_override_high_scores() 
     let now = Timestamp::now().as_secs();
     let mut store = PaidRouteStore::default();
     store.upsert_wallet_mint("https://mint.example", "Test", Some(100_000), now);
-    let mut config = PaidExitConfig::default();
-    config.enabled = true;
+    let mut config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     config.channel.accepted_mints = vec!["https://mint.example".into()];
     config.channel.free_probe_units = 1024 * 1024;
     for (seller, price) in [(&cheap, 25_000), (&expensive, 100_001)] {

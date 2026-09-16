@@ -27,8 +27,8 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
     )?;
     let received_offers = events
         .iter()
-        .cloned()
         .filter(|event| !known_events.contains(&event.id))
+        .cloned()
         .filter_map(|event| SignedPaidRouteOffer::from_event(event).ok())
         .collect::<Vec<_>>();
     if !received_offers.is_empty() {

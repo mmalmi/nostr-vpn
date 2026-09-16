@@ -47,10 +47,10 @@ impl NativeAppRuntime {
             self.config.set_internet_source(source);
             #[cfg(feature = "paid-exit")]
             if source != InternetSource::PaidAutomatic {
-                let path =
+                let store_file =
                     nostr_vpn_core::paid_route_store::paid_route_store_file_path(&self.config_path);
-                if path.exists() {
-                    nostr_vpn_core::paid_route_store::update_paid_route_store(&path, |store| {
+                if store_file.exists() {
+                    nostr_vpn_core::paid_route_store::update_paid_route_store(&store_file, |store| {
                         store.automatic_reselect_from.clear();
                         Ok(())
                     })?;

@@ -333,6 +333,8 @@ pub struct NativePaidRouteChannelState {
     pub error: String,
 }
 
+// Independent capability flags are flattened for the native UI bindings.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativePaidRouteSessionState {
