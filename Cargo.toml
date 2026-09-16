@@ -23,7 +23,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "4.1.13"
+version = "4.1.14"
 edition = "2024"
 license = "MIT"
 authors = ["Nostr VPN contributors"]
@@ -74,8 +74,8 @@ nostr-pubsub-social-graph = "0.2.2"
 nostr-social-graph = "0.1.4"
 nostr-social-memory = "0.1.1"
 nostr-identity = "0.4.0"
-nostr-vpn-core = { version = "=4.1.13", path = "crates/nostr-vpn-core", default-features = false }
-nostr-vpn-wintun = { version = "=4.1.13", path = "crates/nostr-vpn-wintun" }
+nostr-vpn-core = { version = "=4.1.14", path = "crates/nostr-vpn-core", default-features = false }
+nostr-vpn-wintun = { version = "=4.1.14", path = "crates/nostr-vpn-wintun" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

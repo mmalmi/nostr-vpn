@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.14 - 2026-09-16
+
+### Release notes
+
+Paid exits now use trusted ratings to help choose providers and offer clearer
+selection controls. iOS does not support paid exits.
+
+### Added
+
+- Show provider-declared residential, datacenter, mobile, business, or unspecified
+  network types in paid-exit offers and marketplace views.
+- Rate previously used exits and share signed ratings through Nostr. Automatic
+  selection considers your preferences and ratings from trusted authors.
+- Rate the active automatic exit or choose Try another without losing purchased
+  credit. Downvoting an active provider stops using that provider.
+
+### Improved
+
+- Opening the Manual chooser preserves the current connection until you select
+  an exit, and keeps the active paid provider at the top of the list.
+- Keep connection measurements private and require a recent healthy alternative
+  before automatically blaming an exit for an ambiguous connection failure.
+- Bring exit feedback and selection controls to desktop, Android, and the CLI
+  where applicable.
+
+### Fixed
+
+- Keep locally stored paid-exit offers up to date after rapid configuration
+  changes or a system-clock rollback.
+
 ## 4.1.13 - 2026-09-16
 
 ### Cargo distribution repair
