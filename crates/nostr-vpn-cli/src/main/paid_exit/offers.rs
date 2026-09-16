@@ -94,9 +94,10 @@ fn build_local_paid_exit_offer(
     } else {
         Vec::new()
     };
-    let signed = signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
+    let keys = app.nostr_keys()?;
+    let mut signed = signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
         offer_id,
-        &app.nostr_keys()?,
+        &keys,
         &config,
         receiver_pubkey_hex.as_deref(),
         &fips_endpoints,
@@ -108,6 +109,26 @@ fn build_local_paid_exit_offer(
     )?;
     let offer = signed.offer()?;
     let store_path = paid_route_store_file_path(config_path);
+    let store = load_paid_route_store(&store_path)?;
+    let offer_key = nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+        &offer.seller_npub,
+        &offer.offer_id,
+    );
+    if let Some(previous) = store.offers.get(&offer_key)
+        && previous.signed_offer.event.created_at.as_secs() >= now_unix
+    {
+        // Changed terms must replace an offer even within the same second.
+        // Reuse identical offers so reads do not advance their timestamps.
+        signed = if previous.offer == offer {
+            previous.signed_offer.clone()
+        } else {
+            SignedPaidRouteOffer::sign(
+                offer.clone(),
+                &keys,
+                previous.signed_offer.event.created_at.as_secs().saturating_add(1),
+            )?
+        };
+    }
     let stored = persist_paid_exit_offer_snapshot(&store_path, &signed, &[], &offer, now_unix)?;
     Ok(LocalPaidExitOffer {
         signed,

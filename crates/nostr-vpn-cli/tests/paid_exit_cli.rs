@@ -3,7 +3,209 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use nostr_vpn_core::config::AppConfig;
+use nostr_vpn_core::paid_route_store::{load_paid_route_store, upsert_paid_route_offer};
+use nostr_vpn_core::paid_routes::{ExitNetworkClass, SignedPaidRouteOffer};
 use serde_json::Value;
+
+#[test]
+fn paid_exit_network_class_persists_into_signed_offers() {
+    let dir = TestDir::new("nvpn-paid-exit-cli-network-class");
+    let config_path = dir.path().join("config.toml");
+    let config = config_path.to_str().expect("utf8 config path");
+
+    // Omission preserves both legacy defaults and a previously selected class;
+    // explicit unknown clears the classification from the signed announcement.
+    for (argument, expected) in [
+        (None, ExitNetworkClass::Unknown),
+        (Some("residential"), ExitNetworkClass::Residential),
+        (None, ExitNetworkClass::Residential),
+        (Some("datacenter"), ExitNetworkClass::Datacenter),
+        (Some("mobile"), ExitNetworkClass::Mobile),
+        (Some("business"), ExitNetworkClass::Business),
+        (Some("unknown"), ExitNetworkClass::Unknown),
+    ] {
+        let run = run_paid_exit_with_network_class(config, argument);
+        assert_success(&run);
+        let run_json = output_json(&run);
+        assert_eq!(run_json["published"], false);
+        assert_eq!(run_json["daemon_reload_attempted"], false);
+
+        let saved: AppConfig =
+            toml::from_str(&std::fs::read_to_string(&config_path).expect("read saved config"))
+                .expect("parse saved config");
+        assert_eq!(saved.paid_exit.location.network_class, expected);
+
+        // A fresh CLI process must load the saved class into a valid signed offer.
+        let offer = run_nvpn([
+            "paid-exit",
+            "offer",
+            "--config",
+            config,
+            "--offer-id",
+            "cli-class",
+            "--json",
+        ]);
+        assert_success(&offer);
+        let offer_json = output_json(&offer);
+        let signed = SignedPaidRouteOffer::from_event(
+            serde_json::from_value(offer_json["event"].clone()).expect("decode offer event"),
+        )
+        .expect("verify signed offer");
+        assert_eq!(
+            signed
+                .offer()
+                .expect("decode signed offer")
+                .location
+                .network_class,
+            expected
+        );
+        let expected_field = if expected == ExitNetworkClass::Unknown {
+            Value::Null
+        } else {
+            Value::String(expected.as_str().to_owned())
+        };
+        assert_eq!(
+            run_json["offer"]["location"]["network_class"],
+            expected_field
+        );
+        assert_eq!(
+            offer_json["offer"]["location"]["network_class"],
+            expected_field
+        );
+        let content: Value = serde_json::from_str(&signed.event.content).expect("offer content");
+        assert_eq!(content["location"]["network_class"], expected_field);
+        let class_tags: Vec<_> = offer_json["event"]["tags"]
+            .as_array()
+            .expect("event tags")
+            .iter()
+            .filter(|tag| tag[0] == "network_class")
+            .collect();
+        if expected == ExitNetworkClass::Unknown {
+            assert!(class_tags.is_empty());
+        } else {
+            assert_eq!(
+                class_tags,
+                vec![&serde_json::json!(["network_class", expected.as_str()])]
+            );
+        }
+
+        let status = run_nvpn(["paid-exit", "status", "--config", config, "--json"]);
+        assert_success(&status);
+        let status_json = output_json(&status);
+        assert_eq!(status_json["counts"]["offers"], 1);
+        assert_eq!(
+            status_json["offers"][0]["offer"]["location"]["network_class"],
+            expected_field
+        );
+    }
+}
+
+#[test]
+fn paid_exit_network_class_update_survives_clock_rollback() {
+    let dir = TestDir::new("nvpn-paid-exit-cli-network-class-clock");
+    let config_path = dir.path().join("config.toml");
+    let config = config_path.to_str().expect("utf8 config path");
+    assert_success(&run_paid_exit_with_network_class(
+        config,
+        Some("residential"),
+    ));
+
+    // Seed a valid previous offer ahead of the clock. This deterministically
+    // exercises the same replacement conflict as two edits within one second.
+    let store_path = dir.path().join("paid-routes.json");
+    let store = load_paid_route_store(&store_path).expect("load offer store");
+    let previous = store.offers.values().next().expect("stored offer");
+    let app = AppConfig::load(&config_path).expect("load seller config");
+    let previous_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_secs()
+        + 60;
+    let previous = SignedPaidRouteOffer::sign(
+        previous.offer.clone(),
+        &app.nostr_keys().expect("seller keys"),
+        previous_timestamp,
+    )
+    .expect("sign previous offer");
+    upsert_paid_route_offer(&store_path, previous, vec![], previous_timestamp)
+        .expect("seed previous offer");
+
+    let run = run_paid_exit_with_network_class(config, Some("mobile"));
+    assert_success(&run);
+    let run_json = output_json(&run);
+    assert_eq!(run_json["offer"]["location"]["network_class"], "mobile");
+    assert_eq!(
+        run_json["status"]["offers"][0]["offer"]["location"]["network_class"],
+        "mobile"
+    );
+    let store = load_paid_route_store(&store_path).expect("reload offer store");
+    assert_eq!(store.offers.len(), 1);
+    let current = store.offers.values().next().expect("updated offer");
+    current
+        .signed_offer
+        .verify()
+        .expect("valid updated signature");
+    assert_eq!(
+        current.offer.location.network_class,
+        ExitNetworkClass::Mobile
+    );
+    assert!(current.signed_offer.event.created_at.as_secs() > previous_timestamp);
+    assert_eq!(
+        run_json["event_id"],
+        current.signed_offer.event.id.to_string()
+    );
+}
+
+#[test]
+fn paid_exit_network_class_rejects_invalid_values_without_mutation() {
+    let dir = TestDir::new("nvpn-paid-exit-cli-invalid-network-class");
+    let config_path = dir.path().join("config.toml");
+    let config = config_path.to_str().expect("utf8 config path");
+    let store_path = dir.path().join("paid-routes.json");
+
+    for existing_config in [false, true] {
+        if existing_config {
+            assert_success(&run_paid_exit_with_network_class(
+                config,
+                Some("residential"),
+            ));
+        }
+        let config_before = std::fs::read(&config_path).ok();
+        let store_before = std::fs::read(&store_path).ok();
+        for invalid in ["satellite", "residental", "residential,datacenter"] {
+            let output = run_paid_exit_with_network_class(config, Some(invalid));
+            assert_eq!(output.status.code(), Some(2), "invalid class: {invalid}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("--network-class"), "{stderr}");
+            assert!(
+                stderr.contains("unsupported exit network class"),
+                "{stderr}"
+            );
+            assert_eq!(std::fs::read(&config_path).ok(), config_before);
+            assert_eq!(std::fs::read(&store_path).ok(), store_before);
+        }
+    }
+}
+
+fn run_paid_exit_with_network_class(config: &str, class: Option<&str>) -> Output {
+    let mut args = vec![
+        "paid-exit",
+        "run",
+        "--config",
+        config,
+        "--offer-id",
+        "cli-class",
+        "--no-reload-daemon",
+        "--accepted-mint",
+        "https://mint.example",
+        "--json",
+    ];
+    if let Some(class) = class {
+        args.extend(["--network-class", class]);
+    }
+    run_nvpn(args)
+}
 
 #[test]
 fn paid_exit_run_and_status_cover_headless_seller_cli() {
