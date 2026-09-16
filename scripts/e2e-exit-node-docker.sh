@@ -1181,6 +1181,26 @@ if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
   exit 1
 fi
 
+if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
+  # The free trial route is withdrawn while the wallet funds the channel.
+  # Wait for paid admission before checking the route and capturing its egress.
+  AUTOMATIC_FUNDED_STATUS=""
+  for _ in $(seq 1 30); do
+    AUTOMATIC_FUNDED_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn paid-exit status --json | tr -d '\r')"
+    if automatic_buyer_session_funded \
+      "$AUTOMATIC_FUNDED_STATUS" "$PAID_EXIT_SESSION_ID"; then
+      break
+    fi
+    sleep 1
+  done
+  if ! automatic_buyer_session_funded \
+    "$AUTOMATIC_FUNDED_STATUS" "$PAID_EXIT_SESSION_ID"; then
+    echo "exit-node docker e2e failed: automatic session was admitted but not funded and signed" >&2
+    printf '%s\n' "$AUTOMATIC_FUNDED_STATUS" >&2
+    exit 1
+  fi
+fi
+
 DEFAULT_ROUTE=""
 PUBLIC_ROUTE=""
 for _ in $(seq 1 30); do
@@ -1234,21 +1254,6 @@ if truthy "$PAID_EXIT_MODE"; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
     PROBE_BASE_URL="http://$PUBLIC_INTERNET_TARGET:$PAID_EXIT_PROBE_PORT"
     if [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
-      AUTOMATIC_FUNDED_STATUS=""
-      for _ in $(seq 1 30); do
-        AUTOMATIC_FUNDED_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn paid-exit status --json | tr -d '\r')"
-        if automatic_buyer_session_funded \
-          "$AUTOMATIC_FUNDED_STATUS" "$PAID_EXIT_SESSION_ID"; then
-          break
-        fi
-        sleep 1
-      done
-      if ! automatic_buyer_session_funded \
-        "$AUTOMATIC_FUNDED_STATUS" "$PAID_EXIT_SESSION_ID"; then
-        echo "exit-node docker e2e failed: automatic session was admitted but not funded and signed" >&2
-        printf '%s\n' "$AUTOMATIC_FUNDED_STATUS" >&2
-        exit 1
-      fi
       "${COMPOSE[@]}" exec -T node-b python3 -c '
 import sys
 import time

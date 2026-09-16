@@ -293,6 +293,7 @@ for (const [helper, nearbyHelper] of [
   ['publish.sh', 'publish-build.sh'],
   ['verify-cargo-registry-dependency.py', 'verify-cargo-build.py'],
   ['ios-artifact-source.mjs', 'ios-artifact-build.mjs'],
+  ['e2e-exit-node-docker.sh', 'exit-node-build.sh'],
 ]) {
   test(`component proof treats only ${helper} as harness-only`, () => {
     const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))

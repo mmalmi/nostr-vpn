@@ -320,3 +320,58 @@ done
     rmSync(root, { recursive: true, force: true })
   }
 })
+
+test('automatic paid exit waits for funding before capturing routed traffic', () => {
+  const fixture = readFileSync('scripts/e2e-exit-node-docker.sh', 'utf8')
+  const helperStart = fixture.indexOf('automatic_buyer_session_funded() {')
+  const helperEnd = fixture.indexOf('\n}', helperStart) + 2
+  const start = fixture.indexOf('\nif [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]')
+  const end = fixture.indexOf('\nif ! truthy "$PAID_EXIT_MODE"; then\n  assert_secure_exit_dns', start)
+  assert.ok(helperStart >= 0 && helperEnd > helperStart && start >= 0 && end > start)
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-paid-funding-readiness-'))
+  try {
+    const result = spawnSync('bash', ['-c', `
+set -euo pipefail
+ROOT="$1"
+truthy() { [[ "$1" == 1 ]]; }
+sleep() { :; }
+fake_compose() {
+  case "$*" in
+    *'node-b nvpn paid-exit status --json')
+      funded=false
+      if [[ -f "$ROOT/funding-started" ]]; then
+        funded=true
+        touch "$ROOT/funded"
+      fi
+      touch "$ROOT/funding-started"
+      printf '{"sessions":[{"session_id":"session","payment":{"cashu_spilman":{"has_funding":%s,"has_signature":%s}},"routing":{"allow_routing":%s}}]}\\n' "$funded" "$funded" "$funded"
+      ;;
+    *'node-b sh -lc ip route'*) echo 'default dev utun100' ;;
+    *'internet-target sh -lc timeout'*)
+      [[ -f "$ROOT/funded" ]] || { echo 'capture started before funded admission' >&2; return 29; }
+      echo '198.19.246.10 > 198.19.246.100'
+      ;;
+    *) echo "unexpected command: $*" >&2; return 30 ;;
+  esac
+}
+ping_until_success() { [[ -f "$ROOT/funded" ]]; }
+COMPOSE=(fake_compose)
+PAID_EXIT_MODE=1
+PAID_EXIT_SELECTION_MODE=automatic
+PAID_EXIT_SESSION_ID=session
+ALICE_TUNNEL_IP=10.44.0.1
+BOB_TUNNEL_IP=10.44.0.2
+NODE_A_PUBLIC_IP=198.19.246.10
+PUBLIC_INTERNET_TARGET=198.19.246.100
+REALIZED_IP_LOG="$ROOT/capture.log"
+PUBLIC_PING_LOG="$ROOT/ping.log"
+${fixture.slice(helperStart, helperEnd)}
+${fixture.slice(start, end)}
+`, '_', root], { encoding: 'utf8', timeout: 5_000 })
+    assert.ifError(result.error)
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+    assert.match(readFileSync(join(root, 'capture.log'), 'utf8'), /198\.19\.246\.10/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
