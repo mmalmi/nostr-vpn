@@ -63,6 +63,36 @@ test('a late failure resumes without executing the validated earlier check again
   assert.ok(ledger.phases.some(p => p.label === 'late' && p.status === 'passed'))
 })
 
+test('candidate preflight packages Cargo archives even when source quality is reused', t => {
+  const { root, git } = fixture(t)
+  mkdirSync(join(root, 'scripts'))
+  writeFileSync(join(root, 'scripts/sync-versions.mjs'), '')
+  for (const name of ['check-source-file-lines.sh', 'test-release-gate-orchestration.sh']) {
+    writeFileSync(join(root, 'scripts', name), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+  }
+  writeFileSync(join(root, 'scripts/publish.sh'), '#!/bin/sh\nprintf "packaged\\n" >> count\n', { mode: 0o755 })
+  git('add', 'scripts')
+  git('commit', '-qm', 'preflight fixture')
+  const preflight = readFileSync(resolve('scripts/release-gate.sh'), 'utf8')
+    .match(/^run_release_gate_candidate_preflight\(\) \{[\s\S]*?^\}/m)?.[0]
+  assert.ok(preflight, 'production candidate preflight exists')
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const result = spawnSync('/bin/bash', ['-c', `
+      set -euo pipefail
+      source "$1"
+      release_gate_state_init "$2"
+      trap 's=$?; node "$RELEASE_GATE_STATE_TOOL" finish "$RELEASE_GATE_STATE_DIR" "$s"; exit "$s"' EXIT
+      cd "$2"
+      run_release_gate_source_quality() { :; }
+      ${preflight}
+      run_release_gate_candidate_preflight
+    `, '_', library, root], { encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+  }
+  assert.equal(readFileSync(join(root, 'count'), 'utf8'), 'packaged\npackaged\n')
+  assert.ok(status(root).phases.some(p => p.label === 'Source quality' && p.status === 'reused'))
+})
+
 test('changed tracked content invalidates reuse even before a new commit', t => {
   const { root } = fixture(t)
   assert.equal(attempt(root).status, 1)

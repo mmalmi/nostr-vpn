@@ -406,7 +406,8 @@ run_release_gate_candidate_preflight() {
   # expensive exact-candidate build. These use the locked release graph and
   # are not repeated by the later full host validation lane.
   release_gate_checkpoint_run "Source quality" run_release_gate_source_quality
-  release_gate_checkpoint_run "Distributable Cargo packages" ./scripts/publish.sh --dry-run
+  # Regenerate package archives; generic source checkpoints do not bind artifacts.
+  ./scripts/publish.sh --dry-run
 }
 
 run_release_gate_source_quality() {
