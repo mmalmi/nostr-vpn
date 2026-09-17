@@ -19,6 +19,27 @@ FILES=(
 for file in "${FILES[@]}"; do
   bash -n "$file"
 done
+python3 - "$ROOT/scripts/mobile-release-join-e2e.sh" <<'PY'
+import os, pathlib, subprocess, sys, tempfile
+source = pathlib.Path(sys.argv[1]).read_text()
+reset = source.split('case "${NVPN_RELEASE_JOIN_BUILD_ONLY:-0}" in', 1)[1]
+reset = reset.split('\nesac\n', 1)[1].split('\n# Phone phases', 1)[0]
+with tempfile.TemporaryDirectory() as directory:
+    root = pathlib.Path(directory)
+    summary, timings = root / 'summary.json', root / 'delivery-times.tsv'
+    for phase in ('desktop-only', 'full', 'qr-only'):
+        summary.write_text('completed phone receipt')
+        timings.write_text('recorded phone timings')
+        subprocess.run(['bash', '-euc', reset], check=True, env={
+            **os.environ, 'RESULT_DIR': directory, 'SUMMARY': str(summary),
+            'RELEASE_JOIN_PHASE_SELECTION': phase,
+        })
+        if phase == 'desktop-only':
+            assert summary.read_text() == 'completed phone receipt'
+            assert timings.read_text() == 'recorded phone timings'
+        else:
+            assert not summary.exists() and not timings.exists()
+PY
 (
   dispatch="$(sed -n '/^case "$RELEASE_JOIN_PHASE_SELECTION" in$/,/^esac$/p' "$ROOT/scripts/mobile-release-join-e2e.sh")"
   RELEASE_JOIN_PHASE_SELECTION=qr-only

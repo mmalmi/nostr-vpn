@@ -474,7 +474,9 @@ case "${NVPN_RELEASE_JOIN_BUILD_ONLY:-0}" in
   *) fail "unsupported NVPN_RELEASE_JOIN_BUILD_ONLY=$NVPN_RELEASE_JOIN_BUILD_ONLY" ;;
 esac
 
-rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
+if [[ "$RELEASE_JOIN_PHASE_SELECTION" != desktop-only ]]; then
+  rm -f "$SUMMARY" "$RESULT_DIR/delivery-times.tsv"
+fi
 
 # Phone phases prepare their own carrier. Desktop-only entry still needs
 # normalization before handing the retained app to the desktop harness.
