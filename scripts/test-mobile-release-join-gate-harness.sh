@@ -188,6 +188,7 @@ PY
   release_join_android_tap_center() { trace "tap:$1:$2"; }
   release_join_android_tap_visible() { trace "tap:$1:$2"; }
   release_join_android_scroll_to() { trace "scroll:$1:$2"; }
+  release_join_android_normalize_carrier() { trace normalize-carrier; }
   release_join_android_query() {
     [[ "$1:$2" == 'text:This device' && "$scenario" == saved-direct ]]
   }
@@ -204,6 +205,8 @@ PY
     [[ "$(head -2 "$tmp/calls" | tr '\n' ' ')" == 'stop launch ' ]]
     forbidden='clear|uninstall|delete|reset'
     if [[ "$scenario" != fresh ]]; then
+      grep -Fxq normalize-carrier "$tmp/calls"
+      [[ $(grep -n normalize-carrier "$tmp/calls" | cut -d: -f1) -lt $(grep -n 'tap:text:Add network' "$tmp/calls" | cut -d: -f1) ]]
       grep -Fxq 'tap:description:Internet tab' "$tmp/calls"
       if [[ "$scenario" == saved-wireguard ]]; then
         grep -Fxq 'tap:description:Internet source This device' "$tmp/calls"
@@ -216,6 +219,7 @@ PY
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
       grep -Fxq 'wait:description:Create Network' "$tmp/calls"
     else
+      ! grep -Fxq normalize-carrier "$tmp/calls"
       forbidden+='|^tap:'
     fi
     if grep -Eq "$forbidden" "$tmp/calls"; then
@@ -1976,4 +1980,70 @@ echo "Signed Release public-UI join gate contract passed"
   fi
   [[ "$(<"$tmp/events")" == point ]]
   [[ ! -s "$tmp/failed" ]]
+)
+
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-carrier-ui.XXXXXX")"
+  trap 'rm -rf "$tmp"' EXIT
+  python3 - "$tmp/ui.xml" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+root = ET.Element("hierarchy")
+card = ET.SubElement(root, "node", bounds="[0,0][1080,2410]")
+labels = [
+    ("Connect to non-roster FIPS peers", "false"),
+    ("Find peers over Nostr relays", "true"),
+    ("Use bootstrap servers", "false"),
+    ("Enable WebRTC transport", "false"),
+]
+for index, (label, checked) in enumerate(labels):
+    top = 400 + index * 150
+    ET.SubElement(card, "node", checkable="true", checked=checked,
+                  bounds=f"[90,{top}][216,{top + 126}]")
+    ET.SubElement(card, "node", text=label,
+                  bounds=f"[215,{top + 30}][900,{top + 90}]")
+ET.SubElement(card, "node", text="Unpaired label", bounds="[215,1100][900,1160]")
+ET.ElementTree(root).write(sys.argv[1])
+PY
+  ADB=(carrier_adb)
+  release_join_android_dump_ui() { RELEASE_JOIN_ANDROID_UI_XML="$tmp/ui.xml"; }
+  release_join_android_tap_center() { [[ "$1:$2" == 'description:Settings tab' ]]; }
+  release_join_android_scroll_to() {
+    release_join_android_query "$1" "$2" safe-center >/dev/null
+  }
+  carrier_adb() {
+    [[ "$1:$2:$3" == shell:input:tap ]]
+    printf '%s %s\n' "$4" "$5" >>"$tmp/taps"
+    [[ "${IGNORE_CARRIER_TAP:-0}" == 0 ]] || return 0
+    python3 - "$tmp/ui.xml" "$4" "$5" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+tree = ET.parse(sys.argv[1])
+x, y = map(int, sys.argv[2:])
+found = False
+for node in tree.iter("node"):
+    if node.get("checkable") != "true":
+        continue
+    left, top, right, bottom = map(int, re.findall(r"\d+", node.get("bounds")))
+    if (x, y) == ((left + right) // 2, (top + bottom) // 2):
+        node.set("checked", "false" if node.get("checked") == "true" else "true")
+        found = True
+assert found, "tap did not target a real checkbox"
+tree.write(sys.argv[1])
+PY
+  }
+  [[ "$(release_join_android_query checkbox-label 'Unpaired label' count)" == 0 ]]
+  release_join_android_normalize_carrier
+  [[ "$(wc -l <"$tmp/taps" | tr -d ' ')" == 2 ]]
+  [[ "$(release_join_android_query checkbox-label 'Enable WebRTC transport' checked)" == false ]]
+  release_join_android_normalize_carrier
+  [[ "$(wc -l <"$tmp/taps" | tr -d ' ')" == 2 ]]
+  carrier_adb shell input tap 153 463
+  IGNORE_CARRIER_TAP=1
+  if release_join_android_normalize_carrier; then
+    echo 'Android join setup accepted a prerequisite that stayed disabled' >&2
+    exit 1
+  fi
 )

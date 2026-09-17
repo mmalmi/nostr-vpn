@@ -228,7 +228,7 @@ release_join_android_scroll() {
   height="${size#*x}"
   "${ADB[@]}" shell input swipe \
     "$((width / 2))" "$((height * 4 / 5))" \
-    "$((width / 2))" "$((height / 3))" 220
+    "$((width / 2))" "$((height * 3 / 5))" 400
 }
 
 release_join_android_scroll_to() {
@@ -310,6 +310,7 @@ release_join_android_open_network_setup() {
       return 0
     fi
     if release_join_android_query_dumped text '▾' center >/dev/null 2>&1; then
+      release_join_android_normalize_carrier || return 1
       # A preceding exit test may have retained a now-stopped fixture. Select
       # native internet through the UI, without erasing its saved configuration.
       release_join_android_tap_center description 'Internet tab' || return 1
@@ -329,6 +330,27 @@ release_join_android_open_network_setup() {
   done
   echo 'Android did not expose its public network setup controls' >&2
   return 1
+}
+
+release_join_android_normalize_carrier() {
+  local label checked
+  release_join_android_tap_center description 'Settings tab' || return 1
+  for label in \
+    'Connect to non-roster FIPS peers' \
+    'Find peers over Nostr relays' \
+    'Use bootstrap servers'
+  do
+    release_join_android_scroll_to checkbox-label "$label" || return 1
+    checked="$(release_join_android_query_dumped checkbox-label "$label" checked)" \
+      || return 1
+    if [[ "$checked" != true ]]; then
+      release_join_android_tap checkbox-label "$label" || return 1
+      [[ "$(release_join_android_query checkbox-label "$label" checked)" == true ]] || {
+        echo "Android join prerequisite did not turn on: $label" >&2
+        return 1
+      }
+    fi
+  done
 }
 
 release_join_android_tap_center() {

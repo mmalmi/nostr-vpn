@@ -17,6 +17,7 @@ def parser() -> argparse.ArgumentParser:
             "resource",
             "description",
             "text",
+            "checkbox-label",
             "resource-prefix",
             "description-prefix",
         ),
@@ -33,6 +34,7 @@ def parser() -> argparse.ArgumentParser:
             "count",
             "width",
             "enabled",
+            "checked",
         ),
     )
     return result
@@ -105,7 +107,20 @@ def viewport(root: ET.Element, node: ET.Element) -> tuple[int, int, int, int, bo
 def main() -> int:
     args = parser().parse_args()
     root = ET.parse(args.xml).getroot()
-    found = [node for node in root.iter("node") if matches(node, args.kind, args.expected)]
+    if args.kind == "checkbox-label":
+        # Compose exposes each checkbox immediately before its label, with
+        # multiple settings flattened into the same parent accessibility node.
+        found = []
+        for parent in root.iter("node"):
+            children = list(parent)
+            for previous, label in zip(children, children[1:]):
+                if (
+                    matches(label, "text", args.expected)
+                    and previous.get("checkable") == "true"
+                ):
+                    found.append(previous)
+    else:
+        found = [node for node in root.iter("node") if matches(node, args.kind, args.expected)]
     if args.output == "count":
         print(len(found))
         return 0
@@ -144,8 +159,8 @@ def main() -> int:
         print(right - left)
     elif args.output == "description":
         print(html.unescape(node.attrib.get("content-desc", "")))
-    elif args.output == "enabled":
-        print(node.attrib.get("enabled", "false").lower())
+    elif args.output in ("enabled", "checked"):
+        print(node.attrib.get(args.output, "false").lower())
     else:
         print(html.unescape(node.attrib.get("text", "")))
     return 0
