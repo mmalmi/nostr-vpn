@@ -222,13 +222,18 @@ release_join_android_tap_visible() {
 }
 
 release_join_android_scroll() {
-  local size width height
+  local size width height target duration=220
   size="$("${ADB[@]}" shell wm size | tr -d '\r' | sed -n 's/^Physical size: //p')"
   width="${size%x*}"
   height="${size#*x}"
+  target="$((height / 3))"
+  if [[ "${1:-}" == checkbox-label ]]; then
+    target="$((height * 3 / 5))"
+    duration=400
+  fi
   "${ADB[@]}" shell input swipe \
     "$((width / 2))" "$((height * 4 / 5))" \
-    "$((width / 2))" "$((height * 3 / 5))" 400
+    "$((width / 2))" "$target" "$duration"
 }
 
 release_join_android_scroll_to() {
@@ -244,7 +249,7 @@ release_join_android_scroll_to() {
     then
       return 0
     fi
-    release_join_android_scroll >/dev/null
+    release_join_android_scroll "$kind" >/dev/null
     sleep 0.2
   done
   return 1
