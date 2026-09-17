@@ -383,6 +383,12 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
     }
 
     private func normalizeAndRequireJoinCarrier() throws {
+        // Activating the retained app also retains its last presented sheet.
+        let linkDevice = app.navigationBars["Link Device"]
+        if linkDevice.exists {
+            linkDevice.buttons["Done"].tap()
+            XCTAssertTrue(waitUntil(timeout: 5) { !linkDevice.exists })
+        }
         let settings = app.tabBars.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings tab was unavailable")
         settings.tap()
