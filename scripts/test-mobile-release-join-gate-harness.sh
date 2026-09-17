@@ -181,7 +181,7 @@ PY
     if [[ "$scenario" == fresh ]]; then
       printf '<hierarchy><node text="" resource-id="" content-desc="Create Network" bounds="[0,0][100,100]"/></hierarchy>' >"$RELEASE_JOIN_ANDROID_UI_XML"
     else
-      printf '<hierarchy><node text="▾" resource-id="" content-desc="" bounds="[0,0][100,100]"/></hierarchy>' >"$RELEASE_JOIN_ANDROID_UI_XML"
+      printf '<hierarchy><node><node clickable="true" bounds="[0,0][100,100]"><node text="Saved network"/></node><node checkable="true"><node content-desc="Turn VPN on"/></node></node></hierarchy>' >"$RELEASE_JOIN_ANDROID_UI_XML"
     fi
   }
   release_join_android_wait_query() { trace "wait:$1:$2"; }
@@ -214,7 +214,7 @@ PY
       else
         forbidden+='|Internet source This device'
       fi
-      grep -Fxq 'tap:text:▾' "$tmp/calls"
+      grep -Fxq 'tap:network-picker:Turn VPN ' "$tmp/calls"
       grep -Fxq 'scroll:text:Add network' "$tmp/calls"
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
       grep -Fxq 'wait:description:Create Network' "$tmp/calls"
@@ -1575,6 +1575,35 @@ PY
     echo "Android manual join rejected the exact accepted roster row" >&2
     exit 1
   }
+)
+
+(
+  # The whole network title opens the picker, even when a long title leaves
+  # no space for the decorative dropdown arrow in the accessibility tree.
+  fixture="$(mktemp "${TMPDIR:-/tmp}/nvpn-network-picker.XXXXXX.xml")"
+  trap 'rm -f "$fixture"' EXIT
+  for state in on off; do
+    cat >"$fixture" <<EOF
+<hierarchy><node bounds="[0,0][1080,2410]">
+  <node clickable="true" bounds="[0,500][1000,600]"><node text="Unrelated action"/></node>
+  <node bounds="[47,198][1033,324]">
+    <node clickable="true" bounds="[47,198][896,324]">
+      <node text="A network title long enough to hide its dropdown arrow"/>
+    </node>
+    <node clickable="true" checkable="true" bounds="[896,198][1033,324]">
+      <node content-desc="Turn VPN $state"/>
+    </node>
+  </node>
+</node></hierarchy>
+EOF
+    [[ "$("$ROOT/scripts/mobile-release-join-ui-query.py" \
+      "$fixture" network-picker 'Turn VPN ' center)" == '471 261' ]]
+    if "$ROOT/scripts/mobile-release-join-ui-query.py" \
+      "$fixture" network-picker 'Unrelated toggle' center; then
+      echo 'Network picker query accepted an unrelated control' >&2
+      exit 1
+    fi
+  done
 )
 
 fixture="$(mktemp "${TMPDIR:-/tmp}/nvpn-release-join-ui.XXXXXX.xml")"

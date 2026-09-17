@@ -314,7 +314,7 @@ release_join_android_open_network_setup() {
     if release_join_android_query_dumped description 'Create Network' center >/dev/null 2>&1; then
       return 0
     fi
-    if release_join_android_query_dumped text '▾' center >/dev/null 2>&1; then
+    if release_join_android_query_dumped network-picker 'Turn VPN ' center >/dev/null 2>&1; then
       release_join_android_normalize_carrier || return 1
       # A preceding exit test may have retained a now-stopped fixture. Select
       # native internet through the UI, without erasing its saved configuration.
@@ -325,7 +325,7 @@ release_join_android_open_network_setup() {
         release_join_android_tap_center description 'Internet source This device' || return 1
         release_join_android_wait_query text 'This device' || return 1
       fi
-      release_join_android_tap_center text '▾' || return 1
+      release_join_android_tap_center network-picker 'Turn VPN ' || return 1
       release_join_android_scroll_to text 'Add network' visible-center || return 1
       release_join_android_tap_visible text 'Add network' || return 1
       release_join_android_wait_query description 'Create Network'

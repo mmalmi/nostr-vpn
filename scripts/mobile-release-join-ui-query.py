@@ -18,6 +18,7 @@ def parser() -> argparse.ArgumentParser:
             "description",
             "text",
             "checkbox-label",
+            "network-picker",
             "resource-prefix",
             "description-prefix",
         ),
@@ -107,7 +108,27 @@ def viewport(root: ET.Element, node: ET.Element) -> tuple[int, int, int, int, bo
 def main() -> int:
     args = parser().parse_args()
     root = ET.parse(args.xml).getroot()
-    if args.kind == "checkbox-label":
+    if args.kind == "network-picker":
+        # The title is the clickable sibling immediately before the labelled
+        # VPN switch. Its decorative arrow can be absent for long titles.
+        found = []
+        for parent in root.iter("node"):
+            children = list(parent)
+            for title, toggle in zip(children, children[1:]):
+                if (
+                    title.get("clickable") == "true"
+                    and title.get("checkable") != "true"
+                    and any(node.get("text") for node in title.iter("node"))
+                    and toggle.get("checkable") == "true"
+                    and any(
+                        matches(node, "description-prefix", args.expected)
+                        for node in toggle.iter("node")
+                    )
+                ):
+                    found.append(title)
+        if len(found) != 1:
+            return 1
+    elif args.kind == "checkbox-label":
         # Compose exposes each checkbox immediately before its label, with
         # multiple settings flattened into the same parent accessibility node.
         found = []
