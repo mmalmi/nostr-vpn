@@ -2001,7 +2001,20 @@ test('release receipt collection requires exact source and strict public UI gate
       ...macosArtifact,
       manualJoinDriverSha256: 'b'.repeat(64),
       packageTreeSha256: 'c'.repeat(64),
+      // Different harness candidates can verify the same unchanged product.
+      componentInputProof: {
+        policy: 'unchanged-platform-product-inputs-v1',
+        platform: 'macos',
+        receipt_app_git_sha: commit,
+        receipt_app_git_tree: tree,
+        candidate_app_git_sha: 'b'.repeat(40),
+        candidate_app_git_tree: 'c'.repeat(40),
+        changed_paths_sha256: 'd'.repeat(64),
+      },
     }
+    networkArtifact.componentInputProofSha256 = sha256(
+      JSON.stringify(networkArtifact.componentInputProof),
+    )
     const networkArtifactText = JSON.stringify(networkArtifact)
     writeFileSync(paths.macos.network_artifact, networkArtifactText)
     const separatelyPackagedNetwork = JSON.parse(originalMacosNetwork)

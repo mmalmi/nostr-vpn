@@ -1956,16 +1956,19 @@ function collectReleaseGateEvidence({
     platformReceiptPaths.macos.network_artifact,
     'macOS network-tested artifact receipt',
   )
-  // The two gates can package different signed test helpers around the exact
-  // same app. Retain both packages' provenance and compare every product field.
-  const macosHelperFields = new Set([
+  // Separate gates can package different helpers and prove unchanged inputs
+  // against different harness candidates. Retain those records while comparing
+  // every product source, payload, and signing field; candidate source
+  // equivalence is independently recomputed above.
+  const macosPackagingFields = new Set([
     'archiveSha256', 'archiveSize', 'packageTreeSha256',
     'manualJoinDriverSha256', 'manualJoinDriverCodeDirectoryHash',
     'manualJoinFixtureSha256', 'manualJoinFixtureCodeDirectoryHash',
     'serviceToggleDriverSha256', 'serviceToggleDriverCodeDirectoryHash',
+    'componentInputProof', 'componentInputProofSha256',
   ])
   const productFields = (receipt) => Object.fromEntries(
-    Object.entries(receipt).filter(([name]) => !macosHelperFields.has(name)),
+    Object.entries(receipt).filter(([name]) => !macosPackagingFields.has(name)),
   )
   if (!isDeepStrictEqual(productFields(macosArtifact), productFields(macosNetworkArtifact))) {
     throw new Error('macOS network and join packages contain different product evidence.')
