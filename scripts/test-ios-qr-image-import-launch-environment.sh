@@ -41,10 +41,17 @@ other_tests = tests.replace(import_test, "")
 
 for required in (
     "app.launchEnvironment.isEmpty",
-    "app.launch()",
+    "app.activate()",
 ):
     if required not in setup:
-        raise SystemExit(f"Ordinary Release launch lacks empty-environment contract: {required}")
+        raise SystemExit(f"Ordinary Release activation lacks empty-environment contract: {required}")
+if "app.launch()" in setup or "app.terminate()" in setup:
+    raise SystemExit("Join setup interrupts the established approval carrier")
+durability = tests.split("private func relaunchAndRequireAcceptedRoster", 1)[1].split(
+    "private func", 1
+)[0]
+if durability.index("app.terminate()") > durability.index("app.launch()"):
+    raise SystemExit("Join durability must still force a real application restart")
 if ".launchEnvironment =" in tests:
     raise SystemExit("QR import still uses the unreliable runtime environment path")
 if ".launchEnvironment =" in other_tests:

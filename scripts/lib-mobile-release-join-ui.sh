@@ -1035,8 +1035,8 @@ release_join_ios_stop_runner() {
     ios_release_network_stop_forced_xctrunner "$device"
 }
 
-# XCTest setUp calls app.launch(), which terminates an existing app instance.
-# A preceding CoreDevice restart only repeats that launch and waits on teardown.
+# XCTest setUp activates the existing app to preserve its live join carrier.
+# Do not restart it here; the tests verify relaunch durability after delivery.
 release_join_ios_start_test() {
   local test_name="$1" log="$2"
   shift 2
