@@ -766,7 +766,12 @@ PY
 }
 
 owned_daemon_pid() {
-  /usr/bin/python3 - "$STATE_DIR/daemon.pid" "$CONFIG" <<'PY'
+  local pid_file
+  pid_file="$(
+    nvpn status --json --discover-secs 0 --config "$CONFIG" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["daemon"]["pid_file"])'
+  )" || return 1
+  /usr/bin/python3 - "$pid_file" "$CONFIG" <<'PY'
 import json
 import sys
 

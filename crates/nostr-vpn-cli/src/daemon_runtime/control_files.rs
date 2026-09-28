@@ -1,8 +1,13 @@
-pub(crate) fn daemon_pid_file_path(config_path: &Path) -> PathBuf {
-    let parent = config_path
+// macOS snapshots share the protected log/cleanup directory. Never import old
+// user-directory PID/state files: these are disposable, untrusted snapshots.
+pub(crate) fn daemon_pid_file_path(config_path: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    return Ok(crate::macos_privileged_files::runtime_directory(config_path)?.join("daemon.pid"));
+    #[cfg(not(target_os = "macos"))]
+    Ok(config_path
         .parent()
-        .map_or_else(|| Path::new(".").to_path_buf(), PathBuf::from);
-    parent.join("daemon.pid")
+        .unwrap_or_else(|| Path::new("."))
+        .join("daemon.pid"))
 }
 
 #[cfg(unix)]
@@ -485,11 +490,14 @@ pub(crate) fn compact_log_file_if_needed(
     Ok(true)
 }
 
-pub(crate) fn daemon_state_file_path(config_path: &Path) -> PathBuf {
-    let parent = config_path
+pub(crate) fn daemon_state_file_path(config_path: &Path) -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    return Ok(crate::macos_privileged_files::runtime_directory(config_path)?.join("daemon.state.json"));
+    #[cfg(not(target_os = "macos"))]
+    Ok(config_path
         .parent()
-        .map_or_else(|| Path::new(".").to_path_buf(), PathBuf::from);
-    parent.join("daemon.state.json")
+        .unwrap_or_else(|| Path::new("."))
+        .join("daemon.state.json"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -578,6 +586,7 @@ pub(crate) fn write_daemon_control_request(
             error
         );
     }
+    #[cfg(not(target_os = "macos"))]
     project_daemon_vpn_enabled_request(config_path, request);
     Ok(())
 }
@@ -620,6 +629,7 @@ pub(crate) fn persist_desired_daemon_vpn_enabled_in_config(
     Ok(true)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn project_daemon_vpn_enabled_request(config_path: &Path, request: DaemonControlRequest) {
     let Some(vpn_enabled) = (match request {
         DaemonControlRequest::Pause => Some(false),
@@ -629,7 +639,9 @@ fn project_daemon_vpn_enabled_request(config_path: &Path, request: DaemonControl
         return;
     };
 
-    let state_file = daemon_state_file_path(config_path);
+    let Ok(state_file) = daemon_state_file_path(config_path) else {
+        return;
+    };
     let Ok(Some(mut state)) = read_daemon_state(&state_file) else {
         return;
     };
@@ -921,35 +933,25 @@ pub(crate) fn take_daemon_control_request(config_path: &Path) -> Option<DaemonCo
 }
 
 pub(crate) fn read_daemon_pid_record(path: &Path) -> Result<Option<DaemonPidRecord>> {
-    if !path.exists() {
+    let Some(raw) = read_daemon_status_file(path)? else {
         return Ok(None);
-    }
-
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("failed to read daemon pid file {}", path.display()))?;
-    let parsed = serde_json::from_str::<DaemonPidRecord>(&raw)
+    };
+    let parsed = serde_json::from_slice::<DaemonPidRecord>(&raw)
         .with_context(|| format!("failed to parse daemon pid file {}", path.display()))?;
     Ok(Some(parsed))
 }
 
 pub(crate) fn write_daemon_pid_record(path: &Path, record: &DaemonPidRecord) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
     let raw = serde_json::to_string_pretty(record)?;
-    write_runtime_file_atomically(path, raw.as_bytes())
+    write_daemon_status_file(path, raw.as_bytes())
         .with_context(|| format!("failed to write daemon pid file {}", path.display()))?;
     Ok(())
 }
 
 pub(crate) fn read_daemon_state(path: &Path) -> Result<Option<DaemonRuntimeState>> {
-    if !path.exists() {
+    let Some(raw) = read_daemon_status_file(path)? else {
         return Ok(None);
-    }
-
-    let raw = fs::read(path)
-        .with_context(|| format!("failed to read daemon state file {}", path.display()))?;
+    };
     match serde_json::from_slice::<DaemonRuntimeState>(&raw) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(parse_error) => {
@@ -958,7 +960,9 @@ pub(crate) fn read_daemon_state(path: &Path) -> Result<Option<DaemonRuntimeState
                 && !trimmed.is_empty()
                 && let Ok(parsed) = serde_json::from_slice::<DaemonRuntimeState>(trimmed)
             {
-                if let Err(error) = write_runtime_file_atomically(path, trimmed) {
+                if daemon_status_writable()
+                    && let Err(error) = write_daemon_status_file(path, trimmed)
+                {
                     eprintln!(
                         "daemon: parsed padded state file {} but failed to rewrite clean copy: {}",
                         path.display(),
@@ -968,19 +972,48 @@ pub(crate) fn read_daemon_state(path: &Path) -> Result<Option<DaemonRuntimeState
                 return Ok(Some(parsed));
             }
 
-            quarantine_corrupt_runtime_file(path, "daemon state", &parse_error);
+            if daemon_status_writable() {
+                quarantine_corrupt_runtime_file(path, "daemon state", &parse_error);
+            }
             Ok(None)
         }
     }
 }
 
 pub(crate) fn write_daemon_state(path: &Path, state: &DaemonRuntimeState) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
     let raw = serde_json::to_string_pretty(state)?;
-    write_runtime_file_atomically(path, raw.as_bytes())
+    write_daemon_status_file(path, raw.as_bytes())
         .with_context(|| format!("failed to write daemon state file {}", path.display()))?;
     Ok(())
+}
+
+fn daemon_status_writable() -> bool {
+    #[cfg(target_os = "macos")]
+    return unsafe { libc::geteuid() } == 0;
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+fn read_daemon_status_file(path: &Path) -> Result<Option<Vec<u8>>> {
+    #[cfg(target_os = "macos")]
+    return crate::macos_privileged_files::read_runtime_state(path);
+    #[cfg(not(target_os = "macos"))]
+    match fs::read(path) {
+        Ok(raw) => Ok(Some(raw)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read daemon status {}", path.display())),
+    }
+}
+
+fn write_daemon_status_file(path: &Path, contents: &[u8]) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    return crate::macos_privileged_files::write_runtime_state(path, contents);
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        write_runtime_file_atomically(path, contents)
+    }
 }

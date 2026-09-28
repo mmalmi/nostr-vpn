@@ -1,4 +1,4 @@
-//! Publication of root-owned launchd artifacts. Never clone source metadata.
+//! Root-owned launchd artifacts and daemon status. Never clone source metadata.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
@@ -40,6 +40,10 @@ pub(crate) fn helper_destination(path: &Path) -> Option<PathBuf> {
 }
 
 pub(crate) fn validate_artifact(path: &Path) -> Result<()> {
+    open_artifact(path).map(|_| ())
+}
+
+fn open_artifact(path: &Path) -> Result<File> {
     protected_directory(
         path.parent().context("system artifact has no parent")?,
         false,
@@ -57,7 +61,33 @@ pub(crate) fn validate_artifact(path: &Path) -> Result<()> {
     {
         bail!("unsafe system artifact; reinstall the service with administrator privileges");
     }
-    reject_write_acl(&file)
+    reject_write_acl(&file)?;
+    Ok(file)
+}
+
+/// Status is public to local readers, but only root may publish it. Unlike
+/// installation and cleanup records, these frequent snapshots need no fsync.
+pub(crate) fn write_runtime_state(path: &Path, contents: &[u8]) -> Result<()> {
+    require_root()?;
+    protected_directory(path.parent().context("runtime state has no parent")?, true)?;
+    nostr_vpn_core::macos_file_io::write_atomic(path, contents, 0o644, Some((0, 0)), false)?;
+    Ok(())
+}
+
+pub(crate) fn read_runtime_state(path: &Path) -> Result<Option<Vec<u8>>> {
+    let mut file = match open_artifact(path) {
+        Ok(file) => file,
+        Err(error)
+            if error.downcast_ref::<io::Error>()
+                .is_some_and(|error| error.kind() == io::ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    let mut contents = Vec::new();
+    file.read_to_end(&mut contents)?;
+    Ok(Some(contents))
 }
 
 pub(crate) fn require_root() -> Result<()> {
@@ -176,8 +206,8 @@ pub(crate) fn publish(contents: &mut impl Read, destination: &Path, mode: u32) -
     result.context("publish protected system artifact")
 }
 
-/// A user may edit configuration, but must not forge the daemon's record of
-/// routes/DNS it owns. Keep that authority under protected system ancestors.
+/// A user may edit configuration, but must not forge the daemon's status or
+/// record of routes/DNS it owns. Keep those under protected system ancestors.
 pub(crate) fn runtime_directory(config_path: &Path) -> Result<PathBuf> {
     use sha2::{Digest, Sha256};
     use std::os::unix::ffi::OsStrExt;

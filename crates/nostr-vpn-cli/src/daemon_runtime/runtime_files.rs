@@ -279,7 +279,7 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
         config_path: config_path.display().to_string(),
         started_at: unix_timestamp(),
     };
-    let pid_file = daemon_pid_file_path(config_path);
+    let pid_file = daemon_pid_file_path(config_path)?;
     write_daemon_pid_record(&pid_file, &record)?;
     Ok(pid)
 }

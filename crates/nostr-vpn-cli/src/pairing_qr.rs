@@ -53,7 +53,7 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
         print!("{}", render_pairing_output(&uri)?);
     }
 
-    let state_path = daemon_state_file_path(&config_path);
+    let state_path = daemon_state_file_path(&config_path)?;
     let reachability = request_reachability(read_daemon_state(&state_path)?.as_ref());
     println!("{}", reachability.message());
     if args.no_wait {

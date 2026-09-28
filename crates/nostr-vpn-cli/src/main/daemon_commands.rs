@@ -477,9 +477,9 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
 }
 
 pub(crate) fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
-    let pid_file = daemon_pid_file_path(config_path);
+    let pid_file = daemon_pid_file_path(config_path)?;
     let log_file = daemon_log_file_path(config_path)?;
-    let state_file = daemon_state_file_path(config_path);
+    let state_file = daemon_state_file_path(config_path)?;
     let pid_record = read_daemon_pid_record(&pid_file)?;
     let pid_from_record = pid_record.as_ref().map(|record| record.pid);
     let running_pid = daemon_candidate_pids(config_path, std::process::id())?
@@ -490,6 +490,7 @@ pub(crate) fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
     let state = read_daemon_state(&state_file)?;
     let running = running_pid.is_some() || daemon_state_file_counts_as_running(state.as_ref());
 
+    #[cfg(not(target_os = "macos"))]
     if let Some(pid) = running_pid
         && pid_from_record != Some(pid)
     {

@@ -99,7 +99,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     {
         transition_daemon_state_after_network_repair(&config_path)?;
     }
-    let pid_file = daemon_pid_file_path(&config_path);
+    let pid_file = daemon_pid_file_path(&config_path)?;
     if let Err(error) = write_daemon_pid_record(
         &pid_file,
         &DaemonPidRecord {
@@ -145,7 +145,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
         .ok_or_else(|| anyhow!("could not derive local npub for recent peers cache"))?;
     let recent_peers_scope = nostr_vpn_core::recent_peers::recent_peers_scope(&network_id);
     let expected_peers = expected_peer_count(&app);
-    let state_file = daemon_state_file_path(&config_path);
+    let state_file = daemon_state_file_path(&config_path)?;
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);
     let recent_peers = match crate::recent_peers_store::load_recent_peers(

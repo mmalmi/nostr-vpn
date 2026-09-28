@@ -353,7 +353,7 @@ pub(crate) fn recent_windows_daemon_pid_candidate(
 pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Result<Vec<u32>> {
     let mut daemon_pids = find_daemon_pids_by_config(config_path);
 
-    let pid_file = daemon_pid_file_path(config_path);
+    let pid_file = daemon_pid_file_path(config_path)?;
     if let Some(record) = read_daemon_pid_record(&pid_file)?
         && record.pid != current_pid
         && daemon_pid_record_counts_as_running(record.pid, config_path)
@@ -364,7 +364,7 @@ pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Res
 
     #[cfg(windows)]
     {
-        let state = read_daemon_state(&daemon_state_file_path(config_path))?;
+        let state = read_daemon_state(&daemon_state_file_path(config_path)?)?;
         if let Some(pid) = recent_windows_daemon_pid_candidate(
             state.as_ref(),
             current_pid,

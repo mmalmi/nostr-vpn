@@ -599,7 +599,7 @@ pub(crate) fn cleanup_failed_daemon_runtime_state(
 }
 
 pub(crate) fn transition_daemon_state_after_network_repair(config_path: &Path) -> Result<()> {
-    let state_file = daemon_state_file_path(config_path);
+    let state_file = daemon_state_file_path(config_path)?;
     let previous = read_daemon_state(&state_file)?;
     let expected_peers = previous
         .as_ref()

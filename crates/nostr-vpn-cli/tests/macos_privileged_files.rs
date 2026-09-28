@@ -66,6 +66,84 @@ fn non_root_install_is_rejected_without_writes() {
     assert!(publish(&mut &b"plist"[..], &path, 0o644).is_err());
     assert!(!path.exists());
     assert!(network_cleanup_path(&path).is_err());
+    assert!(write_runtime_state(&path, b"forged status").is_err());
+    assert!(!path.exists());
+}
+
+#[test]
+fn runtime_state_rejects_unprotected_storage() {
+    let fixture = Fixture::user();
+    let path = fixture.path("daemon.state.json");
+    fs::write(&path, b"forged state").unwrap();
+    assert!(read_runtime_state(&path).is_err());
+    assert!(read_runtime_state(&fixture.path("missing.pid")).is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"forged state");
+}
+
+#[test]
+#[ignore = "requires root; only creates isolated filesystem fixtures"]
+fn root_runtime_state_is_readable_but_cannot_be_forged_by_users() {
+    let fixture = Fixture::root();
+    let directory = fixture.path("runtime");
+    for name in ["daemon.pid", "daemon.state.json"] {
+        let path = directory.join(name);
+        assert!(read_runtime_state(&path).unwrap().is_none());
+        write_runtime_state(&path, b"first").unwrap();
+        assert_protected(&path, 0o644);
+        let mut previous = File::open(&path).unwrap();
+        write_runtime_state(&path, b"second").unwrap();
+        let mut old = String::new();
+        previous.read_to_string(&mut old).unwrap();
+        assert_eq!(old, "first");
+        assert_eq!(read_runtime_state(&path).unwrap().unwrap(), b"second");
+
+        use std::os::unix::ffi::OsStrExt;
+        let path_c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // Only async-signal-safe syscalls after fork in this threaded runner.
+        let child = unsafe { libc::fork() };
+        assert!(child >= 0);
+        if child == 0 {
+            unsafe {
+                if libc::setgroups(0, std::ptr::null()) != 0
+                    || libc::setgid(65534) != 0
+                    || libc::setuid(65534) != 0
+                {
+                    libc::_exit(2);
+                }
+                if libc::open(path_c.as_ptr(), libc::O_RDONLY) < 0 {
+                    libc::_exit(3);
+                }
+                if libc::open(path_c.as_ptr(), libc::O_WRONLY) >= 0
+                    || libc::unlink(path_c.as_ptr()) == 0
+                {
+                    libc::_exit(4);
+                }
+                libc::_exit(0);
+            }
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+        assert_eq!(
+            status, 0,
+            "users may read, but must not write or unlink status"
+        );
+
+        chown(&path, Some(65534), None).unwrap();
+        assert!(read_runtime_state(&path).is_err());
+        write_runtime_state(&path, b"repaired").unwrap();
+        assert_protected(&path, 0o644);
+        fs::remove_file(&path).unwrap();
+        let victim = fixture.path("victim");
+        fs::write(&victim, b"preserved").unwrap();
+        symlink(&victim, &path).unwrap();
+        assert!(read_runtime_state(&path).is_err());
+        write_runtime_state(&path, b"replacement").unwrap();
+        assert_eq!(fs::read(&victim).unwrap(), b"preserved");
+        assert_protected(&path, 0o644);
+    }
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(read_runtime_state(&directory.join("daemon.pid")).is_err());
+    assert!(write_runtime_state(&directory.join("daemon.pid"), b"unsafe").is_err());
 }
 
 #[test]

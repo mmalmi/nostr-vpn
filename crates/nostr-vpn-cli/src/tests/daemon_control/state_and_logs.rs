@@ -35,12 +35,21 @@ fn daemon_runtime_state_requires_advertised_routes() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "requires root; isolated filesystem fixture"
+)]
 fn read_daemon_state_trims_nul_padding() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock is after epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("nvpn-daemon-state-trim-test-{nonce}"));
+    let base = if cfg!(target_os = "macos") {
+        PathBuf::from("/private/var")
+    } else {
+        std::env::temp_dir()
+    };
+    let dir = base.join(format!("nvpn-daemon-state-trim-test-{nonce}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     let state_path = dir.join("daemon.state.json");
     let mut raw = br#"{
@@ -143,6 +152,7 @@ fn atomic_runtime_write_creates_desktop_readable_file() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn daemon_control_request_projects_desired_vpn_state_immediately() {
     let nonce = SystemTime::now()
@@ -152,7 +162,7 @@ fn daemon_control_request_projects_desired_vpn_state_immediately() {
     let dir = std::env::temp_dir().join(format!("nvpn-control-project-test-{nonce}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     let config_path = dir.join("config.toml");
-    let state_path = daemon_state_file_path(&config_path);
+    let state_path = daemon_state_file_path(&config_path).unwrap();
     let state = DaemonRuntimeState {
         updated_at: 1,
         vpn_enabled: true,
@@ -397,6 +407,7 @@ fn daemon_runtime_operations_reject_fifo_without_waiting_for_a_peer() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn daemon_status_ignores_and_quarantines_corrupt_daemon_state() {
     let nonce = SystemTime::now()
@@ -412,8 +423,6 @@ fn daemon_status_ignores_and_quarantines_corrupt_daemon_state() {
 
     let status = crate::daemon_status(&config_path).expect("daemon status should succeed");
     assert!(status.state.is_none());
-    #[cfg(target_os = "macos")]
-    assert!(status.log_file.starts_with("/Library/Application Support/nvpn/runtime"));
     assert!(!state_path.exists());
 
     let quarantined: Vec<_> = fs::read_dir(&dir)
@@ -538,12 +547,21 @@ fn legacy_macos_cleanup_record_retains_route_ownership_after_upgrade() {
 }
 
 #[test]
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "requires root; isolated filesystem fixture"
+)]
 fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock is after epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!("nvpn-daemon-state-test-{nonce}"));
+    let base = if cfg!(target_os = "macos") {
+        PathBuf::from("/private/var")
+    } else {
+        std::env::temp_dir()
+    };
+    let dir = base.join(format!("nvpn-daemon-state-test-{nonce}"));
     fs::create_dir_all(&dir).expect("create temp dir");
     let state_path = dir.join("daemon.state.json");
 
@@ -709,4 +727,47 @@ fn fips_runtime_state_rejects_far_future_peer_timestamps() {
     assert_eq!(state.peers[0].last_fips_control_seen_at, None);
     assert_eq!(state.peers[0].last_fips_data_seen_at, None);
     assert_eq!(state.peers[0].last_handshake_at, None);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn daemon_status_ignores_user_folder_pid_and_state() {
+    let dir = std::env::temp_dir().join(format!(
+        "nvpn-legacy-status-{:032x}",
+        rand::random::<u128>()
+    ));
+    fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config.toml");
+    // Even malformed legacy files must be ignored, never parsed or migrated.
+    fs::write(dir.join("daemon.pid"), b"forged pid").unwrap();
+    fs::write(dir.join("daemon.state.json"), b"forged state").unwrap();
+    let status = crate::daemon_status(&config).unwrap();
+    assert!(status.pid.is_none());
+    assert!(status.state.is_none());
+    assert!(!status.running);
+    let runtime = crate::macos_privileged_files::runtime_directory(&config).unwrap();
+    assert_eq!(status.pid_file, runtime.join("daemon.pid"));
+    assert_eq!(status.state_file, runtime.join("daemon.state.json"));
+    assert_eq!(status.log_file, runtime.join("daemon.log"));
+    assert!(
+        !runtime.exists(),
+        "status readers must not create protected storage"
+    );
+    assert_eq!(fs::read(dir.join("daemon.pid")).unwrap(), b"forged pid");
+    assert_eq!(
+        fs::read(dir.join("daemon.state.json")).unwrap(),
+        b"forged state"
+    );
+    write_daemon_control_request(&config, DaemonControlRequest::Pause).unwrap();
+    assert_eq!(
+        fs::read_to_string(daemon_control_file_path(&config)).unwrap(),
+        "pause\n"
+    );
+    assert!(
+        !runtime.exists(),
+        "control requests must not publish daemon state"
+    );
+    assert!(daemon_pid_file_path(&dir.join("../config.toml")).is_err());
+    assert!(daemon_state_file_path(&dir.join("../config.toml")).is_err());
+    fs::remove_dir_all(dir).unwrap();
 }
