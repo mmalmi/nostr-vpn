@@ -46,6 +46,8 @@ const RELAY_REPLAY_LIMIT: usize = 32;
 const FIPS_REPLAY_LIMIT: usize = 32;
 const RELAY_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 const FIPS_ADVERT_REFRESH_INTERVAL: Duration = Duration::from_mins(30);
+const FIPS_ADVERT_RETRY_INITIAL: Duration = Duration::from_secs(1);
+const FIPS_ADVERT_RETRY_MAX: Duration = Duration::from_mins(1);
 
 struct PublishRequest {
     event: Box<Event>,
@@ -383,6 +385,7 @@ async fn run(
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let advert_refresh = tokio::time::sleep(Duration::ZERO);
     tokio::pin!(advert_refresh);
+    let mut advert_retry_delay = FIPS_ADVERT_RETRY_INITIAL;
     let mut fips_subscription = FipsSubscriptionState::default();
     sync_fips_subscription(
         &endpoint,
@@ -468,7 +471,7 @@ async fn run(
                 .await;
             }
             _ = &mut advert_refresh => {
-                let refresh_after = publish_local_fips_advert(&endpoint, &pubsub).await;
+                let refresh_after = publish_local_fips_advert(&endpoint, &pubsub, &mut advert_retry_delay).await;
                 advert_refresh.as_mut().reset(tokio::time::Instant::now() + refresh_after);
             }
             _ = maintenance_tick.tick() => {
@@ -570,6 +573,7 @@ async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) 
 async fn publish_local_fips_advert(
     endpoint: &FipsEndpoint,
     pubsub: &NostrPubsubRouter,
+    retry_delay: &mut Duration,
 ) -> Duration {
     let event = match endpoint.local_nostr_discovery_advert_event().await {
         Ok(Some(event)) => event,
@@ -592,23 +596,23 @@ async fn publish_local_fips_advert(
         )
         .await
     {
-        Ok(report) if report.accepted && report.reason.is_none() => {
-            tracing::debug!(%event_id, "published local FIPS advert through Nostr pubsub providers");
-            refresh_after
-        }
         Ok(report) if report.accepted => {
-            tracing::debug!(%event_id, reason = report.reason.as_deref().unwrap_or_default(), "local FIPS advert reached only part of the Nostr pubsub provider set");
-            MAINTENANCE_TICK_INTERVAL
+            // A partial result must not replay the advert to providers that
+            // already accepted it. Resume the normal refresh after any success.
+            tracing::debug!(%event_id, reason = report.reason.as_deref().unwrap_or_default(), "published local FIPS advert through Nostr pubsub providers");
+            *retry_delay = FIPS_ADVERT_RETRY_INITIAL;
+            return refresh_after;
         }
         Ok(report) => {
             tracing::debug!(%event_id, reason = report.reason.as_deref().unwrap_or("no provider accepted the advert"), "local FIPS advert publication deferred");
-            MAINTENANCE_TICK_INTERVAL
         }
         Err(error) => {
             tracing::debug!(%error, %event_id, "local FIPS advert publication deferred");
-            MAINTENANCE_TICK_INTERVAL
         }
     }
+    let retry_after = *retry_delay;
+    *retry_delay = retry_delay.saturating_mul(2).min(FIPS_ADVERT_RETRY_MAX);
+    retry_after
 }
 
 fn fips_advert_refresh_delay(event: &Event) -> Duration {

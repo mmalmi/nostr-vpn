@@ -262,6 +262,119 @@ fn fips_advert_refreshes_at_half_its_signed_lifetime() {
     assert_eq!(fips_advert_refresh_delay(&event), Duration::from_secs(60));
 }
 
+#[tokio::test]
+async fn fips_advert_retries_back_off_and_stop_after_partial_publication() {
+    use futures_util::StreamExt;
+    use nostr_sdk::{ClientMessage, JsonUtil};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local relay");
+    let url = format!("ws://{}", listener.local_addr().expect("relay address"));
+    let (events_tx, mut events_rx) = mpsc::channel(8);
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept relay connection");
+        let mut socket = tokio_tungstenite::accept_async(stream)
+            .await
+            .expect("accept relay websocket");
+        while let Some(Ok(message)) = socket.next().await {
+            if let Ok(ClientMessage::Event(event)) = ClientMessage::from_json(message.into_data()) {
+                events_tx
+                    .send(event.into_owned())
+                    .await
+                    .expect("record event");
+            }
+        }
+    });
+    let relay = Arc::new(
+        RelayEventBus::new([url.clone()], Duration::from_secs(2))
+            .await
+            .expect("start relay provider"),
+    );
+    relay
+        .client()
+        .wait_for_connection(Duration::from_secs(2))
+        .await;
+    // A disconnected provider exercises the real router's partial-success report.
+    let failed = Arc::new(
+        RelayEventBus::with_client(Client::default(), [url.clone()], Duration::from_secs(2))
+            .await
+            .expect("start failing provider"),
+    );
+    failed.client().shutdown().await;
+
+    let mut config = Config::new();
+    config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+        bind_addr: Some("127.0.0.1:0".to_string()),
+        public_url: Some("wss://peer.example/fips".to_string()),
+        ..WebSocketConfig::default()
+    });
+    config.node.discovery.nostr.enabled = true;
+    config.node.discovery.nostr.advertise = true;
+    config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
+    config.node.discovery.nostr.advert_relays.clear();
+    config.node.discovery.nostr.stun_servers.clear();
+    let endpoint = endpoint(&Keys::generate(), config).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if endpoint
+                .local_nostr_discovery_advert_event()
+                .await
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("local announcement ready");
+    let policy = FipsPubsubPolicy::new(
+        Arc::clone(&endpoint),
+        std::iter::empty::<&Event>(),
+        FipsPubsubPolicyOptions::default(),
+    )
+    .expect("pubsub policy");
+    let unavailable = NostrPubsubRouter::new(policy.event_policy()).with_publish_source(
+        RouterPublishSource::new(SourceRoute::relay("failed"), Arc::clone(&failed)),
+    );
+    let router = NostrPubsubRouter::new(policy.event_policy())
+        .with_publish_source(RouterPublishSource::new(
+            SourceRoute::relay("failed"),
+            failed,
+        ))
+        .with_publish_source(RouterPublishSource::new(
+            SourceRoute::relay(url),
+            Arc::clone(&relay),
+        ));
+
+    let mut retry_delay = FIPS_ADVERT_RETRY_INITIAL;
+    for seconds in [1, 2, 4, 8, 16, 32, 60, 60] {
+        assert_eq!(
+            publish_local_fips_advert(&endpoint, &unavailable, &mut retry_delay).await,
+            Duration::from_secs(seconds),
+            "failed publication backs off to a bounded retry interval",
+        );
+    }
+    let refresh = publish_local_fips_advert(&endpoint, &router, &mut retry_delay).await;
+    let event = tokio::time::timeout(Duration::from_secs(2), events_rx.recv())
+        .await
+        .expect("announcement reaches healthy relay")
+        .expect("relay event");
+    assert_eq!(event.kind, Kind::Custom(FIPS_PEER_ADVERT_KIND));
+    assert_eq!(refresh, fips_advert_refresh_delay(&event));
+    assert_eq!(
+        publish_local_fips_advert(&endpoint, &unavailable, &mut retry_delay).await,
+        FIPS_ADVERT_RETRY_INITIAL,
+        "successful publication resets backoff for a later outage",
+    );
+
+    relay.client().shutdown().await;
+    endpoint.shutdown().await.expect("stop endpoint");
+    server.await.expect("stop local relay");
+}
+
 #[test]
 fn standard_fips_pubsub_bounds_retained_replay() {
     let publisher = Keys::generate();
