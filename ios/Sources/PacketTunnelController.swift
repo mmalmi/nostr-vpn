@@ -149,6 +149,10 @@ final class PacketTunnelController {
         manager.protocolConfiguration = proto
         manager.localizedDescription = "Nostr VPN"
         manager.isEnabled = true
+        // Keep on-demand off while the app replaces the tunnel so iOS cannot
+        // restart the old one between the stop and the new start. It is
+        // turned back on once the new tunnel is connected.
+        manager.isOnDemandEnabled = false
         let transaction = PacketTunnelReplacementTransaction(state: replacementState)
         try await transaction.perform(
             replacingActiveTunnel: hadActiveTunnel,
@@ -178,6 +182,7 @@ final class PacketTunnelController {
                 try manager.connection.startVPNTunnel(options: options)
                 let connectedStatus = try await waitForConnected(manager)
                 debugLog("confirmed connected status=\(connectedStatus)")
+                await enableOnDemand(manager)
             }
         )
     }
@@ -217,10 +222,36 @@ final class PacketTunnelController {
     private func stopAndWaitForDisconnected(
         _ manager: NETunnelProviderManager
     ) async throws -> Int {
+        // An explicit stop must win over on-demand, or iOS reconnects at once.
+        if manager.isOnDemandEnabled {
+            manager.isOnDemandEnabled = false
+            try await save(manager, waitsForUserApproval: false)
+            debugLog("disabled on-demand before stop")
+        }
         if manager.connection.status != .disconnecting {
             manager.connection.stopVPNTunnel()
         }
         return try await waitForDisconnected(manager)
+    }
+
+    /// Lets iOS bring the tunnel back after the extension exits, is killed, or
+    /// cancels itself, without waiting for the app to be opened again.
+    /// System-initiated starts use the redacted providerConfiguration, which
+    /// hydrates secrets from the shared config path like a Settings toggle.
+    /// A failed save leaves a connected tunnel without on-demand rather than
+    /// tearing it down.
+    private func enableOnDemand(_ manager: NETunnelProviderManager) async {
+        let connect = NEOnDemandRuleConnect()
+        connect.interfaceTypeMatch = .any
+        manager.onDemandRules = [connect]
+        manager.isOnDemandEnabled = true
+        do {
+            try await save(manager, waitsForUserApproval: false)
+            debugLog("enabled on-demand")
+        } catch {
+            manager.isOnDemandEnabled = false
+            debugLog("enabling on-demand failed: \(String(describing: error))")
+        }
     }
 
     private func waitForDisconnected(_ manager: NETunnelProviderManager) async throws -> Int {

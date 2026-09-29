@@ -223,6 +223,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler()
     }
 
+    // Waking on the same network changes no path, so the underlay monitors
+    // stay quiet while peers have already timed out the links. Refresh them.
+    override func wake() {
+        packetDebugLog("wake")
+        underlayMonitorLock.lock()
+        let generation = underlayMonitorGeneration
+        underlayMonitorLock.unlock()
+        if let generation {
+            scheduleFipsRefresh(generation: generation)
+        }
+    }
+
     override func handleAppMessage(
         _ messageData: Data,
         completionHandler: ((Data?) -> Void)?
@@ -557,6 +569,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if initializedUnderlaySources.insert(source).inserted {
             underlayMonitorLock.unlock()
             packetDebugLog("\(source) underlay monitor ready status=\(path.status)")
+            return
+        }
+        underlayMonitorLock.unlock()
+        scheduleFipsRefresh(generation: generation)
+    }
+
+    private func scheduleFipsRefresh(generation: UInt64) {
+        underlayMonitorLock.lock()
+        guard underlayMonitorGeneration == generation else {
+            underlayMonitorLock.unlock()
             return
         }
         underlayRefreshWorkItem?.cancel()
