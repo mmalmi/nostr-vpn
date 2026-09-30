@@ -1,6 +1,0 @@
-{
-  "git": {
-    "sha1": "738158b414bfaabac6793ea057ed67e6ef4df997"
-  },
-  "path_in_vcs": "crates/nostr-pubsub-fips"
-}

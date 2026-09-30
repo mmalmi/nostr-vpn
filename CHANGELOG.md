@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Maintenance
+
+- Use the published FIPS 0.4.86 pubsub and TCP adapters and remove their duplicate vendored sources.
+
 ## 4.1.17 - 2026-09-27
 
 ### Release notes
