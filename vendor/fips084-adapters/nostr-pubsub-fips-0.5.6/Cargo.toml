@@ -52,7 +52,7 @@ path = "tests/inv_want_tcp_driver.rs"
 version = "0.1"
 
 [dependencies.fips-core]
-version = "=0.4.85"
+version = "=0.4.86"
 package = "nvpn-fips-core"
 
 [dependencies.fips-tcp]
@@ -78,7 +78,7 @@ version = "1.50"
 features = ["full"]
 
 [dev-dependencies.fips-core]
-version = "=0.4.85"
+version = "=0.4.86"
 features = ["sim-transport"]
 package = "nvpn-fips-core"
 
