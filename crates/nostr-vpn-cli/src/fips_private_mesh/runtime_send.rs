@@ -11,6 +11,7 @@ impl FipsPrivateMeshRuntime {
         let mut endpoint_builder = FipsEndpoint::builder()
             .config(config)
             .identity_nsec(identity_nsec)
+            .local_rendezvous()
             .without_system_tun();
         if let Some(scope) = scope.map(|scope| scope.trim().to_string()).filter(|s| !s.is_empty())
         {

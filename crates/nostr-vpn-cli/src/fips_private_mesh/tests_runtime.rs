@@ -945,3 +945,46 @@
             .await
             .expect("shutdown bob");
     }
+
+    #[tokio::test]
+    async fn local_rendezvous_discovers_other_apps_with_explicit_udp_configuration() {
+        use fips_core::discovery::local::LocalInstanceCapability;
+        let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
+        let rendezvous = format!("127.0.0.1:{}", available_udp_port()).parse().unwrap();
+        let mut provider_config = direct_udp_endpoint_config_many(available_udp_port(), &[]);
+        provider_config.node.discovery.nostr.enabled = false;
+        provider_config.node.discovery.lan.enabled = false;
+        provider_config.node.discovery.local.rendezvous_addr = rendezvous;
+        provider_config.node.discovery.local.retry_interval_ms = 20;
+        let provider = fips_core::FipsEndpoint::builder()
+            .config(provider_config)
+            .discovery_scope("hashtree-local-test")
+            .local_rendezvous()
+            .without_system_tun()
+            .bind().await.expect("provider endpoint");
+        let _service = provider.register_service_receiver_with_capability(
+            LocalInstanceCapability::service("hashtree.blob/1", 39018),
+        ).await.expect("provider capability");
+        let mut vpn_config = direct_udp_endpoint_config_many(available_udp_port(), &[]);
+        vpn_config.node.discovery.nostr.enabled = false;
+        vpn_config.node.discovery.lan.enabled = false;
+        vpn_config.node.discovery.local.rendezvous_addr = rendezvous;
+        vpn_config.node.discovery.local.retry_interval_ms = 20;
+        assert!(!vpn_config.node.discovery.local.enabled);
+        let runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            Keys::generate().secret_key().to_bech32().unwrap(),
+            Some("nostr-vpn-local-test".to_string()),
+            Vec::new(), vpn_config, Vec::new(), Vec::new(), Vec::new(),
+        ).await.expect("VPN endpoint");
+        let discovered = tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let adverts = runtime.endpoint().local_instance_advertisements().unwrap();
+                if adverts.iter().any(|advert| advert.npub == provider.npub()
+                    && advert.capability("hashtree.blob/1").is_some()) { break; }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await;
+        runtime.endpoint().shutdown().await.unwrap();
+        provider.shutdown().await.unwrap();
+        discovered.expect("VPN discovers authenticated local capability across app scopes");
+    }
