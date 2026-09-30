@@ -10,9 +10,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use fips_core::FipsEndpoint;
 use nostr_pubsub::{
-    EventBus, EventSource, MatchEventOptions, MeshPeerPolicy, NostrEventSubscriber,
-    NostrEventSubscription, NostrPubsubRouter, PolicyDecision, QueryEvent, RouterPublishSource,
-    SourceRoute, VerifiedEvent,
+    EventBus, EventSource, MatchEventOptions, MeshPeerPolicy, NostrEventSubscription,
+    NostrPubsubRouter, PolicyDecision, QueryEvent, RouterPublishSource, SourceRoute, VerifiedEvent,
 };
 use nostr_pubsub_fips::{
     FipsPubsubClient, FipsPubsubClientOptions, FipsPubsubPolicy, FipsPubsubPolicyOptions,
@@ -313,21 +312,26 @@ impl RelayProvider {
                 .context("failed to start configured Nostr pubsub relay provider")?,
         );
         let (notification_tx, notifications) = mpsc::channel(RELAY_REPLAY_LIMIT * 5);
-        let subscription = NostrEventSubscriber::subscribe(
-            bus.as_ref(),
-            {
-                let mut filters = relay_subscription_filters(update_events, target_advert_authors);
-                filters.push(exit_graph_filter(graph_root));
-                filters
-            },
-            Arc::new(move |event| {
-                if notification_tx.try_send(event).is_err() {
-                    tracing::warn!("dropping control pubsub relay event because the bounded ingress queue is full");
-                }
-            }),
-        )
-        .await
-        .context("failed to subscribe through configured Nostr pubsub relay provider")?;
+        let subscription = bus
+            .subscribe_with_admission(
+                {
+                    let mut filters =
+                        relay_subscription_filters(update_events, target_advert_authors);
+                    filters.push(exit_graph_filter(graph_root));
+                    filters
+                },
+                Arc::new(move |event| match notification_tx.try_send(event) {
+                    Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => true,
+                    Err(mpsc::error::TrySendError::Full(_)) => {
+                        tracing::warn!(
+                            "control pubsub relay ingress is full; requesting retained-event replay"
+                        );
+                        false
+                    }
+                }),
+            )
+            .await
+            .context("failed to subscribe through configured Nostr pubsub relay provider")?;
         Ok(Some(Self {
             bus,
             notifications,

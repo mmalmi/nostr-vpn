@@ -19,6 +19,9 @@ use nostr_vpn_core::updater::UpdateRef;
 
 use super::*;
 
+#[path = "tests/relay_ingress.rs"]
+mod relay_ingress;
+
 const FIPS_TEST_EVENTUAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn available_udp_ports() -> [u16; 3] {
