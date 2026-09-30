@@ -10,7 +10,7 @@ members = [
   "vendor/cashu-service",
   "vendor/cdk-spilman",
 ]
-exclude = ["linux"]
+exclude = ["linux", "vendor/fips084-adapters/nvpn-fips-tcp-endpoint-0.2.18", "vendor/fips084-adapters/nostr-pubsub-fips-0.5.6"]
 default-members = [
   "crates/nostr-vpn-app-core",
   "crates/nostr-vpn-app-core/uniffi-bindgen",
@@ -41,8 +41,8 @@ cashu = { version = "=0.18.0", default-features = false }
 cdk-spilman = { package = "nvpn-cdk-spilman", version = "=0.17.6", path = "vendor/cdk-spilman" }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.83" }
-fips-core = { package = "nvpn-fips-core", version = "=0.4.83", features = ["webrtc-transport"] }
+fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.84" }
+fips-core = { package = "nvpn-fips-core", version = "=0.4.84", features = ["webrtc-transport"] }
 fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.2" }
 fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.18" }
 futures = "0.3"
@@ -86,3 +86,7 @@ missing_panics_doc = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+
+[patch.crates-io]
+nvpn-fips-tcp-endpoint = { path = "vendor/fips084-adapters/nvpn-fips-tcp-endpoint-0.2.18" }
+nostr-pubsub-fips = { path = "vendor/fips084-adapters/nostr-pubsub-fips-0.5.6" }

@@ -1,0 +1,33 @@
+[package]
+name = "nostr-pubsub-fips"
+version = "0.5.6"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Authenticated FIPS peer provider for nostr-pubsub"
+documentation = "https://docs.rs/nostr-pubsub-fips"
+readme = "README.md"
+exclude = ["Cargo.lock"]
+
+[dependencies]
+async-trait.workspace = true
+fips-core.workspace = true
+fips-tcp.workspace = true
+fips-tcp-endpoint.workspace = true
+nostr.workspace = true
+nostr-pubsub.workspace = true
+nostr-pubsub-social-graph.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+fips-core = { workspace = true, features = ["sim-transport"] }
+hex = "0.4"
+nostr-sdk.workspace = true
+nostr-social-graph.workspace = true
+nostr-social-memory.workspace = true
+serde.workspace = true
+serde_json = "1"
+
+[lints]
+workspace = true
