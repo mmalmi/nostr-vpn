@@ -6,7 +6,7 @@ All notable changes to this project are documented in this file.
 
 ### Maintenance
 
-- Use the published FIPS 0.4.87 pubsub and TCP adapters and remove their duplicate vendored sources.
+- Use the published FIPS 0.4.88 pubsub and TCP adapters and remove their duplicate vendored sources.
 - Request retained relay events again when the control-event ingress queue fills.
 
 ## 4.1.17 - 2026-09-27
