@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - Use the published FIPS 0.4.89 pubsub and TCP adapters and remove their duplicate vendored sources.
 - Request retained relay events again when the control-event ingress queue fills.
+- Bound stale pubsub event-ID bookkeeping while preserving duplicate suppression and FIFO eviction.
 - Avoid repeated validation of retained offers and Windows cleanup journal writes when no routes changed.
 
 ## 4.1.17 - 2026-09-27
