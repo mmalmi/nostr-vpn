@@ -275,7 +275,7 @@ async fn secure_selection(
         config_path,
     )
     .await;
-    client.shutdown().await;
+    client.shutdown_shared().await;
     endpoint
         .shutdown()
         .await
@@ -358,7 +358,7 @@ pub fn configured_update_ref() -> Result<UpdateRef> {
 
 // Standalone CLI/desktop checks have no VPN runtime in this process. Join the
 // same FIPS mesh with an ephemeral identity, without a tunnel or relay client.
-async fn update_pubsub(app: &AppConfig) -> Result<(Arc<FipsEndpoint>, FipsPubsubClient)> {
+async fn update_pubsub(app: &AppConfig) -> Result<(Arc<FipsEndpoint>, Arc<FipsPubsubClient>)> {
     let endpoint = Arc::new(
         FipsEndpoint::builder()
             .config(update_endpoint_config(app))
@@ -372,11 +372,17 @@ async fn update_pubsub(app: &AppConfig) -> Result<(Arc<FipsEndpoint>, FipsPubsub
         FipsPubsubClientOptions {
             fanout: app.nostr.pubsub.fanout,
             max_hops: app.nostr.pubsub.max_hops,
+            max_frame_bytes: app
+                .nostr
+                .pubsub
+                .max_event_bytes
+                .saturating_add(4 * 1024)
+                .min(crate::control_pubsub::CONTROL_PUBSUB_MAX_WIRE_BYTES),
             ..FipsPubsubClientOptions::default()
         },
     )
     .await?;
-    Ok((endpoint, client))
+    Ok((endpoint, Arc::new(client)))
 }
 
 fn update_endpoint_config(app: &AppConfig) -> FipsConfig {
@@ -410,20 +416,16 @@ fn update_endpoint_config(app: &AppConfig) -> FipsConfig {
     }
     config.peers = peers
         .into_iter()
-        .map(|(npub, mut addresses)| {
-            addresses.sort();
-            addresses.dedup();
-            PeerConfig {
-                npub,
-                addresses: addresses
-                    .iter()
-                    .map(|address| {
-                        let (transport, address) = split_peer_transport_addr(address);
-                        PeerAddress::new(transport, address)
-                    })
-                    .collect(),
-                ..PeerConfig::default()
-            }
+        .map(|(npub, addresses)| PeerConfig {
+            npub,
+            addresses: addresses
+                .iter()
+                .map(|address| {
+                    let (transport, address) = split_peer_transport_addr(address);
+                    PeerAddress::new(transport, address)
+                })
+                .collect(),
+            ..PeerConfig::default()
         })
         .collect();
     config
@@ -828,7 +830,7 @@ mod tests {
                 .is_empty()
         );
         subscription.close().await.expect("close subscription");
-        client.shutdown().await;
+        client.shutdown_shared().await;
         endpoint.shutdown().await.expect("stop updater endpoint");
         publisher.shutdown().await;
         seed.shutdown().await.expect("stop seed");
@@ -873,7 +875,7 @@ mod tests {
             result.is_err(),
             "cached root must not make an offline check conclusive"
         );
-        client.shutdown().await;
+        client.shutdown_shared().await;
         endpoint.shutdown().await.expect("stop updater endpoint");
         std::fs::remove_dir_all(directory).expect("remove test cache");
     }
