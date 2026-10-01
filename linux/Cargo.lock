@@ -303,7 +303,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-socks",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.26.2",
  "url",
  "wasm-bindgen",
  "web-sys",
@@ -925,7 +925,7 @@ dependencies = [
  "serde_json",
  "serde_urlencoded",
  "thiserror 2.0.18",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.26.2",
  "tracing",
  "url",
  "uuid",
@@ -2424,9 +2424,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e651580b2d77e746ddf48d206f2159229d942dc879a95ca9431a11e3a30f42"
+checksum = "35f2ec87a4d192bffac052446501578cc0187e051b01b089e0b08af1d6ccc900"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2479,13 +2479,15 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.83"
+version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a49500940585ae01292152740e5d4282138a6d6806fe0e012f2b15205694c430"
+checksum = "b7d86c6cfd737a94475f33d082ce6f8401d58f88b866653076014a9225e960ae"
 dependencies = [
  "async-trait",
  "hashtree-core",
  "hex",
+ "nostr",
+ "nostr-relay-pool",
  "nostr-sdk",
  "serde_json",
  "thiserror 1.0.69",
@@ -2494,10 +2496,11 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.83"
+version = "0.2.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0153f9c43ba08f3e66531fc91113f54974bd20f559d90528414ab17ce2eb951"
+checksum = "f8c0a192b9135976aa07e3b7be67ef0ab190e4b7decc0c2c9633fd36c49f11bf"
 dependencies = [
+ "async-trait",
  "flate2",
  "hashtree-blossom",
  "hashtree-core",
@@ -2509,6 +2512,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -3688,9 +3692,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.6"
+version = "0.5.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10b6b1f7fad00ad33630d30ca11af8aa5d128387877146dfd1a4bbd46c3af38e"
+checksum = "21f9d7634da0eafe91a4b0ec79721ccc943fd60c8fa1e1eab296bc0ac1e07c9d"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3829,6 +3833,8 @@ dependencies = [
  "keyring-core",
  "libc",
  "nostr-identity 0.4.0",
+ "nostr-pubsub",
+ "nostr-pubsub-fips",
  "nostr-sdk",
  "nostr-social-graph",
  "nostr-social-memory",
@@ -3975,9 +3981,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.83"
+version = "0.4.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c073fb7b277e60bcbdeac60c05e3cb7c39df7ab2144af4de5f0f7b332d16b0c"
+checksum = "e66122da4be57695b001566103e395fb4ea1a4ec8dfad1af1172eb820914d891"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -4012,7 +4018,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.29.0",
  "tracing",
  "tun",
  "uuid",
@@ -4024,9 +4030,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.83"
+version = "0.4.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c64461e347a2af5d151e1c1a68a2c0e8f8f427058747007f0d0e07cc0ed386"
+checksum = "ed30c9abbf9067422f9db55d80e6629670b178aba8674bb90f8d9a83eeef515f"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4054,9 +4060,9 @@ checksum = "7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.18"
+version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26ae8eb058e45ee32577ffbf6b968b2b328b50d09fbc38c333bf53a02105ffe0"
+checksum = "84a8f4faaed494d05c454cb5d51bb578457a33ea213f3096f7e1cd791a7a97ae"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -6038,7 +6044,23 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls",
- "tungstenite",
+ "tungstenite 0.26.2",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
+dependencies = [
+ "futures-util",
+ "log",
+ "rustls",
+ "rustls-pki-types",
+ "tokio",
+ "tokio-rustls",
+ "tungstenite 0.29.0",
  "webpki-roots 0.26.11",
 ]
 
@@ -6352,6 +6374,24 @@ dependencies = [
  "sha1",
  "thiserror 2.0.18",
  "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c01152af293afb9c7c2a57e4b559c5620b421f6d133261c60dd2d0cdb38e6b8"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "rand 0.9.4",
+ "rustls",
+ "rustls-pki-types",
+ "sha1",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
