@@ -144,6 +144,9 @@ pub(crate) fn persist_windows_route_cleanup_result(
     attempted: &crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot,
     remaining: &crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot,
 ) -> Result<()> {
+    if attempted.is_empty() && remaining.is_empty() {
+        return Ok(());
+    }
     let _journal_lock = windows_network_cleanup_journal_lock();
     let path = daemon_network_cleanup_file_path(config_path)?;
     let mut state = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
@@ -540,6 +543,88 @@ mod windows_network_cleanup_journal_tests {
     }
 
     #[test]
+    fn empty_route_cleanup_result_leaves_ownership_journal_untouched() {
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-empty-route-cleanup-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let config_path = dir.join("config.toml");
+        let cleanup_path = daemon_network_cleanup_file_path(&config_path).expect("cleanup path");
+        let empty = crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot::default();
+        persist_windows_route_cleanup_result(&config_path, &empty, &empty)
+            .expect("empty cleanup without a journal");
+        assert!(!dir.exists());
+        let owned = native_cleanup("nvpn-empty-route-cleanup", true, true);
+        persist_windows_native_wireguard_cleanup_intent(&config_path, &owned)
+            .expect("persist native ownership");
+        let bytes = fs::read(&cleanup_path).expect("journal bytes");
+        let modified = UNIX_EPOCH + std::time::Duration::from_secs(1);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&cleanup_path)
+            .expect("open journal")
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .expect("set old journal timestamp");
+
+        persist_windows_route_cleanup_result(&config_path, &empty, &empty)
+            .expect("empty cleanup result");
+        assert_eq!(fs::read(&cleanup_path).expect("retained journal"), bytes);
+        assert_eq!(
+            fs::metadata(&cleanup_path)
+                .expect("metadata")
+                .modified()
+                .expect("modified"),
+            modified
+        );
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn route_cleanup_results_preserve_unrelated_native_ownership() {
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-route-cleanup-result-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let config_path = dir.join("config.toml");
+        let cleanup_path = daemon_network_cleanup_file_path(&config_path).expect("cleanup path");
+        let owned = native_cleanup("nvpn-route-cleanup-result", true, true);
+        persist_windows_native_wireguard_cleanup_intent(&config_path, &owned)
+            .expect("persist native ownership");
+        let routes: crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot =
+            serde_json::from_value(serde_json::json!({
+                "owned_routes": [{
+                    "prefix": "198.51.100.20/32", "interface_index": 4,
+                    "next_hop": "192.0.2.1", "metric": 1,
+                    "interface_identity": "test-interface"
+                }]
+            }))
+            .expect("route cleanup fixture");
+        let empty = crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot::default();
+        for (attempted, remaining) in [(&empty, &routes), (&routes, &empty)] {
+            persist_windows_route_cleanup_result(&config_path, attempted, remaining)
+                .expect("persist changed route cleanup");
+            let retained = read_daemon_network_cleanup_state(&cleanup_path)
+                .expect("read journal")
+                .expect("native ownership retained");
+            assert_eq!(&retained.routes, remaining);
+            assert_eq!(retained.native_wireguard.len(), 1);
+            assert_eq!(
+                serde_json::to_value(&retained.native_wireguard[0]).expect("retained ownership"),
+                serde_json::to_value(&owned).expect("original ownership")
+            );
+        }
+        fs::remove_dir_all(dir).expect("remove test directory");
+    }
+
+    #[test]
     fn periodic_persist_retains_inflight_native_intent_but_not_completed_dns() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -579,8 +664,7 @@ mod windows_network_cleanup_journal_tests {
         // Native startup has not yet installed the handle in
         // runtime.wg_upstream. Periodic state persistence must retain its
         // write-ahead ownership while retiring successfully-cleaned DNS.
-        persist_fips_daemon_network_cleanup_state(&config_path, None)
-            .expect("periodic persist");
+        persist_fips_daemon_network_cleanup_state(&config_path, None).expect("periodic persist");
         let retained = read_daemon_network_cleanup_state(&cleanup_path)
             .expect("read retained state")
             .expect("native ownership remains");
