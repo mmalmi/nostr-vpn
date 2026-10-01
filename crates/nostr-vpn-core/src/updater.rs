@@ -27,6 +27,8 @@ use nostr_pubsub::NostrEventSubscriber;
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
 use serde::{Deserialize, Serialize};
 
+mod cache;
+
 pub const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
 pub const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
@@ -321,6 +323,9 @@ async fn secure_selection_with_pubsub(
         },
     )
     .await?;
+    for event in cache::update_watermark(&reference, config_path, None)?.resolver_events() {
+        updater.resolver().ingest_event(event).await?;
+    }
     if let Some(config_path) = config_path {
         let path = crate::control_pubsub::control_pubsub_store_path(config_path);
         match cached_update_events(&path) {
@@ -334,9 +339,29 @@ async fn secure_selection_with_pubsub(
             Err(error) => tracing::warn!(%error, "ignored invalid update announcement cache"),
         }
     }
-    select_product_update(updater, reference, current_version, mode, &asset_policy())
-        .await
-        .context("failed to resolve a fresh signed hashtree release over pubsub")
+    let resolver = updater.resolver().clone();
+    let selection = select_product_update(
+        updater,
+        reference.clone(),
+        current_version,
+        mode,
+        &asset_policy(),
+    )
+    .await
+    .context("failed to resolve a fresh signed hashtree release over pubsub");
+    // Retain authenticated observations even if freshness or content retrieval
+    // failed, so the next independently built updater cannot accept an older root.
+    if let Some(event) = resolver.latest_event(&reference.resolver_key()).await? {
+        let observed = event.id;
+        let saved = cache::update_watermark(&reference, config_path, Some(event))?;
+        ensure!(
+            saved
+                .latest()
+                .is_some_and(|latest| latest.as_event().id == observed),
+            "update check inconclusive: a newer release announcement was observed concurrently"
+        );
+    }
+    selection
 }
 
 fn cached_update_events(path: &Path) -> Result<Vec<nostr_sdk::Event>> {

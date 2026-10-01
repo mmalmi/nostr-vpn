@@ -10,7 +10,8 @@ configured FIPS peers and seeds. Standalone checks join the mesh without a VPN
 tunnel, and can use a running same-host FIPS provider. Applications with a live
 pubsub provider can pass its fresh subscriber directly. Update checks require a
 release announcement received from a peer during the check; an old local cache
-alone cannot report “up to date.” Asset downloads still use verified Blossom
+alone cannot report “up to date.” Observed roots are saved separately from the
+daemon cache so later checks cannot accept an older announcement. Asset downloads still use verified Blossom
 content. Explicit GitHub checks and the existing Auto GitHub fallback remain
 available; neither needs a Nostr relay.
 
