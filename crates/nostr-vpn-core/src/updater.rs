@@ -4,20 +4,27 @@ use crate::macos_file_io as fs;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use crate::config::{AppConfig, split_peer_transport_addr};
+use anyhow::{Context, Result, anyhow, ensure};
+use fips_core::config::{
+    PeerAddress, PeerConfig, RoutingMode, TransportInstances, UdpConfig, WebSocketConfig,
+};
+use fips_core::{Config as FipsConfig, FipsEndpoint};
 use hashtree_updater::{
-    ProductAssetPolicy, SecureNostrBlossomConfig, SecureNostrBlossomSelection, UpdateAsset,
-    UpdateManifest, build_secure_nostr_blossom_updater_with_events, current_archive_target,
-    dedupe_nonempty, download_product_selection, env_csv, platform_app_asset_suffixes,
+    ProductAssetPolicy, SecurePubsubBlossomConfig, SecurePubsubBlossomSelection, UpdateAsset,
+    UpdateManifest, build_secure_pubsub_blossom_updater, current_archive_target, dedupe_nonempty,
+    download_product_selection, env_csv, platform_app_asset_suffixes,
     preferred_app_asset_for_suffixes, preferred_cli_asset_for_target, select_product_update,
     selected_download_path as shared_selected_download_path, update_ref_from_override,
 };
 pub use hashtree_updater::{
     ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy, UpdateEventCache, UpdateRef,
 };
-use nostr_sdk::prelude::Event;
+use nostr_pubsub::NostrEventSubscriber;
+use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
 use serde::{Deserialize, Serialize};
 
 pub const GITHUB_LATEST_RELEASE_URL: &str =
@@ -31,13 +38,6 @@ const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
 const UPDATE_MANIFEST_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
 const UPDATE_USER_AGENT: &str = "nvpn-updater";
-const DEFAULT_UPDATE_RELAYS: &[&str] = &[
-    "wss://temp.iris.to",
-    "wss://relay.damus.io",
-    "wss://relay.snort.social",
-    "wss://relay.primal.net",
-    "wss://upload.iris.to/nostr",
-];
 const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
     "https://cdn.iris.to",
     "https://upload.iris.to",
@@ -89,7 +89,7 @@ struct LegacySelection {
 }
 
 enum UpdateSelection {
-    Secure(Box<SecureNostrBlossomSelection>),
+    Secure(Box<SecurePubsubBlossomSelection>),
     Legacy(LegacySelection),
 }
 
@@ -98,24 +98,24 @@ pub fn check_product_update_blocking(
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
 ) -> Result<ProductUpdateResult> {
-    check_product_update_blocking_with_cache(current_version, mode, source, None)
+    check_product_update_blocking_with_config(current_version, mode, source, None)
 }
 
-pub fn check_product_update_blocking_with_cache(
+pub fn check_product_update_blocking_with_config(
     current_version: &str,
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
-    event_cache_path: Option<&Path>,
+    config_path: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to start update runtime")?;
-    runtime.block_on(check_product_update_with_cache(
+    runtime.block_on(check_product_update_with_config(
         current_version,
         mode,
         source,
-        event_cache_path,
+        config_path,
     ))
 }
 
@@ -124,16 +124,16 @@ pub async fn check_product_update(
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
 ) -> Result<ProductUpdateResult> {
-    check_product_update_with_cache(current_version, mode, source, None).await
+    check_product_update_with_config(current_version, mode, source, None).await
 }
 
-pub async fn check_product_update_with_cache(
+pub async fn check_product_update_with_config(
     current_version: &str,
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
-    event_cache_path: Option<&Path>,
+    config_path: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    let selection = select_update(current_version, mode, source, event_cache_path).await?;
+    let selection = select_update(current_version, mode, source, config_path).await?;
     Ok(result_from_selection(current_version, &selection, None))
 }
 
@@ -143,26 +143,26 @@ pub fn download_product_update_blocking(
     source: ProductUpdateSource,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    download_product_update_blocking_with_cache(current_version, mode, source, download_dir, None)
+    download_product_update_blocking_with_config(current_version, mode, source, download_dir, None)
 }
 
-pub fn download_product_update_blocking_with_cache(
+pub fn download_product_update_blocking_with_config(
     current_version: &str,
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
     download_dir: Option<&Path>,
-    event_cache_path: Option<&Path>,
+    config_path: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to start update runtime")?;
-    runtime.block_on(download_product_update_with_cache(
+    runtime.block_on(download_product_update_with_config(
         current_version,
         mode,
         source,
         download_dir,
-        event_cache_path,
+        config_path,
     ))
 }
 
@@ -172,17 +172,17 @@ pub async fn download_product_update(
     source: ProductUpdateSource,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    download_product_update_with_cache(current_version, mode, source, download_dir, None).await
+    download_product_update_with_config(current_version, mode, source, download_dir, None).await
 }
 
-pub async fn download_product_update_with_cache(
+pub async fn download_product_update_with_config(
     current_version: &str,
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
     download_dir: Option<&Path>,
-    event_cache_path: Option<&Path>,
+    config_path: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    let selection = select_update(current_version, mode, source, event_cache_path).await?;
+    let selection = select_update(current_version, mode, source, config_path).await?;
     let destination = download_selection(&selection, download_dir).await?;
     Ok(result_from_selection(
         current_version,
@@ -195,13 +195,13 @@ async fn select_update(
     current_version: &str,
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
-    event_cache_path: Option<&Path>,
+    config_path: Option<&Path>,
 ) -> Result<UpdateSelection> {
     if !should_use_secure_hashtree(source) {
         return legacy_selection(current_version, source, mode).map(UpdateSelection::Legacy);
     }
 
-    let secure = secure_selection(current_version, mode, event_cache_path).await;
+    let secure = secure_selection(current_version, mode, config_path).await;
     let selection = match secure {
         Ok(selection) => selection,
         Err(error) if should_try_github_fallback(source, false) => {
@@ -256,18 +256,99 @@ fn result_from_selection(
 async fn secure_selection(
     current_version: &str,
     mode: ProductUpdateMode,
-    event_cache_path: Option<&Path>,
-) -> Result<SecureNostrBlossomSelection> {
+    config_path: Option<&Path>,
+) -> Result<SecurePubsubBlossomSelection> {
     let reference = configured_update_ref()?;
-    let updater = build_secure_updater(event_cache_path, &reference).await?;
+    let app = match config_path {
+        Some(path) if path.exists() => AppConfig::load(path)?,
+        _ => AppConfig::default(),
+    };
+    ensure!(app.nostr.pubsub.enabled(), "Nostr pubsub is disabled");
+    let (endpoint, client) = tokio::time::timeout(Duration::from_secs(4), update_pubsub(&app))
+        .await
+        .context("timed out starting update pubsub")??;
+    let selection = secure_selection_with_pubsub(
+        current_version,
+        mode,
+        Arc::new(client.fresh_subscriber()),
+        reference,
+        config_path,
+    )
+    .await;
+    client.shutdown().await;
+    endpoint
+        .shutdown()
+        .await
+        .context("failed to stop update pubsub endpoint")?;
+    selection
+}
+
+/// Check signed announcements with an application's existing pubsub provider.
+/// The provider must freshly query its peers instead of replaying a local cache.
+pub async fn check_product_update_with_pubsub(
+    current_version: &str,
+    mode: ProductUpdateMode,
+    provider: Arc<dyn NostrEventSubscriber>,
+) -> Result<ProductUpdateResult> {
+    let selection = secure_selection_with_pubsub(
+        current_version,
+        mode,
+        provider,
+        configured_update_ref()?,
+        None,
+    )
+    .await?;
+    Ok(result_from_selection(
+        current_version,
+        &UpdateSelection::Secure(Box::new(selection)),
+        None,
+    ))
+}
+
+async fn secure_selection_with_pubsub(
+    current_version: &str,
+    mode: ProductUpdateMode,
+    provider: Arc<dyn NostrEventSubscriber>,
+    reference: UpdateRef,
+    config_path: Option<&Path>,
+) -> Result<SecurePubsubBlossomSelection> {
+    let updater = build_secure_pubsub_blossom_updater(
+        provider,
+        SecurePubsubBlossomConfig {
+            manifest_timeout: Duration::from_secs(8),
+            download_timeout: Duration::from_secs(180),
+            blossom_read_servers: blossom_read_servers(),
+        },
+    )
+    .await?;
+    if let Some(config_path) = config_path {
+        let path = crate::control_pubsub::control_pubsub_store_path(config_path);
+        match cached_update_events(&path) {
+            Ok(events) => {
+                for event in events {
+                    // A verified cached root prevents rollback; only a fresh
+                    // peer response can make this update check conclusive.
+                    let _ = updater.resolver().ingest_event(event).await;
+                }
+            }
+            Err(error) => tracing::warn!(%error, "ignored invalid update announcement cache"),
+        }
+    }
     select_product_update(updater, reference, current_version, mode, &asset_policy())
         .await
-        .with_context(|| {
-            format!(
-                "failed to resolve signed hashtree release for {}",
-                asset_policy().noun(mode)
-            )
-        })
+        .context("failed to resolve a fresh signed hashtree release over pubsub")
+}
+
+fn cached_update_events(path: &Path) -> Result<Vec<nostr_sdk::Event>> {
+    #[derive(Deserialize)]
+    struct CachedEvents {
+        events: Vec<nostr_sdk::Event>,
+    }
+    match fs::read(path) {
+        Ok(bytes) => Ok(serde_json::from_slice::<CachedEvents>(&bytes)?.events),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn configured_update_ref() -> Result<UpdateRef> {
@@ -275,66 +356,77 @@ pub fn configured_update_ref() -> Result<UpdateRef> {
         .context("invalid update hashtree ref")
 }
 
-#[must_use]
-pub fn update_event_cache_path(config_path: &Path) -> PathBuf {
-    config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("control-pubsub-events.json")
+// Standalone CLI/desktop checks have no VPN runtime in this process. Join the
+// same FIPS mesh with an ephemeral identity, without a tunnel or relay client.
+async fn update_pubsub(app: &AppConfig) -> Result<(Arc<FipsEndpoint>, FipsPubsubClient)> {
+    let endpoint = Arc::new(
+        FipsEndpoint::builder()
+            .config(update_endpoint_config(app))
+            .local_rendezvous()
+            .without_system_tun()
+            .bind()
+            .await?,
+    );
+    let client = FipsPubsubClient::start(
+        Arc::clone(&endpoint),
+        FipsPubsubClientOptions {
+            fanout: app.nostr.pubsub.fanout,
+            max_hops: app.nostr.pubsub.max_hops,
+            ..FipsPubsubClientOptions::default()
+        },
+    )
+    .await?;
+    Ok((endpoint, client))
 }
 
-#[derive(Deserialize)]
-struct CachedPubsubEvents {
-    events: Vec<Event>,
-}
-
-fn load_cached_update_root_events(path: &Path, reference: &UpdateRef) -> Result<Vec<Event>> {
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => {
-            return Err(error).with_context(|| format!("failed to read {}", path.display()));
-        }
-    };
-    let cached: CachedPubsubEvents = serde_json::from_slice(&bytes)
-        .with_context(|| format!("failed to decode {}", path.display()))?;
-    let mut update_events = UpdateEventCache::new(reference)
-        .context("failed to configure update announcement cache")?;
-    for event in cached.events {
-        let _ = update_events.ingest_event(event);
-    }
-    Ok(update_events.resolver_events())
-}
-
-async fn build_secure_updater(
-    event_cache_path: Option<&Path>,
-    reference: &UpdateRef,
-) -> Result<hashtree_updater::SecureNostrBlossomUpdater> {
-    let cached_events = match event_cache_path {
-        Some(path) => load_cached_update_root_events(path, reference).unwrap_or_else(|error| {
-            tracing::warn!(%error, path = %path.display(), "ignored invalid update-root pubsub cache");
+fn update_endpoint_config(app: &AppConfig) -> FipsConfig {
+    let mut config = FipsConfig::new();
+    config.node.control.enabled = false;
+    config.node.discovery.nostr.enabled = false;
+    config.node.discovery.lan.enabled = false;
+    config.node.routing.mode = RoutingMode::ReplyLearned;
+    config.dns.enabled = false;
+    config.transports.udp = TransportInstances::Single(UdpConfig {
+        bind_addr: Some("0.0.0.0:0".to_string()),
+        accept_connections: Some(false),
+        outbound_only: Some(true),
+        ..UdpConfig::default()
+    });
+    config.transports.tcp = TransportInstances::Single(Default::default());
+    config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+        seed_urls: if app.fips_bootstrap_enabled {
+            app.fips_websocket_seed_urls.clone()
+        } else {
             Vec::new()
-        }),
-        None => Vec::new(),
-    };
-    build_secure_nostr_blossom_updater_with_events(secure_updater_config(), cached_events)
-        .await
-        .context("failed to connect to Nostr release relays")
-}
-
-fn secure_updater_config() -> SecureNostrBlossomConfig {
-    SecureNostrBlossomConfig {
-        // Cached pubsub events are a fast starting point, not an authority for
-        // freshness. Keep querying relays so an old cache cannot pin updates.
-        relays: update_relays(),
-        manifest_timeout: Duration::from_secs(
-            UPDATE_MANIFEST_TIMEOUT_SECS.parse::<u64>().unwrap_or(8),
-        ),
-        download_timeout: Duration::from_secs(
-            UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
-        ),
-        blossom_read_servers: blossom_read_servers(),
+        },
+        ..WebSocketConfig::default()
+    });
+    let mut peers = app
+        .fips_bootstrap_peer_endpoints()
+        .into_iter()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for (npub, addresses) in app.fips_static_peer_endpoints() {
+        peers.entry(npub).or_default().extend(addresses);
     }
+    config.peers = peers
+        .into_iter()
+        .map(|(npub, mut addresses)| {
+            addresses.sort();
+            addresses.dedup();
+            PeerConfig {
+                npub,
+                addresses: addresses
+                    .iter()
+                    .map(|address| {
+                        let (transport, address) = split_peer_transport_addr(address);
+                        PeerAddress::new(transport, address)
+                    })
+                    .collect(),
+                ..PeerConfig::default()
+            }
+        })
+        .collect();
+    config
 }
 
 fn legacy_selection(
@@ -402,17 +494,6 @@ fn should_use_secure_hashtree(source: ProductUpdateSource) -> bool {
 #[must_use]
 pub fn should_try_github_fallback(source: ProductUpdateSource, secure_available: bool) -> bool {
     matches!(source, ProductUpdateSource::Auto) && !secure_available
-}
-
-fn update_relays() -> Vec<String> {
-    env_csv("NVPN_UPDATE_RELAYS").unwrap_or_else(|| {
-        dedupe_nonempty(
-            DEFAULT_UPDATE_RELAYS
-                .iter()
-                .map(|value| (*value).to_string())
-                .collect(),
-        )
-    })
 }
 
 fn blossom_read_servers() -> Vec<String> {
@@ -618,7 +699,6 @@ fn version_parts(value: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nostr_sdk::prelude::{EventBuilder, Keys, Kind, Tag, TagKind, ToBech32};
 
     #[test]
     fn auto_source_checks_htree_before_github() {
@@ -664,66 +744,137 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cached_pubsub_roots_are_verified_filtered_and_replaceable() {
-        let publisher = Keys::generate();
-        let other = Keys::generate();
-        let reference = UpdateRef {
-            npub: publisher.public_key().to_bech32().expect("npub"),
-            tree_name: "releases/test-app".to_string(),
-            path: Some("latest".to_string()),
-        };
-        let root = |keys: &Keys, created_at: u64, hash: &str| {
-            EventBuilder::new(Kind::Custom(30_064), "")
-                .tags([
-                    Tag::identifier("releases/test-app"),
-                    Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
-                    Tag::custom(TagKind::Custom("hash".into()), [hash]),
-                ])
-                .custom_created_at(nostr_sdk::Timestamp::from_secs(created_at))
-                .sign_with_keys(keys)
-                .expect("signed root")
-        };
-        let older = root(
-            &publisher,
-            1_700_000_000,
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        );
-        let newer = root(
-            &publisher,
-            1_700_000_001,
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        );
-        let unrelated = root(
-            &other,
-            1_700_000_002,
-            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-        );
-        let directory =
-            std::env::temp_dir().join(format!("nvpn-update-roots-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("cache directory");
-        let path = directory.join("control-pubsub-events.json");
-        std::fs::write(
-            &path,
-            serde_json::to_vec(&serde_json::json!({
-                "version": 1,
-                "events": [older, unrelated, newer],
-            }))
-            .expect("cache JSON"),
-        )
-        .expect("write cache");
+    #[tokio::test]
+    async fn updater_discovers_signed_roots_from_configured_websocket_seed_without_vpn_or_relays() {
+        use nostr_pubsub::{EventBus, EventSource, VerifiedEvent};
+        use nostr_sdk::prelude::{EventBuilder, Filter, Keys, Kind, Tag, TagKind};
 
-        let events = load_cached_update_root_events(&path, &reference).expect("load roots");
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].created_at.as_secs(), 1_700_000_001);
-        let _ = std::fs::remove_dir_all(directory);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("seed port");
+        let address = listener.local_addr().expect("seed address");
+        drop(listener);
+        let mut app = AppConfig::default();
+        app.fips_bootstrap_enabled = false;
+        app.fips_websocket_seed_urls = vec!["ws://unused.invalid/fips".to_string()];
+        let mut seed_config = update_endpoint_config(&app);
+        assert!(!seed_config.node.discovery.nostr.enabled);
+        assert!(!seed_config.dns.enabled);
+        assert!(!seed_config.node.control.enabled);
+        assert!(seed_config.peers.is_empty());
+        seed_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            bind_addr: Some(address.to_string()),
+            ..WebSocketConfig::default()
+        });
+        let seed = Arc::new(
+            FipsEndpoint::builder()
+                .config(seed_config)
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("seed endpoint"),
+        );
+        let publisher =
+            FipsPubsubClient::start(Arc::clone(&seed), FipsPubsubClientOptions::default())
+                .await
+                .expect("seed pubsub");
+        let keys = Keys::generate();
+        let event = EventBuilder::new(Kind::Custom(30_064), "")
+            .tags([
+                Tag::identifier("releases/test-update"),
+                Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
+                Tag::custom(TagKind::Custom("hash".into()), ["ab".repeat(32)]),
+            ])
+            .sign_with_keys(&keys)
+            .expect("signed release root");
+        publisher
+            .publish(
+                VerifiedEvent::try_from(event.clone()).expect("verified root"),
+                EventSource::local_index("release-publisher"),
+            )
+            .await
+            .expect("retain root at seed");
+        app.fips_peer_endpoints.insert(
+            seed.npub().to_string(),
+            vec![format!("websocket:ws://{address}/fips")],
+        );
+        let (endpoint, client) = update_pubsub(&app)
+            .await
+            .expect("standalone updater network");
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let subscription = client
+            .fresh_subscriber()
+            .subscribe(
+                vec![
+                    Filter::new()
+                        .author(keys.public_key())
+                        .kind(Kind::Custom(30_064))
+                        .identifier("releases/test-update"),
+                ],
+                Arc::new(move |delivery| {
+                    let _ = tx.send(delivery);
+                }),
+            )
+            .await
+            .expect("fresh update subscription");
+        let delivery = tokio::time::timeout(Duration::from_secs(15), rx.recv())
+            .await
+            .expect("seed replay before deadline")
+            .expect("signed update received");
+        assert_eq!(delivery.event.as_event().id, event.id);
+        assert!(
+            endpoint
+                .relay_statuses()
+                .await
+                .expect("relay status")
+                .is_empty()
+        );
+        subscription.close().await.expect("close subscription");
+        client.shutdown().await;
+        endpoint.shutdown().await.expect("stop updater endpoint");
+        publisher.shutdown().await;
+        seed.shutdown().await.expect("stop seed");
     }
 
-    #[test]
-    fn secure_updater_refreshes_relays_even_with_cached_roots() {
-        let config = secure_updater_config();
-
-        assert_eq!(config.relays, update_relays());
-        assert!(!config.relays.is_empty());
+    #[tokio::test]
+    async fn cached_root_without_live_peers_cannot_claim_current_version_is_latest() {
+        use nostr_sdk::prelude::{EventBuilder, Keys, Kind, Tag, TagKind, ToBech32};
+        let keys = Keys::generate();
+        let directory = std::env::temp_dir().join(format!("nvpn-update-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&directory).expect("cache directory");
+        let config_path = directory.join("config.toml");
+        let cached = EventBuilder::new(Kind::Custom(30_064), "")
+            .tags([
+                Tag::identifier("releases/offline-test"),
+                Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
+                Tag::custom(TagKind::Custom("hash".into()), ["ab".repeat(32)]),
+            ])
+            .sign_with_keys(&keys)
+            .expect("cached signed root");
+        fs::write(
+            crate::control_pubsub::control_pubsub_store_path(&config_path),
+            serde_json::to_vec(&serde_json::json!({ "events": [cached] })).expect("cache JSON"),
+        )
+        .expect("write cached root");
+        let mut app = AppConfig::default();
+        app.fips_bootstrap_enabled = false;
+        let (endpoint, client) = update_pubsub(&app).await.expect("offline updater network");
+        let result = secure_selection_with_pubsub(
+            "9999.0.0",
+            ProductUpdateMode::Cli,
+            Arc::new(client.fresh_subscriber()),
+            UpdateRef {
+                npub: keys.public_key().to_bech32().expect("release publisher"),
+                tree_name: "releases/offline-test".to_string(),
+                path: Some("latest".to_string()),
+            },
+            Some(&config_path),
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "cached root must not make an offline check conclusive"
+        );
+        client.shutdown().await;
+        endpoint.shutdown().await.expect("stop updater endpoint");
+        std::fs::remove_dir_all(directory).expect("remove test cache");
     }
 }

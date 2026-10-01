@@ -15,6 +15,8 @@ cashu-wallet = ["dep:cashu-service", "cashu-service/wallet"]
 updater = [
   "dep:hashtree-updater",
   "hashtree-updater/secure-nostr-blossom",
+  "dep:nostr-pubsub",
+  "dep:nostr-pubsub-fips",
 ]
 secure-dns = ["dep:reqwest"]
 
@@ -32,6 +34,8 @@ fips-endpoint.workspace = true
 fips-tcp.workspace = true
 fips-tcp-endpoint.workspace = true
 nostr-sdk.workspace = true
+nostr-pubsub = { workspace = true, optional = true }
+nostr-pubsub-fips = { workspace = true, optional = true }
 nostr-identity.workspace = true
 nostr-social-graph = { workspace = true, optional = true }
 nostr-social-memory = { workspace = true, optional = true }

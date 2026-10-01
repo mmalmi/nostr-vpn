@@ -18,8 +18,8 @@ use jni::sys::{jboolean, jint, jlong, jstring};
 #[cfg(feature = "updater")]
 use nostr_vpn_core::updater::{
     ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_blocking,
-    check_product_update_blocking_with_cache, download_product_update_blocking,
-    download_product_update_blocking_with_cache, update_event_cache_path,
+    check_product_update_blocking_with_config, download_product_update_blocking,
+    download_product_update_blocking_with_config,
 };
 use qrcode::QrCode;
 use serde::Serialize;
@@ -260,12 +260,11 @@ pub extern "C" fn nostr_vpn_update_check_with_config_json(
     config_path: *const c_char,
 ) -> *mut c_char {
     let config_path = c_string_lossy(config_path);
-    let event_cache_path = update_event_cache_path(std::path::Path::new(&config_path));
-    let result = check_product_update_blocking_with_cache(
+    let result = check_product_update_blocking_with_config(
         &c_string_lossy(current_version),
         parse_update_mode(&c_string_lossy(mode)),
         parse_update_source(&c_string_lossy(source)),
-        Some(&event_cache_path),
+        Some(std::path::Path::new(&config_path)),
     );
     update_result_json(result)
 }
@@ -303,13 +302,12 @@ pub extern "C" fn nostr_vpn_update_download_with_config_json(
     let download_dir =
         (!download_dir.trim().is_empty()).then(|| std::path::Path::new(&download_dir));
     let config_path = c_string_lossy(config_path);
-    let event_cache_path = update_event_cache_path(std::path::Path::new(&config_path));
-    let result = download_product_update_blocking_with_cache(
+    let result = download_product_update_blocking_with_config(
         &c_string_lossy(current_version),
         parse_update_mode(&c_string_lossy(mode)),
         parse_update_source(&c_string_lossy(source)),
         download_dir,
-        Some(&event_cache_path),
+        Some(std::path::Path::new(&config_path)),
     );
     update_result_json(result)
 }
