@@ -717,7 +717,9 @@ async fn process_fips_delivery(
     delivery: QueryEvent,
 ) {
     let verified = delivery.event;
-    if !is_control_event(verified.as_event(), update_events) {
+    if !is_control_event(verified.as_event(), update_events)
+        || is_retained_control_replay(events, &verified).await
+    {
         return;
     }
     if !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await {
@@ -753,6 +755,7 @@ async fn process_relay_delivery(
 ) {
     let verified = delivery.event;
     if !is_control_event(verified.as_event(), update_events)
+        || is_retained_control_replay(events, &verified).await
         || !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await
     {
         return;
@@ -773,6 +776,20 @@ async fn process_relay_delivery(
     if let Err(error) = fips_pubsub.publish(verified, delivery.source).await {
         tracing::debug!(%error, event_id = %event.id, "decentralized Nostr pubsub publication deferred");
     }
+}
+
+async fn is_retained_control_replay(
+    events: &Arc<Mutex<ControlEventStore>>,
+    verified: &VerifiedEvent,
+) -> bool {
+    let event = verified.as_event();
+    // Discovery repeats still refresh authenticated peer addresses. Other
+    // retained IDs have already been observed; replay need
+    // not verify/parse their ratings or enqueue discovery work again.
+    // Consult only the existing store, never transport-seen IDs: an event
+    // rejected by a full ingress queue must remain eligible for recovery.
+    u16::from(event.kind) != FIPS_PEER_ADVERT_KIND
+        && events.lock().await.events.contains_key(&event.id.to_hex())
 }
 
 async fn observe_policy_event(policy: &Arc<Mutex<FipsPubsubPolicy>>, event: &Event) {

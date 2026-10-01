@@ -22,6 +22,9 @@ use super::*;
 #[path = "tests/relay_ingress.rs"]
 mod relay_ingress;
 
+#[path = "tests/verified_replay.rs"]
+mod verified_replay;
+
 const FIPS_TEST_EVENTUAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn available_udp_ports() -> [u16; 3] {
