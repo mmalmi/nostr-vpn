@@ -274,8 +274,12 @@ impl ControlEventStore {
             self.events
                 .iter()
                 .filter(|(_, event)| {
+                    // Admission, including disk reload, validates offers before retention.
                     u16::from(event.kind) == PAID_EXIT_OFFER_KIND
-                        && retained_paid_offer_coordinate(event, now_secs).is_none()
+                        && !SignedPaidRouteOffer {
+                            event: (*event).clone(),
+                        }
+                        .is_live_at(now_secs)
                 })
                 .map(|(event_id, _)| event_id.clone()),
         );
@@ -359,11 +363,6 @@ fn paid_offer_coordinate(event: &Event) -> Option<(u16, String, String)> {
         event.pubkey.to_hex(),
         event.tags.identifier()?.to_string(),
     ))
-}
-
-fn retained_paid_offer_coordinate(event: &Event, now_secs: u64) -> Option<(u16, String, String)> {
-    let (coordinate, is_live) = paid_offer_state(event, now_secs)?;
-    is_live.then_some(coordinate)
 }
 
 fn paid_offer_state(event: &Event, now_secs: u64) -> Option<((u16, String, String), bool)> {
@@ -606,6 +605,115 @@ mod tests {
             1
         );
         assert!(store.snapshot().is_empty());
+    }
+
+    #[test]
+    fn invalid_paid_offers_cannot_poison_retained_ids_or_watermarks() {
+        let seller = Keys::generate();
+        let now = now_ms() / 1_000;
+        let valid = paid_offer_event(&seller, "internet-exit", now);
+        let mut changed = valid.clone();
+        changed.content = "{}".to_string();
+        let malformed = EventBuilder::new(valid.kind, "{}")
+            .tags(valid.tags.clone())
+            .custom_created_at(valid.created_at)
+            .sign_with_keys(&seller)
+            .expect("valid signature with invalid offer payload");
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
+
+        assert!(changed.verify().is_err());
+        assert!(malformed.verify().is_ok());
+        for event in [&changed, &malformed] {
+            assert!(!store.insert(event.clone()).expect("reject invalid offer"));
+        }
+        assert!(store.snapshot().is_empty());
+        assert!(store.paid_offer_watermarks.is_empty());
+        assert!(store.insert(valid.clone()).expect("retain valid offer"));
+        assert!(!store.insert(changed).expect("reject changed duplicate"));
+        assert_eq!(
+            store.prune_expired_events(now).expect("retain live offer"),
+            0
+        );
+        assert_eq!(store.snapshot(), vec![valid]);
+    }
+
+    #[test]
+    fn loaded_paid_offers_are_validated_before_maintenance() {
+        let seller = Keys::generate();
+        let now = now_ms() / 1_000;
+        let valid = paid_offer_event(&seller, "internet-exit", now);
+        let mut changed = valid.clone();
+        changed.content = "{}".to_string();
+        let malformed = EventBuilder::new(valid.kind, "{}")
+            .tags(valid.tags.clone())
+            .custom_created_at(valid.created_at)
+            .sign_with_keys(&seller)
+            .expect("signed invalid offer");
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-offer-validation-{}-{}.json",
+            std::process::id(),
+            valid.id
+        ));
+        let saved = StoredEventsFile {
+            version: STORE_VERSION,
+            events: vec![changed.clone(), malformed.clone(), valid.clone()],
+            paid_offer_watermarks: vec![changed, malformed],
+        };
+        fs::write(&path, serde_json::to_vec(&saved).expect("encode store"))
+            .expect("write untrusted store");
+        let mut store = ControlEventStore::load(Some(path.clone()), test_update_events())
+            .expect("reload untrusted store");
+
+        assert_eq!(store.snapshot(), vec![valid.clone()]);
+        assert_eq!(store.paid_offer_watermarks.len(), 1);
+        assert_eq!(
+            store.prune_expired_events(now).expect("retain live offer"),
+            0
+        );
+        assert_eq!(
+            store
+                .prune_expired_events(now + PAID_ROUTE_OFFER_TTL_SECS)
+                .expect("expire reloaded offer"),
+            1
+        );
+        assert!(store.snapshot().is_empty());
+        assert!(store.paid_offer_watermarks.is_empty());
+        let saved: StoredEventsFile =
+            serde_json::from_slice(&fs::read(&path).expect("read cleaned store"))
+                .expect("decode cleaned store");
+        assert!(saved.events.is_empty());
+        assert!(saved.paid_offer_watermarks.is_empty());
+        fs::remove_file(path).expect("remove test store");
+    }
+
+    #[test]
+    fn maintenance_preserves_paid_offer_expiration_boundaries() {
+        let seller = Keys::generate();
+        let now = now_ms() / 1_000;
+        let offer =
+            SignedPaidRouteOffer::from_event(paid_offer_event(&seller, "internet-exit", now))
+                .expect("signed offer")
+                .offer()
+                .expect("offer payload");
+        for lifetime in [60, PAID_ROUTE_OFFER_TTL_SECS * 2] {
+            let event =
+                SignedPaidRouteOffer::sign_expiring_at(offer.clone(), &seller, now, now + lifetime)
+                    .expect("offer with explicit expiration")
+                    .event;
+            let mut store =
+                ControlEventStore::load(None, test_update_events()).expect("event store");
+            assert!(store.insert(event.clone()).expect("retain offer"));
+            let expiry = now + lifetime.min(PAID_ROUTE_OFFER_TTL_SECS);
+            assert_eq!(
+                store
+                    .prune_expired_events(expiry - 1)
+                    .expect("before expiry"),
+                0
+            );
+            assert_eq!(store.snapshot(), vec![event]);
+            assert_eq!(store.prune_expired_events(expiry).expect("at expiry"), 1);
+            assert!(store.snapshot().is_empty());
+        }
     }
 
     #[test]
