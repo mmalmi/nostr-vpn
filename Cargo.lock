@@ -3750,9 +3750,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.9"
+version = "0.5.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0402cef8ae329734794fdd0c09f451e9a65fc3bddc3462c3f834d4f94be31d1"
+checksum = "6a3a50593830caf13ef41eb4e4417b1237bdb59adedb14c192a6c3f003b0f769"
 dependencies = [
  "async-trait",
  "nostr",
@@ -4177,9 +4177,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.88"
+version = "0.4.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d4b60b90ff58b5f4f4c5d5268a2526981bd3b42b0a11f887d7e5b30e5135679"
+checksum = "e66122da4be57695b001566103e395fb4ea1a4ec8dfad1af1172eb820914d891"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -4214,7 +4214,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
- "tokio-tungstenite 0.26.2",
+ "tokio-tungstenite 0.29.0",
  "tracing",
  "tun",
  "uuid",
@@ -4226,9 +4226,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.88"
+version = "0.4.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e846fd33f46d517f2166d2bf1ffef6b35cc8afb36426b24abba6c2af336980eb"
+checksum = "ed30c9abbf9067422f9db55d80e6629670b178aba8674bb90f8d9a83eeef515f"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4256,9 +4256,9 @@ checksum = "7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.21"
+version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93b4f80499a81d18fa1fdfb03b361b3872af3066a6a4c27b7faa379f5e8607dd"
+checksum = "84a8f4faaed494d05c454cb5d51bb578457a33ea213f3096f7e1cd791a7a97ae"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -6327,8 +6327,12 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.29.0",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -6703,6 +6707,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.4",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
 ]
