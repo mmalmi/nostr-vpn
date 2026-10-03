@@ -20,7 +20,7 @@ impl PaidRouteStore {
             return Err(anyhow!("only buyer sessions can request funding"));
         }
         ensure_open_buyer_channel(channel, lease)?;
-        if channel.expires_at_unix.min(lease.lease.expires_at_unix) <= now_unix {
+        if channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix {
             return Err(anyhow!("buyer session expired before funding"));
         }
         if paid_route_session_has_payment_material(&session.session, channel) {

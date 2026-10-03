@@ -166,10 +166,7 @@ impl PaidRouteStore {
             .get(&session.session_id)?
             .clone();
         let decision = session.routing_decision(accepted_terms);
-        let expires_at_unix = lease_record
-            .lease
-            .expires_at_unix
-            .min(channel.expires_at_unix);
+        let expires_at_unix = channel.routing_expires_at_unix(lease_record.lease.expires_at_unix);
         let lifecycle_allows = paid_route_lifecycle_allows_routing(lease_record.status)
             && paid_route_lifecycle_allows_routing(channel.status);
         let not_expired = expires_at_unix > now_unix;
@@ -216,7 +213,7 @@ impl PaidRouteStore {
             .lease
             .expires_at_unix
             .min(channel.expires_at_unix);
-        let expired = expires_at_unix > 0 && expires_at_unix <= now_unix;
+        let due_at_unix = channel.routing_expires_at_unix(lease_record.lease.expires_at_unix);
         let terminally_collected = matches!(
             channel.status,
             PaidRouteLifecycleStatus::Closed | PaidRouteLifecycleStatus::Failed
@@ -233,9 +230,9 @@ impl PaidRouteStore {
             && has_spilman_payment
             && paid_msat > 0
             && !channel.channel_id.trim().is_empty();
-        let auto_collect_due = collectable && expired;
+        let auto_collect_due = collectable && due_at_unix <= now_unix;
         let reason = if auto_collect_due {
-            "expired"
+            "settlement_due"
         } else if collectable {
             "manual"
         } else if terminally_collected {
@@ -256,7 +253,7 @@ impl PaidRouteStore {
             reason,
             paid_msat,
             expires_at_unix,
-            due_at_unix: if collectable { expires_at_unix } else { 0 },
+            due_at_unix: if collectable { due_at_unix } else { 0 },
             updated_at_unix: record.updated_at_unix.max(channel.updated_at_unix),
         })
         .filter(|state| state.collectable)

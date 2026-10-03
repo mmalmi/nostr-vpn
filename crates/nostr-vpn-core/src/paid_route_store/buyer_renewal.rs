@@ -37,7 +37,7 @@ impl PaidRouteStore {
         let capacity_msat = channel.payment.capacity_sat.saturating_mul(1_000);
         Ok(capacity_msat > 0
             && (terms.amount_due_msat(&session.session.usage) >= capacity_msat.div_ceil(2)
-                || lease.lease.expires_at_unix.min(channel.expires_at_unix)
+                || channel.routing_expires_at_unix(lease.lease.expires_at_unix)
                     <= now_unix.saturating_add(60)))
     }
 
@@ -62,7 +62,7 @@ impl PaidRouteStore {
             >= capacity_msat
                 .saturating_sub(1_000)
                 .max(capacity_msat.div_ceil(2))
-            || lease.lease.expires_at_unix.min(channel.expires_at_unix)
+            || channel.routing_expires_at_unix(lease.lease.expires_at_unix)
                 <= now_unix.saturating_add(15))
     }
 

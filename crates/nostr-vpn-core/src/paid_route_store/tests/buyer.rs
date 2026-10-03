@@ -752,7 +752,7 @@ fn seller_admissions_reflect_streaming_payment_decision() {
         100,
     ));
 
-    let admissions = store.seller_admissions(&config, 150);
+    let admissions = store.seller_admissions(&config, 149);
 
     assert_eq!(admissions.len(), 1);
     assert_eq!(admissions[0].buyer_pubkey, buyer.public_key().to_hex());
@@ -769,7 +769,7 @@ fn seller_admissions_reflect_streaming_payment_decision() {
         record.session.usage.billable_bytes = 200;
         record.updated_at_unix = 151;
     }
-    let admissions = store.seller_admissions(&config, 150);
+    let admissions = store.seller_admissions(&config, 149);
 
     assert_eq!(admissions[0].state, PaidRouteAccessState::Suspended);
     assert!(!admissions[0].allow_routing);
@@ -783,7 +783,7 @@ fn seller_admissions_reflect_streaming_payment_decision() {
 }
 
 #[test]
-fn seller_collection_states_mark_expired_spilman_credit_due() {
+fn seller_collection_states_mark_preexpiry_spilman_credit_due() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
     let mut config = sample_config();
@@ -815,7 +815,7 @@ fn seller_collection_states_mark_expired_spilman_credit_due() {
         })
         .expect("apply paid balance");
 
-    let current = store.seller_collection_states(&config, 499);
+    let current = store.seller_collection_states(&config, 299);
 
     assert_eq!(current.len(), 1);
     assert!(current[0].collectable);
@@ -823,15 +823,16 @@ fn seller_collection_states_mark_expired_spilman_credit_due() {
     assert!(!current[0].auto_collect_due);
     assert_eq!(current[0].reason, "manual");
     assert_eq!(current[0].paid_msat, 1_000);
-    assert_eq!(current[0].due_at_unix, 500);
+    assert_eq!(current[0].due_at_unix, 300);
+    assert_eq!(current[0].expires_at_unix, 500);
 
-    let due = store.seller_collection_states(&config, 500);
+    let due = store.seller_collection_states(&config, 300);
 
     assert_eq!(due.len(), 1);
     assert!(due[0].collectable);
     assert!(due[0].manual_collect);
     assert!(due[0].auto_collect_due);
-    assert_eq!(due[0].reason, "expired");
+    assert_eq!(due[0].reason, "settlement_due");
     assert_eq!(due[0].channel_id, "channel-1");
     assert_eq!(due[0].session_id, "seller-session-lease-1");
 

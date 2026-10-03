@@ -33,6 +33,13 @@ const DEFAULT_CHANNEL_EXPIRY_SECS: u64 = 86_400;
 const DEFAULT_FREE_PROBE_BYTES: u64 = 1_048_576;
 const DEFAULT_GRACE_BYTES: u64 = 262_144;
 
+/// Stop using a channel and begin settlement before its immutable refund deadline.
+/// The standard 24-hour channel gets a 12-hour retry window; shorter contracts
+/// reserve half their lifetime, and longer contracts still retire after 12 hours.
+pub fn paid_route_collection_after_secs(refund_lifetime_secs: u64) -> u64 {
+    (refund_lifetime_secs / 2).min(12 * 60 * 60)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PaidRouteServiceKind {
@@ -196,6 +203,7 @@ pub struct PaidRouteChannelTerms {
     pub accepted_mints: Vec<String>,
     #[serde(default = "default_max_channel_capacity_sat")]
     pub max_channel_capacity_sat: u64,
+    /// Funding refund lifetime, not the earlier automatic collection cutoff.
     #[serde(default = "default_channel_expiry_secs")]
     pub channel_expiry_secs: u64,
     #[serde(default = "default_free_probe_bytes")]

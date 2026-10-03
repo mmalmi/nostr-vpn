@@ -261,7 +261,7 @@ impl PaidRouteStore {
             .leases
             .get(&lease_id)
             .ok_or_else(|| anyhow!("paid route lease {lease_id} was not created"))?;
-        let expires_at_unix = channel.expires_at_unix.min(lease.lease.expires_at_unix);
+        let expires_at_unix = channel.routing_expires_at_unix(lease.lease.expires_at_unix);
         let lifecycle_allows = paid_route_lifecycle_allows_routing(channel.status)
             && paid_route_lifecycle_allows_routing(lease.status);
         let allow_routing =

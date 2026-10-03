@@ -628,12 +628,7 @@ impl PaidRouteStore {
             {
                 continue;
             }
-            if lease_record
-                .lease
-                .expires_at_unix
-                .min(channel.expires_at_unix)
-                <= now_unix
-            {
+            if channel.routing_expires_at_unix(lease_record.lease.expires_at_unix) <= now_unix {
                 continue;
             }
             let Some(channel_seller_npub) =
