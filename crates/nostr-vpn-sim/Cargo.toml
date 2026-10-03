@@ -9,7 +9,7 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-fips-core = { workspace = true, features = ["sim-transport"] }
+nvpn-fips-core = { workspace = true, features = ["sim-transport"] }
 hex.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub-fips.workspace = true

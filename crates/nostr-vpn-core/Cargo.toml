@@ -29,10 +29,10 @@ cashu-service = { workspace = true, optional = true, features = ["spilman"] }
 # only — uses kqueue/epoll), so leave it off in the default dep set
 # and let target-specific overrides below opt back in.
 boringtun = { workspace = true }
-fips-core.workspace = true
-fips-endpoint.workspace = true
-fips-tcp.workspace = true
-fips-tcp-endpoint.workspace = true
+nvpn-fips-core.workspace = true
+nvpn-fips-endpoint.workspace = true
+nvpn-fips-tcp.workspace = true
+nvpn-fips-tcp-endpoint.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub = { workspace = true, optional = true }
 nostr-pubsub-fips = { workspace = true, optional = true }
@@ -76,6 +76,6 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
-fips-core = { workspace = true, features = ["sim-transport"] }
+nvpn-fips-core = { workspace = true, features = ["sim-transport"] }
 rcgen = "0.13"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

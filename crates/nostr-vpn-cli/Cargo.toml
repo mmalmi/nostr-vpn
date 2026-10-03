@@ -26,8 +26,8 @@ async-trait.workspace = true
 base64.workspace = true
 clap.workspace = true
 dirs.workspace = true
-fips-core.workspace = true
-fips-endpoint.workspace = true
+nvpn-fips-core.workspace = true
+nvpn-fips-endpoint.workspace = true
 hickory-proto.workspace = true
 hex.workspace = true
 serde.workspace = true
@@ -94,7 +94,7 @@ required-features = ["paid-exit"]
 
 [dev-dependencies]
 async-trait.workspace = true
-fips-core = { workspace = true, features = ["sim-transport"] }
+nvpn-fips-core = { workspace = true, features = ["sim-transport"] }
 futures-util = "0.3"
 nostr-sdk.workspace = true
 nostr-social-graph.workspace = true
