@@ -34,8 +34,8 @@ cashu-service = { workspace = true, optional = true, features = [
 ] }
 dirs.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-fips-core.workspace = true
-fips-endpoint.workspace = true
+nvpn-fips-core.workspace = true
+nvpn-fips-endpoint.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub = { workspace = true, optional = true }
