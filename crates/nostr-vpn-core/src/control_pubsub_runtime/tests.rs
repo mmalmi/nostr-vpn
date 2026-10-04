@@ -414,6 +414,41 @@ fn existing_subscription_ignores_peer_arrival_and_link_churn() {
 }
 
 #[test]
+fn ended_fips_subscription_disables_notifications_until_maintenance() {
+    run_async_test("ended-fips-subscription", || async {
+        let keys = Keys::generate();
+        let endpoint = endpoint(&keys, endpoint_config(available_udp_ports()[0], &[])).await;
+        let client =
+            FipsPubsubClient::start(Arc::clone(&endpoint), FipsPubsubClientOptions::default())
+                .await
+                .unwrap();
+        let mut subscription = Some(
+            client
+                .subscribe(vec![Filter::new().kind(Kind::TextNote)])
+                .await
+                .unwrap(),
+        );
+        client.shutdown_shared().await;
+        assert!(fips_notification(&mut subscription).await.is_none());
+        assert!(
+            subscription.is_none(),
+            "EOF must release the terminal handle"
+        );
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(25),
+                fips_notification(&mut subscription),
+            )
+            .await
+            .is_err(),
+            "a missing subscription must not keep the select branch ready"
+        );
+        assert!(should_create_fips_subscription(subscription.is_some(), 1));
+        endpoint.shutdown().await.unwrap();
+    });
+}
+
+#[test]
 fn plain_control_events_are_verified_before_entering_the_verified_path() {
     let publisher = Keys::generate();
     let update_events = update_events(&publisher, "releases/verified-boundary");

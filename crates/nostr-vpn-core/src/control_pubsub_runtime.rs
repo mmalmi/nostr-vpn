@@ -928,10 +928,17 @@ fn subscription_peer_ids(peers: Vec<(String, u64)>) -> Vec<String> {
 async fn fips_notification(
     subscription: &mut Option<FipsPubsubSubscription>,
 ) -> Option<QueryEvent> {
-    let Some(subscription) = subscription.as_mut() else {
+    let Some(active) = subscription.as_mut() else {
         return std::future::pending().await;
     };
-    subscription.recv().await
+    let delivery = active.recv().await;
+    if delivery.is_none() {
+        // Terminal subscriptions drain their admitted bodies before EOF.
+        // Disable this select branch until the existing maintenance tick can
+        // restore live delivery; reopening is not a missed-history recovery.
+        subscription.take();
+    }
+    delivery
 }
 
 async fn verified_event_is_admitted(
