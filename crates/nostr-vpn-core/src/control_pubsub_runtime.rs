@@ -305,7 +305,7 @@ impl ControlPubsubClient {
         for (url, relay) in client.relays().await {
             states.push(ControlRelayStatus {
                 url: url.to_string(),
-                status: relay.status().to_string(),
+                status: relay.status().to_string().to_ascii_lowercase(),
             });
         }
         states.sort_by(|left, right| left.url.cmp(&right.url));
@@ -982,8 +982,9 @@ fn exit_graph_filter(root: PublicKey) -> Filter {
         .limit(2)
 }
 
-fn control_kinds() -> [Kind; 2] {
-    [
+fn control_kinds() -> Vec<Kind> {
+    vec![
+        #[cfg(feature = "paid-exit")]
         Kind::Custom(PAID_EXIT_OFFER_KIND),
         Kind::Custom(RATING_FACT_KIND),
     ]
@@ -1006,6 +1007,7 @@ fn relay_subscription_filters(
         Filter::new()
             .kind(Kind::Custom(FIPS_PEER_ADVERT_KIND))
             .limit(RELAY_REPLAY_LIMIT),
+        #[cfg(feature = "paid-exit")]
         Filter::new()
             .kind(Kind::Custom(PAID_EXIT_OFFER_KIND))
             .limit(RELAY_REPLAY_LIMIT),
@@ -1018,9 +1020,12 @@ fn relay_subscription_filters(
 }
 
 fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
+    if u16::from(event.kind) == PAID_EXIT_OFFER_KIND {
+        return cfg!(feature = "paid-exit");
+    }
     matches!(
         u16::from(event.kind),
-        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND | 3 | 10_000
+        FIPS_PEER_ADVERT_KIND | RATING_FACT_KIND | 3 | 10_000
     ) || update_events
         .filter()
         .match_event(event, MatchEventOptions::new())

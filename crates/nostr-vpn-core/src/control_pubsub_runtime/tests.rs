@@ -2,6 +2,12 @@ use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::config::{NostrPubsubConfig, NostrPubsubMode};
+#[cfg(feature = "paid-exit")]
+use crate::paid_routes::{
+    PaidExitConfig, SignedPaidRouteOffer, signed_paid_exit_offer_from_config,
+};
+use crate::updater::UpdateRef;
 use fips_core::PeerIdentity;
 use fips_endpoint::{
     Config, NostrPeerfindingSource, PeerConfig, RoutingMode, TransportInstances, UdpConfig,
@@ -11,11 +17,6 @@ use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
 use nostr_social_graph::Rating;
 use nostr_social_memory::RatingEventExt;
-use crate::config::{NostrPubsubConfig, NostrPubsubMode};
-use crate::paid_routes::{
-    PaidExitConfig, SignedPaidRouteOffer, signed_paid_exit_offer_from_config,
-};
-use crate::updater::UpdateRef;
 
 use super::*;
 
@@ -227,7 +228,10 @@ fn relay_subscriptions_bound_retained_replay() {
 
     let filters = relay_subscription_filters(&update_events, &[target]);
 
-    assert_eq!(filters.len(), 5);
+    assert_eq!(
+        filters.len(),
+        if cfg!(feature = "paid-exit") { 5 } else { 4 }
+    );
     assert!(
         filters.iter().all(|filter| filter.limit.is_some()),
         "every public-relay subscription must bound retained replay"
@@ -238,6 +242,7 @@ fn relay_subscriptions_bound_retained_replay() {
     );
     for kind in [
         FIPS_PEER_ADVERT_KIND,
+        #[cfg(feature = "paid-exit")]
         PAID_EXIT_OFFER_KIND,
         RATING_FACT_KIND,
     ] {
@@ -421,6 +426,7 @@ fn standard_fips_pubsub_bounds_retained_replay() {
 }
 
 #[test]
+#[cfg(feature = "paid-exit")]
 fn offers_ratings_and_updates_are_carried_p2p_without_relays() {
     run_async_test(
         "relayless-control-events",
@@ -428,6 +434,7 @@ fn offers_ratings_and_updates_are_carried_p2p_without_relays() {
     );
 }
 
+#[cfg(feature = "paid-exit")]
 async fn offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
@@ -517,6 +524,7 @@ async fn offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
 }
 
 #[test]
+#[cfg(feature = "paid-exit")]
 fn retained_paid_exit_offer_replays_to_late_manual_provider_buyer_without_relays() {
     run_async_test(
         "late-manual-paid-provider",
@@ -524,6 +532,7 @@ fn retained_paid_exit_offer_replays_to_late_manual_provider_buyer_without_relays
     );
 }
 
+#[cfg(feature = "paid-exit")]
 async fn retained_paid_exit_offer_replays_to_late_buyer_run() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
@@ -1092,4 +1101,24 @@ fn signed_update_root_with_content(
         .custom_created_at(Timestamp::from(created_at))
         .sign_with_keys(publisher)
         .expect("signed update root")
+}
+
+#[cfg(not(feature = "paid-exit"))]
+#[test]
+fn peerfinding_without_paid_exit_never_subscribes_to_or_retains_paid_offers() {
+    let publisher = Keys::generate();
+    let updates = update_events(&publisher, "releases/mobile-peerfinding");
+    let offer = EventBuilder::new(Kind::Custom(PAID_EXIT_OFFER_KIND), "offer")
+        .sign_with_keys(&publisher)
+        .unwrap();
+    for filter in relay_subscription_filters(&updates, &[])
+        .into_iter()
+        .chain(fips_subscription_filters(&updates))
+    {
+        assert!(!filter.match_event(&offer, MatchEventOptions::new()));
+    }
+    assert!(!is_control_event(&offer, &updates));
+    let mut store = ControlEventStore::load(None, updates).unwrap();
+    assert!(!store.insert(offer).unwrap());
+    assert!(store.snapshot().is_empty());
 }

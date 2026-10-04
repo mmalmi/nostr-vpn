@@ -119,6 +119,9 @@ impl ControlEventStore {
     }
 
     fn insert_memory(&mut self, event: Event) -> bool {
+        if !is_control_event(&event, &self.update_events) {
+            return false;
+        }
         let event_id = event.id.to_hex();
         if self.events.contains_key(&event_id) {
             return false;
@@ -414,6 +417,7 @@ mod tests {
     use nostr_sdk::{EventBuilder, ToBech32};
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
+    #[cfg(feature = "paid-exit")]
     use crate::paid_routes::{
         PAID_ROUTE_OFFER_TTL_SECS, PaidExitConfig, SignedPaidRouteOffer,
         signed_paid_exit_offer_from_config,
@@ -484,6 +488,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_refreshes_replace_the_same_author_and_identifier() {
         let seller = Keys::generate();
         let other_seller = Keys::generate();
@@ -505,6 +510,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn expired_replacement_withdraws_the_previous_paid_offer() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
@@ -524,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_tombstone_rejects_out_of_order_live_replay() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
@@ -556,6 +563,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_tombstone_survives_restart_without_becoming_visible() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
@@ -592,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn maintenance_prunes_expired_paid_offers() {
         let seller = Keys::generate();
         let signed_at = now_ms() / 1_000;
@@ -688,6 +697,7 @@ mod tests {
         rating.to_event(author).expect("signed rating")
     }
 
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_event(author: &Keys, offer_id: &str, signed_at: u64) -> Event {
         let config = PaidExitConfig {
             enabled: true,
