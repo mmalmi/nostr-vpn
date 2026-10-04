@@ -28,7 +28,9 @@ use nostr_vpn_core::config::{
     normalize_fips_transport_address, normalize_nostr_pubkey, normalize_runtime_network_id,
     split_peer_transport_addr,
 };
-use nostr_vpn_core::control_pubsub_runtime::{ControlPubsubClient, ControlPubsubFipsRuntime, ControlRelayStatus};
+use nostr_vpn_core::control_pubsub_runtime::{
+    ControlPubsubClient, ControlPubsubFipsRuntime, ControlRelayStatus,
+};
 use nostr_vpn_core::fips_control::{
     FipsControlFrame, JoinRosterControl, NetworkRoster, PeerCapabilities, PeerEndpointHint,
     SignedRoster, decode_fips_control_frame, encode_fips_control_frame,

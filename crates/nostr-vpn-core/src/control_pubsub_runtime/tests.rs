@@ -15,7 +15,9 @@ use fips_endpoint::{
 };
 use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
+#[cfg(feature = "paid-exit")]
 use nostr_social_graph::Rating;
+#[cfg(feature = "paid-exit")]
 use nostr_social_memory::RatingEventExt;
 
 use super::*;

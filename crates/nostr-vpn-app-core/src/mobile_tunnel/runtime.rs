@@ -126,9 +126,16 @@ impl MobileTunnel {
             Arc::clone(&endpoint),
             app_config.nostr.pubsub.clone(),
             config.nostr_relays.clone(),
-            private_state_config_path.as_deref().map(nostr_vpn_core::control_pubsub::control_pubsub_store_path),
-            &initial_peers.iter().map(|peer| peer.participant_pubkey.clone()).collect::<Vec<_>>(),
-        ).await.context("failed to start mobile Nostr pubsub")?;
+            private_state_config_path
+                .as_deref()
+                .map(nostr_vpn_core::control_pubsub::control_pubsub_store_path),
+            &initial_peers
+                .iter()
+                .map(|peer| peer.participant_pubkey.clone())
+                .collect::<Vec<_>>(),
+        )
+        .await
+        .context("failed to start mobile Nostr pubsub")?;
 
         let mut state_control = FipsControlTcpRuntime::start(Arc::clone(&endpoint))
             .await

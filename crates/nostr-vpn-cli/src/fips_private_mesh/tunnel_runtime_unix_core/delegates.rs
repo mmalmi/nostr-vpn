@@ -52,7 +52,15 @@ impl FipsPrivateTunnelRuntime {
     mesh_delegate!(fn stale_participants_needing_path_refresh(now: u64) -> Vec<String>);
     pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
         Ok(match &self.control_pubsub {
-            Some(pubsub) => pubsub.relay_statuses().await.into_iter().map(|relay| FipsRelayStatus { url: relay.url, status: relay.status }).collect(),
+            Some(pubsub) => pubsub
+                .relay_statuses()
+                .await
+                .into_iter()
+                .map(|relay| FipsRelayStatus {
+                    url: relay.url,
+                    status: relay.status,
+                })
+                .collect(),
             None => Vec::new(),
         })
     }
