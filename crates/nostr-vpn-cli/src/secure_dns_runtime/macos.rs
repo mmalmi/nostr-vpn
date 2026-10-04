@@ -21,11 +21,13 @@ const MACOS_SECURE_DNS_STORE_DICTIONARY: &str = "\
   }
 }";
 
-pub(super) fn macos_resolver_configs() -> [(PathBuf, String); 1] {
-    [(
-        PathBuf::from("/etc/resolver/nvpn"),
-        macos_magic_dns_resolver_config(),
-    )]
+pub(super) fn macos_resolver_configs() -> [(PathBuf, String); 2] {
+    ["nvpn", "fips"].map(|suffix| {
+        (
+            PathBuf::from("/etc/resolver").join(suffix),
+            macos_magic_dns_resolver_config(),
+        )
+    })
 }
 
 pub(super) fn write_macos_resolver_atomically(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -98,6 +100,7 @@ pub(crate) fn cleanup_owned_macos_secure_dns_state() -> anyhow::Result<bool> {
     for path in [
         Path::new("/etc/resolver/nvpn-secure-dns"),
         Path::new("/etc/resolver/nvpn"),
+        Path::new("/etc/resolver/fips"),
     ] {
         match remove_owned_macos_resolver_file(path) {
             Ok(was_removed) => removed |= was_removed,
@@ -142,7 +145,7 @@ fn refuse_foreign_macos_resolver_file(path: &Path, expected: &str) -> std::io::R
 
 fn macos_resolver_contents_owned(path: &Path, contents: &[u8]) -> bool {
     match path.file_name().and_then(std::ffi::OsStr::to_str) {
-        Some("nvpn") => contents == macos_magic_dns_resolver_config().as_bytes(),
+        Some("nvpn" | "fips") => contents == macos_magic_dns_resolver_config().as_bytes(),
         Some("nvpn-secure-dns") => contents == legacy_macos_secure_dns_resolver_config().as_bytes(),
         _ => false,
     }
@@ -313,6 +316,10 @@ mod tests {
         let magic = macos_magic_dns_resolver_config();
         assert!(macos_resolver_contents_owned(
             Path::new("/etc/resolver/nvpn"),
+            magic.as_bytes()
+        ));
+        assert!(macos_resolver_contents_owned(
+            Path::new("/etc/resolver/fips"),
             magic.as_bytes()
         ));
         assert!(!macos_resolver_contents_owned(

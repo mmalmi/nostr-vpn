@@ -107,6 +107,36 @@ fn build_magic_dns_records_includes_self_name_and_suffixes_peer_collision() {
 }
 
 #[test]
+fn magic_dns_server_resolves_fips_without_host_access_or_aliases() {
+    let identity = fips_core::Identity::generate();
+    let mut server = MagicDnsServer::start("127.0.0.1:0".parse().unwrap(), HashMap::new())
+        .expect("start DNS without host access or a mesh endpoint");
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("DNS client");
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let name = format!("{}.FiPs.", identity.npub());
+
+    let response = send_dns_query(&socket, server.local_addr(), &name, RecordType::AAAA);
+    assert_eq!(response.response_code, ResponseCode::NoError);
+    assert!(response.answers.iter().any(|answer| {
+        matches!(&answer.data, RData::AAAA(address) if address.0 == identity.address().to_ipv6())
+    }));
+    // An empty A response must not poison the IPv6 name lookup with NXDOMAIN.
+    let response = send_dns_query(&socket, server.local_addr(), &name, RecordType::A);
+    assert_eq!(response.response_code, ResponseCode::NoError);
+    assert!(response.answers.is_empty());
+    let invalid = send_dns_query(
+        &socket,
+        server.local_addr(),
+        "invalid.fips.",
+        RecordType::AAAA,
+    );
+    assert_eq!(invalid.response_code, ResponseCode::NXDomain);
+    server.stop();
+}
+
+#[test]
 fn magic_dns_server_answers_a_and_nxdomain() {
     let expected_ip = Ipv4Addr::new(10, 44, 0, 11);
     let mut records = HashMap::new();

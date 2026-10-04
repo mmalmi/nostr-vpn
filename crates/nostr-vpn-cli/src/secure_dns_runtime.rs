@@ -15,6 +15,7 @@ use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, RecordType};
 use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
 use nostr_vpn_core::config::ExitDnsResolverConfig;
+use nostr_vpn_core::magic_dns::resolve_fips_dns_if_handled;
 use nostr_vpn_core::secure_dns::{
     SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, build_servfail_response,
 };
@@ -23,7 +24,7 @@ use tokio::sync::Semaphore;
 use tokio::task::{JoinHandle, JoinSet};
 
 mod resolver;
-use resolver::{current_resolver, dns_resolver, resolve_fips_dns_if_handled};
+use resolver::{current_resolver, dns_resolver};
 #[cfg(any(target_os = "linux", test))]
 mod linux;
 #[cfg(any(target_os = "linux", test))]
@@ -68,7 +69,6 @@ const WINDOWS_DNS_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 type SharedResolver = Arc<dyn SecureDnsLookup>;
 type ResolverState = Arc<RwLock<SharedResolver>>;
 type FipsDnsEndpoint = Option<Arc<FipsEndpoint>>;
-const FIPS_DNS_TTL_SECS: u32 = 30;
 const PAID_EXIT_DNS_HEALTH_HOST: &str = "api.ipify.org.";
 
 #[derive(Clone)]
@@ -449,10 +449,8 @@ async fn resolve_or_servfail(
     {
         return Some(response);
     }
-    if let Some(endpoint) = fips_endpoint
-        && let Some((response, identity)) = resolve_fips_dns_if_handled(query)
-    {
-        if let Some(identity) = identity {
+    if let Some((response, identity)) = resolve_fips_dns_if_handled(query) {
+        if let (Some(endpoint), Some(identity)) = (fips_endpoint, identity) {
             let peer = PeerIdentity::from_pubkey_full(identity.pubkey);
             if peer.node_addr() != &identity.node_addr
                 || !endpoint.register_peer_identity(peer).await.unwrap_or(false)

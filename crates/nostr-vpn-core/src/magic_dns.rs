@@ -5,7 +5,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 #[cfg(target_os = "macos")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::Command;
 use std::sync::Arc;
@@ -115,12 +115,34 @@ fn run_dns_loop(
             .map(|guard| (*guard).clone())
             .unwrap_or_else(|_| HashMap::new());
 
-        let Some(response) = build_dns_response(request, &snapshot, true) else {
+        let Some(response) = resolve_fips_dns_if_handled(request)
+            .map(|(response, _)| response)
+            .or_else(|| build_dns_response(request, &snapshot, true))
+        else {
             continue;
         };
 
         let _ = socket.send_to(&response, peer_addr);
     }
+}
+
+pub fn resolve_fips_dns_if_handled(
+    query: &[u8],
+) -> Option<(Vec<u8>, Option<fips_core::upper::dns::DnsResolvedIdentity>)> {
+    let request = Message::from_vec(query).ok()?;
+    let name = request.queries.first()?.name.to_utf8();
+    if !name
+        .trim_end_matches('.')
+        .to_ascii_lowercase()
+        .ends_with(".fips")
+    {
+        return None;
+    }
+    fips_core::upper::dns::handle_dns_packet(
+        query,
+        DNS_TTL_SECS,
+        &fips_core::upper::hosts::HostMap::new(),
+    )
 }
 
 pub fn build_magic_dns_response_if_handled(
@@ -250,25 +272,43 @@ pub fn build_magic_dns_records(config: &AppConfig) -> HashMap<String, Ipv4Addr> 
     records
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows", test))]
+fn resolver_suffixes(suffix: &str) -> Vec<String> {
+    let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
+    let mut suffixes = vec!["fips".to_string()];
+    if !suffix.is_empty() && suffix != "fips" {
+        suffixes.push(suffix);
+    }
+    suffixes
+}
+
 pub fn install_system_resolver(config: &MagicDnsResolverConfig) -> Result<()> {
     let suffix = config.suffix.trim().trim_matches('.').to_ascii_lowercase();
-    if suffix.is_empty() {
-        return Ok(());
-    }
 
     #[cfg(target_os = "macos")]
+    let (install, uninstall) = (install_macos_resolver, uninstall_macos_resolver);
+    #[cfg(target_os = "windows")]
+    let (install, uninstall) = (install_windows_resolver, uninstall_windows_resolver);
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        install_macos_resolver(&suffix, config.nameserver, config.port)
+        let suffixes = resolver_suffixes(&suffix);
+        for (index, suffix) in suffixes.iter().enumerate() {
+            if let Err(error) = install(suffix, config.nameserver, config.port) {
+                for installed in &suffixes[..index] {
+                    if let Err(cleanup) = uninstall(installed) {
+                        eprintln!("magicdns: failed to roll back .{installed}: {cleanup}");
+                    }
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
         install_linux_resolver(&suffix, config.nameserver, config.port, &config.records)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        install_windows_resolver(&suffix, config.nameserver, config.port)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -282,23 +322,28 @@ pub fn install_system_resolver(config: &MagicDnsResolverConfig) -> Result<()> {
 
 pub fn uninstall_system_resolver(suffix: &str) -> Result<()> {
     let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
-    if suffix.is_empty() {
-        return Ok(());
-    }
 
     #[cfg(target_os = "macos")]
+    let uninstall = uninstall_macos_resolver;
+    #[cfg(target_os = "windows")]
+    let uninstall = uninstall_windows_resolver;
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        uninstall_macos_resolver(&suffix)
+        let failures: Vec<_> = resolver_suffixes(&suffix)
+            .iter()
+            .filter_map(|suffix| uninstall(suffix).err())
+            .map(|error| error.to_string())
+            .collect();
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(failures.join("; ")))
+        }
     }
 
     #[cfg(target_os = "linux")]
     {
         uninstall_linux_resolver(&suffix)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        uninstall_windows_resolver(&suffix)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -311,8 +356,16 @@ pub fn uninstall_system_resolver(suffix: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+const MACOS_MAGIC_DNS_MARKER: &str = "# Managed by nvpn MagicDNS\n";
+
+#[cfg(target_os = "macos")]
 fn install_macos_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Result<()> {
     let resolver_path = macos_resolver_path(suffix);
+    write_macos_resolver(&resolver_path, nameserver, port)
+}
+
+#[cfg(target_os = "macos")]
+fn write_macos_resolver(resolver_path: &Path, nameserver: Ipv4Addr, port: u16) -> Result<()> {
     if let Some(parent) = resolver_path.parent() {
         fs::create_dir_all(parent).map_err(|error| {
             if error.kind() == ErrorKind::PermissionDenied {
@@ -329,8 +382,29 @@ fn install_macos_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Resu
         })?;
     }
 
-    let body = format!("nameserver {nameserver}\nport {port}\noptions timeout:1 attempts:1\n");
-    fs::write(&resolver_path, body).map_err(|error| {
+    let legacy_body =
+        format!("nameserver {nameserver}\nport {port}\noptions timeout:1 attempts:1\n");
+    match fs::symlink_metadata(resolver_path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                return Err(anyhow!(
+                    "refusing to replace non-regular resolver {}",
+                    resolver_path.display()
+                ));
+            }
+            let current = fs::read_to_string(resolver_path)?;
+            if current != legacy_body && !current.starts_with(MACOS_MAGIC_DNS_MARKER) {
+                return Err(anyhow!(
+                    "refusing to replace foreign resolver {}",
+                    resolver_path.display()
+                ));
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let body = format!("{MACOS_MAGIC_DNS_MARKER}{legacy_body}");
+    fs::write(resolver_path, body).map_err(|error| {
         if error.kind() == ErrorKind::PermissionDenied {
             anyhow!(
                 "permission denied writing {}; run with admin privileges",
@@ -350,11 +424,22 @@ fn install_macos_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Resu
 #[cfg(target_os = "macos")]
 fn uninstall_macos_resolver(suffix: &str) -> Result<()> {
     let resolver_path = macos_resolver_path(suffix);
-    if !resolver_path.exists() {
+    remove_macos_resolver(&resolver_path)
+}
+
+#[cfg(target_os = "macos")]
+fn remove_macos_resolver(resolver_path: &Path) -> Result<()> {
+    match fs::symlink_metadata(resolver_path) {
+        Ok(metadata) if !metadata.file_type().is_file() => return Ok(()),
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    if !fs::read_to_string(resolver_path)?.starts_with(MACOS_MAGIC_DNS_MARKER) {
         return Ok(());
     }
 
-    fs::remove_file(&resolver_path).map_err(|error| {
+    fs::remove_file(resolver_path).map_err(|error| {
         if error.kind() == ErrorKind::PermissionDenied {
             anyhow!(
                 "permission denied removing {}; run with admin privileges",
@@ -397,7 +482,13 @@ fn install_linux_resolver(
 
     let resolved_install = (|| -> Result<()> {
         run_linux_resolvectl(&["dns", "lo", &resolver])?;
-        run_linux_resolvectl(&["domain", "lo", &format!("~{suffix}")])?;
+        let domains: Vec<_> = resolver_suffixes(suffix)
+            .iter()
+            .map(|suffix| format!("~{suffix}"))
+            .collect();
+        let mut args = vec!["domain", "lo"];
+        args.extend(domains.iter().map(String::as_str));
+        run_linux_resolvectl(&args)?;
         let _ = run_linux_resolvectl(&["flush-caches"]);
         Ok(())
     })();
@@ -720,6 +811,53 @@ mod tests {
         let mut encoder = BinEncoder::new(&mut bytes);
         message.emit(&mut encoder).expect("encode query");
         bytes
+    }
+
+    #[test]
+    fn split_dns_always_routes_fips_alongside_the_alias_suffix() {
+        assert_eq!(super::resolver_suffixes("nvpn"), ["fips", "nvpn"]);
+        assert_eq!(super::resolver_suffixes(" .Custom. "), ["fips", "custom"]);
+        assert_eq!(super::resolver_suffixes(""), ["fips"]);
+        assert_eq!(super::resolver_suffixes(".FIPS."), ["fips"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_split_dns_installs_and_cleans_fips_without_replacing_foreign_files() {
+        use super::{remove_macos_resolver, write_macos_resolver};
+        use std::fs;
+
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-split-dns-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("fips");
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053).unwrap();
+        let contents = fs::read_to_string(&path).unwrap();
+        assert!(contents.contains("nameserver 127.0.0.1\nport 1053\n"));
+        // A restart can update a resolver already owned by this listener.
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1054).unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("port 1054\n"));
+        remove_macos_resolver(&path).unwrap();
+        assert!(!path.exists());
+
+        let foreign = "nameserver 192.0.2.53\n";
+        fs::write(&path, foreign).unwrap();
+        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053).is_err());
+        remove_macos_resolver(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), foreign);
+        fs::remove_file(&path).unwrap();
+        let target = directory.join("foreign");
+        fs::write(&target, foreign).unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053).is_err());
+        remove_macos_resolver(&path).unwrap();
+        assert!(
+            fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_to_string(&target).unwrap(), foreign);
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

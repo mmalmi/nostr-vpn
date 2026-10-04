@@ -303,11 +303,6 @@ impl ConnectMagicDnsRuntime {
     }
 
     fn start_records(suffix: &str, records: HashMap<String, Ipv4Addr>) -> Option<Self> {
-        if records.is_empty() {
-            println!("magicdns: skipped (no configured alias records)");
-            return None;
-        }
-
         let server = match MagicDnsServer::start(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MAGIC_DNS_PORT)),
             records.clone(),
@@ -338,17 +333,6 @@ impl ConnectMagicDnsRuntime {
         let local_addr = server.local_addr();
 
         let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
-        if suffix.is_empty() {
-            println!(
-                "magicdns: local dns running on {local_addr} (system split-dns disabled; empty suffix)"
-            );
-            return Some(Self {
-                suffix,
-                resolver_installed: false,
-                server,
-            });
-        }
-
         let nameserver = match local_addr {
             SocketAddr::V4(v4) => *v4.ip(),
             SocketAddr::V6(_) => {
@@ -371,8 +355,8 @@ impl ConnectMagicDnsRuntime {
         match install_system_resolver(&resolver_config) {
             Ok(()) => {
                 println!(
-                    "magicdns: active for .{} via {}:{}",
-                    suffix, resolver_config.nameserver, resolver_config.port
+                    "magicdns: active for local names and .fips via {}:{}",
+                    resolver_config.nameserver, resolver_config.port
                 );
                 Some(Self {
                     suffix,
@@ -391,14 +375,14 @@ impl ConnectMagicDnsRuntime {
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                eprintln!(
-                    "magicdns: system resolver install failed ({error}); local dns remains on {local_addr}"
-                );
-                Some(Self {
-                    suffix,
-                    resolver_installed: false,
-                    server,
-                })
+                    eprintln!(
+                        "magicdns: system resolver install failed ({error}); local dns remains on {local_addr}"
+                    );
+                    Some(Self {
+                        suffix,
+                        resolver_installed: false,
+                        server,
+                    })
                 }
             }
         }
@@ -444,10 +428,7 @@ fn start_split_magic_dns(app: &AppConfig) -> Option<ConnectMagicDnsRuntime> {
     }
 }
 
-fn refresh_or_start_split_magic_dns(
-    runtime: &mut Option<ConnectMagicDnsRuntime>,
-    app: &AppConfig,
-) {
+fn refresh_or_start_split_magic_dns(runtime: &mut Option<ConnectMagicDnsRuntime>, app: &AppConfig) {
     if secure_exit_dns_required(app) {
         runtime.take();
         return;
@@ -462,7 +443,6 @@ fn refresh_or_start_split_magic_dns(
 impl Drop for ConnectMagicDnsRuntime {
     fn drop(&mut self) {
         if self.resolver_installed
-            && !self.suffix.is_empty()
             && let Err(error) = uninstall_system_resolver(&self.suffix)
         {
             eprintln!(
