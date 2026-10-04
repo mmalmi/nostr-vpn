@@ -234,6 +234,8 @@ fn fips_endpoint_config_for_platform(
         || !mobile.bootstrap_peers.is_empty();
     let nostr_enabled = mobile_nostr_enabled(mobile);
     config.node.discovery.nostr.enabled = nostr_enabled;
+    config.node.discovery.nostr.peerfinding_source = fips_endpoint::NostrPeerfindingSource::External;
+    config.node.discovery.nostr.advert_relays.clear();
     // Publish only the generic `udp:nat` overlay advert so roster peers can
     // bootstrap encrypted traversal offers to mobile nodes. LAN addresses are
     // not placed in that public advert; when enabled, they are carried inside
@@ -271,14 +273,6 @@ fn fips_endpoint_config_for_platform(
     // observer count members of each private network). The mesh id is still
     // used as the LAN `discovery_scope` and inside FIPS handshake payloads.
     let _ = scope;
-    if !mobile.nostr_relays.is_empty() {
-        config
-            .node
-            .discovery
-            .nostr
-            .advert_relays
-            .clone_from(&mobile.nostr_relays);
-    }
     if !mobile.stun_servers.is_empty() {
         config
             .node

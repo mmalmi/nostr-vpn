@@ -56,6 +56,7 @@ impl MobileTunnel {
             runtime,
             endpoint: Some(started.endpoint),
             state_control: started.state_control,
+            control_pubsub: started.control_pubsub,
             mesh: started.mesh,
             presence: started.presence,
             config: started.config,
@@ -121,6 +122,14 @@ impl MobileTunnel {
             .context("failed to bind mobile FIPS endpoint")?;
         mobile_debug_log("MobileTunnel::start_async FIPS endpoint bound");
         let endpoint = Arc::new(endpoint);
+        let control_pubsub = ControlPubsubFipsRuntime::start_for_peers(
+            Arc::clone(&endpoint),
+            app_config.nostr.pubsub.clone(),
+            config.nostr_relays.clone(),
+            private_state_config_path.as_deref().map(nostr_vpn_core::control_pubsub::control_pubsub_store_path),
+            &initial_peers.iter().map(|peer| peer.participant_pubkey.clone()).collect::<Vec<_>>(),
+        ).await.context("failed to start mobile Nostr pubsub")?;
+
         let mut state_control = FipsControlTcpRuntime::start(Arc::clone(&endpoint))
             .await
             .context("failed to start mobile FIPS-TCP state-control service")?;
@@ -164,7 +173,8 @@ impl MobileTunnel {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
 
         #[cfg(feature = "paid-exit")]
-        if let Some(store_path) = private_state_config_path
+        if let Some(pubsub) = control_pubsub.as_ref()
+            && let Some(store_path) = private_state_config_path
             .as_deref()
             .map(nostr_vpn_core::paid_route_store::paid_route_store_file_path)
         {
@@ -173,10 +183,10 @@ impl MobileTunnel {
                 .map_err(|_| anyhow!("mobile app config lock poisoned"))?
                 .clone();
             if pubsub_app.nostr.pubsub.enabled() {
-                let endpoint = Arc::clone(&endpoint);
+                let client = pubsub.client.clone();
                 tasks.push(tokio::spawn(async move {
                     if let Err(error) =
-                        run_mobile_paid_exit_pubsub(endpoint, pubsub_app, store_path).await
+                        run_mobile_paid_exit_pubsub(client, pubsub_app, store_path).await
                     {
                         tracing::warn!(?error, "mobile: paid exit pubsub stopped");
                     }
@@ -389,6 +399,7 @@ impl MobileTunnel {
         }
 
         if let Some(status_path) = runtime_state_path.clone() {
+            let pubsub = control_pubsub.as_ref().map(|runtime| runtime.client.clone());
             let endpoint = Arc::clone(&endpoint);
             let mesh = Arc::clone(&mesh);
             let presence = Arc::clone(&presence);
@@ -408,6 +419,7 @@ impl MobileTunnel {
                         &status_config,
                         &status_tun_counters,
                         MobileRuntimeDiagnostics {
+                            pubsub: pubsub.as_ref(),
                             secure_dns: status_secure_dns.as_ref(),
                             wireguard_handshake: status_wireguard_handshake.as_ref(),
                         },
@@ -572,6 +584,7 @@ impl MobileTunnel {
         Ok(MobileTunnelStarted {
             endpoint,
             state_control: state_control_sender,
+            control_pubsub,
             mesh,
             presence,
             config: config_state,
@@ -736,15 +749,16 @@ impl MobileTunnel {
             .read()
             .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
             .clone();
+        let pubsub = self.control_pubsub.as_ref();
         self.runtime.block_on(async move {
             let endpoint_peers = endpoint
                 .peers()
                 .await
                 .context("mobile FIPS peer snapshot")?;
-            let relay_statuses = endpoint
-                .relay_statuses()
-                .await
-                .context("mobile FIPS relay snapshot")?;
+            let relay_statuses = match pubsub {
+                Some(pubsub) => pubsub.relay_statuses().await,
+                None => Vec::new(),
+            };
             let mut state = {
                 let mesh = mobile_mesh_snapshot(&mesh)?;
                 let presence = presence

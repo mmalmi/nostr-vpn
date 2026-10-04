@@ -335,7 +335,7 @@ impl ControlEventStore {
             paid_offer_watermarks,
         };
         let bytes = serde_json::to_vec(&saved).context("failed to encode control pubsub store")?;
-        nostr_vpn_core::config::write_private_file_preserving_user_owner(path, &bytes)
+        crate::config::write_private_file_preserving_user_owner(path, &bytes)
             .with_context(|| format!("failed to write control pubsub store {}", path.display()))?;
         Ok(())
     }
@@ -414,7 +414,7 @@ mod tests {
     use nostr_sdk::{EventBuilder, ToBech32};
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
-    use nostr_vpn_core::paid_routes::{
+    use crate::paid_routes::{
         PAID_ROUTE_OFFER_TTL_SECS, PaidExitConfig, SignedPaidRouteOffer,
         signed_paid_exit_offer_from_config,
     };
@@ -667,7 +667,7 @@ mod tests {
 
     fn test_update_events() -> UpdateEventCache {
         let keys = Keys::generate();
-        let reference = nostr_vpn_core::updater::UpdateRef {
+        let reference = crate::updater::UpdateRef {
             npub: keys.public_key().to_bech32().expect("npub"),
             tree_name: "test-root".to_string(),
             path: Some("latest".to_string()),

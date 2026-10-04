@@ -1,6 +1,6 @@
 #[cfg(feature = "paid-exit")]
 pub fn flush_exit_ratings(config_path: &Path) -> Result<usize> {
-    use nostr_vpn_core::paid_route_store::{
+    use crate::paid_route_store::{
         load_paid_route_store, paid_route_store_file_path, update_paid_route_store,
     };
     let path = paid_route_store_file_path(config_path);
@@ -9,7 +9,7 @@ pub fn flush_exit_ratings(config_path: &Path) -> Result<usize> {
     for event in pending
         .into_iter()
         .filter(|event| {
-            nostr_vpn_core::paid_route_ratings::verified_exit_rating(event, now_ms() / 1000).is_ok()
+            crate::paid_route_ratings::verified_exit_rating(event, now_ms() / 1000).is_ok()
         })
         .take(8)
     {
@@ -26,8 +26,8 @@ pub fn flush_exit_ratings(config_path: &Path) -> Result<usize> {
 #[cfg(all(test, feature = "paid-exit"))]
 mod exit_rating_publication_tests {
     use super::*;
-    use nostr_vpn_core::paid_route_ratings::{EXIT_RATING_SCOPE, verified_exit_rating};
-    use nostr_vpn_core::paid_route_store::{
+    use crate::paid_route_ratings::{EXIT_RATING_SCOPE, verified_exit_rating};
+    use crate::paid_route_store::{
         load_paid_route_store, paid_route_store_file_path, update_paid_route_store,
     };
 
@@ -51,7 +51,7 @@ mod exit_rating_publication_tests {
                 &Keys::generate().public_key().to_hex(),
                 80,
                 false,
-                now - nostr_vpn_core::paid_route_ratings::EXIT_RATING_MAX_AGE - 1,
+                now - crate::paid_route_ratings::EXIT_RATING_MAX_AGE - 1,
             )?;
             Ok(())
         })

@@ -50,7 +50,12 @@ impl FipsPrivateTunnelRuntime {
         fn drain_paid_route_usage(participant: &str) -> Result<PaidRouteUsage>
     );
     mesh_delegate!(fn stale_participants_needing_path_refresh(now: u64) -> Vec<String>);
-    mesh_delegate!(async fn relay_statuses() -> Result<Vec<FipsRelayStatus>>);
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
+        Ok(match &self.control_pubsub {
+            Some(pubsub) => pubsub.relay_statuses().await.into_iter().map(|relay| FipsRelayStatus { url: relay.url, status: relay.status }).collect(),
+            None => Vec::new(),
+        })
+    }
     mesh_delegate!(async fn local_advertised_endpoints() -> Result<Vec<OverlayEndpointAdvert>>);
     mesh_delegate!(fn peer_pubkeys() -> Vec<String>);
     mesh_delegate!(async fn authenticated_endpoint_peers() -> Result<Vec<FipsEndpointPeer>>);

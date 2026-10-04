@@ -4,7 +4,7 @@ mod tests {
         AdminSignedSharedRosterUpdate, AppConfig, CLOUDFLARE_DOH_URL, ExitDnsConfig,
         ExitDnsMode, ExitDnsResolverConfig, ExitDohProvider, InternetSource,
         PaidExitSellerEgress, PendingOutboundJoinRequest, QUAD9_DOH_URL, WireGuardExitConfig,
-        effective_fips_nostr_relays, normalize_nostr_pubkey, npub_for_pubkey_hex,
+        effective_nostr_relays, normalize_nostr_pubkey, npub_for_pubkey_hex,
         parse_wireguard_exit_config, split_peer_transport_addr, wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
@@ -192,12 +192,12 @@ mod tests {
     }
 
     #[test]
-    fn empty_application_relay_list_uses_fips_discovery_defaults() {
-        let relays = effective_fips_nostr_relays(&[]);
+    fn empty_application_relay_list_uses_application_defaults() {
+        let relays = effective_nostr_relays(&[], &[]);
 
         assert!(!relays.is_empty());
         assert_eq!(
-            effective_fips_nostr_relays(&["  wss://relay.example  ".to_string()]),
+            effective_nostr_relays(&["  wss://relay.example  ".to_string()], &[]),
             vec!["wss://relay.example"]
         );
     }

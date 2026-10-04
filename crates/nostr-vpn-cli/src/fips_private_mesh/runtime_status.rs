@@ -178,22 +178,6 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
-        self.endpoint
-            .relay_statuses()
-            .await
-            .context("failed to snapshot FIPS endpoint relays")
-            .map(|relays| {
-                relays
-                    .into_iter()
-                    .map(|relay| FipsRelayStatus {
-                        url: relay.url,
-                        status: relay.status,
-                    })
-                    .collect()
-            })
-    }
-
     pub(crate) async fn local_advertised_endpoints(&self) -> Result<Vec<OverlayEndpointAdvert>> {
         self.endpoint
             .local_advertised_endpoints()
@@ -217,13 +201,6 @@ impl FipsPrivateMeshRuntime {
                     && required_ipv6.is_none_or(|ipv6| addr.is_ipv6() == ipv6)
             }))
         .then_some(configured))
-    }
-
-    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
-        self.endpoint
-            .update_relays(relays.to_vec())
-            .await
-            .context("failed to update FIPS endpoint relays")
     }
 
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {

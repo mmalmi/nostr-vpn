@@ -19,8 +19,6 @@ paid-exit = [
   "nostr-vpn-core/cashu-wallet",
   "dep:cashu-service",
   "dep:cashu",
-  "dep:nostr-pubsub-fips",
-  "dep:nostr-pubsub",
 ]
 updater = ["nostr-vpn-core/updater"]
 
@@ -38,10 +36,8 @@ nvpn-fips-core.workspace = true
 nvpn-fips-endpoint.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
-nostr-pubsub = { workspace = true, optional = true }
-nostr-pubsub-fips = { workspace = true, optional = true }
 nostr-identity.workspace = true
-nostr-vpn-core = { workspace = true, features = ["secure-dns"] }
+nostr-vpn-core = { workspace = true, features = ["control-pubsub", "secure-dns"] }
 qrcode = { version = "0.14", default-features = false }
 reqwest.workspace = true
 rqrr = "0.10"
@@ -60,6 +56,8 @@ jni = "0.21"
 ndk-context = "0.1"
 
 [dev-dependencies]
+futures-util = "0.3"
+tokio-tungstenite = "0.26.2"
 async-trait.workspace = true
 hickory-proto.workspace = true
 tracing-subscriber.workspace = true

@@ -1,3 +1,3 @@
 //! Reusable Nostr VPN runtime components.
 
-pub mod control_pubsub_runtime;
+pub use nostr_vpn_core::control_pubsub_runtime;

@@ -19,6 +19,12 @@ updater = [
   "dep:nostr-pubsub-fips",
 ]
 secure-dns = ["dep:reqwest"]
+control-pubsub = [
+  "updater",
+  "dep:nostr-pubsub-relay",
+  "dep:nostr-pubsub-social-graph",
+  "dep:nostr-social-memory",
+]
 
 [dependencies]
 anyhow.workspace = true
@@ -36,6 +42,8 @@ nvpn-fips-tcp-endpoint.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub = { workspace = true, optional = true }
 nostr-pubsub-fips = { workspace = true, optional = true }
+nostr-pubsub-relay = { workspace = true, optional = true }
+nostr-pubsub-social-graph = { workspace = true, optional = true }
 nostr-identity.workspace = true
 nostr-social-graph = { workspace = true, optional = true }
 nostr-social-memory = { workspace = true, optional = true }
@@ -76,6 +84,9 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+futures-util = "0.3"
+nostr-social-graph.workspace = true
+tokio-tungstenite = "0.26.2"
 nvpn-fips-core = { workspace = true, features = ["sim-transport"] }
 rcgen = "0.13"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

@@ -162,7 +162,6 @@
         .expect("peer config");
         let mut transport = endpoint_transport("192.168.50.20:51820", true, true, true);
         transport.stun_servers = vec!["stun:stun.example.org:3478".to_string()];
-        transport.nostr_relays = vec!["wss://relay.example.org".to_string()];
 
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let config = fips_endpoint_config_with_open_discovery_limit(
@@ -198,10 +197,8 @@
             config.node.discovery.nostr.stun_servers,
             vec!["stun:stun.example.org:3478".to_string()]
         );
-        assert_eq!(
-            config.node.discovery.nostr.advert_relays,
-            vec!["wss://relay.example.org".to_string()]
-        );
+        assert!(config.node.discovery.nostr.advert_relays.is_empty());
+        assert_eq!(config.node.discovery.nostr.peerfinding_source, fips_endpoint::NostrPeerfindingSource::External);
         let udp = &udp_carriers(&config)[FIPS_UDP_IPV4_TRANSPORT];
         assert_eq!(udp.bind_addr.as_deref(), Some("0.0.0.0:51820"));
         assert!(!udp.outbound_only());
@@ -241,7 +238,6 @@
         .expect("peer config");
         let mut transport = endpoint_transport("192.168.50.20:51820", true, false, true);
         transport.stun_servers = vec!["stun:stun.example.org:3478".to_string()];
-        transport.nostr_relays = vec!["wss://relay.example.org".to_string()];
 
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let config = fips_endpoint_config_with_open_discovery_limit(

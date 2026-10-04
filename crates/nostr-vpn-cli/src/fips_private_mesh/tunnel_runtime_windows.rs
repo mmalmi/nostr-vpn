@@ -233,9 +233,6 @@ impl FipsPrivateTunnelRuntime {
         if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
             eprintln!("fips: update_peers during apply_config failed: {error}");
         }
-        if self.config.nostr_relays != config.nostr_relays {
-            self.mesh.update_relays(&config.nostr_relays).await?;
-        }
         if starting_secure_dns {
             crate::secure_dns_runtime::SecureDnsRuntime::start_into(
                 &mut self.secure_dns,

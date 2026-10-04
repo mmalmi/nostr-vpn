@@ -451,17 +451,7 @@ fn parse_tcp_ports(input: &str) -> Vec<u16> {
 }
 
 fn effective_config_relays(config: &AppConfig) -> Vec<String> {
-    let disabled_relays = normalize_relay_urls(config.nostr.disabled_relays.clone())
-        .into_iter()
-        .collect::<std::collections::HashSet<_>>();
-    let fips = fips_endpoint::NostrDiscoveryConfig::default();
-    let mut relays = if config.nostr.relays.is_empty() {
-        normalize_relay_urls(fips.advert_relays)
-    } else {
-        normalize_relay_urls(config.nostr.relays.clone())
-    };
-    relays.retain(|relay| !disabled_relays.contains(relay));
-    relays
+    nostr_vpn_core::config::effective_nostr_relays(&config.nostr.relays, &config.nostr.disabled_relays)
 }
 
 fn short_pubkey(pubkey_hex: &str) -> String {

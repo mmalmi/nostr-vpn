@@ -243,9 +243,6 @@ impl FipsPrivateTunnelRuntime {
                 }
             }
         }
-        if self.config.nostr_relays != config.nostr_relays {
-            self.mesh.update_relays(&config.nostr_relays).await?;
-        }
         self.prepare_secure_dns(&config, cleanup_journal_config_path)
             .await?;
         self.apply_interface_config(&config).await?;

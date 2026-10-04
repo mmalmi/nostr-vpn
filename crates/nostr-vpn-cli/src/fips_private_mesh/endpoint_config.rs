@@ -14,7 +14,6 @@ struct FipsEndpointTransportConfig {
     advertise_on_nostr: bool,
     webrtc_enabled: bool,
     stun_servers: Vec<String>,
-    nostr_relays: Vec<String>,
     websocket: WebSocketConfig,
     share_local_candidates: bool,
 }
@@ -284,6 +283,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
     config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
+    config.node.discovery.nostr.advert_relays.clear();
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -323,9 +323,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
     if let Some(transport) = transport {
         config.node.discovery.nostr.bind_interface = transport.bind_interface.clone();
         config.node.discovery.nostr.stun_servers = transport.stun_servers.clone();
-        if !transport.nostr_relays.is_empty() {
-            config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
-        }
         if transport.webrtc_enabled {
             configure_fips_webrtc_transport(
                 &mut config,

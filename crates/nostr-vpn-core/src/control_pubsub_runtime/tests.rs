@@ -11,11 +11,11 @@ use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
 use nostr_social_graph::Rating;
 use nostr_social_memory::RatingEventExt;
-use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
-use nostr_vpn_core::paid_routes::{
+use crate::config::{NostrPubsubConfig, NostrPubsubMode};
+use crate::paid_routes::{
     PaidExitConfig, SignedPaidRouteOffer, signed_paid_exit_offer_from_config,
 };
-use nostr_vpn_core::updater::UpdateRef;
+use crate::updater::UpdateRef;
 
 use super::*;
 
