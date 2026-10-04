@@ -2482,9 +2482,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.87"
+version = "0.2.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8c0a192b9135976aa07e3b7be67ef0ab190e4b7decc0c2c9633fd36c49f11bf"
+checksum = "c28eeb4748b1620ef2079bdb3f476a77ac12632f55c329dc8eab0eed339ed5eb"
 dependencies = [
  "async-trait",
  "flate2",
@@ -3741,9 +3741,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "120d6c3ba6b099011edd0558b6ec257de09abf0917833428e2ff7a4cc542d8da"
+checksum = "7d8ed6dc361119da85a52e7adce2d79b7502255f8a2eb7456c43dfc13c1e99c2"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3754,9 +3754,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.18"
+version = "0.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59ca2843b41e08ea16c2f79016ad899f8877cab4822bc79dc709cb36e7739259"
+checksum = "f6e6eb38c98c4dc2e7ff0252b455f917a2a63742617d39dafa540327ce5f172c"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3770,9 +3770,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-relay"
-version = "0.1.11"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca"
+checksum = "027e2ec1493bc6082e3279d7ad2bfa3cdd1717d0597cb724dd09ded904686f76"
 dependencies = [
  "async-trait",
  "nostr-pubsub",

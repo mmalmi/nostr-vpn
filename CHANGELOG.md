@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.18 - 2026-10-04
+## 4.1.18 - 2026-10-05
 
 ### Release notes
 
@@ -23,6 +23,9 @@ support paid exits.
 
 ### Fixed
 
+- Recover interrupted event subscriptions and preserve verified update information
+  when discovery is interrupted.
+- Resolve peer names independently of Internet-sharing permissions.
 - Back off failed peer announcements without replaying partially successful
   batches.
 - Protect macOS background-service PID and runtime-state files against unsafe
