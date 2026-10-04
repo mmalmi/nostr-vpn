@@ -45,6 +45,20 @@ still use the existing `--complete-gate-from-receipts` and
 `--reuse-gate-receipts` paths. An incomplete platform set is not accepted by those
 commands.
 
+## Resource-constrained release hosts
+
+Set `NVPN_RELEASE_GATE_SERIAL=1` when the allocated hosts cannot safely overlap
+release lanes. The same phases, checks, logs and artifact receipts run in order;
+this does not skip verification. Parallel execution remains the default.
+
+The canonical Linux VM bundle builder accepts optional positive integer
+`NVPN_HOST_LINUX_VM_BUILD_CPUS` and `NVPN_HOST_LINUX_VM_CARGO_JOBS` limits, plus
+`NVPN_HOST_LINUX_VM_BUILD_MEMORY` in bytes or with a `k`, `m` or `g` suffix.
+Both local Docker and remote native builds apply these limits. The memory limit
+also caps total memory plus swap at the same value, so it permits no extra swap.
+Keep host-specific values in the release process environment. These controls do
+not replace host/device reservations, free-space checks or isolated measurements.
+
 ## iPhone testing window
 
 Compile the signed test runner for the generic iOS destination. Selecting the
