@@ -132,7 +132,7 @@
     }
 
     #[test]
-    fn empty_app_relay_config_exposes_fips_defaults() {
+    fn empty_app_relay_config_exposes_application_defaults() {
         let mut config = AppConfig::generated();
         config.nostr.relays.clear();
 
@@ -147,7 +147,7 @@
     fn disabled_app_relays_filter_effective_relays() {
         let mut config = AppConfig::generated();
         let defaults = effective_config_relays(&config);
-        let disabled = defaults.first().expect("fips default relay").clone();
+        let disabled = defaults.first().expect("application default relay").clone();
         config.nostr.disabled_relays = vec![disabled.clone()];
 
         let relays = effective_config_relays(&config);

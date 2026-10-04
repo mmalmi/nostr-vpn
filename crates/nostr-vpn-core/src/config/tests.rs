@@ -196,6 +196,7 @@ mod tests {
         let relays = effective_nostr_relays(&[], &[]);
 
         assert!(!relays.is_empty());
+        assert!(effective_nostr_relays(&[], &relays).is_empty());
         assert_eq!(
             effective_nostr_relays(&["  wss://relay.example  ".to_string()], &[]),
             vec!["wss://relay.example"]
