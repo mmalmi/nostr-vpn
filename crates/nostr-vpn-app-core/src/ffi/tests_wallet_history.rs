@@ -63,15 +63,15 @@ fn wallet_history_reads_daemon_activity_without_refreshing_mints_or_losing_invoi
     runtime.dispatch(NativeAppAction::RefreshPaidRouteWalletHistory);
     let failed = runtime.state().paid_route_market.wallet.history;
     assert_eq!(failed.entries, history.entries);
-    assert!(!failed.error.is_empty());
+    assert_ne!(failed.error, "");
 
     // An empty response is a successfully loaded empty wallet, not a spinner.
     fs::write(&response_path, r#"{"activity":[]}"#).unwrap();
     runtime.dispatch(NativeAppAction::RefreshPaidRouteWalletHistory);
     let empty = runtime.state().paid_route_market.wallet.history;
     assert!(empty.loaded);
-    assert!(empty.entries.is_empty());
-    assert!(empty.error.is_empty());
+    assert_eq!(empty.entries, [] as [crate::native_state::NativePaidRouteWalletActivityState; 0]);
+    assert_eq!(empty.error, "");
     drop(runtime);
     fs::remove_dir_all(dir).unwrap();
 }

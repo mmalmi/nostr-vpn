@@ -17,6 +17,7 @@ source "$ROOT/scripts/lib-host-linux-native-builder.sh"
 
 load_release_env "$ROOT"
 load_mobile_env "$ROOT"
+host_linux_builder_resource_args
 [[ "$(uname -s)" == "Darwin" ]] || {
   echo "Linux release artifacts must be orchestrated by the controlling Mac" >&2
   exit 2
@@ -499,7 +500,7 @@ else
     --volume "$TARGET_VOLUME_NAME:/target-root" \
     --env CARGO_HOME=/cargo-home \
     --env HOME=/cargo-home \
-    --env CARGO_INCREMENTAL=0 \
+    "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
     --env CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
     --env "NVPN_BUILD_GIT_SHA=$APP_GIT_SHA" \
     --env "EXPECTED_ROOT_REALIZED_CARGO_LOCK_SHA256=$ROOT_REALIZED_CARGO_LOCK_SHA256" \
@@ -540,7 +541,7 @@ else
     --volume "$TEMP_DIR/package-linux-target:/workspace/app/linux/target" \
     --env CARGO_HOME=/cargo-home \
     --env HOME=/cargo-home \
-    --env CARGO_INCREMENTAL=0 \
+    "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
     --env CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
     --env "NVPN_BUILD_GIT_SHA=$APP_GIT_SHA" \
     --env "EXPECTED_ROOT_REALIZED_CARGO_LOCK_SHA256=$ROOT_REALIZED_CARGO_LOCK_SHA256" \

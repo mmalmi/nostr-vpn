@@ -2,6 +2,32 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.18 - 2026-10-04
+
+### Release notes
+
+This release shares event discovery across desktop and mobile, improves signed
+update discovery, and settles Internet-sharing earnings before buyer refunds
+become available. Existing settings and identities are preserved. iOS does not
+support paid exits.
+
+### Improved
+
+- Share the event subscription and social-graph policy used for peer and
+  Internet-sharing discovery across desktop and mobile.
+- Discover signed updates from the trusted release publisher through other
+  peers and nearby applications, retaining verified release information between
+  checks.
+- Settle seller channels before buyer refund eligibility, with durable retry
+  timing and no change to the wallet balance shown for uncollected earnings.
+
+### Fixed
+
+- Back off failed peer announcements without replaying partially successful
+  batches.
+- Protect macOS background-service PID and runtime-state files against unsafe
+  paths and permissions.
+
 ## 4.1.17 - 2026-09-27
 
 ### Release notes

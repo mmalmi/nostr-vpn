@@ -4,11 +4,11 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 REMOTE_ROOT APP_BUNDLE_SHA APP_SHA APP_TREE FIPS_BUNDLE_SHA FIPS_SHA FIPS_TREE RUST_TOOLCHAIN CACHE_ID TARGET_GENERATION TARGET_VOLUME CONTAINER_NAME ROOT_REALIZED_LOCK LINUX_REALIZED_LOCK SOURCE_DATE_EPOCH DOCKERFILE_SHA PAYLOAD_SHA" >&2
+  echo "usage: $0 REMOTE_ROOT APP_BUNDLE_SHA APP_SHA APP_TREE FIPS_BUNDLE_SHA FIPS_SHA FIPS_TREE RUST_TOOLCHAIN CACHE_ID TARGET_GENERATION TARGET_VOLUME CONTAINER_NAME ROOT_REALIZED_LOCK LINUX_REALIZED_LOCK SOURCE_DATE_EPOCH DOCKERFILE_SHA PAYLOAD_SHA BUILD_CPUS BUILD_MEMORY CARGO_JOBS" >&2
   exit 2
 }
 
-[[ "$#" == 17 ]] || usage
+[[ "$#" == 20 ]] || usage
 REMOTE_ROOT="$1"
 APP_BUNDLE_SHA256="$2"
 APP_GIT_SHA="$3"
@@ -26,6 +26,12 @@ LINUX_REALIZED_CARGO_LOCK_SHA256="${14}"
 SOURCE_DATE_EPOCH="${15}"
 EXPECTED_DOCKERFILE_SHA256="${16}"
 EXPECTED_PAYLOAD_SHA256="${17}"
+export NVPN_HOST_LINUX_VM_BUILD_CPUS="${18}"
+export NVPN_HOST_LINUX_VM_BUILD_MEMORY="${19}"
+export NVPN_HOST_LINUX_VM_CARGO_JOBS="${20}"
+for resource in NVPN_HOST_LINUX_VM_BUILD_CPUS NVPN_HOST_LINUX_VM_BUILD_MEMORY NVPN_HOST_LINUX_VM_CARGO_JOBS; do
+  [[ "${!resource}" != - ]] || unset "$resource"
+done
 
 EXPECTED_RUNS_ROOT="$HOME/.cache/nostr-vpn-linux-release-builder/runs"
 [[ -d "$EXPECTED_RUNS_ROOT" \
@@ -235,6 +241,7 @@ flock 9
 
 # shellcheck disable=SC1091
 source "$REMOTE_ROOT/app/scripts/lib-host-linux-builder-isolation.sh"
+host_linux_builder_resource_args
 host_linux_builder_stop_container "$CONTAINER_NAME" "$BUILD_CACHE_ID"
 host_linux_builder_stop_container "$OWNER_CONTAINER_NAME" "$BUILD_CACHE_ID"
 host_linux_builder_create_fresh_target_volume \
@@ -329,7 +336,7 @@ run_builder_phase() {
     "${package_mounts[@]}" \
     --env CARGO_HOME=/cargo-home \
     --env HOME=/cargo-home \
-    --env CARGO_INCREMENTAL=0 \
+    "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
     --env CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
     --env "NVPN_BUILD_GIT_SHA=$APP_GIT_SHA" \
     --env "EXPECTED_ROOT_REALIZED_CARGO_LOCK_SHA256=$ROOT_REALIZED_CARGO_LOCK_SHA256" \

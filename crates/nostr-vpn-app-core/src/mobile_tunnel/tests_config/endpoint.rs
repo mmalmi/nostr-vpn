@@ -104,7 +104,7 @@
         );
         // The mesh id must NOT appear in the publicly visible relay app tag.
         assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
-        assert!(config.node.discovery.nostr.advert_relays.is_empty());
+        assert_eq!(config.node.discovery.nostr.advert_relays, [] as [std::string::String; 0]);
         assert_eq!(config.node.discovery.nostr.peerfinding_source, fips_endpoint::NostrPeerfindingSource::External);
         assert_eq!(
             config.node.discovery.nostr.stun_servers,

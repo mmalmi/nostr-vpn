@@ -266,9 +266,10 @@ async fn secure_selection(
         _ => AppConfig::default(),
     };
     ensure!(app.nostr.pubsub.enabled(), "Nostr pubsub is disabled");
-    let (endpoint, client) = tokio::time::timeout(Duration::from_secs(4), update_pubsub(&app))
-        .await
-        .context("timed out starting update pubsub")??;
+    let (endpoint, client) =
+        tokio::time::timeout(Duration::from_secs(4), update_pubsub(&app, &reference))
+            .await
+            .context("timed out starting update pubsub")??;
     let selection = secure_selection_with_pubsub(
         current_version,
         mode,
@@ -383,7 +384,13 @@ pub fn configured_update_ref() -> Result<UpdateRef> {
 
 // Standalone CLI/desktop checks have no VPN runtime in this process. Join the
 // same FIPS mesh with an ephemeral identity, without a tunnel or relay client.
-async fn update_pubsub(app: &AppConfig) -> Result<(Arc<FipsEndpoint>, Arc<FipsPubsubClient>)> {
+async fn update_pubsub(
+    app: &AppConfig,
+    reference: &UpdateRef,
+) -> Result<(Arc<FipsEndpoint>, Arc<FipsPubsubClient>)> {
+    let publisher = fips_core::PeerIdentity::from_npub(&reference.npub)
+        .context("invalid update publisher")?
+        .npub();
     let endpoint = Arc::new(
         FipsEndpoint::builder()
             .config(update_endpoint_config(app))
@@ -395,6 +402,9 @@ async fn update_pubsub(app: &AppConfig) -> Result<(Arc<FipsEndpoint>, Arc<FipsPu
     let client = FipsPubsubClient::start(
         Arc::clone(&endpoint),
         FipsPubsubClientOptions {
+            // Route only to the configured release authority, never to
+            // arbitrary event authors learned from peers.
+            routed_peers: vec![publisher],
             fanout: app.nostr.pubsub.fanout,
             max_hops: app.nostr.pubsub.max_hops,
             max_frame_bytes: app
@@ -772,16 +782,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn updater_discovers_signed_roots_from_configured_websocket_seed_without_vpn_or_relays() {
+    async fn updater_rejects_invalid_authority_without_changing_network_defaults() {
+        let app = AppConfig::default();
+        let reference = UpdateRef::parse(HTREE_UPDATE_REF).expect("default release reference");
+        assert!(fips_core::PeerIdentity::from_npub(&reference.npub).is_ok());
+        let config = update_endpoint_config(&app);
+        assert!(!config.node.discovery.nostr.enabled);
+        assert!(!config.node.discovery.lan.enabled);
+        assert!(!config.node.control.enabled);
+        assert!(!config.dns.enabled);
+        let invalid = UpdateRef {
+            npub: "untrusted-invalid-publisher".to_string(),
+            ..reference
+        };
+        let error = update_pubsub(&app, &invalid)
+            .await
+            .err()
+            .expect("invalid authority rejected before endpoint startup");
+        assert!(error.to_string().contains("invalid update publisher"));
+    }
+
+    #[tokio::test]
+    async fn updater_discovers_retained_signed_root_through_transit_without_vpn_or_relays() {
         use nostr_pubsub::{EventBus, EventSource, VerifiedEvent};
-        use nostr_sdk::prelude::{EventBuilder, Filter, Keys, Kind, Tag, TagKind};
+        use nostr_sdk::prelude::{EventBuilder, Filter, Keys, Kind, Tag, TagKind, ToBech32};
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("seed port");
         let address = listener.local_addr().expect("seed address");
         drop(listener);
-        let mut app = AppConfig::default();
-        app.fips_bootstrap_enabled = false;
-        app.fips_websocket_seed_urls = vec!["ws://unused.invalid/fips".to_string()];
+        let mut app = AppConfig {
+            fips_bootstrap_enabled: false,
+            fips_websocket_seed_urls: vec!["ws://unused.invalid/fips".to_string()],
+            ..AppConfig::default()
+        };
         let mut seed_config = update_endpoint_config(&app);
         assert!(!seed_config.node.discovery.nostr.enabled);
         assert!(!seed_config.dns.enabled);
@@ -797,16 +830,43 @@ mod tests {
                 .without_system_tun()
                 .bind()
                 .await
-                .expect("seed endpoint"),
+                .expect("transit endpoint"),
         );
-        let publisher =
-            FipsPubsubClient::start(Arc::clone(&seed), FipsPubsubClientOptions::default())
-                .await
-                .expect("seed pubsub");
+        app.fips_peer_endpoints.insert(
+            seed.npub().to_string(),
+            vec![format!("websocket:ws://{address}/fips")],
+        );
         let keys = Keys::generate();
+        let reference = UpdateRef {
+            npub: keys.public_key().to_bech32().expect("release authority"),
+            tree_name: "releases/test-update".to_string(),
+            path: None,
+        };
+        // The transit never runs pubsub or retains this event. The provider
+        // accepts routed clients without knowing their ephemeral identities.
+        let mut publisher_config = update_endpoint_config(&app);
+        publisher_config.node.discovery.local.enabled = false;
+        let publisher_endpoint = Arc::new(
+            FipsEndpoint::builder()
+                .config(publisher_config)
+                .identity_nsec(keys.secret_key().to_bech32().expect("publisher key"))
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("publisher endpoint"),
+        );
+        let publisher = FipsPubsubClient::start(
+            Arc::clone(&publisher_endpoint),
+            FipsPubsubClientOptions {
+                max_inbound_routed_peers: 1,
+                ..FipsPubsubClientOptions::default()
+            },
+        )
+        .await
+        .expect("publisher pubsub");
         let event = EventBuilder::new(Kind::Custom(30_064), "")
             .tags([
-                Tag::identifier("releases/test-update"),
+                Tag::identifier(&reference.tree_name),
                 Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
                 Tag::custom(TagKind::Custom("hash".into()), ["ab".repeat(32)]),
             ])
@@ -818,12 +878,9 @@ mod tests {
                 EventSource::local_index("release-publisher"),
             )
             .await
-            .expect("retain root at seed");
-        app.fips_peer_endpoints.insert(
-            seed.npub().to_string(),
-            vec![format!("websocket:ws://{address}/fips")],
-        );
-        let (endpoint, client) = update_pubsub(&app)
+            .expect("retain root before client exists");
+        let started = std::time::Instant::now();
+        let (endpoint, client) = update_pubsub(&app, &reference)
             .await
             .expect("standalone updater network");
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -834,7 +891,7 @@ mod tests {
                     Filter::new()
                         .author(keys.public_key())
                         .kind(Kind::Custom(30_064))
-                        .identifier("releases/test-update"),
+                        .identifier(&reference.tree_name),
                 ],
                 Arc::new(move |delivery| {
                     let _ = tx.send(delivery);
@@ -842,11 +899,15 @@ mod tests {
             )
             .await
             .expect("fresh update subscription");
-        let delivery = tokio::time::timeout(Duration::from_secs(15), rx.recv())
-            .await
-            .expect("seed replay before deadline")
-            .expect("signed update received");
-        assert_eq!(delivery.event.as_event().id, event.id);
+        let received = tokio::time::timeout(Duration::from_secs(8), rx.recv()).await;
+        let elapsed = started.elapsed();
+        eprintln!("retained signed update through transit: {elapsed:?}");
+        let peers = endpoint.peers().await.expect("client physical peers");
+        assert!(
+            !peers
+                .iter()
+                .any(|peer| peer.npub == reference.npub && peer.connected)
+        );
         assert!(
             endpoint
                 .relay_statuses()
@@ -854,11 +915,27 @@ mod tests {
                 .expect("relay status")
                 .is_empty()
         );
-        subscription.close().await.expect("close subscription");
+        subscription
+            .close()
+            .await
+            .expect("close update subscription");
         client.shutdown_shared().await;
         endpoint.shutdown().await.expect("stop updater endpoint");
         publisher.shutdown().await;
-        seed.shutdown().await.expect("stop seed");
+        publisher_endpoint.shutdown().await.expect("stop publisher");
+        seed.shutdown().await.expect("stop transit");
+        let delivery = received
+            .expect("fresh routed root before deadline")
+            .expect("signed root");
+        assert_eq!(delivery.event.as_event().id, event.id);
+        assert_ne!(
+            delivery.source.kind,
+            nostr_pubsub::EventSourceKind::LocalIndex
+        );
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "startup and signed replay: {elapsed:?}"
+        );
     }
 
     #[tokio::test]
@@ -881,18 +958,23 @@ mod tests {
             serde_json::to_vec(&serde_json::json!({ "events": [cached] })).expect("cache JSON"),
         )
         .expect("write cached root");
-        let mut app = AppConfig::default();
-        app.fips_bootstrap_enabled = false;
-        let (endpoint, client) = update_pubsub(&app).await.expect("offline updater network");
+        let app = AppConfig {
+            fips_bootstrap_enabled: false,
+            ..AppConfig::default()
+        };
+        let reference = UpdateRef {
+            npub: keys.public_key().to_bech32().expect("release publisher"),
+            tree_name: "releases/offline-test".to_string(),
+            path: Some("latest".to_string()),
+        };
+        let (endpoint, client) = update_pubsub(&app, &reference)
+            .await
+            .expect("offline updater network");
         let result = secure_selection_with_pubsub(
             "9999.0.0",
             ProductUpdateMode::Cli,
             Arc::new(client.fresh_subscriber()),
-            UpdateRef {
-                npub: keys.public_key().to_bech32().expect("release publisher"),
-                tree_name: "releases/offline-test".to_string(),
-                path: Some("latest".to_string()),
-            },
+            reference,
             Some(&config_path),
         )
         .await;

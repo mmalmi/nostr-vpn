@@ -501,7 +501,7 @@ mod tests {
                     stale: false,
                 },
             );
-            assert!(wallet.exchange_rate_status.is_empty());
+            assert_eq!(wallet.exchange_rate_status, "");
         }
     }
 
@@ -543,7 +543,7 @@ mod tests {
         assert_eq!(wallet.navigation_balance_text, "≈ €0.10");
         assert_eq!(wallet.channel_balance_text, "≈ €0.20 in channels");
         assert_eq!(wallet.mints[0].balance_text, "≈ €0.10");
-        assert!(wallet.mints[1].balance_text.is_empty());
+        assert_eq!(wallet.mints[1].balance_text, "");
         assert_eq!(wallet.last_action.amount_text, "≈ €0.10");
         assert_eq!(wallet.last_action.fee_text, "≈ €0.0008 fee");
         assert_eq!(wallet.exchange_rate_status, "Using last rate");

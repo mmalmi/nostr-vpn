@@ -118,7 +118,7 @@
             ..DaemonRuntimeState::default()
         };
 
-        assert!(effective_config_relays(&app).is_empty());
+        assert_eq!(effective_config_relays(&app), [] as [std::string::String; 0]);
         assert_eq!(
             paid_exit::paid_exit_seller_status(
                 &app,
@@ -138,7 +138,7 @@
 
         let relays = effective_config_relays(&config);
 
-        assert!(!relays.is_empty());
+        assert_ne!(relays, [] as [std::string::String; 0]);
         assert!(relays.iter().all(|relay| relay.starts_with("wss://")));
         assert!(relays.contains(&"wss://temp.iris.to".to_string()));
     }
@@ -180,10 +180,10 @@
         assert_eq!(runtime.config.node_name, "iPhone");
         assert_eq!(saved.node_name, "iPhone");
         assert!(saved.networks.is_empty());
-        assert!(!saved.nostr.secret_key.trim().is_empty());
-        assert!(!saved.nostr.public_key.trim().is_empty());
+        assert_ne!(saved.nostr.secret_key.trim(), "");
+        assert_ne!(saved.nostr.public_key.trim(), "");
         let first_join_link = runtime.state().join_request_qr_code_or_link;
-        assert!(first_join_link.is_empty());
+        assert_eq!(first_join_link, "");
         assert!(saved.pending_nostr_join_request.is_none());
         let raw = fs::read_to_string(&config_path).expect("read persisted config");
         assert!(raw.contains("[nostr]"));
@@ -193,7 +193,7 @@
         drop(runtime);
         let reloaded = NativeAppRuntime::new(dir.to_str().expect("utf8 temp dir"), String::new())
             .expect("runtime reloads");
-        assert!(reloaded.state().join_request_qr_code_or_link.is_empty());
+        assert_eq!(reloaded.state().join_request_qr_code_or_link, "");
 
         drop(reloaded);
         let _ = fs::remove_dir_all(&dir);
@@ -319,13 +319,13 @@
         let state = runtime.state();
 
         assert_eq!(state.error, "boom");
-        assert!(state.own_pubkey_hex.is_empty());
-        assert!(state.node_name.is_empty());
-        assert!(state.tunnel_ip.is_empty());
-        assert!(state.network_id.is_empty());
+        assert_eq!(state.own_pubkey_hex, "");
+        assert_eq!(state.node_name, "");
+        assert_eq!(state.tunnel_ip, "");
+        assert_eq!(state.network_id, "");
         assert_eq!(state.expected_peer_count, 0);
         assert_eq!(state.connected_peer_count, 0);
-        assert!(state.networks.is_empty());
+        assert_eq!(state.networks, [] as [crate::native_state::NativeNetworkState; 0]);
     }
 
     #[test]
@@ -345,11 +345,11 @@
         );
         let initial = app.state();
         assert_eq!(initial.config_path, config_path.display().to_string());
-        assert!(!initial.error.is_empty());
+        assert_ne!(initial.error, "");
 
         let refreshed = app.refresh();
         assert_eq!(refreshed.config_path, config_path.display().to_string());
-        assert!(!refreshed.error.is_empty());
+        assert_ne!(refreshed.error, "");
         assert_eq!(
             fs::read_to_string(&config_path).expect("read original config"),
             "not valid toml"
@@ -412,8 +412,8 @@
 
         assert!(state.error.is_empty(), "{}", state.error);
         assert_eq!(state.node_name, "real-config");
-        assert!(state.networks.is_empty());
-        assert!(state.network_id.is_empty());
+        assert_eq!(state.networks, [] as [crate::native_state::NativeNetworkState; 0]);
+        assert_eq!(state.network_id, "");
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -435,8 +435,8 @@
 
         let state = runtime.state();
         assert!(runtime.config.networks.is_empty());
-        assert!(state.networks.is_empty());
-        assert!(state.network_id.is_empty());
+        assert_eq!(state.networks, [] as [crate::native_state::NativeNetworkState; 0]);
+        assert_eq!(state.network_id, "");
 
         runtime.dispatch(NativeAppAction::AddNetwork {
             name: "Home".to_string(),
@@ -447,7 +447,7 @@
         assert_eq!(runtime.config.networks.len(), 1);
         assert_eq!(state.networks.len(), 1);
         assert_eq!(state.networks[0].name, "Home");
-        assert!(!state.network_id.is_empty());
+        assert_ne!(state.network_id, "");
         assert_eq!(state.expected_peer_count, 0);
 
         let _ = fs::remove_dir_all(&dir);

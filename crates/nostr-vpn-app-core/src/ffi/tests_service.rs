@@ -935,7 +935,7 @@ exit 0
         });
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert!(!runtime.config.wireguard_exit.enabled);
-        assert!(!runtime.config.exit_node.is_empty());
+        assert_ne!(runtime.config.exit_node, "");
 
         // Flip back to WG: peer exit must clear.
         runtime.dispatch(NativeAppAction::UpdateSettings {

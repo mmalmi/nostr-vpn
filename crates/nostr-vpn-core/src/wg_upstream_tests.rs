@@ -13,11 +13,11 @@ mod tests {
 
     fn internet_checksum(bytes: &[u8]) -> u16 {
         let mut sum = 0u32;
-        let mut chunks = bytes.chunks_exact(2);
-        for chunk in &mut chunks {
-            sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+        let (chunks, remainder) = bytes.as_chunks::<2>();
+        for chunk in chunks {
+            sum += u16::from_be_bytes(*chunk) as u32;
         }
-        if let Some(&byte) = chunks.remainder().first() {
+        if let Some(&byte) = remainder.first() {
             sum += u16::from_be_bytes([byte, 0]) as u32;
         }
         while (sum >> 16) != 0 {

@@ -9,7 +9,7 @@
         let config = MobileTunnelConfig::from_app(&app).expect("manual bootstrap config");
         let endpoint = fips_endpoint_config("nostr-vpn:pending-manual-join", &config);
 
-        assert!(config.network_id.is_empty());
+        assert_eq!(config.network_id, "");
         assert_eq!(config.peers.len(), 1);
         assert_eq!(config.peers[0].participant_pubkey, admin);
         assert!(
@@ -22,7 +22,7 @@
             endpoint.node.discovery.nostr.advertise,
             "a manual joiner must publish an encrypted return path for its approval"
         );
-        assert!(config.route_targets.is_empty());
+        assert_eq!(config.route_targets, [] as [std::string::String; 0]);
         assert!(
             config.dns_servers.is_empty(),
             "an addressless joiner must keep using the device DNS until a roster arrives"
@@ -31,7 +31,7 @@
             config.magic_dns_server.is_empty(),
             "MagicDNS is unavailable before the joiner has a mesh"
         );
-        assert!(config.dns_match_domains.is_empty());
+        assert_eq!(config.dns_match_domains, [] as [std::string::String; 0]);
         assert_eq!(app.active_network().network_id, "manual-mesh");
         assert_eq!(app.active_network().join_request_admin, admin);
 
@@ -60,11 +60,11 @@
         );
         assert_eq!(still_pending.peers.len(), 1);
         assert_eq!(still_pending.peers[0].participant_pubkey, admin);
-        assert!(still_pending.peers[0].allowed_ips.is_empty());
-        assert!(still_pending.route_targets.is_empty());
-        assert!(still_pending.dns_servers.is_empty());
-        assert!(still_pending.magic_dns_server.is_empty());
-        assert!(still_pending.dns_match_domains.is_empty());
+        assert_eq!(still_pending.peers[0].allowed_ips, [] as [std::string::String; 0]);
+        assert_eq!(still_pending.route_targets, [] as [std::string::String; 0]);
+        assert_eq!(still_pending.dns_servers, [] as [std::string::String; 0]);
+        assert_eq!(still_pending.magic_dns_server, "");
+        assert_eq!(still_pending.dns_match_domains, [] as [std::string::String; 0]);
     }
 
     #[test]
@@ -98,7 +98,7 @@
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
 
         assert!(mobile.join_requests_enabled);
-        assert!(mobile.peers.is_empty());
+        assert_eq!(mobile.peers, [] as [nostr_vpn_core::fips_mesh::FipsMeshPeerConfig; 0]);
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(

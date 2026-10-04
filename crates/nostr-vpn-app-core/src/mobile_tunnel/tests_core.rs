@@ -333,7 +333,7 @@
 
         let config = MobileTunnelConfig::from_app(&app).expect("direct mobile config");
 
-        assert!(config.peers.is_empty());
+        assert_eq!(config.peers, [] as [nostr_vpn_core::fips_mesh::FipsMeshPeerConfig; 0]);
         assert_eq!(config.route_targets, vec![MESH_TUNNEL_IPV4_CIDR]);
         assert!(config.wireguard_exit.is_none());
     }
@@ -917,7 +917,7 @@
 
         assert_eq!(config.peers.len(), 1);
         assert_eq!(config.peers[0].participant_pubkey, admin);
-        assert!(config.peers[0].allowed_ips.is_empty());
+        assert_eq!(config.peers[0].allowed_ips, [] as [std::string::String; 0]);
         assert!(
             !config
                 .route_targets

@@ -16,9 +16,7 @@ fn mobile_relay_discovery_uses_shared_pubsub_across_reconnect_and_restart() {
 }
 
 async fn mobile_relay_pubsub_roundtrip() {
-    use futures_util::{SinkExt, StreamExt};
     use nostr_sdk::prelude::{EventBuilder, Kind, Tag, TagKind, Timestamp};
-    use tokio_tungstenite::tungstenite::Message;
 
     let peer_keys = Keys::generate();
     let advert = EventBuilder::new(
@@ -38,57 +36,7 @@ async fn mobile_relay_pubsub_roundtrip() {
     ])
     .sign_with_keys(&peer_keys)
     .unwrap();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let relay_url = format!("ws://{}", listener.local_addr().unwrap());
-    let connections = Arc::new(AtomicUsize::new(0));
-    let seen_connections = Arc::clone(&connections);
-    let replay = advert.clone();
-    let server = tokio::spawn(async move {
-        loop {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-            let connection = seen_connections.fetch_add(1, Ordering::SeqCst);
-            while let Some(Ok(message)) = socket.next().await {
-                let Ok(value) = serde_json::from_slice::<serde_json::Value>(&message.into_data())
-                else {
-                    continue;
-                };
-                match value[0].as_str() {
-                    Some("REQ") => {
-                        socket
-                            .send(Message::Text(
-                                serde_json::json!(["EVENT", value[1], replay])
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await
-                            .unwrap();
-                        socket
-                            .send(Message::Text(
-                                serde_json::json!(["EOSE", value[1]]).to_string().into(),
-                            ))
-                            .await
-                            .unwrap();
-                        if connection == 0 {
-                            socket.close(None).await.unwrap();
-                            break;
-                        }
-                    }
-                    Some("EVENT") => {
-                        socket
-                            .send(Message::Text(
-                                serde_json::json!(["OK", value[1]["id"], true, ""])
-                                    .to_string()
-                                    .into(),
-                            ))
-                            .await
-                            .unwrap();
-                    }
-                    _ => {}
-                }
-            }
-        }
-    });
+    let (relay_url, connections, server) = reconnecting_test_relay(advert.clone()).await;
 
     let mut app = AppConfig::generated();
     app.nostr.relays = vec![relay_url.clone()];
@@ -140,4 +88,63 @@ async fn mobile_relay_pubsub_roundtrip() {
     }
     server.abort();
     let _ = server.await;
+}
+
+async fn reconnecting_test_relay(
+    replay: nostr_sdk::prelude::Event,
+) -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let relay_url = format!("ws://{}", listener.local_addr().unwrap());
+    let connections = Arc::new(AtomicUsize::new(0));
+    let seen_connections = Arc::clone(&connections);
+    let server = tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let connection = seen_connections.fetch_add(1, Ordering::SeqCst);
+            while let Some(Ok(message)) = socket.next().await {
+                let Ok(value) = serde_json::from_slice::<serde_json::Value>(&message.into_data())
+                else {
+                    continue;
+                };
+                match value[0].as_str() {
+                    Some("REQ") => {
+                        socket
+                            .send(Message::Text(
+                                serde_json::json!(["EVENT", value[1], replay])
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .unwrap();
+                        socket
+                            .send(Message::Text(
+                                serde_json::json!(["EOSE", value[1]]).to_string().into(),
+                            ))
+                            .await
+                            .unwrap();
+                        if connection == 0 {
+                            socket.close(None).await.unwrap();
+                            break;
+                        }
+                    }
+                    Some("EVENT") => {
+                        socket
+                            .send(Message::Text(
+                                serde_json::json!(["OK", value[1]["id"], true, ""])
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await
+                            .unwrap();
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+    (relay_url, connections, server)
 }

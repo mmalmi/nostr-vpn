@@ -13,7 +13,7 @@ const functions = [
   'main',
 ].map((name) => source.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, 'm'))?.[0] ?? '').join('\n')
 
-function runRoute(command, { complete = '0', full = false, failCheck = '' } = {}) {
+function runRoute(command, { complete = '0', full = false, failCheck = '', serial = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-hosted-route-'))
   try {
     const result = spawnSync('bash', ['-c', `
@@ -55,9 +55,20 @@ windows_platform_lane_requested() {
 }
 macos_platform_lane_requested() { return 0; }
 linux_platform_lane_requested() { return 0; }
+${serial ? `
+source "$2/scripts/lib-release-gate-parallel.sh"
+eval "$(declare -f release_gate_parallel_start | sed '1s/release_gate_parallel_start/real_lane_start/')"
+record_lane() { echo "executed:$1"; }
+release_gate_parallel_start() {
+  local label="$1"
+  shift
+  echo "lane:$label"
+  real_lane_start "$label" record_lane "$label"
+}
+` : ''}
 ${functions}
 ${command}
-`, '_', root], {
+`, '_', root, process.cwd()], {
       cwd: root,
       encoding: 'utf8',
       timeout: 10_000,
@@ -67,6 +78,7 @@ ${command}
         NVPN_RELEASE_GATE_REQUIRE_COMPLETE: complete,
         NVPN_TEST_FULL_ROUTE: full ? '1' : '0',
         NVPN_TEST_FAIL_CHECK: failCheck,
+        NVPN_RELEASE_GATE_SERIAL: serial ? '1' : '0',
       },
     })
     return { ...result, files: readdirSync(root, { recursive: true }) }
@@ -374,4 +386,17 @@ ${fixture.slice(start, end)}
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test('serial full gate preserves every phase from the default route', () => {
+  const parallel = runRoute('main', { full: true })
+  const serial = runRoute('main', { full: true, serial: true })
+  assert.equal(parallel.status, 0, parallel.stderr)
+  assert.equal(serial.status, 0, serial.stdout + serial.stderr)
+  const phases = r => r.stdout.split('\n').filter(line => /^(check|lane):/.test(line))
+  assert.deepEqual(phases(serial), phases(parallel))
+  const lanes = phases(parallel).filter(line => line.startsWith('lane:')).map(line => line.slice(5))
+  const executed = serial.stdout.split('\n').filter(line => line.startsWith('executed:')).map(line => line.slice(9))
+  assert.deepEqual(executed, lanes)
+  assert.match(serial.stdout, /Release gate passed/)
 })

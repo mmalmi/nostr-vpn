@@ -16,8 +16,10 @@ const HOUR: u64 = 3_600;
 fn channel(lifetime: u64) -> (PaidRouteStore, PaidExitConfig, String, String) {
     let seller = Keys::generate();
     let buyer = Keys::generate();
-    let mut config = PaidExitConfig::default();
-    config.enabled = true;
+    let mut config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     config.channel.accepted_mints = vec!["https://mint.example".into()];
     config.channel.channel_expiry_secs = lifetime;
     let signed = signed_paid_exit_offer_from_config("exit", &seller, &config, None, START).unwrap();
