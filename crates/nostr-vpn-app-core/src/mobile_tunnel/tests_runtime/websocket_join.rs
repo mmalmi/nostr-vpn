@@ -549,7 +549,7 @@
         let retried_config = guest
             .take_app_config_toml()
             .expect("retry interrupted UI handoff");
-        assert!(!retried_config.is_empty());
+        assert_ne!(retried_config, "");
         assert_eq!(
             toml::from_str::<toml::Value>(&retried_config)
                 .expect("decode retried UI handoff"),

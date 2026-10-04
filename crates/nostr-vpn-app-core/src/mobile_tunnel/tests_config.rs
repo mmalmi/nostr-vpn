@@ -163,7 +163,7 @@
             .iter()
             .find(|peer| peer.participant_pubkey == provider_pubkey)
             .expect("manual provider control peer");
-        assert!(provider_peer.allowed_ips.is_empty());
+        assert_eq!(provider_peer.allowed_ips, [] as [std::string::String; 0]);
         assert!(!mobile.route_targets.iter().any(|route| route == "0.0.0.0/0"));
 
         let endpoint = fips_endpoint_config("manual-provider", &mobile);
@@ -172,7 +172,7 @@
             .iter()
             .find(|peer| peer.npub == provider_npub)
             .expect("manual provider endpoint peer");
-        assert!(provider_endpoint.addresses.is_empty());
+        assert_eq!(provider_endpoint.addresses, [] as [fips_endpoint::PeerAddress; 0]);
         assert!(provider_endpoint.discovery_fallback_transit);
         assert!(!endpoint.node.discovery.nostr.enabled);
         assert_eq!(
@@ -480,7 +480,7 @@
             .as_ref()
             .expect("IPv6 WG config");
         assert_eq!(ipv6_wg.endpoint, "[2001:db8::20]:51820");
-        assert!(ipv6_transport.excluded_routes.is_empty());
+        assert_eq!(ipv6_transport.excluded_routes, [] as [std::string::String; 0]);
         assert!(
             ipv6_transport
                 .route_targets
@@ -551,7 +551,7 @@
         app.set_internet_source(nostr_vpn_core::config::InternetSource::Direct);
         let direct = MobileTunnelConfig::from_app(&app).expect("direct mobile config");
         assert!(direct.wireguard_exit.is_none());
-        assert!(active_mobile_exit_dns_servers(&direct).unwrap().is_empty());
+        assert_eq!(active_mobile_exit_dns_servers(&direct).unwrap(), [] as [std::net::Ipv4Addr; 0]);
         assert_eq!(direct.dns_match_domains, vec!["nvpn"]);
     }
 
@@ -574,7 +574,7 @@
         config.exit_dns.mode = nostr_vpn_core::config::ExitDnsMode::Encrypted;
         config.exit_dns.doh_provider = nostr_vpn_core::config::ExitDohProvider::Quad9;
 
-        assert!(active_mobile_exit_dns_servers(&config).unwrap().is_empty());
+        assert_eq!(active_mobile_exit_dns_servers(&config).unwrap(), [] as [std::net::Ipv4Addr; 0]);
         assert!(matches!(
             mobile_exit_dns_resolver_config(&config).unwrap(),
             ExitDnsResolverConfig::Doh { url, .. }
@@ -829,10 +829,10 @@
         assert_eq!(launch.queued_join_rosters[0].recipient_npub, peer);
         assert!(launch.signed_roster.is_some());
         let launch_config = launch.tunnel;
-        assert!(launch_config.app_config_toml.is_empty());
-        assert!(launch_config.identity_nsec.is_empty());
-        assert!(launch_config.join_secret.is_empty());
-        assert!(launch_config.pending_join_secret.is_empty());
+        assert_eq!(launch_config.app_config_toml, "");
+        assert_eq!(launch_config.identity_nsec, "");
+        assert_eq!(launch_config.join_secret, "");
+        assert_eq!(launch_config.pending_join_secret, "");
         assert_eq!(
             launch_config
                 .wireguard_exit
@@ -901,7 +901,7 @@
                 .private_key,
             "client-private-key"
         );
-        assert!(provider_runtime.config_path.is_empty());
+        assert_eq!(provider_runtime.config_path, "");
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -929,7 +929,7 @@
             tunnel_provider_options_config_json(dir.to_str().expect("utf8 temp dir"));
         let launch: MobileTunnelLaunchConfig =
             serde_json::from_str(&provider_json).expect("provider launch config");
-        assert!(launch.tunnel.config_path.is_empty());
+        assert_eq!(launch.tunnel.config_path, "");
         assert_eq!(
             PathBuf::from(&launch.private_state_config_path),
             config_path

@@ -78,6 +78,10 @@ pub struct MeshPeerStatus {
     pub error: Option<String>,
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait adds must_use to generated Future-returning methods"
+)]
 #[async_trait]
 pub trait PrivateMeshBackend: Send {
     async fn start(&mut self, roster: MeshRoster, routes: RoutePolicy) -> Result<()>;

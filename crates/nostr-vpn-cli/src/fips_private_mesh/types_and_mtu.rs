@@ -528,6 +528,10 @@ fn endpoint_identity_for_send(
         })
 }
 
+#[allow(
+    deprecated,
+    reason = "fetch_update retains compatibility with the Rust 1.93 release fixtures"
+)]
 fn saturating_atomic_add(counter: &AtomicU64, value: u64) {
     let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         Some(current.saturating_add(value))

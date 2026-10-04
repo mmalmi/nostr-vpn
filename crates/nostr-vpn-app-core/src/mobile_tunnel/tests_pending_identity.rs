@@ -18,10 +18,10 @@
         let config =
             MobileTunnelConfig::from_app(&app).expect("malformed pending manual bootstrap config");
 
-        assert!(config.network_id.is_empty());
-        assert!(config.peers.is_empty());
-        assert!(config.route_targets.is_empty());
-        assert!(config.dns_servers.is_empty());
-        assert!(config.magic_dns_server.is_empty());
-        assert!(config.dns_match_domains.is_empty());
+        assert_eq!(config.network_id, "");
+        assert_eq!(config.peers, [] as [nostr_vpn_core::fips_mesh::FipsMeshPeerConfig; 0]);
+        assert_eq!(config.route_targets, [] as [std::string::String; 0]);
+        assert_eq!(config.dns_servers, [] as [std::string::String; 0]);
+        assert_eq!(config.magic_dns_server, "");
+        assert_eq!(config.dns_match_domains, [] as [std::string::String; 0]);
     }
