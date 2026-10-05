@@ -14,7 +14,10 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.nostr.public_key.is_empty());
     assert!(!config.node_name.trim().is_empty());
     assert_ne!(config.node_name, "nostr-vpn-node");
-    assert_eq!(config.nostr.relays, DEFAULT_RELAYS);
+    let expected_relays = nostr_vpn_core::config::normalize_relay_urls(
+        DEFAULT_RELAYS.iter().map(|relay| relay.to_string()).collect(),
+    );
+    assert_eq!(config.nostr.relays, expected_relays);
     assert!(config.nostr.disabled_relays.is_empty());
     assert!(config.autoconnect);
     assert!(config.lan_discovery_enabled);
