@@ -26,8 +26,8 @@
 
         let state = runtime.state();
         assert!(state.error.is_empty(), "{}", state.error);
-        assert!(state.networks.is_empty());
-        assert!(state.network_id.is_empty());
+        assert_eq!(state.networks, [] as [crate::native_state::NativeNetworkState; 0]);
+        assert_eq!(state.network_id, "");
         assert!(state.join_request_qr_code_or_link.starts_with("nvpn://join-request/"));
         assert_eq!(state.expected_peer_count, 0);
 
@@ -449,14 +449,13 @@
             endpoint_hints: Vec::new(),
         });
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
-        assert!(
+        assert_eq!(
             runtime.state().networks[0]
                 .participants
                 .iter()
                 .find(|participant| participant.pubkey_hex == peer_hex)
                 .expect("peer participant")
-                .fips_endpoint_hints
-                .is_empty()
+                .fips_endpoint_hints, [] as [std::string::String; 0]
         );
         let state = runtime.state();
         assert_eq!(state.fips_roster_peer_count, 0);

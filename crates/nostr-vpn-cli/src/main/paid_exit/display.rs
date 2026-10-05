@@ -1,4 +1,3 @@
-
 fn paid_exit_provider_link_for_offer(offer: &PaidRouteOffer) -> Result<String> {
     ManualPaidExitProvider::seller_link(
         &offer.seller_npub,
@@ -111,7 +110,10 @@ fn paid_exit_price_text(price_msat_per_gb: u64) -> String {
 
 fn paid_exit_settlement_text(channel_expiry_secs: u64) -> String {
     format!(
-        "Channels end after {} or when you manually collect",
+        "Automatic collection after {}; buyer refunds available after {}",
+        paid_exit_duration_text(
+            nostr_vpn_core::paid_routes::paid_route_collection_after_secs(channel_expiry_secs)
+        ),
         paid_exit_duration_text(channel_expiry_secs)
     )
 }

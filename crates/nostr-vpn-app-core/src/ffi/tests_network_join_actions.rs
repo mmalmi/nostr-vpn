@@ -41,7 +41,7 @@
             runtime.config.networks[0].devices
                 .contains(&requester_hex)
         );
-        assert!(runtime.config.networks[0].inbound_join_requests.is_empty());
+        assert_eq!(runtime.config.networks[0].inbound_join_requests, [] as [nostr_vpn_core::config::PendingInboundJoinRequest; 0]);
         assert_eq!(
             runtime.config.peer_alias(&requester_hex).as_deref(),
             Some("linux-dev")
@@ -559,10 +559,10 @@ exit 0
             !runtime.config.networks[0].devices
                 .contains(&requester_hex)
         );
-        assert!(runtime.config.networks[0].inbound_join_requests.is_empty());
+        assert_eq!(runtime.config.networks[0].inbound_join_requests, [] as [nostr_vpn_core::config::PendingInboundJoinRequest; 0]);
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
-        assert!(saved.networks[0].inbound_join_requests.is_empty());
+        assert_eq!(saved.networks[0].inbound_join_requests, [] as [nostr_vpn_core::config::PendingInboundJoinRequest; 0]);
 
         let _ = fs::remove_dir_all(&dir);
     }

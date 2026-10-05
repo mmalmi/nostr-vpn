@@ -27,7 +27,7 @@ impl PaidRouteStore {
                 "paid route session {session_id} is not a buyer session"
             ));
         }
-        if lease.lease.expires_at_unix.min(channel.expires_at_unix) <= now_unix {
+        if channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix {
             return Err(anyhow!("paid route buyer session {session_id} has expired"));
         }
         ensure_open_buyer_channel(channel, lease)?;
@@ -75,7 +75,7 @@ impl PaidRouteStore {
                             .ok()
                             .as_deref()
                             == Some(seller_pubkey.as_str())
-                        && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
+                        && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                         && paid_route_lifecycle_allows_routing(lease.status)
                         && paid_route_lifecycle_allows_routing(channel.status),
                 )
@@ -97,7 +97,7 @@ impl PaidRouteStore {
                         .ok()
                         .as_deref()
                         == Some(seller_pubkey.as_str())
-                    && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
+                    && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                     && paid_route_lifecycle_allows_routing(lease.status)
                     && paid_route_lifecycle_allows_routing(channel.status))
                 .then_some((session.updated_at_unix, session.session.session_id.clone()))
@@ -116,20 +116,20 @@ impl PaidRouteStore {
         open_timeout_secs: u64,
     ) -> PaidRouteBuyerSessionLifecycleReconcile {
         let before = self.clone();
-        let buyer_lease_ids = self
+        let expired_buyer_lease_ids = self
             .sessions
             .values()
             .filter_map(|session| {
-                self.channels
-                    .get(&session.session.payment.channel_id)
-                    .is_some_and(|channel| channel.role == PaidRouteChannelRole::Buyer)
+                let channel = self.channels.get(&session.session.payment.channel_id)?;
+                let lease = self.leases.get(&session.session.lease_id)?;
+                (channel.role == PaidRouteChannelRole::Buyer
+                    && channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix)
                     .then_some(session.session.lease_id.clone())
             })
             .collect::<Vec<_>>();
         for lease in self.leases.values_mut() {
-            if buyer_lease_ids.contains(&lease.lease.lease_id)
+            if expired_buyer_lease_ids.contains(&lease.lease.lease_id)
                 && paid_route_lifecycle_allows_routing(lease.status)
-                && lease.lease.expires_at_unix <= now_unix
             {
                 lease.status = PaidRouteLifecycleStatus::Expired;
                 lease.updated_at_unix = lease.updated_at_unix.max(now_unix);
@@ -138,7 +138,7 @@ impl PaidRouteStore {
         for channel in self.channels.values_mut() {
             if channel.role == PaidRouteChannelRole::Buyer
                 && paid_route_lifecycle_allows_routing(channel.status)
-                && channel.expires_at_unix <= now_unix
+                && channel.routing_expires_at_unix(u64::MAX) <= now_unix
             {
                 channel.status = PaidRouteLifecycleStatus::Expired;
                 channel.updated_at_unix = channel.updated_at_unix.max(now_unix);
@@ -281,7 +281,7 @@ impl PaidRouteStore {
                 "paid route session {session_id} is not a buyer session"
             ));
         }
-        if lease.lease.expires_at_unix.min(channel.expires_at_unix) <= now_unix {
+        if channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix {
             return Err(anyhow!("paid route buyer session {session_id} has expired"));
         }
         if channel.status != PaidRouteLifecycleStatus::Failed
@@ -403,7 +403,7 @@ impl PaidRouteStore {
                 && paid_route_lifecycle_allows_routing(lease.status)
                 && paid_route_lifecycle_allows_routing(channel.status)
                 && session.session.routing_decision(terms).allow_routing
-                && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
+                && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                 && normalize_nostr_pubkey(&channel.counterparty_npub)
                     .ok()
                     .as_deref()
@@ -446,7 +446,9 @@ impl PaidRouteStore {
         }
         let offer = self.buyer_offer_for_session(lease, channel)?;
         let expires_at_unix = lease.lease.expires_at_unix.min(channel.expires_at_unix);
-        if expires_at_unix <= now_unix {
+        // Keep the funding deadline on the existing wire format. Both peers
+        // derive the earlier service cutoff; do not halve it a second time.
+        if channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix {
             return Err(anyhow!("paid route session has expired"));
         }
         Ok(PaidRouteSessionOpen {
@@ -486,7 +488,7 @@ impl PaidRouteStore {
                     == Some(seller_pubkey.as_str())
                 && paid_route_lifecycle_allows_routing(lease.status)
                 && paid_route_lifecycle_allows_routing(channel.status)
-                && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix;
+                && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix;
             return selected_matches
                 .then(|| {
                     self.build_buyer_session_open(
@@ -514,7 +516,7 @@ impl PaidRouteStore {
                 {
                     return None;
                 }
-                let expires_at = lease.lease.expires_at_unix.min(channel.expires_at_unix);
+                let expires_at = channel.routing_expires_at_unix(lease.lease.expires_at_unix);
                 (expires_at > now_unix
                     && paid_route_lifecycle_allows_routing(lease.status)
                     && paid_route_lifecycle_allows_routing(channel.status))

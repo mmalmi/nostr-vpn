@@ -4,8 +4,8 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::updater::{
-    ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_with_cache,
-    download_product_update_with_cache, update_event_cache_path,
+    ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_with_config,
+    download_product_update_with_config,
 };
 
 use super::{PRODUCT_VERSION, UpdateArgs, UpdateSource, default_config_path};
@@ -54,27 +54,15 @@ pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
     } else {
         false
     };
-    let event_cache_path = update_event_cache_path(&default_config_path());
+    let config_path = default_config_path();
 
+    let check =
+        check_product_update_with_config(PRODUCT_VERSION, mode.core(), source, Some(&config_path))
+            .await?;
     if args.check {
-        let check = check_product_update_with_cache(
-            PRODUCT_VERSION,
-            mode.core(),
-            source,
-            Some(&event_cache_path),
-        )
-        .await?;
         print_update_check(mode, &check, args.json)?;
         return Ok(());
     }
-
-    let check = check_product_update_with_cache(
-        PRODUCT_VERSION,
-        mode.core(),
-        source,
-        Some(&event_cache_path),
-    )
-    .await?;
     if !check.available && !args.force {
         print_up_to_date(mode, &check, args.json)?;
         return Ok(());
@@ -86,12 +74,12 @@ pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
     if helper_update {
         crate::macos_privileged_files::protected_directory(download_parent, false)?;
     }
-    let download = download_product_update_with_cache(
+    let download = download_product_update_with_config(
         PRODUCT_VERSION,
         mode.core(),
         source,
         Some(download_parent),
-        Some(&event_cache_path),
+        Some(&config_path),
     )
     .await?;
     let archive_path = download

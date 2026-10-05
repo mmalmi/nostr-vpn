@@ -6,8 +6,8 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use nostr_vpn_core::updater::{
-    check_product_update_blocking_with_cache, download_product_update_blocking_with_cache,
-    update_event_cache_path, ProductUpdateMode, ProductUpdateSource,
+    check_product_update_blocking_with_config, download_product_update_blocking_with_config,
+    ProductUpdateMode, ProductUpdateSource,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -68,12 +68,11 @@ pub fn download(asset: ReleaseAsset, config_path: String, sender: Sender<UpdateE
 }
 
 pub fn check_blocking(current_version: &str, config_path: &str) -> Result<UpdateCheck, String> {
-    let event_cache_path = update_event_cache_path(Path::new(config_path));
-    let result = check_product_update_blocking_with_cache(
+    let result = check_product_update_blocking_with_config(
         current_version,
         ProductUpdateMode::App,
         ProductUpdateSource::Auto,
-        Some(&event_cache_path),
+        Some(Path::new(config_path)),
     )
     .map_err(|error| error.to_string())?;
     let source = result.source.clone();
@@ -101,13 +100,12 @@ pub fn download_blocking(asset: &ReleaseAsset, config_path: &str) -> Result<Path
         ));
     }
     let download_dir = update_download_dir();
-    let event_cache_path = update_event_cache_path(Path::new(config_path));
-    let result = download_product_update_blocking_with_cache(
+    let result = download_product_update_blocking_with_config(
         "0.0.0",
         ProductUpdateMode::App,
         ProductUpdateSource::Auto,
         Some(&download_dir),
-        Some(&event_cache_path),
+        Some(Path::new(config_path)),
     )
     .map_err(|error| error.to_string())?;
     if !result.verified {

@@ -143,6 +143,7 @@
             endpoint,
             tasks,
             wg_upstream,
+            control_pubsub,
             ..
         } = started;
         for task in &tasks {
@@ -154,6 +155,7 @@
         if let Some(wg) = wg_upstream {
             wg.shutdown().await;
         }
+        if let Some(pubsub) = control_pubsub { pubsub.stop().await; }
         let _ = endpoint.shutdown().await;
     }
 

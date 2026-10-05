@@ -36,7 +36,6 @@ mod endpoint_config_tests {
             advertise_on_nostr: true,
             webrtc_enabled,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
-            nostr_relays: vec!["wss://relay.example.org".to_string()],
             websocket: WebSocketConfig {
                 seed_urls: vec!["wss://seed.example.org/fips".to_string()],
                 ..WebSocketConfig::default()

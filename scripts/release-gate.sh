@@ -417,7 +417,7 @@ run_release_gate_source_quality() {
   cargo check --locked -p nostr-vpn-app-core --no-default-features --lib
   # Keep the application lint scope: vendored dependencies are now workspace
   # members for Cargo packaging, with their existing upstream test lint policy.
-  cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets -- -D warnings
+  cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets --no-deps -- -D warnings
 }
 
 run_linux_arm64_cli_gate() {

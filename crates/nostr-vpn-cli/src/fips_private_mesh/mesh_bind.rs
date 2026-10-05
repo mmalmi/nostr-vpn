@@ -19,7 +19,6 @@ async fn bind_fips_private_mesh(
         advertise_on_nostr: config.advertise_on_nostr,
         webrtc_enabled: config.webrtc_enabled,
         stun_servers: config.stun_servers.clone(),
-        nostr_relays: config.nostr_relays.clone(),
         websocket: config.websocket.clone(),
         share_local_candidates: config.share_local_candidates,
     };

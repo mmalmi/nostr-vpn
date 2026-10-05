@@ -9,6 +9,7 @@ RELEASE_GATE_PARALLEL_PGIDS=()
 RELEASE_GATE_PARALLEL_LABELS=()
 RELEASE_GATE_PARALLEL_LOGS=()
 RELEASE_GATE_PARALLEL_STARTED_AT=()
+RELEASE_GATE_PARALLEL_RESULTS=()
 RELEASE_GATE_PARALLEL_LAST_INDEX=""
 RELEASE_GATE_PARALLEL_LOG_DIR=""
 RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS="${RELEASE_GATE_PARALLEL_TERM_GRACE_SECONDS:-2}"
@@ -17,6 +18,10 @@ RELEASE_GATE_PARALLEL_SUCCESS_LOG_LINES="${RELEASE_GATE_PARALLEL_SUCCESS_LOG_LIN
 RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES="${RELEASE_GATE_PARALLEL_FAILURE_LOG_LINES:-200}"
 
 release_gate_parallel_init() {
+  case "${NVPN_RELEASE_GATE_SERIAL:-0}" in
+    0|1) ;;
+    *) echo "NVPN_RELEASE_GATE_SERIAL must be 0 or 1" >&2; return 2 ;;
+  esac
   RELEASE_GATE_PARALLEL_LOG_DIR="$1"
   mkdir -p "$RELEASE_GATE_PARALLEL_LOG_DIR"
 }
@@ -82,6 +87,9 @@ release_gate_parallel_start() {
   RELEASE_GATE_PARALLEL_STARTED_AT[$index]="$(date +%s)"
   RELEASE_GATE_PARALLEL_LAST_INDEX="$index"
   printf 'Started release-gate lane: %s (log: %s)\n' "$label" "$log_path"
+  if [[ "${NVPN_RELEASE_GATE_SERIAL:-0}" == 1 ]]; then
+    release_gate_parallel_wait "$index"
+  fi
 }
 
 release_gate_parallel_pid_live_in_group() {
@@ -207,7 +215,18 @@ release_gate_parallel_cancel_all() {
   return "$cleanup_failed"
 }
 
+# Serial starts reap immediately; the common later joins reuse that result.
 release_gate_parallel_wait() {
+  local index="$1" status=0
+  if [[ -n "${RELEASE_GATE_PARALLEL_RESULTS[$index]:-}" ]]; then
+    return "${RELEASE_GATE_PARALLEL_RESULTS[$index]}"
+  fi
+  release_gate_parallel_wait_running "$index" || status=$?
+  RELEASE_GATE_PARALLEL_RESULTS[index]="$status"
+  return "$status"
+}
+
+release_gate_parallel_wait_running() {
   local index="$1"
   local pid="${RELEASE_GATE_PARALLEL_PIDS[$index]:-}"
   local label="${RELEASE_GATE_PARALLEL_LABELS[$index]:-lane-$index}"
@@ -325,13 +344,7 @@ release_gate_parallel_wait_group() {
     local index pid status group_failed=0
     for index in "${remaining[@]}"; do
       pid="${RELEASE_GATE_PARALLEL_PIDS[$index]:-}"
-      if [[ -z "$pid" ]]; then
-        if ((first_failure == 0)); then
-          first_failure=2
-        fi
-        continue
-      fi
-      if kill -0 "$pid" >/dev/null 2>&1; then
+      if [[ -n "$pid" ]] && kill -0 "$pid" >/dev/null 2>&1; then
         pending+=("$index")
         continue
       fi

@@ -61,6 +61,8 @@ For startup at boot, run `sudo nvpn service install`; on Windows, run `nvpn serv
 
 Buy or sell VPN bandwidth for Bitcoin. Providers can sell their own internet connection or a WireGuard VPN uplink. Providers advertise per-byte prices over Nostr; buyers fund Cashu Spilman channels and sign payment updates as they use bandwidth. Uploads count as sent; UDP replies and acknowledged TCP downloads count too, without double-billing TCP retransmissions. Choose a provider manually or automatically using connection quality, trusted ratings, and price.
 
+By default, channels renew before a 12-hour service cutoff, when providers begin automatic collection. Buyers can reclaim uncollected funds after 24 hours, leaving a 12-hour window for collection retries. Existing funded refund deadlines are preserved.
+
 DNS is encrypted by default, but exits still see destination IPs and unencrypted traffic. Use HTTPS for sensitive data. See [payment and privacy details](docs/protocol.md#paid-exits).
 
 ## Build and Verify

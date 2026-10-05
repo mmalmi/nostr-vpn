@@ -47,6 +47,10 @@ pub struct WireGuardDnsResolver {
     servers: Vec<SocketAddr>,
 }
 
+#[allow(
+    clippy::double_must_use,
+    reason = "async_trait adds must_use to generated Future-returning methods"
+)]
 #[async_trait::async_trait]
 pub trait SecureDnsLookup: Send + Sync {
     async fn resolve(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError>;

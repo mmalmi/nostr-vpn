@@ -118,7 +118,13 @@ fn macos_secure_dns_uses_system_configuration_default_routing() {
         MACOS_SECURE_DNS_STORE_KEY,
         "State:/Network/Service/to.nostrvpn.nvpn-secure-dns/DNS"
     );
-    assert_eq!(macos_resolver_configs().len(), 1);
+    let configs = macos_resolver_configs();
+    assert_eq!(configs.len(), 2);
+    assert!(
+        configs
+            .iter()
+            .any(|(path, _)| path == std::path::Path::new("/etc/resolver/fips"))
+    );
 
     let magic_dns_resolver = macos_magic_dns_resolver_config();
     assert!(magic_dns_resolver.contains("nameserver 127.0.0.1\n"));
@@ -810,6 +816,63 @@ fn direct_npub_fips_query_returns_ipv6_and_identity_without_doh() {
 }
 
 #[tokio::test]
+async fn local_stub_resolves_fips_without_host_access_or_upstream_dns() {
+    let server = Arc::new(tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap());
+    let address = server.local_addr().unwrap();
+    let resolver = Arc::new(RwLock::new(
+        dns_resolver(&ExitDnsResolverConfig::FailClosed).unwrap(),
+    ));
+    let records = Arc::new(RwLock::new(HashMap::new()));
+    let task = tokio::spawn(run_udp(server, resolver, records, None));
+    let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let identity = fips_core::Identity::generate();
+    for (name, kind, expected_code) in [
+        (
+            format!("{}.fips.", identity.npub()),
+            RecordType::AAAA,
+            ResponseCode::NoError,
+        ),
+        (
+            format!("{}.fips.", identity.npub()),
+            RecordType::A,
+            ResponseCode::NoError,
+        ),
+        (
+            "invalid.fips.".to_string(),
+            RecordType::AAAA,
+            ResponseCode::NXDomain,
+        ),
+        (
+            "example.com.".to_string(),
+            RecordType::A,
+            ResponseCode::ServFail,
+        ),
+    ] {
+        client
+            .send_to(&query_packet_with_type(&name, 84, kind), address)
+            .await
+            .unwrap();
+        let mut packet = [0; 512];
+        let (length, _) =
+            tokio::time::timeout(Duration::from_secs(1), client.recv_from(&mut packet))
+                .await
+                .unwrap()
+                .unwrap();
+        let response = Message::from_vec(&packet[..length]).unwrap();
+        assert_eq!(response.id, 84);
+        assert_eq!(response.response_code, expected_code, "{name} {kind}");
+        if kind == RecordType::AAAA && expected_code == ResponseCode::NoError {
+            assert!(response.answers.iter().any(|answer| {
+                matches!(&answer.data, RData::AAAA(address) if address.0 == identity.address().to_ipv6())
+            }));
+        } else {
+            assert!(response.answers.is_empty());
+        }
+    }
+    task.abort();
+}
+
+#[tokio::test]
 async fn local_stub_serves_udp_and_fails_closed() {
     let server = Arc::new(
         tokio::net::UdpSocket::bind("127.0.0.1:0")
@@ -912,7 +975,8 @@ async fn local_stub_serves_framed_tcp_dns() {
     let mut client = tokio::net::TcpStream::connect(address)
         .await
         .expect("TCP client");
-    let query = query_packet("example.com.", 82);
+    let identity = fips_core::Identity::generate();
+    let query = query_packet_with_type(&format!("{}.fips.", identity.npub()), 82, RecordType::AAAA);
     client
         .write_all(&(query.len() as u16).to_be_bytes())
         .await
@@ -929,4 +993,7 @@ async fn local_stub_serves_framed_tcp_dns() {
     let response = Message::from_vec(&response).expect("DNS response");
     assert_eq!(response.id, 82);
     assert_eq!(response.metadata.message_type, MessageType::Response);
+    assert!(response.answers.iter().any(|answer| {
+        matches!(&answer.data, RData::AAAA(address) if address.0 == identity.address().to_ipv6())
+    }));
 }

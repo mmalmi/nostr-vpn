@@ -18,15 +18,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
     Config as FipsConfig, ConnectPolicy, FipsEndpoint, FipsEndpointMessage, FipsEndpointPeer,
-    FipsEndpointRelayStatus, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, RoutingMode, TransportInstances, UdpConfig, WebSocketConfig,
+    NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode,
+    TransportInstances, UdpConfig, WebSocketConfig,
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
     AppConfig, ExitDnsConfig, ExitDnsResolverConfig, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig,
-    derive_mesh_tunnel_ip, effective_fips_nostr_relays, maybe_autoconfigure_node,
+    derive_mesh_tunnel_ip, effective_nostr_relays, maybe_autoconfigure_node,
     normalize_fips_transport_address, normalize_nostr_pubkey, normalize_runtime_network_id,
     split_peer_transport_addr,
+};
+use nostr_vpn_core::control_pubsub_runtime::{
+    ControlPubsubClient, ControlPubsubFipsRuntime, ControlRelayStatus,
 };
 use nostr_vpn_core::fips_control::{
     FipsControlFrame, JoinRosterControl, NetworkRoster, PeerCapabilities, PeerEndpointHint,
@@ -82,6 +85,7 @@ mod tests {
     include!("mobile_tunnel/tests_identity.rs");
     include!("mobile_tunnel/tests_runtime_join_request.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_runtime_pubsub.rs");
     include!("mobile_tunnel/tests_runtime_state.rs");
     include!("mobile_tunnel/tests_runtime_manual_join.rs");
     include!("mobile_tunnel/tests_runtime_desktop_mobile_join.rs");

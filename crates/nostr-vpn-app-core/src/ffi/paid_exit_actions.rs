@@ -149,7 +149,7 @@ impl NativeAppRuntime {
         }
         let session = store.sessions.get(&store.selected_buyer_session_id)?;
         let channel = store.channels.get(&session.session.payment.channel_id)?;
-        if session.funding_started_unix == 0 || channel.expires_at_unix <= now {
+        if session.funding_started_unix == 0 || channel.routing_expires_at_unix(u64::MAX) <= now {
             return None;
         }
         let mint = paid_route_mint_host(&channel.mint_url);

@@ -3,6 +3,31 @@
 # Exact cleanup for the daemon-owned container used by the host Linux release
 # builder. Callers serialize a cache root before invoking this helper.
 
+# Operational limits preserve the existing source and receipt validation.
+# Keeping the existing environment argument makes this array safe on Bash 3
+# even when no limits are configured.
+host_linux_builder_resource_args() {
+  local cpus="${NVPN_HOST_LINUX_VM_BUILD_CPUS:-}"
+  local memory="${NVPN_HOST_LINUX_VM_BUILD_MEMORY:-}"
+  local jobs="${NVPN_HOST_LINUX_VM_CARGO_JOBS:-}"
+  [[ -z "$cpus" || "$cpus" =~ ^[1-9][0-9]*$ ]] \
+    && [[ -z "$memory" || "$memory" =~ ^[1-9][0-9]*[kKmMgG]?$ ]] \
+    && [[ -z "$jobs" || "$jobs" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Linux builder CPU, memory and Cargo job limits must be positive" >&2
+    return 2
+  }
+  HOST_LINUX_BUILDER_RESOURCE_ARGS=(--env CARGO_INCREMENTAL=0)
+  if [[ -n "$cpus" ]]; then
+    HOST_LINUX_BUILDER_RESOURCE_ARGS+=(--cpus "$cpus")
+  fi
+  if [[ -n "$memory" ]]; then
+    HOST_LINUX_BUILDER_RESOURCE_ARGS+=(--memory "$memory" --memory-swap "$memory")
+  fi
+  if [[ -n "$jobs" ]]; then
+    HOST_LINUX_BUILDER_RESOURCE_ARGS+=(--env "CARGO_BUILD_JOBS=$jobs")
+  fi
+}
+
 host_linux_builder_container_matches() {
   local container_id="$1"
   local expected_cache_id="$2"

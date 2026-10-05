@@ -6,6 +6,8 @@ mod config_secrets;
 pub use config_secrets::PlatformCashuWalletSeedStore;
 pub mod control;
 pub mod control_pubsub;
+#[cfg(feature = "control-pubsub")]
+pub mod control_pubsub_runtime;
 pub mod data_plane;
 pub mod diagnostics;
 pub mod fips_control;

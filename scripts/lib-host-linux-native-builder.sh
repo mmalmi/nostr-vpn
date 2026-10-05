@@ -171,6 +171,7 @@ host_linux_native_builder_run() {
   local output_tar="$temp_dir/remote-output.tar"
   local app_bundle_sha fips_bundle_sha driver_sha remote_dir
 
+  host_linux_builder_resource_args || return
   host_linux_native_builder_commands
   for command in git scp ssh; do
     command -v "$command" >/dev/null 2>&1 || {
@@ -232,6 +233,9 @@ mktemp -d "$runs/nvpn-linux-native-builder.XXXXXX"'
     "$target_volume" "$container_name" \
     "$root_realized_lock" "$linux_realized_lock" \
     "$source_date_epoch" "$dockerfile_sha" "$payload_sha" \
+    "${NVPN_HOST_LINUX_VM_BUILD_CPUS:--}" \
+    "${NVPN_HOST_LINUX_VM_BUILD_MEMORY:--}" \
+    "${NVPN_HOST_LINUX_VM_CARGO_JOBS:--}" \
     >"$output_tar" <<'REMOTE'
 set -euo pipefail
 root="$1"

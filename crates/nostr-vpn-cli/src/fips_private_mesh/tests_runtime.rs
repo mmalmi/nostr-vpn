@@ -39,7 +39,6 @@
             advertise_on_nostr: true,
             webrtc_enabled: false,
             stun_servers: Vec::new(),
-            nostr_relays: Vec::new(),
             websocket: fips_endpoint::WebSocketConfig::default(),
             share_local_candidates,
         }

@@ -421,7 +421,7 @@ impl FipsPrivateTunnelConfig {
             &app.fips_websocket_seed_urls,
             &endpoint_peers,
         );
-        let nostr_relays = effective_fips_nostr_relays(&app.nostr.relays);
+        let nostr_relays = effective_nostr_relays(&app.nostr.relays, &app.nostr.disabled_relays);
         let websocket = WebSocketConfig {
             bind_addr: (!app.fips_websocket_bind_addr.is_empty())
                 .then(|| app.fips_websocket_bind_addr.clone()),

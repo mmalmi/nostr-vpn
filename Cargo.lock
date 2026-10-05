@@ -2410,9 +2410,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e651580b2d77e746ddf48d206f2159229d942dc879a95ca9431a11e3a30f42"
+checksum = "35f2ec87a4d192bffac052446501578cc0187e051b01b089e0b08af1d6ccc900"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2465,13 +2465,15 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.83"
+version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a49500940585ae01292152740e5d4282138a6d6806fe0e012f2b15205694c430"
+checksum = "b7d86c6cfd737a94475f33d082ce6f8401d58f88b866653076014a9225e960ae"
 dependencies = [
  "async-trait",
  "hashtree-core",
  "hex",
+ "nostr",
+ "nostr-relay-pool",
  "nostr-sdk",
  "serde_json",
  "thiserror 1.0.69",
@@ -2480,10 +2482,11 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.83"
+version = "0.2.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0153f9c43ba08f3e66531fc91113f54974bd20f559d90528414ab17ce2eb951"
+checksum = "c28eeb4748b1620ef2079bdb3f476a77ac12632f55c329dc8eab0eed339ed5eb"
 dependencies = [
+ "async-trait",
  "flate2",
  "hashtree-blossom",
  "hashtree-core",
@@ -2495,6 +2498,7 @@ dependencies = [
  "tar",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -3737,9 +3741,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.15"
+version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "120d6c3ba6b099011edd0558b6ec257de09abf0917833428e2ff7a4cc542d8da"
+checksum = "7d8ed6dc361119da85a52e7adce2d79b7502255f8a2eb7456c43dfc13c1e99c2"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3750,9 +3754,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.6"
+version = "0.5.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10b6b1f7fad00ad33630d30ca11af8aa5d128387877146dfd1a4bbd46c3af38e"
+checksum = "f6e6eb38c98c4dc2e7ff0252b455f917a2a63742617d39dafa540327ce5f172c"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3766,9 +3770,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-relay"
-version = "0.1.11"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca"
+checksum = "027e2ec1493bc6082e3279d7ad2bfa3cdd1717d0597cb724dd09ded904686f76"
 dependencies = [
  "async-trait",
  "nostr-pubsub",
@@ -3856,13 +3860,14 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
  "cashu",
  "dirs 6.0.0",
+ "futures-util",
  "hickory-proto",
  "image",
  "jni 0.21.1",
@@ -3870,8 +3875,6 @@ dependencies = [
  "ndk-context",
  "netdev",
  "nostr-identity 0.4.0",
- "nostr-pubsub",
- "nostr-pubsub-fips",
  "nostr-sdk",
  "nostr-vpn-core",
  "nvpn-cashu-service",
@@ -3883,6 +3886,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite 0.26.2",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
@@ -3891,7 +3895,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3900,6 +3904,7 @@ dependencies = [
  "boringtun",
  "core-foundation 0.9.4",
  "core-foundation-sys",
+ "futures-util",
  "hashtree-updater",
  "hex",
  "hickory-proto",
@@ -3907,6 +3912,10 @@ dependencies = [
  "keyring-core",
  "libc",
  "nostr-identity 0.4.0",
+ "nostr-pubsub",
+ "nostr-pubsub-fips",
+ "nostr-pubsub-relay",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
  "nostr-social-graph",
  "nostr-social-memory",
@@ -3925,6 +3934,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.26.2",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",
@@ -3933,7 +3943,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-sim"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "anyhow",
  "hex",
@@ -3959,7 +3969,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "anyhow",
  "axum",
@@ -3980,7 +3990,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "anyhow",
  "wintun",
@@ -4075,7 +4085,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.1.17"
+version = "4.1.18"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -4095,8 +4105,6 @@ dependencies = [
  "netdev",
  "nostr-pubsub",
  "nostr-pubsub-fips",
- "nostr-pubsub-relay",
- "nostr-pubsub-social-graph",
  "nostr-sdk",
  "nostr-social-graph",
  "nostr-social-memory",
@@ -4177,9 +4185,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.83"
+version = "0.4.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c073fb7b277e60bcbdeac60c05e3cb7c39df7ab2144af4de5f0f7b332d16b0c"
+checksum = "6687a0d516c6090a6590ec973ebef9dcec2c395f11f41a96119f973dfc60b8bb"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -4214,7 +4222,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
- "tokio-tungstenite 0.26.2",
+ "tokio-tungstenite 0.29.0",
  "tracing",
  "tun",
  "uuid",
@@ -4226,9 +4234,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.83"
+version = "0.4.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c64461e347a2af5d151e1c1a68a2c0e8f8f427058747007f0d0e07cc0ed386"
+checksum = "779ba9c38b64ca1f0da6957bac2c7baff014ae21ac4d943ffd624dbfaf8a84b7"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4250,15 +4258,15 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-tcp"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97"
+checksum = "12926b2da10f9b554250223ea045f89de58df05d6cc5bf1f3e0d23ccf05f7c6f"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.18"
+version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26ae8eb058e45ee32577ffbf6b968b2b328b50d09fbc38c333bf53a02105ffe0"
+checksum = "8d08987e4a40edd91bf1c15f091199b5e291fe09364c195c59942281fb838994"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -6327,8 +6335,12 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite 0.29.0",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -6703,6 +6715,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.4",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 2.0.18",
 ]

@@ -164,7 +164,10 @@ fn paid_route_seller_session_title_text(session: &NativePaidRouteSessionState) -
 
 fn paid_exit_seller_settlement_text(channel_expiry_secs: u64) -> String {
     format!(
-        "Channels end after {} or when you manually collect",
+        "Automatic collection after {}; buyer refunds available after {}",
+        paid_route_duration_text(
+            nostr_vpn_core::paid_routes::paid_route_collection_after_secs(channel_expiry_secs)
+        ),
         paid_route_duration_text(channel_expiry_secs)
     )
 }
@@ -200,7 +203,7 @@ fn paid_route_session_settlement_text(
         );
     if expires_at_unix <= now_unix {
         return if auto_collect_due {
-            "Ended; collect to move funds to wallet".to_string()
+            "Ended; automatic collection pending".to_string()
         } else if is_collectable_seller {
             "Ended; collect when ready".to_string()
         } else {

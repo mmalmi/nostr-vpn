@@ -13,7 +13,7 @@
         });
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert_eq!(runtime.config.manual_paid_exit_provider.npub, seller_npub);
-        assert!(runtime.config.manual_paid_exit_provider.mint.is_empty());
+        assert_eq!(runtime.config.manual_paid_exit_provider.mint, "");
         assert!(
             load_paid_route_store(store_path)
                 .expect("load wallet after bare npub")
@@ -409,7 +409,7 @@
         assert!(runtime.state().paid_route_market.sessions.iter().all(|session| !session.can_rate));
         runtime.dispatch(NativeAppAction::RatePaidExit { seller_npub: seller_npub.clone(), rating: -1 });
         assert!(runtime.last_error.contains("connect through this provider"));
-        assert!(nostr_vpn_core::paid_route_store::load_paid_route_store(&store_path).unwrap().pending_exit_ratings().is_empty());
+        assert_eq!(nostr_vpn_core::paid_route_store::load_paid_route_store(&store_path).unwrap().pending_exit_ratings(), [] as [nostr_sdk::nostr::event::Event; 0]);
         assert_eq!(runtime.config.exit_node, seller.public_key().to_hex());
         assert_paid_route_activation_requires_fresh_end_to_end_probe(
             &mut runtime,
@@ -444,7 +444,7 @@
         runtime.dispatch(NativeAppAction::RatePaidExit { seller_npub: seller_npub.to_owned(), rating: -1 });
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert_eq!(runtime.config.internet_source, InternetSource::PaidManual);
-        assert!(runtime.config.exit_node.is_empty());
+        assert_eq!(runtime.config.exit_node, "");
         assert!(runtime.config.exit_node_leak_protection, "downvote must not expose direct traffic");
         assert!(runtime.vpn_enabled);
         let after = nostr_vpn_core::paid_route_store::load_paid_route_store(store_path).unwrap();

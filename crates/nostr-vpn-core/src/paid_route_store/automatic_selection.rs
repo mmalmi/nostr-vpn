@@ -129,7 +129,7 @@ impl PaidRouteStore {
                     && channel.offer_id == offer.offer_id
                     && channel.counterparty_npub == offer.seller_npub
                     && accepted.iter().any(|url| url == mint)
-                    && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
+                    && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                     && paid_route_lifecycle_allows_routing(lease.status)
                     && paid_route_lifecycle_allows_routing(channel.status)
                     && self

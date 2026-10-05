@@ -1,4 +1,10 @@
-pub const DEFAULT_RELAYS: &[&str] = &[];
+/// Nostr announcement relays owned by the application pubsub provider.
+pub const DEFAULT_RELAYS: &[&str] = &[
+    "wss://relay.damus.io",
+    "wss://nos.lol",
+    "wss://offchain.pub",
+    "wss://temp.iris.to",
+];
 
 /// Public authenticated WebSocket FIPS transit seeds.
 ///

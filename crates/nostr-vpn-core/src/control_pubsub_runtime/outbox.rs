@@ -7,7 +7,7 @@ fn now_ms() -> u64 {
 }
 
 pub fn control_pubsub_store_file_path(config_path: &Path) -> PathBuf {
-    nostr_vpn_core::updater::update_event_cache_path(config_path)
+    crate::control_pubsub::control_pubsub_store_path(config_path)
 }
 
 fn control_pubsub_outbox_directory_from_store_path(store_path: &Path) -> PathBuf {
@@ -32,7 +32,7 @@ pub fn queue_control_pubsub_event(config_path: &Path, event: &Event) -> Result<b
     if destination.exists() {
         return Ok(false);
     }
-    nostr_vpn_core::config::write_private_file_preserving_user_owner(&destination, &bytes)
+    crate::config::write_private_file_preserving_user_owner(&destination, &bytes)
         .with_context(|| format!("failed to queue {}", destination.display()))?;
     Ok(true)
 }

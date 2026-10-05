@@ -265,7 +265,7 @@ fn paid_exit_run_and_status_cover_headless_seller_cli() {
     );
     assert_eq!(
         status_json["config"]["settlement_text"].as_str(),
-        Some("Channels end after 1 day or when you manually collect")
+        Some("Automatic collection after 12 hours; buyer refunds available after 1 day")
     );
     assert_eq!(
         status_json["config"]["free_probe_units"].as_u64(),
@@ -306,7 +306,7 @@ fn paid_exit_run_and_status_cover_headless_seller_cli() {
     let stdout = output_stdout(&text_status);
     assert!(
         stdout.contains(
-            "paid_exit_settlement: Channels end after 1 day or when you manually collect"
+            "paid_exit_settlement: Automatic collection after 12 hours; buyer refunds available after 1 day"
         ),
         "{stdout}"
     );

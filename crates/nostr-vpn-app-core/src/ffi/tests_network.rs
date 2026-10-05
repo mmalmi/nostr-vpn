@@ -259,7 +259,7 @@
             admin.config.own_nostr_pubkey_hex().unwrap()
         );
         assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
-        assert!(admin.config.networks[0].inbound_join_requests.is_empty());
+        assert_eq!(admin.config.networks[0].inbound_join_requests, [] as [nostr_vpn_core::config::PendingInboundJoinRequest; 0]);
         assert_eq!(
             admin.config.peer_alias(&joiner_pubkey).as_deref(),
             Some("pixel-phone")
@@ -270,7 +270,7 @@
             .into_iter()
             .find(|network| network.id == admin_network_id)
             .expect("admin network");
-        assert!(imported.inbound_join_requests.is_empty());
+        assert_eq!(imported.inbound_join_requests, [] as [crate::native_state::NativeInboundJoinRequestState; 0]);
         assert!(imported
             .join_request_qr_code_or_link
             .starts_with("nvpn://join-request/"));
@@ -371,7 +371,7 @@
         assert_eq!(network.devices, vec![admin_hex.clone()]);
         assert_eq!(network.admins, vec![admin_hex.clone()]);
         assert_eq!(network.join_request_admin, admin_hex);
-        assert!(!network.join_secret.is_empty());
+        assert_ne!(network.join_secret, "");
         assert!(network.outbound_join_request.is_none());
         assert!(runtime.vpn_enabled);
         let state = runtime.state();
@@ -598,7 +598,7 @@ exit 0
             admin.last_error
         );
         assert!(!admin.config.networks[0].devices.contains(&joiner_pubkey));
-        assert!(admin.queued_join_rosters.is_empty());
+        assert_eq!(admin.queued_join_rosters, [] as [nostr_vpn_core::fips_control::JoinRosterControl; 0]);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -809,7 +809,7 @@ exit 0
         assert_eq!(request.requester_npub, requester_npub);
         assert_eq!(request.requester_pubkey_hex, requester_hex);
         assert_eq!(request.requester_node_name, "iPhone");
-        assert!(!request.requested_at_text.trim().is_empty());
+        assert_ne!(request.requested_at_text.trim(), "");
 
         let json = serde_json::to_value(&state).expect("serialize native state");
         assert_eq!(

@@ -236,8 +236,7 @@ fn recover_automatic_paid_exit_session(
                 && channel.offer_id == offer.offer_id
                 && channel.counterparty_npub == offer.seller_npub
                 && channel.mint_url == selection.mint_url
-                && channel.expires_at_unix > now_unix
-                && lease.lease.expires_at_unix > now_unix
+                && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                 && store
                     .buyer_session_has_remaining_capacity(&session.session.session_id)
                     .ok()?

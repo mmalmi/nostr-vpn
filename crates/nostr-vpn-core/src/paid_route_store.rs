@@ -174,6 +174,24 @@ pub struct PaidRouteChannelRecord {
     pub error: String,
 }
 
+impl PaidRouteChannelRecord {
+    /// Use the same cutoff for admission, renewal and automatic collection.
+    /// Derive it from persisted channel dates, never a subsequently edited offer.
+    /// The original expiry remains unchanged for funding and buyer refunds.
+    pub fn routing_expires_at_unix(&self, lease_expires_at_unix: u64) -> u64 {
+        let expires = self.expires_at_unix.min(lease_expires_at_unix);
+        if self.payment.mode != PaidRoutePaymentMode::CashuSpilman {
+            return expires;
+        }
+        let lifetime = self.expires_at_unix.saturating_sub(self.created_at_unix);
+        self.created_at_unix
+            .saturating_add(crate::paid_routes::paid_route_collection_after_secs(
+                lifetime,
+            ))
+            .min(expires)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PaidRouteChannelRole {

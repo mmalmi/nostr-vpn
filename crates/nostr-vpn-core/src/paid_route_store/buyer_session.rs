@@ -189,10 +189,7 @@ impl PaidRouteStore {
                 channel.channel_id
             ));
         }
-        let expires_at_unix = lease_record
-            .lease
-            .expires_at_unix
-            .min(channel.expires_at_unix);
+        let expires_at_unix = channel.routing_expires_at_unix(lease_record.lease.expires_at_unix);
         if record.funding_started_unix != 0 || expires_at_unix <= now_unix {
             return Ok(false);
         }
@@ -394,7 +391,9 @@ impl PaidRouteStore {
                 .lease
                 .expires_at_unix
                 .min(channel.expires_at_unix);
-            if expires_at_unix <= request.now_unix {
+            if channel.routing_expires_at_unix(lease_record.lease.expires_at_unix)
+                <= request.now_unix
+            {
                 continue;
             }
             let Ok(offer) = self.buyer_offer_for_session(lease_record, channel) else {

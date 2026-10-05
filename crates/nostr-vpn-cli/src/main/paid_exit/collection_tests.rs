@@ -32,6 +32,7 @@ impl Fixture {
     }
 
     fn add(&self, id: &str, expires: u64, role: PaidRouteChannelRole, closed_receipt: bool) {
+        let created = unix_timestamp().min(expires.saturating_sub(1));
         let payment = PaidRoutePaymentState {
             mode: PaidRoutePaymentMode::CashuSpilman,
             channel_id: id.into(),
@@ -57,7 +58,7 @@ impl Fixture {
                     accepted_terms: None,
                     mint_url: MINT.into(),
                     counterparty_npub: String::new(),
-                    created_at_unix: 1,
+                    created_at_unix: created,
                     expires_at_unix: expires,
                     updated_at_unix: 1,
                     error: String::new(),
@@ -71,11 +72,11 @@ impl Fixture {
                         offer_id: "offer".into(),
                         quote_id: String::new(),
                         buyer_npub: Keys::generate().public_key().to_bech32().unwrap(),
-                        starts_at_unix: 1,
+                        starts_at_unix: created,
                         expires_at_unix: expires,
                     },
                     status: PaidRouteLifecycleStatus::Active,
-                    created_at_unix: 1,
+                    created_at_unix: created,
                     updated_at_unix: 1,
                 },
             );
@@ -95,7 +96,7 @@ impl Fixture {
                     funding_required_balance_sat: 0,
                     funding_started_unix: 0,
                     last_successful_probe_unix: 0,
-                    created_at_unix: 1,
+                    created_at_unix: created,
                     updated_at_unix: 1,
                 },
             );
@@ -265,7 +266,22 @@ async fn seller_collection_failure_does_not_starve_other_channels_or_close_live_
         PaidRouteChannelRole::Seller,
         false,
     );
-    f.add("b-paid", 2, PaidRouteChannelRole::Seller, true);
+    let now = unix_timestamp();
+    f.add(
+        "b-paid",
+        now + 12 * 3600,
+        PaidRouteChannelRole::Seller,
+        true,
+    );
+    update_paid_route_store(&paid_route_store_file_path(&f.config), |store| {
+        store.channels.get_mut("b-paid").unwrap().created_at_unix = now - 12 * 3600;
+        Ok(())
+    })
+    .unwrap();
+    assert!(
+        f.store().channels["b-paid"].expires_at_unix > now,
+        "automatic collection must run before refund eligibility"
+    );
     f.add(
         "c-still-live",
         unix_timestamp() + 3600,

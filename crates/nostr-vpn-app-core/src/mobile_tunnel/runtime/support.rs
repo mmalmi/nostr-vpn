@@ -187,6 +187,7 @@ async fn push_mobile_wg_inbound_batch(
 struct MobileTunnelStarted {
     endpoint: Arc<FipsEndpoint>,
     state_control: FipsControlTcpSender,
+    control_pubsub: Option<ControlPubsubFipsRuntime>,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
@@ -395,6 +396,7 @@ impl Drop for MobileTunnel {
         }
         let tasks = std::mem::take(&mut self.tasks);
         let endpoint = self.endpoint.take();
+        let control_pubsub = self.control_pubsub.take();
         let wg_upstream = self.wg_upstream.take();
         self.runtime.block_on(async move {
             #[cfg(target_os = "ios")]
@@ -406,6 +408,9 @@ impl Drop for MobileTunnel {
             }
             if let Some(wg) = wg_upstream {
                 wg.shutdown().await;
+            }
+            if let Some(pubsub) = control_pubsub {
+                pubsub.stop().await;
             }
             if let Some(endpoint) = endpoint {
                 let _ = endpoint.shutdown().await;

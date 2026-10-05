@@ -114,7 +114,6 @@
             advertise_on_nostr: false,
             webrtc_enabled: false,
             stun_servers: Vec::new(),
-            nostr_relays: Vec::new(),
             websocket: Default::default(),
             share_local_candidates: false,
         };

@@ -287,7 +287,7 @@ fn paid_exit_buyer_funding_ready(config_path: &Path) -> Result<bool> {
                     .channels
                     .get(&session.session.payment.channel_id)
                     .is_some_and(|channel| {
-                        channel.expires_at_unix > now
+                        channel.routing_expires_at_unix(u64::MAX) > now
                             && matches!(
                                 channel.status,
                                 PaidRouteLifecycleStatus::Opening

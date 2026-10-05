@@ -1,16 +1,15 @@
 /// Relays used by signed FIPS peer/service announcements. Physical FIPS
 /// datagrams are never carried through these relays.
-pub fn effective_fips_nostr_relays(configured: &[String]) -> Vec<String> {
-    let configured = configured
-        .iter()
-        .map(|relay| relay.trim())
-        .filter(|relay| !relay.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    if !configured.is_empty() {
-        return configured;
-    }
-    fips_core::Config::new().node.discovery.nostr.advert_relays
+pub fn effective_nostr_relays(configured: &[String], disabled: &[String]) -> Vec<String> {
+    let configured = normalize_relay_urls(configured.to_vec());
+    let mut relays = if configured.is_empty() {
+        default_relays()
+    } else {
+        configured
+    };
+    let disabled = normalize_relay_urls(disabled.to_vec());
+    relays.retain(|relay| !disabled.contains(relay));
+    relays
 }
 
 impl AppConfig {
@@ -195,5 +194,4 @@ impl AppConfig {
         }
         self.fips_peer_endpoints = normalized;
     }
-
 }

@@ -297,8 +297,8 @@ fn paid_route_session_state_with_decision(
         .map(|channel| channel.status)
         .or_else(|| lease.map(|lease| lease.status));
     let expires_at_unix = match (channel, lease) {
-        (Some(channel), Some(lease)) => channel.expires_at_unix.min(lease.lease.expires_at_unix),
-        (Some(channel), None) => channel.expires_at_unix,
+        (Some(channel), Some(lease)) => channel.routing_expires_at_unix(lease.lease.expires_at_unix),
+        (Some(channel), None) => channel.routing_expires_at_unix(u64::MAX),
         (None, Some(lease)) => lease.lease.expires_at_unix,
         (None, None) => 0,
     };

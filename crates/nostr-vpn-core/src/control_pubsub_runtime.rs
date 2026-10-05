@@ -1,5 +1,5 @@
 #[cfg(target_os = "macos")]
-use nostr_vpn_core::macos_file_io as fs;
+use crate::macos_file_io as fs;
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(not(target_os = "macos"))]
 use std::fs;
@@ -7,6 +7,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::config::{NostrPubsubConfig, NostrPubsubMode};
+use crate::control_pubsub::{
+    CONTROL_PUBSUB_MAX_EVENT_BYTES, CONTROL_PUBSUB_MAX_WIRE_BYTES, FIPS_PEER_ADVERT_KIND,
+    PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
+};
+use crate::paid_routes::{PAID_ROUTE_OFFER_TTL_SECS, SignedPaidRouteOffer};
+use crate::updater::{UpdateEventCache, configured_update_ref};
 use anyhow::{Context, Result, anyhow};
 use fips_core::FipsEndpoint;
 use nostr_pubsub::{
@@ -24,13 +31,6 @@ use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW
 use nostr_sdk::prelude::Keys;
 use nostr_sdk::prelude::{Client, Event, Filter, Kind, PublicKey};
 use nostr_social_memory::rating_from_event;
-use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
-use nostr_vpn_core::control_pubsub::{
-    CONTROL_PUBSUB_MAX_EVENT_BYTES, CONTROL_PUBSUB_MAX_WIRE_BYTES, FIPS_PEER_ADVERT_KIND,
-    PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
-};
-use nostr_vpn_core::paid_routes::{PAID_ROUTE_OFFER_TTL_SECS, SignedPaidRouteOffer};
-use nostr_vpn_core::updater::{UpdateEventCache, configured_update_ref};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -62,10 +62,15 @@ enum RuntimeCommand {
 
 include!("control_pubsub_runtime/event_store.rs");
 
-pub struct ControlPubsubFipsRuntime {
+#[derive(Clone)]
+pub struct ControlPubsubClient {
     command_tx: mpsc::Sender<RuntimeCommand>,
     events: Arc<Mutex<ControlEventStore>>,
     relay_client: Option<Client>,
+}
+
+pub struct ControlPubsubFipsRuntime {
+    pub client: ControlPubsubClient,
     shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
@@ -211,14 +216,47 @@ impl ControlPubsubFipsRuntime {
             .await;
         });
         Ok(Some(Self {
-            command_tx,
-            events,
-            relay_client,
+            client: ControlPubsubClient {
+                command_tx,
+                events,
+                relay_client,
+            },
             shutdown: Some(shutdown_tx),
             task,
         }))
     }
 
+    pub async fn stop(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        let _ = (&mut self.task).await;
+        if let Some(client) = self.client.relay_client.take() {
+            client.shutdown().await;
+        }
+    }
+}
+
+fn fips_pubsub_options(max_event_bytes: usize, max_hops: u8) -> FipsPubsubClientOptions {
+    FipsPubsubClientOptions {
+        max_frame_bytes: max_event_bytes
+            .saturating_add(4 * 1_024)
+            .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
+        max_connected_peers: MAX_PUBSUB_PEERS,
+        max_replay_events: FIPS_REPLAY_LIMIT,
+        receive_batch_size: 64,
+        max_hops,
+        ..FipsPubsubClientOptions::default()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ControlRelayStatus {
+    pub url: String,
+    pub status: String,
+}
+
+impl ControlPubsubClient {
     pub async fn events(&self) -> Vec<Event> {
         self.events.lock().await.snapshot()
     }
@@ -259,27 +297,26 @@ impl ControlPubsubFipsRuntime {
             .context("control pubsub runtime stopped during subscription query")?
     }
 
-    pub async fn stop(mut self) {
-        if let Some(shutdown) = self.shutdown.take() {
-            let _ = shutdown.send(());
+    pub async fn relay_statuses(&self) -> Vec<ControlRelayStatus> {
+        let Some(client) = &self.relay_client else {
+            return Vec::new();
+        };
+        let mut states = Vec::new();
+        for (url, relay) in client.relays().await {
+            states.push(ControlRelayStatus {
+                url: url.to_string(),
+                status: relay.status().to_string().to_ascii_lowercase(),
+            });
         }
-        let _ = (&mut self.task).await;
-        if let Some(client) = self.relay_client.take() {
-            client.shutdown().await;
-        }
+        states.sort_by(|left, right| left.url.cmp(&right.url));
+        states
     }
 }
 
-fn fips_pubsub_options(max_event_bytes: usize, max_hops: u8) -> FipsPubsubClientOptions {
-    FipsPubsubClientOptions {
-        max_frame_bytes: max_event_bytes
-            .saturating_add(4 * 1_024)
-            .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
-        max_connected_peers: MAX_PUBSUB_PEERS,
-        max_replay_events: FIPS_REPLAY_LIMIT,
-        receive_batch_size: 64,
-        max_hops,
-        ..FipsPubsubClientOptions::default()
+impl std::ops::Deref for ControlPubsubFipsRuntime {
+    type Target = ControlPubsubClient;
+    fn deref(&self) -> &Self::Target {
+        &self.client
     }
 }
 
@@ -891,10 +928,17 @@ fn subscription_peer_ids(peers: Vec<(String, u64)>) -> Vec<String> {
 async fn fips_notification(
     subscription: &mut Option<FipsPubsubSubscription>,
 ) -> Option<QueryEvent> {
-    let Some(subscription) = subscription.as_mut() else {
+    let Some(active) = subscription.as_mut() else {
         return std::future::pending().await;
     };
-    subscription.recv().await
+    let delivery = active.recv().await;
+    if delivery.is_none() {
+        // Terminal subscriptions drain their admitted bodies before EOF.
+        // Disable this select branch until the existing maintenance tick can
+        // restore live delivery; reopening is not a missed-history recovery.
+        subscription.take();
+    }
+    delivery
 }
 
 async fn verified_event_is_admitted(
@@ -938,56 +982,7 @@ async fn relay_notification(relay: &mut Option<RelayProvider>) -> Option<QueryEv
     relay.notifications.recv().await
 }
 
-fn exit_graph_filter(root: PublicKey) -> Filter {
-    Filter::new()
-        .author(root)
-        .kinds([Kind::ContactList, Kind::MuteList])
-        .limit(2)
-}
-
-fn control_kinds() -> [Kind; 2] {
-    [
-        Kind::Custom(PAID_EXIT_OFFER_KIND),
-        Kind::Custom(RATING_FACT_KIND),
-    ]
-}
-
-fn relay_subscription_filters(
-    update_events: &UpdateEventCache,
-    target_advert_authors: &[PublicKey],
-) -> Vec<Filter> {
-    let mut filters = Vec::with_capacity(5);
-    if !target_advert_authors.is_empty() {
-        filters.push(
-            Filter::new()
-                .kind(Kind::Custom(FIPS_PEER_ADVERT_KIND))
-                .authors(target_advert_authors.iter().copied())
-                .limit(target_advert_authors.len().min(MAX_PUBSUB_PEERS)),
-        );
-    }
-    filters.extend([
-        Filter::new()
-            .kind(Kind::Custom(FIPS_PEER_ADVERT_KIND))
-            .limit(RELAY_REPLAY_LIMIT),
-        Filter::new()
-            .kind(Kind::Custom(PAID_EXIT_OFFER_KIND))
-            .limit(RELAY_REPLAY_LIMIT),
-        Filter::new()
-            .kind(Kind::Custom(RATING_FACT_KIND))
-            .limit(RELAY_REPLAY_LIMIT),
-        update_events.filter().clone().limit(RELAY_REPLAY_LIMIT),
-    ]);
-    filters
-}
-
-fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
-    matches!(
-        u16::from(event.kind),
-        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND | 3 | 10_000
-    ) || update_events
-        .filter()
-        .match_event(event, MatchEventOptions::new())
-}
+include!("control_pubsub_runtime/filters.rs");
 
 include!("control_pubsub_runtime/outbox.rs");
 include!("control_pubsub_runtime/exit_ratings.rs");

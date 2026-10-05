@@ -6,7 +6,7 @@ use nostr_vpn_core::secure_dns::{
     SecureDnsError, SecureDnsLookup, SecureDnsResolver, WireGuardDnsResolver,
 };
 
-use super::{FIPS_DNS_TTL_SECS, ResolverState, SharedResolver};
+use super::{ResolverState, SharedResolver};
 
 pub(super) fn dns_resolver(config: &ExitDnsResolverConfig) -> Result<SharedResolver> {
     match config {
@@ -33,20 +33,4 @@ impl SecureDnsLookup for FailClosedDnsResolver {
 
 pub(super) fn current_resolver(resolver: &ResolverState) -> Option<SharedResolver> {
     resolver.read().ok().map(|resolver| Arc::clone(&*resolver))
-}
-
-pub(super) fn resolve_fips_dns_if_handled(
-    query: &[u8],
-) -> Option<(Vec<u8>, Option<fips_core::upper::dns::DnsResolvedIdentity>)> {
-    let request = hickory_proto::op::Message::from_vec(query).ok()?;
-    let name = request.queries.first()?.name.to_utf8();
-    let name = name.trim_end_matches('.');
-    if !name.to_ascii_lowercase().ends_with(".fips") {
-        return None;
-    }
-    fips_core::upper::dns::handle_dns_packet(
-        query,
-        FIPS_DNS_TTL_SECS,
-        &fips_core::upper::hosts::HostMap::new(),
-    )
 }

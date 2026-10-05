@@ -175,6 +175,7 @@ fn mobile_runtime_state_path(config_path: &Path) -> Option<PathBuf> {
 }
 
 struct MobileRuntimeDiagnostics<'a> {
+    pubsub: Option<&'a ControlPubsubClient>,
     secure_dns: Option<&'a SecureDnsResolver>,
     wireguard_handshake:
         Option<&'a nostr_vpn_core::wg_upstream::WgUpstreamHandshakeObserver>,
@@ -193,10 +194,10 @@ async fn persist_mobile_runtime_state(
         .peers()
         .await
         .context("mobile FIPS peer snapshot")?;
-    let relay_statuses = endpoint
-        .relay_statuses()
-        .await
-        .context("mobile FIPS relay snapshot")?;
+    let relay_statuses = match diagnostics.pubsub {
+        Some(pubsub) => pubsub.relay_statuses().await,
+        None => Vec::new(),
+    };
     let config = config
         .read()
         .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
@@ -233,7 +234,7 @@ fn mobile_runtime_state_with_tun_counters(
     mesh: &FipsMeshRuntime,
     presence: &HashMap<String, MobilePeerPresence>,
     endpoint_peers: Vec<FipsEndpointPeer>,
-    relay_statuses: Vec<FipsEndpointRelayStatus>,
+    relay_statuses: Vec<ControlRelayStatus>,
     tun_counters: MobileTunCounters,
     now: u64,
 ) -> DaemonRuntimeState {

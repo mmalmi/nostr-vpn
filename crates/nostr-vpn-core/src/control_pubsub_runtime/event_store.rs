@@ -119,6 +119,9 @@ impl ControlEventStore {
     }
 
     fn insert_memory(&mut self, event: Event) -> bool {
+        if !is_control_event(&event, &self.update_events) {
+            return false;
+        }
         let event_id = event.id.to_hex();
         if self.events.contains_key(&event_id) {
             return false;
@@ -335,7 +338,7 @@ impl ControlEventStore {
             paid_offer_watermarks,
         };
         let bytes = serde_json::to_vec(&saved).context("failed to encode control pubsub store")?;
-        nostr_vpn_core::config::write_private_file_preserving_user_owner(path, &bytes)
+        crate::config::write_private_file_preserving_user_owner(path, &bytes)
             .with_context(|| format!("failed to write control pubsub store {}", path.display()))?;
         Ok(())
     }
@@ -414,7 +417,8 @@ mod tests {
     use nostr_sdk::{EventBuilder, ToBech32};
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
-    use nostr_vpn_core::paid_routes::{
+    #[cfg(feature = "paid-exit")]
+    use crate::paid_routes::{
         PAID_ROUTE_OFFER_TTL_SECS, PaidExitConfig, SignedPaidRouteOffer,
         signed_paid_exit_offer_from_config,
     };
@@ -484,6 +488,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_refreshes_replace_the_same_author_and_identifier() {
         let seller = Keys::generate();
         let other_seller = Keys::generate();
@@ -505,6 +510,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn expired_replacement_withdraws_the_previous_paid_offer() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
@@ -524,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_tombstone_rejects_out_of_order_live_replay() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
@@ -556,6 +563,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_tombstone_survives_restart_without_becoming_visible() {
         let seller = Keys::generate();
         let now = now_ms() / 1_000;
@@ -592,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "paid-exit")]
     fn maintenance_prunes_expired_paid_offers() {
         let seller = Keys::generate();
         let signed_at = now_ms() / 1_000;
@@ -667,7 +676,7 @@ mod tests {
 
     fn test_update_events() -> UpdateEventCache {
         let keys = Keys::generate();
-        let reference = nostr_vpn_core::updater::UpdateRef {
+        let reference = crate::updater::UpdateRef {
             npub: keys.public_key().to_bech32().expect("npub"),
             tree_name: "test-root".to_string(),
             path: Some("latest".to_string()),
@@ -688,6 +697,7 @@ mod tests {
         rating.to_event(author).expect("signed rating")
     }
 
+    #[cfg(feature = "paid-exit")]
     fn paid_offer_event(author: &Keys, offer_id: &str, signed_at: u64) -> Event {
         let config = PaidExitConfig {
             enabled: true,

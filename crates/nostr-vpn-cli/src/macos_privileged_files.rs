@@ -78,7 +78,8 @@ pub(crate) fn read_runtime_state(path: &Path) -> Result<Option<Vec<u8>>> {
     let mut file = match open_artifact(path) {
         Ok(file) => file,
         Err(error)
-            if error.downcast_ref::<io::Error>()
+            if error
+                .downcast_ref::<io::Error>()
                 .is_some_and(|error| error.kind() == io::ErrorKind::NotFound) =>
         {
             return Ok(None);
