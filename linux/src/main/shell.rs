@@ -75,8 +75,8 @@ fn render(app: &AppRef) {
     refresh_header(app, &state);
     clear_box(&sidebar);
     clear_box(&update_bar);
-    clear_box(&content);
     if !app.borrow().core_ready {
+        clear_box(&content);
         let loading = gtk::Box::new(gtk::Orientation::Vertical, 12);
         loading.set_halign(gtk::Align::Center);
         loading.set_valign(gtk::Align::Center);
@@ -99,7 +99,18 @@ fn render(app: &AppRef) {
     build_sidebar(app, &sidebar, &state, page);
     build_update_stripe(app, &update_bar, &state);
 
-    let scroll = gtk::ScrolledWindow::new();
+    // Keep the live scroll adjustment and layout across background refreshes.
+    // Recreating the scroller starts it at zero before its new child is sized.
+    let existing_scroll = (page == rendered_page)
+        .then(|| content.first_child())
+        .flatten()
+        .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
+    let scroll = existing_scroll.unwrap_or_else(|| {
+        clear_box(&content);
+        let scroll = gtk::ScrolledWindow::new();
+        content.append(&scroll);
+        scroll
+    });
     scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
     scroll.set_vexpand(true);
     scroll.set_hexpand(true);
@@ -125,7 +136,6 @@ fn render(app: &AppRef) {
     }
 
     scroll.set_child(Some(&page_box));
-    content.append(&scroll);
     restore_scroll_offset(&scroll, scroll_offset);
 }
 

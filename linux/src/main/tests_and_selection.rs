@@ -3,7 +3,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manage_devices_stays_expanded_across_refreshes() {
+    fn background_refresh_preserves_expanders_and_settings_scroll() {
         if std::env::var_os("NVPN_MANAGE_DEVICES_UI_TEST").is_none() {
             let directory = std::env::temp_dir()
                 .join(format!("nvpn-manage-devices-test-{}", std::process::id()));
@@ -11,7 +11,7 @@ mod tests {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "tests::manage_devices_stays_expanded_across_refreshes",
+                    "tests::background_refresh_preserves_expanders_and_settings_scroll",
                     "--nocapture",
                 ])
                 .env("NVPN_MANAGE_DEVICES_UI_TEST", "1")
@@ -92,6 +92,57 @@ mod tests {
                 "Manage devices lost its state during a background refresh"
             );
         }
+
+        app.borrow_mut().page = Page::Settings;
+        render(&app);
+        let window = app.borrow().window.clone();
+        window.set_default_size(900, 600);
+        window.set_content(Some(&content));
+        window.present();
+        let context = glib::MainContext::default();
+        let scroll = content
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::ScrolledWindow>()
+            .unwrap();
+        let adjustment = scroll.vadjustment();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while adjustment.upper() <= adjustment.page_size() {
+            assert!(Instant::now() < deadline, "Settings did not become scrollable");
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Settle initial window focus/scroll animations before simulating a
+        // user's scroll followed by a background refresh.
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        gtk::prelude::GtkWindowExt::set_focus(&window, Some(&scroll));
+        adjustment.set_value(200.0);
+        let offset = adjustment.value();
+        assert!(offset > 0.0);
+        for refresh in 1..=3 {
+            let mut state = app.borrow().state.clone();
+            state.rev += 1;
+            state.vpn_status = format!("Settings refresh {refresh}");
+            results.send(CoreResult { is_action: false, state }).unwrap();
+            drain_core_results(&app);
+            assert_eq!(
+                content.first_child().unwrap(),
+                scroll.clone().upcast::<gtk::Widget>(),
+                "Background refresh replaced the scroller, resetting its layout and scroll position"
+            );
+            assert_eq!(adjustment.value(), offset);
+            let deadline = Instant::now() + Duration::from_millis(100);
+            while Instant::now() < deadline {
+                context.iteration(false);
+                assert_eq!(adjustment.value(), offset, "Settings scroll jumped during layout");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        window.close();
     }
 
     #[test]
