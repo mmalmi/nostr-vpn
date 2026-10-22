@@ -25,13 +25,15 @@ jobs:
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: 2
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      GTK_A11Y: none
     steps:
       - name: Install Debian 13 build dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential pkg-config clang libclang-dev \
-            libgtk-4-dev libadwaita-1-dev libssl-dev libdbus-1-dev python3 file
+            libgtk-4-dev libadwaita-1-dev libssl-dev libdbus-1-dev python3 file \
+            xvfb xauth dbus-x11
 
       - uses: actions/checkout@v6
 
@@ -52,8 +54,8 @@ jobs:
           cargo build --release --locked --bin nvpn
           cargo build --release --locked --manifest-path linux/Cargo.toml
 
-      - name: Test QR scanning and camera process cleanup
-        run: cargo test --release --locked --manifest-path linux/Cargo.toml qr_scan::tests -- --nocapture
+      - name: Test Linux UI refreshes and QR scanning
+        run: xvfb-run -a dbus-run-session -- cargo test --release --locked --manifest-path linux/Cargo.toml -- --nocapture
 
       - name: Install Debian packaging tool
         run: cargo install cargo-deb --locked --version 3.8.0

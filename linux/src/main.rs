@@ -192,6 +192,7 @@ struct AppModel {
     service_settling: bool,
     render_pending: bool,
     manual_join_expanded: bool,
+    manage_devices_expanded: bool,
     diagnostics_expanded: bool,
 }
 
@@ -259,6 +260,7 @@ impl AppModel {
             service_settling: false,
             render_pending: false,
             manual_join_expanded: false,
+            manage_devices_expanded: false,
             diagnostics_expanded,
         }
     }

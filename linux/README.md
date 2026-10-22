@@ -37,6 +37,7 @@ deep link can be passed directly to the app:
 Live camera scanning uses `zbarcam` when a camera is available. Use the Camera
 dropdown in the scanner to select a built-in or external webcam. Cameras are
 listed by name and device path; changing the selection restarts the scan.
+Only accessible video-capture nodes are listed; metadata-only nodes are hidden.
 QR image import works without a camera. Release packaging currently produces a
 Debian package through the release workflow.
 
@@ -44,8 +45,8 @@ Debian package through the release workflow.
 
 The `Linux desktop installer` GitHub Actions workflow builds a Debian 13
 `amd64` package when the `camera-selector` branch is pushed. It also supports
-manual runs. The workflow builds the daemon and desktop app, runs the QR scanner
-tests, and checks that the package installs in Debian 13.
+manual runs. The workflow builds the daemon and desktop app, runs the Linux UI
+and QR scanner tests, and checks that the package installs in Debian 13.
 
 Open a successful run in the fork's **Actions** tab and download the
 `nostr-vpn-debian13-amd64-camera-selector` artifact. Extract the ZIP, then run

@@ -50,6 +50,13 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
 
     if network.local_is_admin {
         let expander = gtk::Expander::new(Some("Manage devices"));
+        expander.set_expanded(app.borrow().manage_devices_expanded);
+        {
+            let app = app.clone();
+            expander.connect_expanded_notify(move |expander| {
+                app.borrow_mut().manage_devices_expanded = expander.is_expanded();
+            });
+        }
         let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
         body.set_margin_top(10);
 

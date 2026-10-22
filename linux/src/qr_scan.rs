@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
@@ -28,6 +30,54 @@ pub fn decode_from_path(path: &Path) -> Result<String, String> {
     Err("No QR code found".to_string())
 }
 
+// Linux videodev2.h: v4l2_capability, filled by VIDIOC_QUERYCAP.
+#[repr(C)]
+#[derive(Default)]
+struct VideoCapabilities {
+    driver: [u8; 16],
+    card: [u8; 32],
+    bus_info: [u8; 32],
+    version: u32,
+    capabilities: u32,
+    device_caps: u32,
+    reserved: [u32; 3],
+}
+
+impl VideoCapabilities {
+    fn can_capture(&self) -> bool {
+        const VIDEO_CAPTURE: u32 = 0x0000_0001;
+        const READWRITE: u32 = 0x0100_0000;
+        const STREAMING: u32 = 0x0400_0000;
+        const DEVICE_CAPS: u32 = 0x8000_0000;
+        let capabilities = if self.capabilities & DEVICE_CAPS != 0 {
+            self.device_caps
+        } else {
+            self.capabilities
+        };
+        capabilities & VIDEO_CAPTURE != 0 && capabilities & (READWRITE | STREAMING) != 0
+    }
+}
+
+nix::ioctl_read!(query_video_capabilities, b'V', 0, VideoCapabilities);
+
+fn capture_device_name(path: &Path) -> Option<String> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(nix::libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
+    let mut capabilities = VideoCapabilities::default();
+    // SAFETY: The open descriptor stays valid, and the writable repr(C) buffer
+    // matches the kernel's v4l2_capability layout and the ioctl's encoded size.
+    unsafe { query_video_capabilities(file.as_raw_fd(), &mut capabilities) }.ok()?;
+    if !capabilities.can_capture() {
+        return None;
+    }
+    let name = capabilities.card.split(|byte| *byte == 0).next()?;
+    Some(String::from_utf8_lossy(name).into_owned())
+}
+
 fn camera_devices() -> Vec<(PathBuf, String)> {
     let mut devices = Vec::new();
     if let Ok(entries) = std::fs::read_dir("/dev") {
@@ -40,9 +90,10 @@ fn camera_devices() -> Vec<(PathBuf, String)> {
             else {
                 continue;
             };
-            let name = std::fs::read_to_string(format!("/sys/class/video4linux/{file_name}/name"))
-                .unwrap_or_else(|_| "Camera".to_string());
             let path = entry.path();
+            let Some(name) = capture_device_name(&path) else {
+                continue;
+            };
             let label = format!("{} ({})", name.trim(), path.display());
             devices.push((index, path, label));
         }
@@ -320,6 +371,35 @@ mod tests {
     use super::*;
     use image::{GrayImage, Luma};
     use qrcode::QrCode;
+
+    #[test]
+    fn camera_capabilities_exclude_metadata_and_output_nodes() {
+        // Raw videodev2.h capability bits, including the aggregate capabilities
+        // shared by a webcam's video and metadata nodes.
+        for (capabilities, device_caps, expected) in [
+            (0x8480_0001, 0x0400_0001, true),
+            (0x8480_0001, 0x0480_0000, false),
+            (0x8480_0001, 0, false),
+            (0x0400_0001, 0, true),
+            (0x0100_0001, 0, true),
+            (0x0480_0000, 0, false),
+            (0x0400_0002, 0, false),
+            (0x0000_0001, 0, false),
+        ] {
+            let node = VideoCapabilities {
+                capabilities,
+                device_caps,
+                ..VideoCapabilities::default()
+            };
+            assert_eq!(
+                node.can_capture(),
+                expected,
+                "wrong capture decision for capabilities={capabilities:#x}, device_caps={device_caps:#x}"
+            );
+        }
+        assert_eq!(std::mem::size_of::<VideoCapabilities>(), 104);
+        assert!(capture_device_name(Path::new("/dev/null")).is_none());
+    }
 
     #[test]
     fn camera_process_lifecycle() {
