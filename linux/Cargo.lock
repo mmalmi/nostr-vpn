@@ -4101,6 +4101,7 @@ dependencies = [
  "gtk4",
  "image",
  "libadwaita",
+ "nix 0.29.0",
  "nostr-vpn-app-core",
  "nostr-vpn-core",
  "qrcode",

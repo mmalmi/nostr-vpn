@@ -6,6 +6,11 @@ wallet, settings, tray, deep-link, updater, and QR import/scanning surfaces.
 
 ## Development
 
+Background polling updates telemetry labels and relay indicators in place.
+Traffic counters, latency, timestamps, and diagnostic updates do not rebuild
+the page or replace open expanders and form controls. Navigation, configuration,
+permissions, and roster changes still rebuild the page when necessary.
+
 Docker is required. From the repository root:
 
 ```sh
@@ -34,9 +39,12 @@ deep link can be passed directly to the app:
 ./tools/run-linux cargo run -- nvpn://debug/tick
 ```
 
-Live camera scanning uses `zbarcam` when a camera is available; QR image import
-works without it. Release packaging currently produces a Debian package through
-the release workflow.
+Live camera scanning uses `zbarcam` when a camera is available. Use the Camera
+dropdown in the scanner to select a built-in or external webcam. Cameras are
+listed by name and device path; changing the selection restarts the scan.
+Only accessible video-capture nodes are listed; metadata-only nodes are hidden.
+QR image import works without a camera. Release packaging currently produces a
+Debian package through the release workflow.
 
 See the [native UI parity matrix](../docs/native-ui-parity-matrix.md) for the
 shared platform contract.

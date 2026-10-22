@@ -144,11 +144,12 @@ fn drain_core_results(app: &AppRef) {
                             || model.render_pending,
                     )
                 };
-                set_state(app, state);
+                set_state(app, state.clone());
                 if initialized {
                     sync_launch_on_startup_setting(app);
                     check_updates_if_due(app);
                 }
+                refresh_live_widgets(app, &state);
                 if should_render {
                     let editing = gtk::prelude::GtkWindowExt::focus(&app.borrow().window)
                         .is_some_and(|widget| {

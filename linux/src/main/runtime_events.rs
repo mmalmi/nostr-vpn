@@ -21,9 +21,46 @@ fn state_needs_render(previous: &NativeAppState, next: &NativeAppState) -> bool 
     if previous == next {
         return false;
     }
-    let mut previous = previous.clone();
-    previous.rev = next.rev;
-    previous != *next
+    // Telemetry has live bindings (or is not displayed). Everything else,
+    // including permissions, configuration and roster changes, still rebuilds
+    // the page so action callbacks cannot retain obsolete state.
+    fn structure(mut state: NativeAppState) -> NativeAppState {
+        state.rev = 0;
+        state.vpn_status.clear();
+        state.runtime_status_detail.clear();
+        state.connected_peer_count = 0;
+        state.expected_peer_count = 0;
+        state.fips_connected_peer_count = 0;
+        state.fips_roster_peer_count = 0;
+        state.non_fips_roster_peer_count = 0;
+        state.magic_dns_status.clear();
+        state.network = Default::default();
+        state.port_mapping = Default::default();
+        for relay in &mut state.relays {
+            relay.status.clear();
+        }
+        for network in &mut state.networks {
+            network.online_count = 0;
+            network.expected_count = 0;
+            for participant in &mut network.participants {
+                participant.tx_bytes = 0;
+                participant.rx_bytes = 0;
+                participant.fips_srtt_ms = 0;
+                participant.fips_srtt_age_ms = 0;
+                participant.fips_packets_sent = 0;
+                participant.fips_packets_recv = 0;
+                participant.fips_bytes_sent = 0;
+                participant.fips_bytes_recv = 0;
+                participant.fips_direct_probe_after_ms = 0;
+                participant.fips_direct_probe_expires_at_ms = 0;
+                participant.last_fips_control_seen_text.clear();
+                participant.last_fips_data_seen_text.clear();
+                participant.last_seen_text.clear();
+            }
+        }
+        state
+    }
+    structure(previous.clone()) != structure(next.clone())
 }
 
 fn drain_tray_commands(app: &AppRef) {

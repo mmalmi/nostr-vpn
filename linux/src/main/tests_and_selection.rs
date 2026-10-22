@@ -3,6 +3,196 @@ mod tests {
     use super::*;
 
     #[test]
+    fn background_refresh_preserves_expanders_and_settings_scroll() {
+        if std::env::var_os("NVPN_MANAGE_DEVICES_UI_TEST").is_none() {
+            let directory = std::env::temp_dir()
+                .join(format!("nvpn-manage-devices-test-{}", std::process::id()));
+            std::fs::create_dir_all(&directory).unwrap();
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::background_refresh_preserves_expanders_and_settings_scroll",
+                    "--nocapture",
+                ])
+                .env("NVPN_MANAGE_DEVICES_UI_TEST", "1")
+                .env("NVPN_APP_DATA_DIR", &directory)
+                .env("NVPN_CLI_PATH", "/bin/false")
+                .status();
+            std::fs::remove_dir_all(directory).unwrap();
+            assert!(result.unwrap().success());
+            return;
+        }
+
+        fn find_expander(widget: &gtk::Widget) -> Option<gtk::Expander> {
+            if let Some(expander) = widget.downcast_ref::<gtk::Expander>() {
+                if expander.label().as_deref() == Some("Manage devices") {
+                    return Some(expander.clone());
+                }
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if let Some(expander) = find_expander(&widget) {
+                    return Some(expander);
+                }
+                child = widget.next_sibling();
+            }
+            None
+        }
+
+        fn contains_label(widget: &gtk::Widget, text: &str) -> bool {
+            if let Some(expander) = widget.downcast_ref::<gtk::Expander>() {
+                if expander.child().is_some_and(|child| contains_label(&child, text)) {
+                    return true;
+                }
+            }
+            if widget.downcast_ref::<gtk::Label>().is_some_and(|label| label.text() == text) {
+                return true;
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if contains_label(&widget, text) {
+                    return true;
+                }
+                child = widget.next_sibling();
+            }
+            false
+        }
+
+        adw::init().unwrap();
+        let application = adw::Application::new(
+            Some("fi.siriusbusiness.nvpn.tests"),
+            gio::ApplicationFlags::NON_UNIQUE,
+        );
+        application.register(gio::Cancellable::NONE).unwrap();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let mut model = AppModel::new(
+            adw::ApplicationWindow::new(&application),
+            gtk::Box::new(gtk::Orientation::Vertical, 0),
+            gtk::Box::new(gtk::Orientation::Vertical, 0),
+            content.clone(),
+            gtk::Label::new(None),
+            gtk::Box::new(gtk::Orientation::Vertical, 0),
+            gtk::Switch::new(),
+        );
+        let (results, receiver) = mpsc::channel();
+        model.core_results = receiver;
+        model.core_ready = true;
+        model.state = NativeAppState {
+            networks: vec![NativeNetworkState {
+                id: "test-network".to_string(),
+                enabled: true,
+                local_is_admin: true,
+                participants: vec![NativeParticipantState {
+                    npub: "npub1testpeer".to_string(),
+                    magic_dns_alias: "test-peer".to_string(),
+                    ..NativeParticipantState::default()
+                }],
+                ..NativeNetworkState::default()
+            }],
+            ..NativeAppState::default()
+        };
+        let app = Rc::new(RefCell::new(model));
+        render(&app);
+        let expander = find_expander(content.upcast_ref()).unwrap();
+        assert!(!expander.is_expanded());
+        expander.set_expanded(true);
+
+        for expanded in [true, true, false, false] {
+            let expander = find_expander(content.upcast_ref()).unwrap();
+            expander.set_expanded(expanded);
+            let mut state = app.borrow().state.clone();
+            state.rev += 1;
+            state.vpn_status = format!("Refresh {}", state.rev);
+            state.networks[0].participants[0].tx_bytes = state.rev * 1024;
+            state.networks[0].participants[0].last_seen_text = format!("Seen {}", state.rev);
+            let sent = format_bytes(state.networks[0].participants[0].tx_bytes);
+            let last_seen = state.networks[0].participants[0].last_seen_text.clone();
+            results
+                .send(CoreResult {
+                    is_action: false,
+                    state,
+                })
+                .unwrap();
+            drain_core_results(&app);
+            assert_eq!(
+                find_expander(content.upcast_ref()).unwrap(),
+                expander,
+                "Routine polling replaced the Manage devices widget"
+            );
+            assert!(contains_label(content.upcast_ref(), &sent), "Traffic counter did not update");
+            assert!(contains_label(content.upcast_ref(), &last_seen), "Last-seen text did not update");
+            assert_eq!(
+                find_expander(content.upcast_ref()).unwrap().is_expanded(),
+                expanded,
+                "Manage devices lost its state during a background refresh"
+            );
+        }
+
+        app.borrow_mut().page = Page::Settings;
+        render(&app);
+        let window = app.borrow().window.clone();
+        window.set_default_size(900, 600);
+        window.set_content(Some(&content));
+        window.present();
+        let context = glib::MainContext::default();
+        let scroll = content
+            .first_child()
+            .unwrap()
+            .downcast::<gtk::ScrolledWindow>()
+            .unwrap();
+        let adjustment = scroll.vadjustment();
+        let settings_page = scroll.child().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while adjustment.upper() <= adjustment.page_size() {
+            assert!(Instant::now() < deadline, "Settings did not become scrollable");
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Settle initial window focus/scroll animations before simulating a
+        // user's scroll followed by a background refresh.
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            context.iteration(false);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        gtk::prelude::GtkWindowExt::set_focus(&window, Some(&scroll));
+        adjustment.set_value(200.0);
+        let offset = adjustment.value();
+        assert!(offset > 0.0);
+        for refresh in 1..=3 {
+            let mut state = app.borrow().state.clone();
+            state.rev += 1;
+            state.vpn_status = format!("Settings refresh {refresh}");
+            state.runtime_status_detail = format!("Runtime refresh {refresh}");
+            state.network.changed_at += 1;
+            state.port_mapping.good_until += 1;
+            results.send(CoreResult { is_action: false, state }).unwrap();
+            drain_core_results(&app);
+            assert_eq!(
+                scroll.child().unwrap(), settings_page,
+                "Routine polling replaced the Settings controls"
+            );
+            assert!(contains_label(content.upcast_ref(), &format!("Runtime refresh {refresh}")),
+                "Runtime telemetry did not update in place");
+            assert!(contains_label(app.borrow().sidebar.upcast_ref(), &format!("Settings refresh {refresh}")),
+                "Sidebar status did not update in place");
+            assert_eq!(
+                content.first_child().unwrap(),
+                scroll.clone().upcast::<gtk::Widget>(),
+                "Background refresh replaced the scroller, resetting its layout and scroll position"
+            );
+            assert_eq!(adjustment.value(), offset);
+            let deadline = Instant::now() + Duration::from_millis(100);
+            while Instant::now() < deadline {
+                context.iteration(false);
+                assert_eq!(adjustment.value(), offset, "Settings scroll jumped during layout");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        window.close();
+    }
+
+    #[test]
     fn page_scroll_offsets_track_pages_independently() {
         let mut offsets = PageScrollOffsets::default();
 
@@ -52,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn state_needs_render_detects_visible_changes() {
+    fn state_needs_render_detects_configuration_changes() {
         let previous = NativeAppState {
             rev: 40,
             vpn_status: "Connected".to_string(),
@@ -60,10 +250,46 @@ mod tests {
         };
         let next = NativeAppState {
             rev: 41,
-            vpn_status: "Disconnected".to_string(),
+            node_name: "New device name".to_string(),
             ..previous.clone()
         };
 
+        assert!(state_needs_render(&previous, &next));
+    }
+
+    #[test]
+    fn live_telemetry_does_not_rebuild_but_roster_and_permissions_do() {
+        let previous = NativeAppState {
+            relays: vec![nostr_vpn_app_core::native_state::NativeRelayState {
+                url: "wss://relay.example.com".to_string(),
+                enabled: true,
+                ..Default::default()
+            }],
+            networks: vec![NativeNetworkState {
+                id: "test".to_string(),
+                participants: vec![NativeParticipantState::default()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut next = previous.clone();
+        next.rev = 1;
+        next.connected_peer_count = 2;
+        next.runtime_status_detail = "Running".to_string();
+        next.magic_dns_status = "Ready".to_string();
+        next.relays[0].status = "connected".to_string();
+        next.network.primary_ipv4 = "192.0.2.1".to_string();
+        next.port_mapping.good_until = 100;
+        next.networks[0].online_count = 2;
+        next.networks[0].participants[0].tx_bytes = 1024;
+        next.networks[0].participants[0].fips_srtt_ms = 42;
+        next.networks[0].participants[0].last_seen_text = "Just now".to_string();
+        assert!(!state_needs_render(&previous, &next));
+
+        next.networks[0].local_is_admin = true;
+        assert!(state_needs_render(&previous, &next));
+        next.networks[0].local_is_admin = false;
+        next.networks[0].participants.push(NativeParticipantState::default());
         assert!(state_needs_render(&previous, &next));
     }
 
