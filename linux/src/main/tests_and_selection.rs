@@ -39,6 +39,25 @@ mod tests {
             None
         }
 
+        fn contains_label(widget: &gtk::Widget, text: &str) -> bool {
+            if let Some(expander) = widget.downcast_ref::<gtk::Expander>() {
+                if expander.child().is_some_and(|child| contains_label(&child, text)) {
+                    return true;
+                }
+            }
+            if widget.downcast_ref::<gtk::Label>().is_some_and(|label| label.text() == text) {
+                return true;
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if contains_label(&widget, text) {
+                    return true;
+                }
+                child = widget.next_sibling();
+            }
+            false
+        }
+
         adw::init().unwrap();
         let application = adw::Application::new(
             Some("fi.siriusbusiness.nvpn.tests"),
@@ -63,6 +82,11 @@ mod tests {
                 id: "test-network".to_string(),
                 enabled: true,
                 local_is_admin: true,
+                participants: vec![NativeParticipantState {
+                    npub: "npub1testpeer".to_string(),
+                    magic_dns_alias: "test-peer".to_string(),
+                    ..NativeParticipantState::default()
+                }],
                 ..NativeNetworkState::default()
             }],
             ..NativeAppState::default()
@@ -79,6 +103,10 @@ mod tests {
             let mut state = app.borrow().state.clone();
             state.rev += 1;
             state.vpn_status = format!("Refresh {}", state.rev);
+            state.networks[0].participants[0].tx_bytes = state.rev * 1024;
+            state.networks[0].participants[0].last_seen_text = format!("Seen {}", state.rev);
+            let sent = format_bytes(state.networks[0].participants[0].tx_bytes);
+            let last_seen = state.networks[0].participants[0].last_seen_text.clone();
             results
                 .send(CoreResult {
                     is_action: false,
@@ -86,6 +114,13 @@ mod tests {
                 })
                 .unwrap();
             drain_core_results(&app);
+            assert_eq!(
+                find_expander(content.upcast_ref()).unwrap(),
+                expander,
+                "Routine polling replaced the Manage devices widget"
+            );
+            assert!(contains_label(content.upcast_ref(), &sent), "Traffic counter did not update");
+            assert!(contains_label(content.upcast_ref(), &last_seen), "Last-seen text did not update");
             assert_eq!(
                 find_expander(content.upcast_ref()).unwrap().is_expanded(),
                 expanded,
@@ -106,6 +141,7 @@ mod tests {
             .downcast::<gtk::ScrolledWindow>()
             .unwrap();
         let adjustment = scroll.vadjustment();
+        let settings_page = scroll.child().unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
         while adjustment.upper() <= adjustment.page_size() {
             assert!(Instant::now() < deadline, "Settings did not become scrollable");
@@ -127,8 +163,19 @@ mod tests {
             let mut state = app.borrow().state.clone();
             state.rev += 1;
             state.vpn_status = format!("Settings refresh {refresh}");
+            state.runtime_status_detail = format!("Runtime refresh {refresh}");
+            state.network.changed_at += 1;
+            state.port_mapping.good_until += 1;
             results.send(CoreResult { is_action: false, state }).unwrap();
             drain_core_results(&app);
+            assert_eq!(
+                scroll.child().unwrap(), settings_page,
+                "Routine polling replaced the Settings controls"
+            );
+            assert!(contains_label(content.upcast_ref(), &format!("Runtime refresh {refresh}")),
+                "Runtime telemetry did not update in place");
+            assert!(contains_label(app.borrow().sidebar.upcast_ref(), &format!("Settings refresh {refresh}")),
+                "Sidebar status did not update in place");
             assert_eq!(
                 content.first_child().unwrap(),
                 scroll.clone().upcast::<gtk::Widget>(),
@@ -195,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn state_needs_render_detects_visible_changes() {
+    fn state_needs_render_detects_configuration_changes() {
         let previous = NativeAppState {
             rev: 40,
             vpn_status: "Connected".to_string(),
@@ -203,10 +250,46 @@ mod tests {
         };
         let next = NativeAppState {
             rev: 41,
-            vpn_status: "Disconnected".to_string(),
+            node_name: "New device name".to_string(),
             ..previous.clone()
         };
 
+        assert!(state_needs_render(&previous, &next));
+    }
+
+    #[test]
+    fn live_telemetry_does_not_rebuild_but_roster_and_permissions_do() {
+        let previous = NativeAppState {
+            relays: vec![nostr_vpn_app_core::native_state::NativeRelayState {
+                url: "wss://relay.example.com".to_string(),
+                enabled: true,
+                ..Default::default()
+            }],
+            networks: vec![NativeNetworkState {
+                id: "test".to_string(),
+                participants: vec![NativeParticipantState::default()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut next = previous.clone();
+        next.rev = 1;
+        next.connected_peer_count = 2;
+        next.runtime_status_detail = "Running".to_string();
+        next.magic_dns_status = "Ready".to_string();
+        next.relays[0].status = "connected".to_string();
+        next.network.primary_ipv4 = "192.0.2.1".to_string();
+        next.port_mapping.good_until = 100;
+        next.networks[0].online_count = 2;
+        next.networks[0].participants[0].tx_bytes = 1024;
+        next.networks[0].participants[0].fips_srtt_ms = 42;
+        next.networks[0].participants[0].last_seen_text = "Just now".to_string();
+        assert!(!state_needs_render(&previous, &next));
+
+        next.networks[0].local_is_admin = true;
+        assert!(state_needs_render(&previous, &next));
+        next.networks[0].local_is_admin = false;
+        next.networks[0].participants.push(NativeParticipantState::default());
         assert!(state_needs_render(&previous, &next));
     }
 

@@ -49,6 +49,7 @@ fn refresh_header(app: &AppRef, state: &NativeAppState) {
 
 fn render(app: &AppRef) {
     app.borrow_mut().render_pending = false;
+    app.borrow_mut().live_updates.clear();
     sync_selected_device(app);
 
     let (sidebar, update_bar, content, state, page, rendered_page) = {
@@ -252,6 +253,9 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
             "{} of {} connected",
             state.connected_peer_count, state.expected_peer_count
         )));
+        bind_live_label(app, &count, |state| format!(
+            "{} of {} connected", state.connected_peer_count, state.expected_peer_count
+        ));
         count.add_css_class("caption");
         count.add_css_class("dim-label");
         count.set_xalign(0.0);
@@ -265,6 +269,7 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
     sidebar.append(&spacer);
 
     let status = gtk::Label::new(Some(&state.vpn_status));
+    bind_live_label(app, &status, |state| state.vpn_status.clone());
     status.add_css_class("caption");
     status.add_css_class("dim-label");
     status.set_xalign(0.0);

@@ -6,6 +6,11 @@ wallet, settings, tray, deep-link, updater, and QR import/scanning surfaces.
 
 ## Development
 
+Background polling updates telemetry labels and relay indicators in place.
+Traffic counters, latency, timestamps, and diagnostic updates do not rebuild
+the page or replace open expanders and form controls. Navigation, configuration,
+permissions, and roster changes still rebuild the page when necessary.
+
 Docker is required. From the repository root:
 
 ```sh
