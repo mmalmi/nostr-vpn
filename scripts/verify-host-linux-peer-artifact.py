@@ -9,6 +9,7 @@ import os
 import pathlib
 import re
 import stat
+import subprocess
 import sys
 from typing import Any
 
@@ -39,10 +40,10 @@ def load_receipt(path: pathlib.Path) -> dict[str, Any]:
 
 
 def main() -> None:
-    if len(sys.argv) != 9:
+    if len(sys.argv) not in (9, 10):
         fail(
             "expected RECEIPT BINARY APP_SHA APP_TREE FIPS_SHA FIPS_TREE "
-            "FIPS_VERSION TARGET"
+            "FIPS_VERSION TARGET [CANDIDATE_ROOT]"
         )
     (
         receipt_arg,
@@ -53,7 +54,7 @@ def main() -> None:
         fips_tree,
         fips_version,
         target,
-    ) = sys.argv[1:]
+    ) = sys.argv[1:9]
     for label, value in (
         ("app Git SHA", app_sha),
         ("app Git tree", app_tree),
@@ -81,6 +82,26 @@ def main() -> None:
         fail("binary is writable")
 
     receipt = load_receipt(receipt_path)
+    if (receipt.get("appGitSha"), receipt.get("appGitTree")) != (app_sha, app_tree):
+        if len(sys.argv) != 10:
+            fail("different peer source requires canonical component proof")
+        module = pathlib.Path(__file__).with_name("release-component-source.mjs").resolve()
+        program = """
+import { pathToFileURL } from 'node:url';
+const [modulePath, root, receiptCommit, receiptTree, candidateCommit, candidateTree] = process.argv.slice(1);
+const { proveUnchangedPlatformInputs } = await import(pathToFileURL(modulePath));
+console.log(JSON.stringify(proveUnchangedPlatformInputs({candidateRoot:root, platform:'linux', receiptCommit, receiptTree, candidateCommit, candidateTree})));
+"""
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", program, str(module), sys.argv[9],
+             str(receipt.get("appGitSha", "")), str(receipt.get("appGitTree", "")), app_sha, app_tree],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode:
+            fail("Linux component source proof rejected: " + result.stderr.strip())
+        # Preserve the original artifact identity; the candidate is proven separately.
+        print(result.stdout.strip())
+        app_sha, app_tree = receipt["appGitSha"], receipt["appGitTree"]
     expected: dict[str, Any] = {
         "schema": 1,
         "appGitSha": app_sha,

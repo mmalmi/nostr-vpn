@@ -75,7 +75,7 @@ desktop_underlay_import_host_peer() {
   }
 
   local app_root app_sha app_tree app_version
-  local fips_sha fips_tree fips_version target receipt
+  local fips_sha fips_tree fips_version target receipt peer_app_sha peer_app_tree
   local peer_runner peer_runner_sha listener_audit listener_audit_sha remote_dir
   app_root="${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}"
   app_root="$(cd "$app_root" && pwd -P)" || {
@@ -155,10 +155,12 @@ desktop_underlay_import_host_peer() {
     "$fips_sha" \
     "$fips_tree" \
     "$fips_version" \
-    "$target" || {
+    "$target" "$app_root" >"$ARTIFACT_DIR/host-peer-source-equivalence.json" || {
       desktop_underlay_host_peer_error "host Linux peer receipt verification failed"
       return 1
     }
+  peer_app_sha="$(jq -er .appGitSha "$receipt")" || return 1
+  peer_app_tree="$(jq -er .appGitTree "$receipt")" || return 1
   file "$DESKTOP_UNDERLAY_HOST_PEER_BINARY" \
     | grep -Eq 'ELF 64-bit.*x86-64' \
     || {
@@ -260,8 +262,8 @@ desktop_underlay_import_host_peer() {
     "$remote_dir" \
     "$DESKTOP_UNDERLAY_HOST_PEER_SHA256" \
     "$DESKTOP_UNDERLAY_HOST_PEER_SIZE" \
-    "$app_sha" \
-    "$app_tree" \
+    "$peer_app_sha" \
+    "$peer_app_tree" \
     "$fips_sha" \
     "$fips_tree" \
     "$fips_version" \
@@ -357,6 +359,8 @@ SH
       "$(jq -r '.buildExecutionHostClass // "host-macos"' "$receipt")"
     printf 'appVersion=%s\n' "$app_version"
     printf 'appGitSha=%s\n' "$app_sha"
+    printf 'peerAppGitSha=%s\n' "$peer_app_sha"
+    printf 'peerAppGitTree=%s\n' "$peer_app_tree"
     printf 'appGitTree=%s\n' "$app_tree"
     printf 'fipsGitSha=%s\n' "$fips_sha"
     printf 'fipsGitTree=%s\n' "$fips_tree"
