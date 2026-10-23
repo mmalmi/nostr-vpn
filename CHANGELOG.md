@@ -18,6 +18,8 @@ All notable changes to this project are documented in this file.
   preserving healthy connections and pending retries.
 - Handle Windows storage-lock contention and safely finish network cleanup
   after its configuration directory has already been removed.
+- Return to the Windows device list after submitting an approval while its
+  confirmation is pending, preserving edits made during the request.
 - Remove mobile Internet-sharing controls that the mobile apps do not support.
 - Update FIPS and peer messaging dependencies to recover Bluetooth reconnects
   after address reuse, retain WebRTC connection cleanup and consent fixes, and
