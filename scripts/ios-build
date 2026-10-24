@@ -80,6 +80,9 @@ env (read from .env.release.local or shell):
                                   exact Ad Hoc profiles for ios-release-testing
   NVPN_IOS_FROZEN_DEVICE_UDID    physical device required in those profiles
   NVPN_RELEASE_STAGE_DIR          exact passed release gate for upload actions
+  NVPN_IOS_FIPS_SOURCE_RELOCATION evidence binding a relocated validation checkout
+  NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256
+                                  exact SHA256 of that evidence; validation only
 EOF
 }
 
@@ -261,15 +264,36 @@ prepare_frozen_revision_args() {
   )
 }
 
+prepare_frozen_validation_args() {
+  prepare_frozen_revision_args || return
+  FROZEN_VALIDATION_ARGS=("${FROZEN_REVISION_ARGS[@]}")
+  local relocation="${NVPN_IOS_FIPS_SOURCE_RELOCATION:-}"
+  local digest="${NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256:-}"
+  if [[ -n "$relocation" || -n "$digest" ]]; then
+    [[ -f "$relocation" && "$digest" =~ ^[0-9a-f]{64}$ ]] || {
+      echo "FIPS source relocation requires evidence and its exact SHA256." >&2
+      return 1
+    }
+    FROZEN_VALIDATION_ARGS+=(
+      --fips-source-relocation "$relocation"
+      --fips-source-relocation-sha256 "$digest"
+    )
+  fi
+}
+
 validate_frozen_archive() {
-  prepare_frozen_revision_args
+  prepare_frozen_validation_args || return
   python3 "$FROZEN_TOOL" validate-archive \
     --archive "$ARCHIVE_PATH" \
     --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \
-    "${FROZEN_REVISION_ARGS[@]}"
+    "${FROZEN_VALIDATION_ARGS[@]}"
 }
 
 write_frozen_archive_receipt() {
+  [[ -z "${NVPN_IOS_FIPS_SOURCE_RELOCATION:-}${NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256:-}" ]] || {
+    echo "FIPS source relocation cannot authorize a new archive." >&2
+    return 1
+  }
   prepare_frozen_revision_args
   python3 "$FROZEN_TOOL" freeze \
     --archive "$ARCHIVE_PATH" \
@@ -309,6 +333,12 @@ run_ios_archive() {
       echo "Reusing the exact verified frozen iOS archive."
       return
     fi
+  fi
+  [[ -z "${NVPN_IOS_FIPS_SOURCE_RELOCATION:-}${NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256:-}" ]] || {
+    echo "FIPS source relocation requires a valid retained archive; refusing to replace it." >&2
+    return 1
+  }
+  if [[ -e "$ARCHIVE_PATH" || -e "$FROZEN_DIR" ]]; then
     quarantine_stale_frozen_state
   fi
   ensure_profiles
@@ -445,7 +475,7 @@ run_ios_release_testing_export() {
     }
     ipa="$(exact_ipa_path "$FROZEN_ADHOC_EXPORT_DIR")"
     app="$(unpack_ipa "$ipa" "$FROZEN_ADHOC_UNPACK_DIR")"
-    prepare_frozen_revision_args
+    prepare_frozen_validation_args
     python3 "$FROZEN_TOOL" validate-export \
       --archive "$ARCHIVE_PATH" \
       --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \
@@ -454,7 +484,7 @@ run_ios_release_testing_export() {
       --output "$FROZEN_ADHOC_RECEIPT" \
       --distribution release-testing \
       --device-udid "$device_udid" \
-      "${FROZEN_REVISION_ARGS[@]}"
+      "${FROZEN_VALIDATION_ARGS[@]}"
     echo "Reusing the exact verified release-testing export."
     return
   fi
@@ -468,7 +498,7 @@ run_ios_release_testing_export() {
   run_export_archive "$FROZEN_ADHOC_EXPORT_DIR" "$options"
   ipa="$(exact_ipa_path "$FROZEN_ADHOC_EXPORT_DIR")"
   app="$(unpack_ipa "$ipa" "$FROZEN_ADHOC_UNPACK_DIR")"
-  prepare_frozen_revision_args
+  prepare_frozen_validation_args
   python3 "$FROZEN_TOOL" validate-export \
     --archive "$ARCHIVE_PATH" \
     --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \
@@ -477,7 +507,7 @@ run_ios_release_testing_export() {
     --output "$FROZEN_ADHOC_RECEIPT" \
     --distribution release-testing \
     --device-udid "$device_udid" \
-    "${FROZEN_REVISION_ARGS[@]}"
+    "${FROZEN_VALIDATION_ARGS[@]}"
   echo "Release-testing app exported from the frozen archive: $app"
 }
 
@@ -499,7 +529,7 @@ run_ios_export() {
   run_export_archive "$EXPORT_DIR" "$EXPORT_OPTIONS"
   ipa="$(exact_ipa_path "$EXPORT_DIR")"
   app="$(unpack_ipa "$ipa" "$FROZEN_APPSTORE_UNPACK_DIR")"
-  prepare_frozen_revision_args
+  prepare_frozen_validation_args
   python3 "$FROZEN_TOOL" validate-export \
     --archive "$ARCHIVE_PATH" \
     --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \
@@ -507,7 +537,7 @@ run_ios_export() {
     --ipa "$ipa" \
     --output "$FROZEN_APPSTORE_RECEIPT" \
     --distribution app-store-connect \
-    "${FROZEN_REVISION_ARGS[@]}"
+    "${FROZEN_VALIDATION_ARGS[@]}"
 }
 
 IOS_UPLOAD_IPA=""
@@ -520,7 +550,7 @@ prepare_ios_upload() {
   validate_frozen_gate_seal
   ipa="$(exact_ipa_path "$EXPORT_DIR")"
   app="$(unpack_ipa "$ipa" "$FROZEN_APPSTORE_UNPACK_DIR")"
-  prepare_frozen_revision_args
+  prepare_frozen_validation_args
   python3 "$FROZEN_TOOL" validate-export \
     --archive "$ARCHIVE_PATH" \
     --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \
@@ -528,7 +558,7 @@ prepare_ios_upload() {
     --ipa "$ipa" \
     --output "$FROZEN_APPSTORE_RECEIPT" \
     --distribution app-store-connect \
-    "${FROZEN_REVISION_ARGS[@]}"
+    "${FROZEN_VALIDATION_ARGS[@]}"
   expected_sha="$(
     python3 - "$FROZEN_APPSTORE_RECEIPT" "$ipa" <<'PY'
 import json
