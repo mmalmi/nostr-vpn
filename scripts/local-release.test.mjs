@@ -853,7 +853,14 @@ test('iOS export and upload retain original source, paths and bytes across harne
   const ipa = join(repoRoot, 'dist', 'ios', 'release.ipa')
   writeFileSync(ipa, 'original archive bytes\n')
   writeFileSync(join(gateDir, 'receipt.json'), 'original gate bytes\n')
-  const env = { ...process.env, NVPN_RELEASE_TAG: tag, NVPN_RELEASE_STAGE_DIR: '/exact/stage' }
+  const env = {
+    ...process.env,
+    NVPN_RELEASE_TAG: tag,
+    NVPN_RELEASE_STAGE_DIR: '/exact/stage',
+    NVPN_FIPS_REPO_PATH: '/exact/relocated-fips',
+    NVPN_IOS_FIPS_SOURCE_RELOCATION: '/exact/relocation.json',
+    NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256: '7'.repeat(64),
+  }
   const original = { repoRoot, receipt, commit: receipt.appGitSha, tree: receipt.appGitTree, env }
   withIosArtifactSource(original, ({ cwd }) => assert.equal(cwd, repoRoot))
 
@@ -871,6 +878,9 @@ test('iOS export and upload retain original source, paths and bytes across harne
       assert.equal(scoped.NVPN_BUILD_GIT_SHA, receipt.appGitSha)
       assert.equal(scoped.NVPN_IOS_RELEASE_SOURCE_ROOT, cwd)
       assert.equal(scoped.NVPN_RELEASE_STAGE_DIR, env.NVPN_RELEASE_STAGE_DIR)
+      assert.equal(scoped.NVPN_FIPS_REPO_PATH, env.NVPN_FIPS_REPO_PATH)
+      assert.equal(scoped.NVPN_IOS_FIPS_SOURCE_RELOCATION, env.NVPN_IOS_FIPS_SOURCE_RELOCATION)
+      assert.equal(scoped.NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256, env.NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256)
       assert.equal(scoped.NVPN_RELEASE_GATE_LOG_DIR, gateDir)
       assert.equal(scoped.NVPN_RELEASE_JOIN_RESULT_DIR, joinDir)
       assert.equal(realpathSync(join(cwd, 'dist', 'ios', 'release.ipa')), realpathSync(ipa))
