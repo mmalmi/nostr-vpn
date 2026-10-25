@@ -555,16 +555,18 @@ fn validate_windows_wireguard_config(
         }
         Ok(_) | Err(_) => {}
     }
-    if config.allowed_ips.iter().any(|route| {
+    let routes_ipv6 = config.allowed_ips.iter().any(|route| {
         route
             .split_once('/')
             .map_or(route.as_str(), |(address, _)| address)
             .trim()
             .parse::<std::net::Ipv6Addr>()
             .is_ok()
-    }) {
+    });
+    if routes_ipv6 && config.address_v6.trim().is_empty() {
         return Err(anyhow!(
-            "Windows WireGuard exit does not yet support IPv6 AllowedIPs"
+            "WireGuard exit with IPv6 AllowedIPs needs an IPv6 Address; re-import the \
+             provider config so its dual-stack Address line is kept"
         ));
     }
     Ok(())
@@ -693,11 +695,15 @@ mod windows_endpoint_bypass_tests {
         config.allowed_ips.push("::/0".to_string());
         assert!(
             validate_windows_wireguard_config(&config, &exit_dns)
-                .expect_err("IPv6 AllowedIPs are unsupported")
+                .expect_err("IPv6 AllowedIPs without an IPv6 address jail IPv6 traffic")
                 .to_string()
-                .contains("does not yet support IPv6 AllowedIPs")
+                .contains("needs an IPv6 Address")
         );
+        config.address_v6 = "fc00:bbbb:bbbb:bb01::1:46c2/128".to_string();
+        validate_windows_wireguard_config(&config, &exit_dns)
+            .expect("dual-stack provider config with ::/0 connects");
         config.allowed_ips.retain(|route| route != "::/0");
+        config.address_v6.clear();
         validate_windows_wireguard_config(&config, &exit_dns).expect("literal IPv4-only config");
     }
 
