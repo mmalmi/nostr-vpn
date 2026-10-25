@@ -396,13 +396,28 @@ impl LinuxExitGuard {
             script.push_str("}\n");
             return nft(&script);
         }
-        script.push_str(&format!(" chain output {{\n type filter hook output priority 0; policy drop;\n oifname \"lo\" accept\n meta mark {CARRIER_MARK} accept\n"));
-        for interface in &self.interfaces {
-            script.push_str(&format!(" oifname \"{interface}\" accept\n"));
-        }
-        script.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n}\n");
+        script.push_str(&render_output_chain(&self.interfaces));
+        script.push_str("}\n");
         nft(&script)
     }
+}
+
+// The kill switch guards internet egress only. Host-originated traffic to
+// link-local and private destinations — docker bridges and published app
+// ports on a shared host, LAN peers, mDNS, DHCP broadcast — must survive a
+// fail-closed table, or the daemon jails the machine it runs on. Unmarked
+// internet-bound output still rejects below.
+fn render_output_chain(interfaces: &[String]) -> String {
+    let mut chain = format!(
+        " chain output {{\n type filter hook output priority 0; policy drop;\n oifname \"lo\" accept\n meta mark {CARRIER_MARK} accept\n"
+    );
+    for interface in interfaces {
+        chain.push_str(&format!(" oifname \"{interface}\" accept\n"));
+    }
+    chain.push_str(" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } accept\n");
+    chain.push_str(" ip6 daddr { fe80::/10, fc00::/7, ff00::/8 } accept\n");
+    chain.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n");
+    chain
 }
 
 // A table whose every chain matches our fingerprints can only have been
@@ -870,5 +885,29 @@ mod tests {
         assert!(!foreign_table_is_adoptable(
             &serde_json::json!({"nftables": {}})
         ));
+    }
+
+    #[test]
+    fn output_chain_jails_only_internet_egress() {
+        let chain = render_output_chain(&["end0".to_owned()]);
+        assert!(
+            chain.contains(" type filter hook output priority 0; policy drop;\n"),
+            "the kill switch must stay fail closed"
+        );
+        assert!(chain.contains(" oifname \"end0\" accept\n"));
+        let local = chain
+            .find(" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } accept\n")
+            .expect("local-network accept");
+        assert!(
+            chain.contains(" ip6 daddr { fe80::/10, fc00::/7, ff00::/8 } accept\n"),
+            "local v6 destinations must stay reachable"
+        );
+        let reject = chain
+            .find("counter reject with icmpx type admin-prohibited")
+            .expect("catch-all reject");
+        assert!(
+            local < reject,
+            "local-network traffic must be accepted before the catch-all reject"
+        );
     }
 }
