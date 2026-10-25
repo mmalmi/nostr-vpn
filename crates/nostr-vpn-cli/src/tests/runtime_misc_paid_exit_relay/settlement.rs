@@ -116,6 +116,28 @@ fn disabled_seller_preserves_channel_control_peers_until_vpn_resumes() {
         "closing the channel must leave VPN off"
     );
 
+    let refreshed = fips_tunnel_config_from_app(FipsTunnelConfigInput {
+        app: &app,
+        config_path: &config_path,
+        network_id: &network_id,
+        iface: "utun-test".to_string(),
+        underlay_interface: None,
+        underlay_interface_mtu: None,
+        own_pubkey: Some(&own_pubkey),
+        recent_peers: Some(&recent_peers),
+        live_peer_endpoints: &[],
+        ethernet_underlay: None,
+    })
+    .expect("rebuild after settlement channel closes");
+    assert!(
+        refreshed
+            .endpoint_peers
+            .iter()
+            .all(|peer| peer.npub != buyer_npub),
+        "a new build must reload the store and withdraw the closed settlement peer"
+    );
+    assert!(refreshed.paid_route_admissions.is_empty());
+
     let _ = std::fs::remove_dir_all(&dir);
 }
 

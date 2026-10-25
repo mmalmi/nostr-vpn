@@ -53,13 +53,21 @@ impl CliTunnelRuntime {
     }
 }
 
-fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'static str, String)>> {
+struct FipsTunnelConfigStores {
+    pending_control_recipients: Vec<(&'static str, String)>,
+    #[cfg(feature = "paid-exit")]
+    paid_route_store: PaidRouteStore,
+}
+
+// Reload for every construction, but keep one validated view of the paid store
+// across this build's control recipients, wallet routes, and admission checks.
+fn load_fips_tunnel_config_stores(config_path: &Path) -> Result<FipsTunnelConfigStores> {
     let recipients = nostr_vpn_core::join_delivery::load_join_rosters(config_path)
         .into_iter()
         .map(|(_, queued)| ("join roster", queued.recipient_npub))
         .collect::<Vec<_>>();
     #[cfg(feature = "paid-exit")]
-    let recipients = {
+    let (recipients, paid_route_store) = {
         let mut recipients = recipients;
         recipients.extend(
             load_paid_exit_payment_outbox(config_path)
@@ -87,9 +95,13 @@ fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'sta
                     )
                 }),
         );
-        recipients
+        (recipients, store)
     };
-    Ok(recipients)
+    Ok(FipsTunnelConfigStores {
+        pending_control_recipients: recipients,
+        #[cfg(feature = "paid-exit")]
+        paid_route_store,
+    })
 }
 
 fn endpoint_with_listen_port(endpoint: &str, listen_port: u16) -> String {
