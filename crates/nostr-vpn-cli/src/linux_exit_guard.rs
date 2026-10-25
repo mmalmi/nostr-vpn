@@ -245,14 +245,19 @@ impl LinuxExitGuard {
         // periodic policy rewrites or disrupt forwarding.
         let mut table = json_command("nft", &["-s", "-j", "list", "table", "inet", NFT_TABLE])?;
         let expected = format!("owner_{}", self.owner);
-        if !table["nftables"].as_array().is_some_and(|entries| {
+        let owned_tag = table["nftables"].as_array().is_some_and(|entries| {
             entries
                 .iter()
                 .any(|entry| entry["chain"]["name"] == expected)
-        }) {
+        });
+        // Only this daemon creates the table, so a tagless table whose every
+        // chain matches our fingerprints belonged to an instance whose durable
+        // intent was lost, such as a recreated host-network container. Adopt
+        // it: the owned apply/release paths already delete and rebuild it.
+        if !owned_tag && !foreign_table_is_adoptable(&table) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                "Linux egress firewall belongs to another configuration",
+                "Linux egress firewall belongs to another configuration; remove it with: nft delete table inet nvpn_egress",
             ));
         }
         if let Some(entries) = table["nftables"].as_array_mut() {
@@ -398,6 +403,20 @@ impl LinuxExitGuard {
         script.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n}\n");
         nft(&script)
     }
+}
+
+// A table whose every chain matches our fingerprints can only have been
+// created by an instance of this daemon whose durable intent was lost. Its
+// structure alone authorizes adoption by the owned path; any other chain
+// keeps the table refused until it is removed explicitly. Entries without a
+// chain, such as metainfo, impose nothing.
+fn foreign_table_is_adoptable(table_json: &Value) -> bool {
+    table_json["nftables"].as_array().is_some_and(|entries| {
+        entries
+            .iter()
+            .filter_map(|entry| entry["chain"]["name"].as_str())
+            .all(|name| name.starts_with("owner_") || name == "forwarded" || name == "output")
+    })
 }
 
 // This reserved rule priority is owned only while our nft ownership tag is
@@ -810,4 +829,46 @@ fn validate_network_prefix(target: &str) -> io::Result<std::net::IpAddr> {
         return Err(invalid("guard route must use a canonical network prefix"));
     }
     Ok(address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn table(chains: &[&str]) -> Value {
+        serde_json::json!({
+            "nftables": chains
+                .iter()
+                .map(|name| {
+                    serde_json::json!({
+                        "chain": {"family": "inet", "table": NFT_TABLE, "name": name}
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+    }
+
+    #[test]
+    fn orphaned_tables_with_only_our_chain_fingerprints_are_adoptable() {
+        let mut owned = table(&["owner_deadbeef01", "forwarded", "output"]);
+        owned["nftables"].as_array_mut().unwrap().insert(
+            0,
+            serde_json::json!({"metainfo": {"version": "1.1.0", "release_name": "libnftables"}}),
+        );
+        assert!(foreign_table_is_adoptable(&owned));
+        // A tagless instance may already have torn its chains down.
+        assert!(foreign_table_is_adoptable(&table(&[])));
+    }
+
+    #[test]
+    fn a_foreign_chain_name_refuses_table_adoption() {
+        assert!(!foreign_table_is_adoptable(&table(&[
+            "owner_deadbeef01",
+            "docker-user-chain"
+        ])));
+        assert!(!foreign_table_is_adoptable(&Value::Null));
+        assert!(!foreign_table_is_adoptable(
+            &serde_json::json!({"nftables": {}})
+        ));
+    }
 }
