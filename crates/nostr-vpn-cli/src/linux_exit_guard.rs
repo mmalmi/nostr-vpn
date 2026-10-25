@@ -46,6 +46,20 @@ fn local_destination_rule_priority(family: &str, index: usize) -> u32 {
     }
 }
 
+// iproute2 reports the rule destination selector as dst/dstlen, so the
+// validation fields use those keys even though the add path says "to".
+fn local_destination_fields(target: &str) -> Vec<(&'static str, Value)> {
+    let (address, prefix) = target.split_once('/').expect("local target carries a prefix");
+    vec![
+        ("dst", Value::from(address)),
+        (
+            "dstlen",
+            Value::from(prefix.parse::<u64>().expect("local target prefix parses")),
+        ),
+        ("table", Value::from("254")),
+    ]
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KernelPolicy {
     firewall: Option<Value>,
@@ -113,7 +127,21 @@ impl LinuxExitGuard {
         self.check_routes(known_routing)?;
         self.check_rules(known_routing)?;
         let old_sources = vpn_source_rules(known_routing)?;
-        let old_forwarded = forwarded_source_rule_state(known_routing)?;
+        let old_forwarded = match forwarded_source_rule_state(known_routing) {
+            Ok(state) => state,
+            Err(error)
+                if error.kind() == io::ErrorKind::AlreadyExists && known_routing =>
+            {
+                // A teardown that raced the mesh interface can leave the
+                // reserved forwarded-source priority detached with metadata
+                // the exact-match validator cannot attribute. The priority is
+                // reserved for this configuration and apply reinstates the
+                // rule below, so clear the leftover and re-validate.
+                let _ = ip(&["-4", "rule", "del", "pref", "104"]);
+                forwarded_source_rule_state(known_routing)?
+            }
+            Err(error) => return Err(error),
+        };
         // Block selected forwarding until both lookup and terminal rejection
         // rules exist. A first apply or interrupted repair must not briefly
         // send a buyer's packets through the host's physical default.
@@ -733,10 +761,7 @@ fn rules(family: &'static str) -> Vec<Rule> {
             family,
             priority: local_destination_rule_priority(family, index),
             args: vec!["to".into(), target.to_string(), "lookup".into(), "main".into()],
-            fields: vec![
-                ("to", Value::from(target)),
-                ("table", Value::from("254")),
-            ],
+            fields: local_destination_fields(target),
         });
     }
     // Only selected mesh ingress receives this mark. Paid forwarding must
