@@ -27,7 +27,7 @@ fn windows_command_line_quote(value: &str) -> String {
     quoted
 }
 
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn parse_nonzero_pid(value: &str) -> Option<u32> {
     value.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
 }

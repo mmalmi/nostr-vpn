@@ -487,14 +487,26 @@ fn windows_elevated_service_script(nvpn_bin: &Path, args: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     let argument_line = base64::engine::general_purpose::STANDARD.encode(argument_line.as_bytes());
+    // The elevated command runs through cmd with stdout/stderr redirected to
+    // unique temp files that are echoed back after the elevated process exits,
+    // so failures no longer surface as empty "stdout:/stderr:" output.
     format!(
         concat!(
             "$ErrorActionPreference='Stop';",
             "$exe=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{executable}'));",
             "$argLine=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{argument_line}'));",
             "try {{",
-            "$process=Start-Process -FilePath $exe -ArgumentList $argLine -Verb RunAs -Wait -PassThru -ErrorAction Stop;",
+            "$out=[IO.Path]::GetTempFileName();",
+            "$err=[IO.Path]::GetTempFileName();",
+            "try {{",
+            "$cmd='/d /s /c \"'+$exe+' '+$argLine+' > \"'+$out+'\" 2> \"'+$err+'\"';",
+            "$process=Start-Process -FilePath $env:ComSpec -ArgumentList $cmd -Verb RunAs -Wait -PassThru -ErrorAction Stop;",
+            "if (Test-Path -LiteralPath $out) {{ [Console]::Out.Write([IO.File]::ReadAllText($out)); }}",
+            "if (Test-Path -LiteralPath $err) {{ [Console]::Error.Write([IO.File]::ReadAllText($err)); }}",
             "exit $process.ExitCode",
+            "}} finally {{",
+            "Remove-Item -LiteralPath $out,$err -Force -ErrorAction SilentlyContinue;",
+            "}}",
             "}} catch {{",
             "$nativeCode=$_.Exception.NativeErrorCode;",
             "if ($nativeCode -eq 1223 -or $_.Exception.Message -match '(?i)cancel') {{",
@@ -553,6 +565,17 @@ mod privileged_service_action_tests {
         assert!(script.contains("Start-Process"));
         assert!(script.contains("-Verb RunAs"));
         assert!(script.contains("NVPN_ELEVATION_CANCELLED"));
+        assert!(script.contains("NVPN_ELEVATION_FAILED"));
+        // The elevated command runs through cmd with its output redirected to
+        // unique per-invocation temp files that are echoed back and cleaned up,
+        // so elevated failures no longer report empty stdout/stderr.
+        assert!(script.contains("$env:ComSpec"));
+        assert!(script.contains("/d /s /c"));
+        assert!(script.contains("GetTempFileName"));
+        assert!(script.contains("ReadAllText"));
+        assert!(script.contains("Remove-Item"));
+        assert!(script.contains(" > \"'+$out+'\""));
+        assert!(script.contains("2> \"'+$err+'\""));
         assert_eq!(
             windows_command_line_quote(r#"a b\"quoted""#),
             r#""a b\\\"quoted\"""#
