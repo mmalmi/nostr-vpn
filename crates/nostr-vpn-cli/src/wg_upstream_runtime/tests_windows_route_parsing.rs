@@ -200,10 +200,14 @@ Idx     Met         MTU          State                Name
 
     #[test]
     fn windows_daemon_uses_only_native_owned_tunnel_state() {
-        let source = include_str!("windows_daemon.rs");
-        let config_source = include_str!("windows_native_config.rs");
-        let route_source = include_str!("windows_system_routes.rs");
-        let cleanup_source = include_str!("windows_native_ownership.rs");
+        // include_str! embeds the working-tree bytes; a CRLF checkout must not
+        // change what these structure pins match.
+        let normalize =
+            |text: &str| -> String { text.replace("\r\n", "\n") };
+        let source = normalize(include_str!("windows_daemon.rs"));
+        let config_source = normalize(include_str!("windows_native_config.rs"));
+        let route_source = normalize(include_str!("windows_system_routes.rs"));
+        let cleanup_source = normalize(include_str!("windows_native_ownership.rs"));
         assert!(
             !source.contains("apply_daemon_wg_upstream_userspace"),
             "the daemon must surface native WireGuardNT failure instead of switching backends"
