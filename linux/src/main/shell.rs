@@ -74,6 +74,15 @@ fn render(app: &AppRef) {
     };
 
     refresh_header(app, &state);
+    // Unset focus while the old controls are still alive. GTK can otherwise
+    // reassign focus to a selectable label after removing the old page, with
+    // its previous-focus pointer already pointing at a destroyed widget.
+    let window = app.borrow().window.clone();
+    if let Some(focus) = gtk::prelude::GtkWindowExt::focus(&window) {
+        if focus.is_ancestor(&sidebar) || focus.is_ancestor(&update_bar) || focus.is_ancestor(&content) {
+            gtk::prelude::GtkWindowExt::set_focus(&window, gtk::Widget::NONE);
+        }
+    }
     clear_box(&sidebar);
     clear_box(&update_bar);
     if !app.borrow().core_ready {

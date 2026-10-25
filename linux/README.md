@@ -32,6 +32,11 @@ Run focused Cargo commands through the same environment:
 ./tools/run-linux cargo test
 ```
 
+The GTK regression test uses a display, a D-Bus session, and `xdotool` to exercise
+real device-row clicks with GTK critical messages treated as test failures.
+These tools are included in the development image. In a headless native build
+environment, run the tests with `xvfb-run -a dbus-run-session -- cargo test`.
+
 Installed packages register `nvpn://` through the desktop entry. A development
 deep link can be passed directly to the app:
 

@@ -17,6 +17,7 @@ mod tests {
                 .env("NVPN_MANAGE_DEVICES_UI_TEST", "1")
                 .env("NVPN_APP_DATA_DIR", &directory)
                 .env("NVPN_CLI_PATH", "/bin/false")
+                .env("G_DEBUG", "fatal-criticals")
                 .status();
             std::fs::remove_dir_all(directory).unwrap();
             assert!(result.unwrap().success());
@@ -128,13 +129,55 @@ mod tests {
             );
         }
 
-        app.borrow_mut().page = Page::Settings;
-        render(&app);
         let window = app.borrow().window.clone();
         window.set_default_size(900, 600);
         window.set_content(Some(&content));
         window.present();
         let context = glib::MainContext::default();
+        {
+            fn find_row(widget: &gtk::Widget) -> Option<gtk::Widget> {
+                if widget.has_css_class("nvpn-device-row") {
+                    return Some(widget.clone());
+                }
+                let mut child = widget.first_child();
+                while let Some(widget) = child {
+                    if let Some(row) = find_row(&widget) {
+                        return Some(row);
+                    }
+                    child = widget.next_sibling();
+                }
+                None
+            }
+            let deadline = Instant::now() + Duration::from_millis(300);
+            while Instant::now() < deadline {
+                context.iteration(false);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let window_id = std::process::Command::new("xdotool")
+                .args(["search", "--onlyvisible", "--pid", &std::process::id().to_string()])
+                .output().expect("xdotool is required for the GTK mouse regression test");
+            assert!(window_id.status.success());
+            let window_id = String::from_utf8(window_id.stdout).unwrap();
+            let window_id = window_id.lines().next().unwrap();
+            for _ in 0..3 {
+                let row = find_row(content.upcast_ref()).unwrap();
+                let bounds = row.compute_bounds(&window).unwrap();
+                let x = (bounds.x() + 20.0).to_string();
+                let y = (bounds.y() + bounds.height() / 2.0).to_string();
+                drop(row);
+                app.borrow_mut().selected_device_pubkey = None;
+                assert!(std::process::Command::new("xdotool")
+                    .args(["mousemove", "--window", window_id, &x, &y, "click", "1"]).status().unwrap().success());
+                let deadline = Instant::now() + Duration::from_millis(200);
+                while Instant::now() < deadline {
+                    context.iteration(false);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                assert_eq!(app.borrow().selected_device_pubkey.as_deref(), Some("npub1testpeer"));
+            }
+        }
+        app.borrow_mut().page = Page::Settings;
+        render(&app);
         let scroll = content
             .first_child()
             .unwrap()
@@ -186,6 +229,33 @@ mod tests {
             while Instant::now() < deadline {
                 context.iteration(false);
                 assert_eq!(adjustment.value(), offset, "Settings scroll jumped during layout");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        drop(settings_page);
+        fn find_button(widget: &gtk::Widget) -> Option<gtk::Button> {
+            if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+                return Some(button.clone());
+            }
+            let mut child = widget.first_child();
+            while let Some(widget) = child {
+                if let Some(button) = find_button(&widget) {
+                    return Some(button);
+                }
+                child = widget.next_sibling();
+            }
+            None
+        }
+        // A real action or configuration change still rebuilds controls. Do
+        // not leave GTK's scroller focus tracking pointed into a removed page.
+        for _ in 0..3 {
+            let button = find_button(scroll.child().unwrap().upcast_ref()).unwrap();
+            button.grab_focus();
+            drop(button);
+            render(&app);
+            let deadline = Instant::now() + Duration::from_millis(100);
+            while Instant::now() < deadline {
+                context.iteration(false);
                 std::thread::sleep(Duration::from_millis(5));
             }
         }
