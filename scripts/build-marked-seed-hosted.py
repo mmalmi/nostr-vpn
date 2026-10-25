@@ -108,7 +108,10 @@ def locked_driver(original):
         adapted = adapted.replace(update, '')
     build = 'cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}"'
     assert adapted.count(build) == 1
-    return adapted.replace(build, 'cargo "${cargo_config_args[@]}" build --frozen')
+    adapted = adapted.replace(build, 'cargo "${cargo_config_args[@]}" build --frozen')
+    fetch = 'cargo "${cargo_config_args[@]}" fetch "${cargo_lock_args[@]}" --target "$TARGET"'
+    assert adapted.count(fetch) == 1
+    return adapted.replace(fetch, fetch + ' --target x86_64-unknown-linux-gnu')
 
 
 try:
@@ -227,13 +230,17 @@ try:
         original_driver.splitlines(keepends=True), driver.read_text().splitlines(keepends=True),
         fromfile="canonical", tofile="locked-diagnostic")))
     receipt["driver_adapter"] = {"sha256": sha(driver), "diff_sha256": sha(evidence / "build-driver.diff"),
-        "changes": "materialize approved lock; skip three FIPS updates; locked fetch and frozen build"}
+        "changes": "materialize approved lock; skip three FIPS updates; locked musl/native-host fetch and frozen build"}
     run("driver-syntax", ["bash", "-n", str(driver)])
-    run("daemon-build", ["bash", str(driver), TARGET], cwd=app, env=env)
-    workdirs = list(build_root.glob("nvpn-linux-musl.*"))
+    try:
+        run("daemon-build", ["bash", str(driver), TARGET], cwd=app, env=env)
+    finally:
+        workdirs = list(build_root.glob("nvpn-linux-musl.*"))
+        if len(workdirs) == 1 and (workdirs[0] / "Cargo.lock").is_file():
+            shutil.copyfile(workdirs[0] / "Cargo.lock", evidence / "Cargo.lock.realized")
+            receipt["realized_lock_sha256"] = sha(workdirs[0] / "Cargo.lock")
     assert len(workdirs) == 1
     work = workdirs[0]
-    shutil.copyfile(work / "Cargo.lock", evidence / "Cargo.lock.realized")
     run("realized-lock", ["python3", str(verifier), "--validate", str(app / "Cargo.lock"), str(work / "Cargo.lock"), *packages])
     assert sha(work / "Cargo.lock") == expected_lock
     verify_archive(work, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(), "Cargo.lock": expected_lock})
