@@ -14,9 +14,9 @@ const NFT_TABLE: &str = "nvpn_egress";
 const ROUTE_PROTOCOL: u32 = 99;
 const FORWARDED_MARK: u32 = CARRIER_MARK + 1;
 // Local ranges that must keep resolving through the main table while the
-// customer tunnel owns the table's default route. Mirrors the local-network
-// accepts rendered into the egress firewall's output chain.
-const LOCAL_THROW_TARGETS: &[&str] = &[
+// customer tunnel owns the exit table's default route. Mirrors the
+// local-network accepts rendered into the egress firewall's output chain.
+const LOCAL_DESTINATION_TARGETS: &[&str] = &[
     "10.0.0.0/8",
     "100.64.0.0/10",
     "169.254.0.0/16",
@@ -27,12 +27,23 @@ const LOCAL_THROW_TARGETS: &[&str] = &[
     "fc00::/7",
 ];
 
-fn local_throw_targets(family: &str) -> impl Iterator<Item = &'static str> {
+fn local_destination_targets(family: &str) -> impl Iterator<Item = &'static str> {
     let want_ipv6 = family == "-6";
-    LOCAL_THROW_TARGETS
+    LOCAL_DESTINATION_TARGETS
         .iter()
         .copied()
         .filter(move |target| target.contains(':') == want_ipv6)
+}
+
+// One unused priority per local range, all below the vpn-source (102),
+// forwarded-source (104), and forwarded-kill-switch (105/106) rules so a
+// local destination can never be captured into the exit table.
+fn local_destination_rule_priority(family: &str, index: usize) -> u32 {
+    if family == "-4" {
+        90 + index as u32
+    } else {
+        96 + index as u32
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +93,23 @@ impl LinuxExitGuard {
                 }
                 _ => false,
             };
+        // Retired mechanism: in-table throws for local ranges, superseded by
+        // the local-destination rule priorities. Remove leftovers from earlier
+        // releases before ownership validation, which rejects routes it cannot
+        // attribute to an interface.
+        for family in ["-4", "-6"] {
+            for target in local_destination_targets(family) {
+                let _ = ip(&[
+                    family,
+                    "route",
+                    "del",
+                    "throw",
+                    target,
+                    "table",
+                    &TABLE.to_string(),
+                ]);
+            }
+        }
         self.check_routes(known_routing)?;
         self.check_rules(known_routing)?;
         let old_sources = vpn_source_rules(known_routing)?;
@@ -108,25 +136,6 @@ impl LinuxExitGuard {
                 "proto",
                 &ROUTE_PROTOCOL.to_string(),
             ])?;
-            // The table's default route captures host-originated lookups
-            // before rule 103 reaches main. Without throws for local ranges,
-            // app containers and the LAN die inside the customer tunnel while
-            // the daemon's own carrier-marked traffic keeps working.
-            for target in local_throw_targets(family) {
-                ip(&[
-                    family,
-                    "route",
-                    "replace",
-                    "throw",
-                    target,
-                    "metric",
-                    "100",
-                    "table",
-                    &TABLE.to_string(),
-                    "proto",
-                    &ROUTE_PROTOCOL.to_string(),
-                ])?;
-            }
             for rule in rules(family) {
                 if !rule.present()? {
                     rule.run("add")?;
@@ -369,14 +378,6 @@ impl LinuxExitGuard {
                 if (route["type"] == "7" || route["type"] == "9")
                     && route["dst"] == "default"
                     && route["metric"] == 32760
-                {
-                    continue;
-                }
-                if route["type"] == "9"
-                    && route["metric"] == 100
-                    && route["dst"]
-                        .as_str()
-                        .is_some_and(|dst| LOCAL_THROW_TARGETS.contains(&dst))
                 {
                     continue;
                 }
@@ -722,6 +723,21 @@ fn rules(family: &'static str) -> Vec<Rule> {
     for rule in &mut rules {
         rule.args.extend(["iif".into(), "lo".into()]);
         rule.fields.push(("iif", Value::from("lo")));
+    }
+    // Local-destination traffic must resolve in main before the exit table's
+    // default route or the forwarded kill switch can capture it. Docker
+    // published ports DNAT in prerouting after the forwarded mark, so these
+    // rules also carry mesh clients to services hosted on this machine.
+    for (index, target) in local_destination_targets(family).enumerate() {
+        rules.push(Rule {
+            family,
+            priority: local_destination_rule_priority(family, index),
+            args: vec!["to".into(), target.to_string(), "lookup".into(), "main".into()],
+            fields: vec![
+                ("to", Value::from(target)),
+                ("table", Value::from("254")),
+            ],
+        });
     }
     // Only selected mesh ingress receives this mark. Paid forwarding must
     // never fall through to native egress, even if local apps allow fallback.
