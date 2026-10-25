@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:NostrVpn.Windows.Controls">
 <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=Wallet}">
-  <TextBlock Text="Pay for internet access and receive earnings when you sell bandwidth." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,12" />
+  <TextBlock Text="Pay for internet access and receive earnings when you sell bandwidth." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,12" />
   <Border Style="{StaticResource Card}">
     <StackPanel>
       <DockPanel LastChildFill="True" Margin="0,0,0,10">
@@ -11,11 +11,11 @@
         <StackPanel>
           <TextBlock Text="Wallet" FontSize="18" FontWeight="SemiBold" />
           <TextBlock Text="{Binding PaidRouteWalletBalanceText, Mode=OneWay}" FontSize="32" FontWeight="Bold" Visibility="{Binding PaidRouteWalletBalanceText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-          <TextBlock Text="{Binding PaidRouteWalletSecondaryBalanceText}" Foreground="{StaticResource TextSecondary}" Visibility="{Binding PaidRouteWalletSecondaryBalanceText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-          <TextBlock Text="{Binding PaidRouteWalletRateText}" Foreground="{StaticResource TextSecondary}" FontSize="12" Visibility="{Binding PaidRouteWalletRateText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+          <TextBlock Text="{Binding PaidRouteWalletSecondaryBalanceText}" Foreground="{DynamicResource TextSecondary}" Visibility="{Binding PaidRouteWalletSecondaryBalanceText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+          <TextBlock Text="{Binding PaidRouteWalletRateText}" Foreground="{DynamicResource TextSecondary}" FontSize="12" Visibility="{Binding PaidRouteWalletRateText, Converter={StaticResource NonEmptyStringToVisibility}}" />
         </StackPanel>
       </DockPanel>
-      <TextBlock Text="{Binding State.PaidRouteMarket.Wallet.LastAction.DisplayStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding State.PaidRouteMarket.Wallet.LastAction.DisplayStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+      <TextBlock Text="{Binding State.PaidRouteMarket.Wallet.LastAction.DisplayStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding State.PaidRouteMarket.Wallet.LastAction.DisplayStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
 
       <Grid Margin="0,10,0,8">
         <Grid.ColumnDefinitions>
@@ -23,7 +23,7 @@
           <ColumnDefinition Width="*" />
           <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
-        <TextBlock Text="Mint URL" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,10,0" />
+        <TextBlock Text="Mint URL" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,10,0" />
         <TextBox Grid.Column="1" Text="{Binding PaidRouteMintUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
         <Button Grid.Column="2" Content="Add" Click="AddPaidRouteWalletMint_Click" IsEnabled="{Binding CanAddPaidRouteWalletMint}" />
       </Grid>
@@ -32,7 +32,7 @@
         <TabItem Header="Receive">
           <StackPanel Margin="8">
             <TextBlock Text="Lightning" FontWeight="SemiBold" Margin="0,0,0,6" />
-            <TextBlock Text="Add a mint before using Lightning." Foreground="{StaticResource TextSecondary}" Margin="0,0,0,6" Visibility="{Binding HasPaidRouteWalletMint, Converter={StaticResource InverseBoolToVisibility}}" />
+            <TextBlock Text="Add a mint before using Lightning." Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6" Visibility="{Binding HasPaidRouteWalletMint, Converter={StaticResource InverseBoolToVisibility}}" />
             <DockPanel LastChildFill="True">
               <Button DockPanel.Dock="Right" Content="Create Invoice" Click="TopUpPaidRouteWallet_Click" IsEnabled="{Binding CanTopUpPaidRouteWallet}" Margin="8,0,0,0" />
               <TextBox Text="{Binding PaidRouteTopUpAmount, UpdateSourceTrigger=PropertyChanged}" />
@@ -47,7 +47,7 @@
         <TabItem Header="Send">
           <StackPanel Margin="8">
             <TextBlock Text="Lightning" FontWeight="SemiBold" Margin="0,0,0,6" />
-            <TextBlock Text="Add a mint before sending." Foreground="{StaticResource TextSecondary}" Margin="0,0,0,6" Visibility="{Binding HasPaidRouteWalletMint, Converter={StaticResource InverseBoolToVisibility}}" />
+            <TextBlock Text="Add a mint before sending." Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,6" Visibility="{Binding HasPaidRouteWalletMint, Converter={StaticResource InverseBoolToVisibility}}" />
             <DockPanel LastChildFill="True">
               <Button DockPanel.Dock="Right" Content="Pay" Click="WithdrawPaidRouteWalletLightning_Click" IsEnabled="{Binding CanWithdrawPaidRouteWalletLightning}" Margin="8,0,0,0" />
               <TextBox Text="{Binding PaidRouteWithdrawInvoice, UpdateSourceTrigger=PropertyChanged}" />
@@ -66,7 +66,7 @@
         <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxWidth="220" MaxHeight="220" HorizontalAlignment="Center">
           <controls:QrCodeView Width="220" Height="220" Matrix="{Binding PaidRouteWalletInvoiceQr}" />
         </Viewbox>
-        <TextBlock Text="{Binding PaidRouteWalletInvoiceExpiryText}" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center" Margin="0,6,0,4" Visibility="{Binding PaidRouteWalletInvoiceExpiryText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+        <TextBlock Text="{Binding PaidRouteWalletInvoiceExpiryText}" Foreground="{DynamicResource TextSecondary}" HorizontalAlignment="Center" Margin="0,6,0,4" Visibility="{Binding PaidRouteWalletInvoiceExpiryText, Converter={StaticResource NonEmptyStringToVisibility}}" />
         <DockPanel LastChildFill="True">
           <Button DockPanel.Dock="Right" Content="Copy" Tag="{Binding State.PaidRouteMarket.Wallet.LastAction.PaymentRequest}" Click="CopyWalletValue_Click" Margin="8,0,0,0" />
           <TextBox Text="{Binding State.PaidRouteMarket.Wallet.LastAction.PaymentRequest}" IsReadOnly="True" />
@@ -88,11 +88,11 @@
       </StackPanel>
 
       <TextBlock Text="Mints" FontWeight="SemiBold" Margin="0,10,0,6" />
-      <TextBlock Text="{Binding PaidRouteWalletMintsStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding PaidRouteWalletMintsStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+      <TextBlock Text="{Binding PaidRouteWalletMintsStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding PaidRouteWalletMintsStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
       <ItemsControl ItemsSource="{Binding PaidRouteWalletMintRows}">
         <ItemsControl.ItemTemplate>
           <DataTemplate>
-            <TextBlock Text="{Binding}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
+            <TextBlock Text="{Binding}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
