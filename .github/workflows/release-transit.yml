@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       lane:
-        description: Hosted app checks, package preflight, FIPS checks, or both
+        description: Hosted app checks, package preflight, focused CLI checks, FIPS checks, or both
         type: choice
         default: both
-        options: [both, hosted, fips, ingress, package]
+        options: [both, hosted, fips, ingress, package, cli-store]
       app_commit:
         description: Exact application commit
         type: string
@@ -205,5 +205,48 @@ jobs:
         with:
           name: relay-ingress-${{ inputs.app_commit }}
           path: artifacts/relay-ingress
+          retention-days: 14
+          if-no-files-found: error
+
+  cli-store:
+    if: inputs.lane == 'cli-store'
+    runs-on: macos-14
+    timeout-minutes: 35
+    env:
+      EXPECTED_APP_COMMIT: ${{ inputs.app_commit }}
+      EXPECTED_APP_TREE: ${{ inputs.app_tree }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.app_commit }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-cli-store
+          cache-bin: false
+          cache-on-failure: true
+      - name: Verify fresh store configuration and macOS mint failure handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/cli-store
+          [[ "$EXPECTED_APP_COMMIT" =~ ^[0-9a-f]{40}$ && "$EXPECTED_APP_TREE" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_APP_COMMIT"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_APP_TREE"
+          test -z "$(git status --porcelain)"
+          { git rev-parse HEAD 'HEAD^{tree}'; rustc -Vv; cargo -V; shasum -a 256 Cargo.lock; } > artifacts/cli-store/inputs.txt
+          for filter in tests::runtime_misc_paid_exit_relay::disabled_seller_preserves_channel_control_peers_until_vpn_resumes tests::runtime_misc::payment_routes::paid_modes_keep_wallet_mints_reachable_outside_the_route_they_fund; do
+            log="artifacts/cli-store/${filter##*::}.log"
+            cargo test --locked -p nvpn --bin nvpn "$filter" -- --exact --test-threads=1 --nocapture 2>&1 | tee "$log"
+            grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$log"
+          done
+          git diff --exit-code -- Cargo.toml Cargo.lock linux/Cargo.lock
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: cli-store-${{ inputs.app_commit }}
+          path: artifacts/cli-store
           retention-days: 14
           if-no-files-found: error
