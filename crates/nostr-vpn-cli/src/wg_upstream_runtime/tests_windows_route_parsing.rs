@@ -200,10 +200,13 @@ Idx     Met         MTU          State                Name
 
     #[test]
     fn windows_daemon_uses_only_native_owned_tunnel_state() {
-        let source = include_str!("windows_daemon.rs");
-        let config_source = include_str!("windows_native_config.rs");
-        let route_source = include_str!("windows_system_routes.rs");
-        let cleanup_source = include_str!("windows_native_ownership.rs");
+        // include_str! embeds the working-tree bytes; a CRLF checkout must not
+        // change what these structure pins match.
+        let normalize = |text: &str| -> String { text.replace("\r\n", "\n") };
+        let source = &normalize(include_str!("windows_daemon.rs"));
+        let config_source = &normalize(include_str!("windows_native_config.rs"));
+        let route_source = &normalize(include_str!("windows_system_routes.rs"));
+        let cleanup_source = &normalize(include_str!("windows_native_ownership.rs"));
         assert!(
             !source.contains("apply_daemon_wg_upstream_userspace"),
             "the daemon must surface native WireGuardNT failure instead of switching backends"
@@ -306,8 +309,8 @@ Idx     Met         MTU          State                Name
             .and_then(|tail| tail.split("#[cfg(target_os = \"windows\")]").next())
             .expect("native WireGuard route apply");
         assert!(
-            route_apply.contains("true,\n        cleanup_journal_config_path"),
-            "nVPN must install and journal the default route after handshake"
+            route_apply.contains("true,\n        manage_default_v6,\n        cleanup_journal_config_path"),
+            "nVPN must install and journal both default routes after handshake"
         );
     }
 
@@ -341,6 +344,7 @@ Idx     Met         MTU          State                Name
     #[cfg(target_os = "windows")]
     #[test]
     fn journaled_pending_cleanup_retry_retires_exact_durable_entries() {
+        let _registry = windows_pending_cleanup_registry_guard();
         assert!(pending_windows_native_cleanup_snapshot().is_empty());
         assert!(pending_windows_route_cleanup_snapshot().is_empty());
 
@@ -391,6 +395,53 @@ Idx     Met         MTU          State                Name
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn windows_route_args_follow_the_prefix_family() {
+        let on_link_v4 = WindowsRouteSpec {
+            prefix: "0.0.0.0/0".to_string(),
+            interface_index: 42,
+            next_hop: "0.0.0.0".to_string(),
+            metric: 1,
+            interface_identity: None,
+        };
+        assert_eq!(
+            windows_route_add_args(&on_link_v4),
+            vec![
+                "interface".to_string(),
+                "ipv4".to_string(),
+                "add".to_string(),
+                "route".to_string(),
+                "0.0.0.0/0".to_string(),
+                "interface=42".to_string(),
+                "metric=1".to_string(),
+                "store=active".to_string(),
+            ]
+        );
+
+        let on_link_v6 = WindowsRouteSpec {
+            prefix: "::/0".to_string(),
+            interface_index: 42,
+            next_hop: "::".to_string(),
+            metric: 1,
+            interface_identity: None,
+        };
+        let args = windows_route_add_args(&on_link_v6);
+        assert_eq!(args[1], "ipv6");
+        assert!(
+            !args.iter().any(|arg| arg.starts_with("nexthop=")),
+            "an on-link IPv6 default route must not carry a next hop"
+        );
+        assert_eq!(windows_route_delete_args(&on_link_v6)[1], "ipv6");
+        assert!(on_link_v6.next_hop_is_on_link());
+        assert!(on_link_v6.is_identityless_legacy_tunnel_route());
+        assert!(!on_link_v6.is_identityless_legacy_physical_bypass());
+
+        let mut bypassed_v6 = on_link_v6.clone();
+        bypassed_v6.next_hop = "fe80::1".to_string();
+        assert!(!bypassed_v6.next_hop_is_on_link());
+        assert!(bypassed_v6.is_identityless_legacy_physical_bypass());
     }
 
     #[test]

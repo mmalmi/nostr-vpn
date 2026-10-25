@@ -275,6 +275,10 @@ async fn apply_daemon_wg_upstream_native(
         interface_index,
         upstream,
         excluded_tunnel_interfaces,
+        config
+            .allowed_ips
+            .iter()
+            .any(|route| nostr_vpn_core::config::route_is_ipv6(route)),
         cleanup_journal_config_path,
     ) {
         Ok(route) => route,

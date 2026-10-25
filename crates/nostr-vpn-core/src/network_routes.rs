@@ -48,6 +48,15 @@ pub fn normalize_advertised_route(value: &str) -> Option<String> {
     Some(format!("{network}/{bits}"))
 }
 
+pub fn route_is_ipv6(route: &str) -> bool {
+    route
+        .split_once('/')
+        .map_or(route, |(address, _)| address)
+        .trim()
+        .parse::<Ipv6Addr>()
+        .is_ok()
+}
+
 pub fn normalize_advertised_routes(routes: &[String]) -> Vec<String> {
     let mut normalized = Vec::new();
     let mut seen = HashSet::new();

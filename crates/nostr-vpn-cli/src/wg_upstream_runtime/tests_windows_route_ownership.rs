@@ -120,6 +120,7 @@ fn windows_wg_underlay_refresh_installs_fresh_bypass_before_removing_stale() {
         endpoint,
         old_underlay.clone(),
         true,
+        false,
     )
     .expect("initial routes");
     runner.events.clear();
@@ -182,7 +183,7 @@ fn windows_wg_underlay_refresh_repairs_default_after_fresh_bypass() {
     let default = WindowsRouteSpec::wireguard_default(77);
     let mut runner = FakeWindowsRouteRunner::default();
     let mut guard =
-        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, old_underlay, true)
+        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, old_underlay, true, false)
             .expect("initial routes");
     runner.routes.remove(&default);
     runner.events.clear();
@@ -216,6 +217,7 @@ fn windows_wg_endpoint_roam_installs_fresh_target_before_removing_stale() {
         77,
         old_endpoint,
         underlay.clone(),
+        false,
         false,
     )
     .expect("initial endpoint route");
@@ -257,6 +259,7 @@ fn windows_wg_underlay_refresh_rolls_back_exactly_when_stale_removal_fails() {
         endpoint,
         old_underlay.clone(),
         true,
+        false,
     )
     .expect("initial routes");
     let before = runner.routes.clone();
@@ -286,7 +289,7 @@ fn windows_wg_underlay_refresh_retains_failed_rollback_for_later_cleanup() {
     let fresh = WindowsRouteSpec::endpoint(endpoint, &fresh_underlay);
     let mut runner = FakeWindowsRouteRunner::default();
     let mut guard =
-        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, old_underlay, true)
+        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, old_underlay, true, false)
             .expect("initial routes");
     runner.fail_deletes.extend([stale, fresh.clone()]);
 
@@ -616,7 +619,7 @@ fn windows_wg_same_gateway_address_change_retains_owned_bypass() {
     let renewed_underlay = windows_underlay(11, "192.0.2.1", "192.0.2.99");
     let mut runner = FakeWindowsRouteRunner::default();
     let mut guard =
-        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, old_underlay, true)
+        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, old_underlay, true, false)
             .expect("initial routes");
     let routes_before = runner.routes.clone();
     runner.events.clear();
@@ -653,7 +656,7 @@ fn windows_wg_apply_rolls_back_bypass_when_default_install_fails() {
     runner.routes.insert(foreign.clone());
     runner.fail_add = Some(WindowsRouteSpec::wireguard_default(77));
 
-    WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, underlay, true)
+    WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, underlay, true, false)
         .expect_err("default failure must abort apply");
     assert_eq!(
         runner.routes,
@@ -674,7 +677,7 @@ fn windows_wg_apply_retains_bypass_when_constructor_rollback_fails() {
     };
 
     let mut failure =
-        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, underlay, true)
+        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, underlay, true, false)
             .expect_err("default add and bypass rollback fail");
     assert!(runner.routes.contains(&bypass));
     assert!(failure.cleanup.bypass_owned);
@@ -748,6 +751,7 @@ fn windows_interface_constructor_retains_failed_rollback() {
 
 #[test]
 fn windows_failed_active_guard_cleanup_is_snapshotted_and_retried_by_owned_identity() {
+    let _registry = windows_pending_cleanup_registry_guard();
     let prior_pending = take_pending_windows_route_cleanup();
     assert!(
         prior_pending.is_empty(),
@@ -815,7 +819,7 @@ fn windows_failed_active_guard_cleanup_is_snapshotted_and_retried_by_owned_ident
     let mut default_runner = FakeWindowsRouteRunner::default();
     default_runner.routes.insert(foreign_default.clone());
     let mut default_guard =
-        WindowsManagedDefaultRoutes::apply_with(&mut default_runner, 77, endpoint, underlay, true)
+        WindowsManagedDefaultRoutes::apply_with(&mut default_runner, 77, endpoint, underlay, true, false)
             .expect("active full-default guard");
     let bypass = WindowsRouteSpec::endpoint(endpoint, &default_guard.underlay);
     assert_eq!(
@@ -948,7 +952,7 @@ fn windows_wg_cleanup_preserves_preexisting_exact_routes() {
     runner.routes.extend([bypass.clone(), default.clone()]);
 
     let mut guard =
-        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, underlay, true)
+        WindowsManagedDefaultRoutes::apply_with(&mut runner, 77, endpoint, underlay, true, false)
             .expect("adopt preexisting exact routes without ownership");
     guard.revert_with(&mut runner).expect("cleanup");
     assert_eq!(

@@ -555,14 +555,10 @@ fn validate_windows_wireguard_config(
         }
         Ok(_) | Err(_) => {}
     }
-    let routes_ipv6 = config.allowed_ips.iter().any(|route| {
-        route
-            .split_once('/')
-            .map_or(route.as_str(), |(address, _)| address)
-            .trim()
-            .parse::<std::net::Ipv6Addr>()
-            .is_ok()
-    });
+    let routes_ipv6 = config
+        .allowed_ips
+        .iter()
+        .any(|route| nostr_vpn_core::config::route_is_ipv6(route));
     if routes_ipv6 && config.address_v6.trim().is_empty() {
         return Err(anyhow!(
             "WireGuard exit with IPv6 AllowedIPs needs an IPv6 Address; re-import the \
