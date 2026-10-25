@@ -1,4 +1,4 @@
-name: FIPS 109 production server daemon
+name: FIPS 109 admission index diagnostic daemon
 
 on:
   push:
@@ -23,6 +23,8 @@ jobs:
       APP_SOURCE_TREE: 54e62faa74d9c954bc1b73325effc1e0e3b9d1ea
       APP_LOCK_SHA256: 8181955c13f6d7bb861b62242aa13a04151003a698256d050f22f7780e76e15b
       PUBSUB_ARCHIVE_SHA256: e685a39352c1e87cbdfc416479629831333fbf2e45541bdd3efc6f85bc27d09a
+      FIPS_SOURCE_SHA: 79c72683ce8d12578094cef3a3a8e3fcc0145462
+      FIPS_SOURCE_TREE: 14241db7c262396ce970c80ab69baaadffffc28a
     steps:
       - uses: actions/checkout@v6
         with:
@@ -33,8 +35,15 @@ jobs:
           ref: 4d5896c4b55d7bdda0bc920ee98c8d713451c193
           path: app
           persist-credentials: false
-      - name: Build and qualify the exact production server daemon
-        run: python3 control/scripts/build-marked-seed-hosted.py "$GITHUB_WORKSPACE/app" "$RUNNER_TEMP/production-server"
+      - uses: actions/checkout@v6
+        with:
+          repository: mmalmi/fips
+          ref: 79c72683ce8d12578094cef3a3a8e3fcc0145462
+          fetch-depth: 2
+          path: fips
+          persist-credentials: false
+      - name: Build and qualify the attribution-only diagnostic daemon
+        run: python3 control/scripts/build-marked-seed-hosted.py "$GITHUB_WORKSPACE/app" "$GITHUB_WORKSPACE/fips" "$RUNNER_TEMP/production-server"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
