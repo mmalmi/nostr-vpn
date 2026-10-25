@@ -1,4 +1,5 @@
 use super::*;
+use nostr_pubsub::NostrEventSubscriber;
 
 #[test]
 fn updater_reads_retained_root_after_peer_adverts_exhaust_recent_replay() {
