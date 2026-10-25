@@ -1,0 +1,53 @@
+name: Marked seed diagnostic daemon
+
+on:
+  push:
+    branches: [codex/release-config-store-snapshot]
+    paths:
+      - .github/workflows/marked-seed-daemon.yml
+      - scripts/build-marked-seed-hosted.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: marked-seed-daemon-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  daemon:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: control
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: 5c1b2f0606f18387ace32f5712dde9b63a274620
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: mmalmi/fips
+          ref: e8ffed70d96a29a6a0355d5979e7111987f8d3b2
+          path: fips
+          persist-credentials: false
+      - name: Build and qualify only the exact diagnostic daemon
+        run: python3 control/scripts/build-marked-seed-hosted.py "$GITHUB_WORKSPACE/app" "$GITHUB_WORKSPACE/fips" "$RUNNER_TEMP/marked-seed"
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: marked-seed-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/marked-seed/evidence
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v6
+        if: success()
+        with:
+          name: marked-seed-daemon-${{ github.run_id }}
+          path: ${{ runner.temp }}/marked-seed/binary/nvpn
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
