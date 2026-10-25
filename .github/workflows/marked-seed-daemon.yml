@@ -31,7 +31,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: mmalmi/fips
-          ref: e8ffed70d96a29a6a0355d5979e7111987f8d3b2
+          ref: c06d566108d0c696acd2cf97e594a335287fef5d
           path: fips
           persist-credentials: false
       - name: Build and qualify only the exact diagnostic daemon
