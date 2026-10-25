@@ -85,6 +85,32 @@ def verify_archive(work, expected, exceptions):
         assert actual == exceptions.get(name, expected_hash), "archive source changed: " + name
 
 
+def locked_driver(original):
+    """Retain canonical build mechanics with the approved materialized lock."""
+    adapted = original
+    archive_line = 'git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"\n'
+    assert adapted.count(archive_line) == 1
+    adapted = adapted.replace(archive_line, archive_line +
+        'cp -- "$NVPN_MARKED_EXPECTED_LOCK" "$WORK_DIR/Cargo.lock"\n')
+    for suffix, package in (("ENDPOINT", "nvpn-fips-endpoint"),
+                            ("CORE", "nvpn-fips-core"),
+                            ("IDENTITY", "nvpn-fips-identity")):
+        variable = "NVPN_FIPS_" + suffix + "_PATCH_PATH"
+        block = ('if [[ -n ${' + variable + ':-} ]]; then\n'
+                 '  cargo_config_args+=(--config "patch.crates-io.' + package +
+                 '.path=\\"${' + variable + '}\\"")\n'
+                 '  cargo_lock_args=()\nfi\n')
+        assert adapted.count(block) == 1
+        adapted = adapted.replace(block, block.replace('cargo_lock_args=()', 'cargo_lock_args=(--locked)'))
+        update = ('if [[ -n ${' + variable + ':-} ]]; then\n'
+                  '  cargo "${cargo_config_args[@]}" update -p ' + package + '\nfi\n')
+        assert adapted.count(update) == 1
+        adapted = adapted.replace(update, '')
+    build = 'cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}"'
+    assert adapted.count(build) == 1
+    return adapted.replace(build, 'cargo "${cargo_config_args[@]}" build --frozen')
+
+
 try:
     before_app = source(app, APP_SHA, APP_TREE)
     before_fips = source(fips, FIPS_SHA, FIPS_TREE)
@@ -109,8 +135,7 @@ try:
     receipt["expected_realized_lock_sha256"] = expected_lock
     shutil.copyfile(app / "Cargo.lock", evidence / "Cargo.lock.committed")
 
-    # Resolve the canonical driver's three path updates before building its image
-    # or daemon. Preserve the exact delta even when the strict lock gate fails.
+    # Prove the approved lock resolves before building the image or daemon.
     run("resolver-toolchain", ["rustup", "toolchain", "install", "1.95.0", "--profile", "minimal"])
     run("resolver-version", ["cargo", "+1.95.0", "--version", "--verbose"])
     preflight = output / "lock-preflight"
@@ -128,15 +153,18 @@ try:
                                ("nvpn-fips-core", "fips-core"),
                                ("nvpn-fips-identity", "fips-identity")):
         resolver += ["--config", 'patch.crates-io.' + package + '.path=' + json.dumps(str(fips / "crates" / directory))]
-    for package in ("nvpn-fips-endpoint", "nvpn-fips-core", "nvpn-fips-identity"):
-        run("resolve-" + package, resolver + ["update", "-p", package], cwd=preflight)
-    shutil.copyfile(preflight / "Cargo.lock", evidence / "Cargo.lock.preflight")
     run("expected-lock", ["python3", str(verifier), "--materialize", str(app / "Cargo.lock"), str(evidence / "Cargo.lock.expected"), *packages])
-    delta = "".join(difflib.unified_diff(
-        (evidence / "Cargo.lock.expected").read_text().splitlines(keepends=True),
-        (preflight / "Cargo.lock").read_text().splitlines(keepends=True),
-        fromfile="expected", tofile="resolved"))
-    (evidence / "lock-preflight.diff").write_text(delta)
+    shutil.copyfile(evidence / "Cargo.lock.expected", preflight / "Cargo.lock")
+    try:
+        run("resolve-locked", resolver + ["metadata", "--locked", "--format-version", "1",
+                                          "--filter-platform", TARGET], cwd=preflight)
+    finally:
+        shutil.copyfile(preflight / "Cargo.lock", evidence / "Cargo.lock.preflight")
+        delta = "".join(difflib.unified_diff(
+            (evidence / "Cargo.lock.expected").read_text().splitlines(keepends=True),
+            (preflight / "Cargo.lock").read_text().splitlines(keepends=True),
+            fromfile="expected", tofile="resolved"))
+        (evidence / "lock-preflight.diff").write_text(delta)
     receipt["preflight_lock_sha256"] = sha(preflight / "Cargo.lock")
     verify_archive(preflight, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(),
                                           "Cargo.lock": receipt["preflight_lock_sha256"]})
@@ -189,8 +217,19 @@ try:
             del env[name]
     env.update(NVPN_LINUX_MUSL_IMAGE=image, NVPN_LINUX_MUSL_BUILD_ROOT=str(build_root),
                NVPN_LINUX_MUSL_TARGET_DIR=str(target), NVPN_LINUX_MUSL_KEEP_WORK="1",
-               NVPN_FIPS_REPO_PATH=str(fips), CARGO_INCREMENTAL="0", LC_ALL="C", TZ="UTC")
-    run("daemon-build", [str(app / "scripts/build-nvpn-linux-musl"), TARGET], cwd=app, env=env)
+               NVPN_FIPS_REPO_PATH=str(fips), NVPN_MARKED_EXPECTED_LOCK=str(evidence / "Cargo.lock.expected"),
+               CARGO_INCREMENTAL="0", LC_ALL="C", TZ="UTC")
+    original_driver = (app / "scripts/build-nvpn-linux-musl").read_text()
+    assert sha(app / "scripts/build-nvpn-linux-musl") == "0b94f88c18693e87e4c3e4ee3d8e1c81d3227503c00b5d76d9b879b0672ad5cc"
+    driver = evidence / "build-nvpn-linux-musl.locked"
+    driver.write_text(locked_driver(original_driver))
+    (evidence / "build-driver.diff").write_text("".join(difflib.unified_diff(
+        original_driver.splitlines(keepends=True), driver.read_text().splitlines(keepends=True),
+        fromfile="canonical", tofile="locked-diagnostic")))
+    receipt["driver_adapter"] = {"sha256": sha(driver), "diff_sha256": sha(evidence / "build-driver.diff"),
+        "changes": "materialize approved lock; skip three FIPS updates; locked fetch and frozen build"}
+    run("driver-syntax", ["bash", "-n", str(driver)])
+    run("daemon-build", ["bash", str(driver), TARGET], cwd=app, env=env)
     workdirs = list(build_root.glob("nvpn-linux-musl.*"))
     assert len(workdirs) == 1
     work = workdirs[0]
