@@ -59,8 +59,6 @@ final class AppManager: ObservableObject {
     @Published var pendingPaidExitLink: String?
     @Published var openingPaidExitLink: String?
     var startupUpdateCheckDone = false
-    var updateAssetUrl: URL?
-    var updateUsesCoreDownload = false
     let updateManifestUrls: [URL] = {
         if let overrideUrl = ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
             .flatMap(URL.init(string:)) {
@@ -157,7 +155,7 @@ final class AppManager: ObservableObject {
     }
 
     var updateInstallEnabled: Bool {
-        updateAvailable && updateUsesCoreDownload && !updateChecking && !updateInstalling
+        updateAvailable && !updateChecking && !updateInstalling
     }
 
     func start() {

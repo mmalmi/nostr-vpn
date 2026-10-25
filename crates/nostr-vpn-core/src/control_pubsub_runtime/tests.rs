@@ -992,3 +992,7 @@ async fn control_pubsub_preserves_56k_event_limit_over_real_udp_fips_run() {
 }
 
 include!("tests_peer_policy.rs");
+
+#[cfg(feature = "updater")]
+#[path = "replay_tests.rs"]
+mod replay_tests;

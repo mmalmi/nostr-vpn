@@ -75,10 +75,7 @@ struct ReleaseAsset: Decodable {
 struct UpdateCheck {
     let manifest: ReleaseManifest
     let asset: ReleaseAsset?
-    let assetUrl: URL?
     let isNewer: Bool
-    let usesCoreDownload: Bool
-    let source: String
     let verified: Bool
 }
 
@@ -144,6 +141,7 @@ enum UpdateError: LocalizedError {
     case coreUpdaterOutputInvalid
     case missingDownloadedPath
     case unverifiedSource(String)
+    case noNewerVerifiedRelease
 
     var errorDescription: String? {
         switch self {
@@ -157,6 +155,8 @@ enum UpdateError: LocalizedError {
             return "Updater did not return a downloaded file."
         case .unverifiedSource(let source):
             return "Refusing to install unverified update from \(source)."
+        case .noNewerVerifiedRelease:
+            return "No newer verified update is available yet."
         }
     }
 }
@@ -443,7 +443,7 @@ func runCoreUpdateCheckBlocking(currentVersion: String, configPath: String) thro
 func runCoreUpdateDownloadBlocking(currentVersion: String, downloadDir: URL, configPath: String) throws -> CoreUpdateResult {
     let json = try currentVersion.withCString { current in
         try "app".withCString { mode in
-            try "auto".withCString { source in
+            try "hashtree".withCString { source in
                 try downloadDir.path.withCString { dir in
                     try configPath.withCString { config in
                         try takeRustString(nostrVpnUpdateDownloadWithConfigJson(current, mode, source, dir, config))

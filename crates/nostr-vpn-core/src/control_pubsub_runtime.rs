@@ -17,7 +17,6 @@ use crate::paid_routes::{PAID_ROUTE_OFFER_TTL_SECS, SignedPaidRouteOffer};
 use crate::updater::{UpdateEventCache, configured_update_ref};
 use anyhow::{Context, Result, anyhow};
 use fips_core::FipsEndpoint;
-#[cfg(feature = "updater")]
 use nostr_pubsub::MatchEventOptions;
 use nostr_pubsub::{
     EventBus, EventSource, MeshPeerPolicy, NostrEventSubscription, NostrPubsubRouter,
@@ -256,6 +255,10 @@ impl ControlPubsubFipsRuntime {
         }
 
         let events = Arc::new(Mutex::new(event_store));
+        fips_pubsub.set_replay_source(Some(Arc::new(ControlEventReplay {
+            events: Arc::clone(&events),
+            policy: Arc::clone(&pubsub_policy),
+        })))?;
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let task_events = Arc::clone(&events);
@@ -299,25 +302,6 @@ impl ControlPubsubFipsRuntime {
             client.shutdown().await;
         }
     }
-}
-
-fn fips_pubsub_options(max_event_bytes: usize, max_hops: u8) -> FipsPubsubClientOptions {
-    FipsPubsubClientOptions {
-        max_frame_bytes: max_event_bytes
-            .saturating_add(4 * 1_024)
-            .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
-        max_connected_peers: MAX_PUBSUB_PEERS,
-        max_replay_events: FIPS_REPLAY_LIMIT,
-        receive_batch_size: 64,
-        max_hops,
-        ..FipsPubsubClientOptions::default()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ControlRelayStatus {
-    pub url: String,
-    pub status: String,
 }
 
 impl ControlPubsubClient {
@@ -880,17 +864,8 @@ fn should_create_fips_subscription(subscription_exists: bool, connected_peer_cou
 
 include!("control_pubsub_runtime/subscriptions.rs");
 
-fn bounded_fips_replay(mut events: Vec<Event>, peer_ratings: &Filter) -> Vec<Event> {
-    // Old caches can contain ratings collected by the former unscoped request.
-    // Filter those before the replay cap so they neither consume bandwidth nor
-    // displace the owner's useful records after an upgrade.
-    let rating_filters = rating_subscription_filters(peer_ratings, FIPS_REPLAY_LIMIT);
-    events.retain(|event| {
-        event.kind != Kind::Custom(RATING_FACT_KIND)
-            || rating_filters
-                .iter()
-                .any(|filter| filter.match_event(event, nostr_pubsub::MatchEventOptions::new()))
-    });
+fn bounded_fips_replay(events: Vec<Event>, peer_ratings: &Filter) -> Vec<Event> {
+    let mut events = scoped_fips_replay(events, peer_ratings);
     let drop_count = events.len().saturating_sub(FIPS_REPLAY_LIMIT);
     events.drain(..drop_count);
     events
@@ -972,6 +947,7 @@ async fn relay_notification(relay: &mut Option<RelayProvider>) -> Option<QueryEv
 }
 
 include!("control_pubsub_runtime/outbox.rs");
+include!("control_pubsub_runtime/transport.rs");
 include!("control_pubsub_runtime/exit_ratings.rs");
 #[cfg(feature = "paid-exit")]
 include!("control_pubsub_runtime/provider_profiles.rs");

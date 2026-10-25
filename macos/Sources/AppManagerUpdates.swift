@@ -9,7 +9,7 @@ extension AppManager {
             updateStatus = manual ? "Fixture mode" : ""
             return
         }
-        guard !updateChecking else {
+        guard !updateChecking, !updateInstalling else {
             return
         }
         if manual {
@@ -18,9 +18,7 @@ extension AppManager {
         }
         updateTask?.cancel()
         updateChecking = true
-        if manual {
-            updateStatus = "Checking for updates"
-        }
+        updateStatus = "Checking for updates"
         updateTask = Task { [weak self] in
             guard let self else {
                 return
@@ -28,18 +26,12 @@ extension AppManager {
             do {
                 let check = try await self.fetchUpdateCheck()
                 await MainActor.run {
-                    self.updateRetryTask?.cancel()
-                    self.updateRetryTask = nil
                     self.applyUpdateCheck(check, manual: manual)
                 }
             } catch {
                 await MainActor.run {
                     self.updateChecking = false
-                    self.updateUsesCoreDownload = false
-                    self.updateAssetUrl = nil
-                    if manual {
-                        self.updateStatus = error.localizedDescription
-                    }
+                    self.updateStatus = error.localizedDescription
                     if self.autoCheckUpdates {
                         self.scheduleAutomaticUpdateCheck(
                             after: defaultUpdateRetryDelayNanoseconds
@@ -108,35 +100,8 @@ extension AppManager {
     }
 
     func installUpdate() {
-        if updateUsesCoreDownload {
-            installCoreDownloadedUpdate()
-            return
-        }
-        guard let updateAssetUrl else {
-            updateStatus = "No macOS update asset found"
-            return
-        }
-        guard !updateInstalling else {
-            return
-        }
-        updateInstalling = true
-        updateStatus = "Downloading \(updateVersion)"
-        Task { [weak self] in
-            guard let self else {
-                return
-            }
-            do {
-                let savedUrl = try await self.downloadUpdateAsset(from: updateAssetUrl)
-                try await MainActor.run {
-                    try self.installDownloadedUpdate(savedUrl)
-                }
-            } catch {
-                await MainActor.run {
-                    self.updateInstalling = false
-                    self.updateStatus = error.localizedDescription
-                }
-            }
-        }
+        guard updateInstallEnabled else { return }
+        installCoreDownloadedUpdate()
     }
 
     func fetchUpdateCheck() async throws -> UpdateCheck {
@@ -151,29 +116,23 @@ extension AppManager {
         return UpdateCheck(
             manifest: ReleaseManifest(tag: result.tag, assets: asset.map { [$0] } ?? []),
             asset: asset,
-            assetUrl: nil,
             isNewer: result.available,
-            usesCoreDownload: result.available && asset != nil && result.verified,
-            source: result.source,
             verified: result.verified
         )
     }
 
     @MainActor
     func applyUpdateCheck(_ check: UpdateCheck, manual: Bool, allowAutoInstall: Bool = true) {
+        updateRetryTask?.cancel()
+        updateRetryTask = nil
         updateChecking = false
         updateAvailable = check.isNewer
         updateVersion = check.manifest.tag
-        updateUsesCoreDownload = check.isNewer && check.usesCoreDownload
-        updateAssetUrl = check.isNewer ? check.assetUrl : nil
         if check.isNewer {
-            let hasAsset = check.usesCoreDownload
-            if !check.verified {
-                updateStatus = "Update \(check.manifest.tag) found from unverified \(check.source); install disabled"
-            } else {
-                updateStatus = hasAsset ? "Update \(check.manifest.tag) available" : "Update \(check.manifest.tag) found without a macOS asset"
-            }
-            if allowAutoInstall, autoInstallUpdates, hasAsset {
+            updateStatus = check.asset != nil ? "Update \(check.manifest.tag) available" : "Update \(check.manifest.tag) found without a macOS asset"
+            if !check.verified || check.asset == nil {
+                scheduleAutomaticUpdateCheck(after: defaultUpdateRetryDelayNanoseconds)
+            } else if allowAutoInstall, autoInstallUpdates {
                 installUpdate()
             }
         } else if manual {
@@ -207,6 +166,9 @@ extension AppManager {
                 guard result.verified else {
                     throw UpdateError.unverifiedSource(result.source)
                 }
+                guard result.available else {
+                    throw UpdateError.noNewerVerifiedRelease
+                }
                 guard let path = result.path, !path.isEmpty else {
                     throw UpdateError.missingDownloadedPath
                 }
@@ -220,18 +182,6 @@ extension AppManager {
                 }
             }
         }
-    }
-
-    func downloadUpdateAsset(from assetUrl: URL) async throws -> URL {
-        let downloadedUrl: URL
-        if assetUrl.isFileURL {
-            downloadedUrl = FileManager.default.temporaryDirectory
-                .appendingPathComponent("nostr-vpn-update-download-\(UUID().uuidString)")
-            try FileManager.default.copyItem(at: assetUrl, to: downloadedUrl)
-        } else {
-            (downloadedUrl, _) = try await URLSession.shared.download(from: assetUrl)
-        }
-        return try moveDownloadedUpdate(downloadedUrl, from: assetUrl)
     }
 
     func drainStartupUrls() {
