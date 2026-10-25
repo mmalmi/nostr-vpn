@@ -1,4 +1,4 @@
-name: Marked seed diagnostic daemon
+name: FIPS 109 production server daemon
 
 on:
   push:
@@ -11,13 +11,18 @@ permissions:
   contents: read
 
 concurrency:
-  group: marked-seed-daemon-${{ github.ref }}
+  group: production-server-daemon-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   daemon:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      APP_SOURCE_SHA: 4d5896c4b55d7bdda0bc920ee98c8d713451c193
+      APP_SOURCE_TREE: 54e62faa74d9c954bc1b73325effc1e0e3b9d1ea
+      APP_LOCK_SHA256: 8181955c13f6d7bb861b62242aa13a04151003a698256d050f22f7780e76e15b
+      PUBSUB_ARCHIVE_SHA256: e685a39352c1e87cbdfc416479629831333fbf2e45541bdd3efc6f85bc27d09a
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,29 +30,23 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v6
         with:
-          ref: 5c1b2f0606f18387ace32f5712dde9b63a274620
+          ref: 4d5896c4b55d7bdda0bc920ee98c8d713451c193
           path: app
           persist-credentials: false
-      - uses: actions/checkout@v6
-        with:
-          repository: mmalmi/fips
-          ref: c06d566108d0c696acd2cf97e594a335287fef5d
-          path: fips
-          persist-credentials: false
-      - name: Build and qualify only the exact diagnostic daemon
-        run: python3 control/scripts/build-marked-seed-hosted.py "$GITHUB_WORKSPACE/app" "$GITHUB_WORKSPACE/fips" "$RUNNER_TEMP/marked-seed"
+      - name: Build and qualify the exact production server daemon
+        run: python3 control/scripts/build-marked-seed-hosted.py "$GITHUB_WORKSPACE/app" "$RUNNER_TEMP/production-server"
       - uses: actions/upload-artifact@v6
         if: always()
         with:
-          name: marked-seed-evidence-${{ github.run_id }}
-          path: ${{ runner.temp }}/marked-seed/evidence
+          name: production-server-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/production-server/evidence
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@v6
         if: success()
         with:
-          name: marked-seed-daemon-${{ github.run_id }}
-          path: ${{ runner.temp }}/marked-seed/binary/nvpn
+          name: production-server-daemon-${{ github.run_id }}
+          path: ${{ runner.temp }}/production-server/binary/nvpn
           compression-level: 0
           retention-days: 14
           if-no-files-found: error

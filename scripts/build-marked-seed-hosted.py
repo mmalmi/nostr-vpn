@@ -1,4 +1,4 @@
-"""Build one exact diagnostic daemon on a dedicated hosted Linux runner."""
+"""Build one exact registry-resolved server daemon on a hosted Linux runner."""
 import hashlib
 import difflib
 import json
@@ -8,21 +8,27 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 
-APP_SHA = "5c1b2f0606f18387ace32f5712dde9b63a274620"
-APP_TREE = "bc66adf87c8f0a8fe8cb1df4ccc3b4462e369335"
-FIPS_SHA = "c06d566108d0c696acd2cf97e594a335287fef5d"
-FIPS_TREE = "636d337bb5728648ae8f743a3fcaccc2ccb5fd5f"
+APP_SHA = os.environ["APP_SOURCE_SHA"]
+APP_TREE = os.environ["APP_SOURCE_TREE"]
+EXPECTED_LOCK = os.environ["APP_LOCK_SHA256"]
+EXPECTED_PACKAGES = {
+    "nvpn-fips-core": ("0.4.109", "2baf7c1c2e6e8170b102c60ce8158b5d25ad6997e3f2de7ed5d0490ce2e16eb1"),
+    "nvpn-fips-endpoint": ("0.4.109", "c6f8f1323c421f07271505516542a6b4b4e148a0663e1dbcf3525524673865c4"),
+    "nvpn-fips-tcp-endpoint": ("0.2.44", "70489db5838739c619a02024906dfeb72b854e4a7f06db3fa3a2afa62a762d81"),
+    "nostr-pubsub-fips": ("0.5.39", os.environ["PUBSUB_ARCHIVE_SHA256"]),
+}
 BASE = "ubuntu@sha256:a2d43bffc46670d7108bb3c0468c67c5557c4c92e83e1e34cbff1322ad1b94dc"
 TARGET = "x86_64-unknown-linux-musl"
 
-app, fips, output = (Path(arg).resolve() for arg in sys.argv[1:])
+app, output = (Path(arg).resolve() for arg in sys.argv[1:])
 assert os.uname().sysname == "Linux" and os.uname().machine == "x86_64"
 assert not output.exists()
 evidence = output / "evidence"
 evidence.mkdir(parents=True)
 started = time.monotonic()
-receipt = {"success": False, "diagnostic_build_only": True, "runtime_acceptance": False,
+receipt = {"success": False, "registry_resolved_server_build": True, "runtime_acceptance": False,
            "workflow_sha": os.environ["GITHUB_SHA"], "run_id": os.environ["GITHUB_RUN_ID"],
            "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "commands": [], "base_image": BASE}
 
@@ -86,29 +92,10 @@ def verify_archive(work, expected, exceptions):
 
 
 def locked_driver(original):
-    """Retain canonical build mechanics with the approved materialized lock."""
-    adapted = original
-    archive_line = 'git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"\n'
-    assert adapted.count(archive_line) == 1
-    adapted = adapted.replace(archive_line, archive_line +
-        'cp -- "$NVPN_MARKED_EXPECTED_LOCK" "$WORK_DIR/Cargo.lock"\n')
-    for suffix, package in (("ENDPOINT", "nvpn-fips-endpoint"),
-                            ("CORE", "nvpn-fips-core"),
-                            ("IDENTITY", "nvpn-fips-identity")):
-        variable = "NVPN_FIPS_" + suffix + "_PATCH_PATH"
-        block = ('if [[ -n ${' + variable + ':-} ]]; then\n'
-                 '  cargo_config_args+=(--config "patch.crates-io.' + package +
-                 '.path=\\"${' + variable + '}\\"")\n'
-                 '  cargo_lock_args=()\nfi\n')
-        assert adapted.count(block) == 1
-        adapted = adapted.replace(block, block.replace('cargo_lock_args=()', 'cargo_lock_args=(--locked)'))
-        update = ('if [[ -n ${' + variable + ':-} ]]; then\n'
-                  '  cargo "${cargo_config_args[@]}" update -p ' + package + '\nfi\n')
-        assert adapted.count(update) == 1
-        adapted = adapted.replace(update, '')
+    """Retain the canonical build with frozen compilation and native host fetch."""
     build = 'cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}"'
-    assert adapted.count(build) == 1
-    adapted = adapted.replace(build, 'cargo "${cargo_config_args[@]}" build --frozen')
+    assert original.count(build) == 1
+    adapted = original.replace(build, 'cargo "${cargo_config_args[@]}" build --frozen')
     fetch = 'cargo "${cargo_config_args[@]}" fetch "${cargo_lock_args[@]}" --target "$TARGET"'
     assert adapted.count(fetch) == 1
     return adapted.replace(fetch, fetch + ' --target x86_64-unknown-linux-gnu')
@@ -116,29 +103,28 @@ def locked_driver(original):
 
 try:
     before_app = source(app, APP_SHA, APP_TREE)
-    before_fips = source(fips, FIPS_SHA, FIPS_TREE)
     receipt["inputs"] = {
         "app_sha": APP_SHA, "app_tree": APP_TREE, "app_files_sha256": fingerprint(before_app),
-        "fips_sha": FIPS_SHA, "fips_tree": FIPS_TREE, "fips_files_sha256": fingerprint(before_fips),
         "canonical_wrapper_sha256": sha(app / "scripts/build-nvpn-linux-musl"),
         "base_dockerfile_sha256": sha(app / "Dockerfile.linux-vm-gate"),
-        "lock_verifier_sha256": sha(app / "scripts/verify-cargo-path-patch-lock.py"),
         "helper_sha256": sha(__file__),
         "workflow_sha256": sha(Path(__file__).resolve().parents[1] / ".github/workflows/marked-seed-daemon.yml"),
     }
     disk = os.statvfs(output)
     receipt["resources_before"] = {"disk_available_bytes": disk.f_bavail * disk.f_frsize,
                                    "meminfo": Path("/proc/meminfo").read_text()}
-    verifier = app / "scripts/verify-cargo-path-patch-lock.py"
-    packages = capture(["python3", str(verifier), "--manifest-specs", str(fips)]).splitlines()
-    assert len(packages) == 8
-    expected_lock = capture(["python3", str(verifier), "--expected-sha256", str(app / "Cargo.lock"), *packages])
-    assert expected_lock == "cc7015e369b655778dd391541d296c20036bf2a8475cab1d2ea2d2aa8692d264"
-    receipt["approved_path_packages"] = packages
-    receipt["expected_realized_lock_sha256"] = expected_lock
+    assert sha(app / "Cargo.lock") == EXPECTED_LOCK
+    lock = tomllib.loads((app / "Cargo.lock").read_text())
+    for name, (version, checksum) in EXPECTED_PACKAGES.items():
+        matches = [p for p in lock["package"] if p["name"] == name]
+        assert len(matches) == 1
+        assert matches[0]["version"] == version and matches[0]["checksum"] == checksum
+        assert matches[0]["source"] == "registry+https://github.com/rust-lang/crates.io-index"
+    receipt["registry_packages"] = EXPECTED_PACKAGES
+    receipt["expected_lock_sha256"] = EXPECTED_LOCK
     shutil.copyfile(app / "Cargo.lock", evidence / "Cargo.lock.committed")
 
-    # Prove the approved lock resolves before building the image or daemon.
+    # Resolve the committed registry lock before the expensive image/build steps.
     run("resolver-toolchain", ["rustup", "toolchain", "install", "1.95.0", "--profile", "minimal"])
     run("resolver-version", ["cargo", "+1.95.0", "--version", "--verbose"])
     preflight = output / "lock-preflight"
@@ -146,34 +132,13 @@ try:
     archive = output / "app.tar"
     subprocess.run(["git", "archive", "--format=tar", "--output=" + str(archive), "HEAD"], cwd=app, check=True)
     subprocess.run(["tar", "-xf", str(archive), "-C", str(preflight)], check=True)
-    (preflight / ".fips-patch").symlink_to(fips, target_is_directory=True)
-    manifest = (app / "Cargo.toml").read_text().replace(
-        'exclude = ["linux"]',
-        'exclude = ["linux", ".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"]')
-    (preflight / "Cargo.toml").write_text(manifest)
-    resolver = ["cargo", "+1.95.0"]
-    for package, directory in (("nvpn-fips-endpoint", "fips-endpoint"),
-                               ("nvpn-fips-core", "fips-core"),
-                               ("nvpn-fips-identity", "fips-identity")):
-        resolver += ["--config", 'patch.crates-io.' + package + '.path=' + json.dumps(str(fips / "crates" / directory))]
-    run("expected-lock", ["python3", str(verifier), "--materialize", str(app / "Cargo.lock"), str(evidence / "Cargo.lock.expected"), *packages])
-    shutil.copyfile(evidence / "Cargo.lock.expected", preflight / "Cargo.lock")
-    try:
-        run("resolve-locked", resolver + ["metadata", "--locked", "--format-version", "1",
-                                          "--filter-platform", TARGET], cwd=preflight)
-    finally:
-        shutil.copyfile(preflight / "Cargo.lock", evidence / "Cargo.lock.preflight")
-        delta = "".join(difflib.unified_diff(
-            (evidence / "Cargo.lock.expected").read_text().splitlines(keepends=True),
-            (preflight / "Cargo.lock").read_text().splitlines(keepends=True),
-            fromfile="expected", tofile="resolved"))
-        (evidence / "lock-preflight.diff").write_text(delta)
+    run("resolve-locked", ["cargo", "+1.95.0", "metadata", "--locked", "--format-version", "1",
+                           "--filter-platform", TARGET], cwd=preflight)
+    shutil.copyfile(preflight / "Cargo.lock", evidence / "Cargo.lock.preflight")
     receipt["preflight_lock_sha256"] = sha(preflight / "Cargo.lock")
-    verify_archive(preflight, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(),
-                                          "Cargo.lock": receipt["preflight_lock_sha256"]})
+    assert receipt["preflight_lock_sha256"] == EXPECTED_LOCK
+    verify_archive(preflight, before_app, {})
     assert source(app, APP_SHA, APP_TREE) == before_app
-    assert source(fips, FIPS_SHA, FIPS_TREE) == before_fips
-    run("preflight-lock", ["python3", str(verifier), "--validate", str(app / "Cargo.lock"), str(preflight / "Cargo.lock"), *packages])
 
     image_context = output / "image"
     image_context.mkdir()
@@ -220,7 +185,6 @@ try:
             del env[name]
     env.update(NVPN_LINUX_MUSL_IMAGE=image, NVPN_LINUX_MUSL_BUILD_ROOT=str(build_root),
                NVPN_LINUX_MUSL_TARGET_DIR=str(target), NVPN_LINUX_MUSL_KEEP_WORK="1",
-               NVPN_FIPS_REPO_PATH=str(fips), NVPN_MARKED_EXPECTED_LOCK=str(evidence / "Cargo.lock.expected"),
                CARGO_INCREMENTAL="0", LC_ALL="C", TZ="UTC")
     original_driver = (app / "scripts/build-nvpn-linux-musl").read_text()
     assert sha(app / "scripts/build-nvpn-linux-musl") == "0b94f88c18693e87e4c3e4ee3d8e1c81d3227503c00b5d76d9b879b0672ad5cc"
@@ -228,9 +192,9 @@ try:
     driver.write_text(locked_driver(original_driver))
     (evidence / "build-driver.diff").write_text("".join(difflib.unified_diff(
         original_driver.splitlines(keepends=True), driver.read_text().splitlines(keepends=True),
-        fromfile="canonical", tofile="locked-diagnostic")))
+        fromfile="canonical", tofile="locked-registry")))
     receipt["driver_adapter"] = {"sha256": sha(driver), "diff_sha256": sha(evidence / "build-driver.diff"),
-        "changes": "materialize approved lock; skip three FIPS updates; locked musl/native-host fetch and frozen build"}
+        "changes": "locked musl/native-host fetch and frozen build; no dependency or path overrides"}
     run("driver-syntax", ["bash", "-n", str(driver)])
     try:
         run("daemon-build", ["bash", str(driver), TARGET], cwd=app, env=env)
@@ -241,33 +205,55 @@ try:
             receipt["realized_lock_sha256"] = sha(workdirs[0] / "Cargo.lock")
     assert len(workdirs) == 1
     work = workdirs[0]
-    run("realized-lock", ["python3", str(verifier), "--validate", str(app / "Cargo.lock"), str(work / "Cargo.lock"), *packages])
-    assert sha(work / "Cargo.lock") == expected_lock
-    verify_archive(work, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(), "Cargo.lock": expected_lock})
-    assert source(work / ".fips-patch", FIPS_SHA, FIPS_TREE) == before_fips
+    assert sha(work / "Cargo.lock") == EXPECTED_LOCK
+    manifest = (app / "Cargo.toml").read_text().replace(
+        'exclude = ["linux"]',
+        'exclude = ["linux", ".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"]')
+    exceptions = {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest()}
+    assert not any((work / name).exists() for name in
+                   (".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"))
+    verify_archive(work, before_app, exceptions)
     assert source(app, APP_SHA, APP_TREE) == before_app
-    assert source(fips, FIPS_SHA, FIPS_TREE) == before_fips
     receipt["source_before_after_match"] = True
     receipt["archive_source_verified"] = True
 
+    # Preserve the completed default-feature ELF outside the shared Cargo target.
+    built_binary = target / TARGET / "release/nvpn"
+    (output / "binary").mkdir()
+    binary = output / "binary/nvpn"
+    shutil.copy2(built_binary, binary)
+    default_binary_sha = sha(binary)
+
     cache = "nvpn-musl-" + TARGET + f"-{os.getuid()}-{os.getgid()}-" + image.removeprefix("sha256:")
-    metadata = run("resolved-features", ["docker", "run", "--rm", "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
+    container = ["docker", "run", "--rm", "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
         "-v", str(work) + ":/home/rust/src", "-v", cache + ":/tmp/nvpn-cache", "-w", "/home/rust/src",
-        "-e", "CARGO_HOME=/tmp/nvpn-cache/cargo", "-e", "HOME=/home/rust/src", image,
-        "cargo", "--config", 'patch.crates-io.nvpn-fips-endpoint.path="/home/rust/src/.fips-patch/crates/fips-endpoint"',
-        "--config", 'patch.crates-io.nvpn-fips-core.path="/home/rust/src/.fips-patch/crates/fips-core"',
-        "--config", 'patch.crates-io.nvpn-fips-identity.path="/home/rust/src/.fips-patch/crates/fips-identity"',
-        "metadata", "--locked", "--offline", "--format-version", "1", "--filter-platform", TARGET])
+        "-e", "CARGO_HOME=/tmp/nvpn-cache/cargo", "-e", "CARGO_TARGET_DIR=/tmp/nvpn-cache/target",
+        "-e", "HOME=/home/rust/src",
+        "-e", "SOURCE_DATE_EPOCH=" + capture(["git", "show", "-s", "--format=%ct", "HEAD"], app),
+        "-e", "ZERO_AR_DATE=1", "-e", "LC_ALL=C", "-e", "TZ=UTC",
+        "-e", "BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl=-I/usr/local/musl/x86_64-unknown-linux-musl/include",
+        "-e", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc", image]
+    run("no-default-features-check", container + ["bash", "-ceu",
+        'exec 9>/tmp/nvpn-cache/build.lock; flock 9; cargo check --frozen -p nvpn --bin nvpn '
+        '--no-default-features --release --target x86_64-unknown-linux-musl'])
+    metadata = run("resolved-features", container + [
+        "cargo", "metadata", "--locked", "--offline", "--format-version", "1", "--filter-platform", TARGET])
     metadata_rows = [line for line in metadata.read_text().splitlines() if line.startswith("{")]
     assert len(metadata_rows) == 1
     resolved = json.loads(metadata_rows[0])
     daemon = next(p for p in resolved["packages"] if p["name"] == "nvpn")
     features = next(n["features"] for n in resolved["resolve"]["nodes"] if n["id"] == daemon["id"])
-    assert "default" in features and "paid-exit" in features
+    assert set(features) == {"default", "paid-exit"}
+    for name, (expected_version, _) in EXPECTED_PACKAGES.items():
+        packages = [p for p in resolved["packages"] if p["name"] == name]
+        assert len(packages) == 1
+        assert packages[0]["version"] == expected_version
+        assert packages[0]["source"] == "registry+https://github.com/rust-lang/crates.io-index"
     receipt["daemon_features"] = features
-    assert sha(work / "Cargo.lock") == expected_lock
+    assert sha(work / "Cargo.lock") == EXPECTED_LOCK
 
-    binary = target / TARGET / "release/nvpn"
+    assert sha(binary) == default_binary_sha
+    assert sha(built_binary) == default_binary_sha
     file_log = run("file", ["file", "-b", str(binary)])
     assert "ELF 64-bit" in file_log.read_text() and "x86-64" in file_log.read_text()
     program = run("elf-program-headers", ["readelf", "-lW", str(binary)])
@@ -276,12 +262,8 @@ try:
     version = run("version", ["timeout", "15", str(binary), "--version"])
     help_log = run("help", ["timeout", "15", str(binary), "--help"])
     assert "4.1.19" in version.read_text() and "Usage:" in help_log.read_text()
-    verify_archive(work, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(), "Cargo.lock": expected_lock})
-    assert source(work / ".fips-patch", FIPS_SHA, FIPS_TREE) == before_fips
+    verify_archive(work, before_app, exceptions)
     assert source(app, APP_SHA, APP_TREE) == before_app
-    assert source(fips, FIPS_SHA, FIPS_TREE) == before_fips
-    (output / "binary").mkdir()
-    shutil.copy2(binary, output / "binary/nvpn")
     receipt["binary"] = {"sha256": sha(binary), "bytes": binary.stat().st_size,
                          "target": TARGET, "static": True, "version": version.read_text().strip()}
     receipt["success"] = True
