@@ -10,6 +10,8 @@ pub struct WireGuardExitConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub address: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub address_v6: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub private_key: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub peer_public_key: String,
@@ -42,6 +44,7 @@ impl Default for WireGuardExitConfig {
             enabled: false,
             interface: default_wireguard_exit_interface(),
             address: String::new(),
+            address_v6: String::new(),
             private_key: String::new(),
             peer_public_key: String::new(),
             peer_preshared_key: String::new(),
@@ -189,6 +192,7 @@ pub fn parse_wireguard_exit_config(raw: &str) -> Result<WireGuardExitConfig> {
     }
     if !addresses.is_empty() {
         config.address = select_wireguard_exit_address(&addresses);
+        config.address_v6 = select_wireguard_exit_address_v6(&addresses);
     }
     if config.allowed_ips.is_empty() {
         return Err(anyhow!("WireGuard peer is missing AllowedIPs"));
@@ -225,10 +229,15 @@ pub fn wireguard_exit_config_text(config: &WireGuardExitConfig) -> String {
         return String::new();
     }
 
+    let mut address = config.address.clone();
+    if !config.address_v6.trim().is_empty() {
+        address.push_str(", ");
+        address.push_str(config.address_v6.trim());
+    }
     let mut lines = vec![
         "[Interface]".to_string(),
         format!("PrivateKey = {}", config.private_key),
-        format!("Address = {}", config.address),
+        format!("Address = {address}"),
     ];
     if !config.dns.is_empty() {
         lines.push(format!("DNS = {}", config.dns.join(", ")));
@@ -319,17 +328,28 @@ fn normalize_wireguard_address(value: &str, line_no: usize) -> Result<String> {
 }
 
 fn select_wireguard_exit_address(addresses: &[String]) -> String {
+    wireguard_address_in_family(addresses, |ip| ip.is_ipv4())
+        .or_else(|| addresses.first().cloned())
+        .unwrap_or_default()
+}
+
+fn select_wireguard_exit_address_v6(addresses: &[String]) -> String {
+    wireguard_address_in_family(addresses, |ip| ip.is_ipv6()).unwrap_or_default()
+}
+
+fn wireguard_address_in_family(
+    addresses: &[String],
+    family: fn(std::net::IpAddr) -> bool,
+) -> Option<String> {
     addresses
         .iter()
         .find(|address| {
             address
                 .split_once('/')
                 .and_then(|(ip, _)| ip.parse::<std::net::IpAddr>().ok())
-                .is_some_and(|ip| ip.is_ipv4())
+                .is_some_and(family)
         })
-        .or_else(|| addresses.first())
         .cloned()
-        .unwrap_or_default()
 }
 
 fn parse_wireguard_allowed_ips(value: &str, line_no: usize) -> Result<Vec<String>> {
@@ -408,6 +428,7 @@ fn normalize_wireguard_exit_config(config: &mut WireGuardExitConfig) {
         config.interface = default_wireguard_exit_interface();
     }
     config.address = config.address.trim().to_string();
+    config.address_v6 = config.address_v6.trim().to_string();
     config.private_key = config.private_key.trim().to_string();
     config.peer_public_key = config.peer_public_key.trim().to_string();
     config.peer_preshared_key = config.peer_preshared_key.trim().to_string();
