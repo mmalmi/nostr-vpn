@@ -13,6 +13,27 @@ const TABLE: u32 = 20054;
 const NFT_TABLE: &str = "nvpn_egress";
 const ROUTE_PROTOCOL: u32 = 99;
 const FORWARDED_MARK: u32 = CARRIER_MARK + 1;
+// Local ranges that must keep resolving through the main table while the
+// customer tunnel owns the table's default route. Mirrors the local-network
+// accepts rendered into the egress firewall's output chain.
+const LOCAL_THROW_TARGETS: &[&str] = &[
+    "10.0.0.0/8",
+    "100.64.0.0/10",
+    "169.254.0.0/16",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "198.18.0.0/15",
+    "fe80::/10",
+    "fc00::/7",
+];
+
+fn local_throw_targets(family: &str) -> impl Iterator<Item = &'static str> {
+    let want_ipv6 = family == "-6";
+    LOCAL_THROW_TARGETS
+        .iter()
+        .copied()
+        .filter(move |target| target.contains(':') == want_ipv6)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KernelPolicy {
@@ -87,6 +108,25 @@ impl LinuxExitGuard {
                 "proto",
                 &ROUTE_PROTOCOL.to_string(),
             ])?;
+            // The table's default route captures host-originated lookups
+            // before rule 103 reaches main. Without throws for local ranges,
+            // app containers and the LAN die inside the customer tunnel while
+            // the daemon's own carrier-marked traffic keeps working.
+            for target in local_throw_targets(family) {
+                ip(&[
+                    family,
+                    "route",
+                    "replace",
+                    "throw",
+                    target,
+                    "metric",
+                    "100",
+                    "table",
+                    &TABLE.to_string(),
+                    "proto",
+                    &ROUTE_PROTOCOL.to_string(),
+                ])?;
+            }
             for rule in rules(family) {
                 if !rule.present()? {
                     rule.run("add")?;
@@ -329,6 +369,14 @@ impl LinuxExitGuard {
                 if (route["type"] == "7" || route["type"] == "9")
                     && route["dst"] == "default"
                     && route["metric"] == 32760
+                {
+                    continue;
+                }
+                if route["type"] == "9"
+                    && route["metric"] == 100
+                    && route["dst"]
+                        .as_str()
+                        .is_some_and(|dst| LOCAL_THROW_TARGETS.contains(&dst))
                 {
                     continue;
                 }
