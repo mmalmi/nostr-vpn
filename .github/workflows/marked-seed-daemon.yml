@@ -52,10 +52,10 @@ jobs:
           retention-days: 14
           if-no-files-found: error
       - uses: actions/upload-artifact@v6
-        if: success()
+        if: always()
         with:
           name: production-server-daemon-${{ github.run_id }}
           path: ${{ runner.temp }}/production-server/binary/nvpn
           compression-level: 0
           retention-days: 14
-          if-no-files-found: error
+          if-no-files-found: warn

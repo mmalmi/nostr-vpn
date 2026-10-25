@@ -11,6 +11,7 @@ import time
 import tomllib
 import tarfile
 import urllib.request
+from contextlib import contextmanager
 
 APP_SHA = os.environ["APP_SOURCE_SHA"]
 APP_TREE = os.environ["APP_SOURCE_TREE"]
@@ -130,6 +131,37 @@ def verify_lock_override(path):
     assert actual == expected, "dependency closure drift beyond core source override"
 
 
+@contextmanager
+def parser_workspace(root):
+    """Expose core dev-dependencies only for tests; restore production inputs."""
+    manifest_path, lock_path = root / "Cargo.toml", root / "Cargo.lock"
+    manifest, lock = manifest_path.read_text(), lock_path.read_text()
+    assert manifest.count("\nmembers = [\n") == 1
+    test_manifest = manifest.replace("\nmembers = [\n", '\nmembers = [\n  ".fips-core-diagnostic",\n', 1)
+    test_manifest = test_manifest.replace(', ".fips-core-diagnostic"', '')
+    sections = lock.split("[[package]]")
+    matches = [i for i, section in enumerate(sections) if section.startswith('\nname = "nvpn-fips-core"\n')]
+    assert len(matches) == 1
+    index = matches[0]
+    assert ' "tempfile",\n' not in sections[index]
+    assert sections[index].count(' "thiserror 2.0.18",\n') == 1
+    sections[index] = sections[index].replace(' "thiserror 2.0.18",\n', ' "tempfile",\n "thiserror 2.0.18",\n')
+    test_lock = "[[package]]".join(sections)
+    expected = tomllib.loads(lock)
+    core = next(p for p in expected["package"] if p["name"] == CORE_NAME)
+    core["dependencies"] = sorted([*core["dependencies"], "tempfile"])
+    assert tomllib.loads(test_lock) == expected
+    try:
+        manifest_path.write_text(test_manifest)
+        lock_path.write_text(test_lock)
+        yield
+        assert manifest_path.read_text() == test_manifest
+        assert lock_path.read_text() == test_lock
+    finally:
+        manifest_path.write_text(manifest)
+        lock_path.write_text(lock)
+
+
 def prepare_core():
     """Retain the published normalized manifest and every unchanged crate byte."""
     before = source(fips, FIPS_SHA, FIPS_TREE)
@@ -221,6 +253,19 @@ try:
     verify_lock_override(preflight / "Cargo.lock")
     diagnostic_lock = sha(preflight / "Cargo.lock")
     verify_archive(preflight, before_app, {"Cargo.lock": diagnostic_lock})
+    with parser_workspace(preflight):
+        test_metadata = run("parser-workspace-preflight", ["cargo", "+1.95.0", "--config",
+            'patch.crates-io.nvpn-fips-core.path=".fips-core-diagnostic"', "metadata", "--locked",
+            "--format-version", "1", "--filter-platform", TARGET], cwd=preflight)
+        parsed = json.loads(test_metadata.read_text().splitlines()[-1])
+        package = next(p for p in parsed["packages"] if p["name"] == CORE_NAME)
+        assert package["id"] in parsed["workspace_members"]
+        shutil.copyfile(preflight / "Cargo.lock", evidence / "Cargo.lock.parser-tests")
+        receipt["parser_workspace"] = {"lock_sha256": sha(preflight / "Cargo.lock"),
+            "manifest_sha256": sha(preflight / "Cargo.toml"),
+            "only_added_dependency_edge": "nvpn-fips-core -> tempfile (existing locked version)"}
+    assert sha(preflight / "Cargo.lock") == diagnostic_lock
+    verify_archive(preflight, before_app, {"Cargo.lock": diagnostic_lock})
     assert source(app, APP_SHA, APP_TREE) == before_app
 
     image_context = output / "image"
@@ -259,6 +304,33 @@ try:
         'readlink -f /usr/local/musl/x86_64-unknown-linux-musl/include; dpkg-query -W'])
     assert TARGET in startup.read_text()
 
+    cache = "nvpn-musl-" + TARGET + f"-{os.getuid()}-{os.getgid()}-" + image.removeprefix("sha256:")
+    test_container = ["docker", "run", "--rm", "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
+        "-v", str(preflight) + ":/home/rust/src", "-v", cache + ":/tmp/nvpn-cache", "-w", "/home/rust/src",
+        "-e", "CARGO_HOME=/tmp/nvpn-cache/cargo", "-e", "CARGO_TARGET_DIR=/tmp/nvpn-cache/target",
+        "-e", "HOME=/home/rust/src",
+        "-e", "SOURCE_DATE_EPOCH=" + capture(["git", "show", "-s", "--format=%ct", "HEAD"], app),
+        "-e", "ZERO_AR_DATE=1", "-e", "LC_ALL=C", "-e", "TZ=UTC",
+        "-e", "BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl=-I/usr/local/musl/x86_64-unknown-linux-musl/include",
+        "-e", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc", image]
+    run("cache-init", ["docker", "run", "--rm", "--network", "none", "-u", "0",
+        "-v", cache + ":/tmp/nvpn-cache", "--entrypoint", "chown", image,
+        f"{os.getuid()}:{os.getgid()}", "/tmp/nvpn-cache"])
+    config = ['--config', 'patch.crates-io.nvpn-fips-core.path="/home/rust/src/.fips-core-diagnostic"']
+    with parser_workspace(preflight):
+        assert sha(preflight / "Cargo.lock") == receipt["parser_workspace"]["lock_sha256"]
+        fetch_container = test_container.copy()
+        fetch_container[fetch_container.index("--network") + 1] = "bridge"
+        run("parser-fetch", fetch_container + ["flock", "/tmp/nvpn-cache/build.lock", "cargo", *config,
+            "fetch", "--locked", "--target", TARGET, "--target", "x86_64-unknown-linux-gnu"])
+        tests = run("msg1-header-tests", test_container + ["flock", "/tmp/nvpn-cache/build.lock", "cargo", *config,
+            "test", "--frozen", "-p", CORE_NAME, "--lib", "--release", "--target", TARGET,
+            "node::wire::tests::test_msg1_header", "--", "--nocapture"])
+    assert "7 passed; 0 failed; 0 ignored;" in tests.read_text()
+    receipt["parser_tests"] = {"passed": 7, "failed": 0, "ignored": 0}
+    verify_lock_override(preflight / "Cargo.lock")
+    verify_archive(preflight, before_app, {"Cargo.lock": diagnostic_lock})
+
     build_root = output / "work"
     build_root.mkdir()
     target = output / "target"
@@ -282,6 +354,16 @@ try:
     run("driver-syntax", ["bash", "-n", str(driver)])
     try:
         run("daemon-build", ["bash", str(driver), TARGET], cwd=app, env=env)
+        # Preserve the completed default-feature ELF outside the shared Cargo target.
+        built_binary = target / TARGET / "release/nvpn"
+        (output / "binary").mkdir()
+        binary = output / "binary/nvpn"
+        shutil.copy2(built_binary, binary)
+        default_binary_sha = sha(binary)
+        receipt["built_binary_unqualified"] = {"sha256": default_binary_sha,
+            "bytes": binary.stat().st_size, "target": TARGET,
+            "app_sha": APP_SHA, "core_sha": FIPS_SHA, "qualified": False}
+
     finally:
         workdirs = list(build_root.glob("nvpn-linux-musl.*"))
         if len(workdirs) == 1 and (workdirs[0] / "Cargo.lock").is_file():
@@ -304,28 +386,8 @@ try:
     receipt["source_before_after_match"] = True
     receipt["archive_source_verified"] = True
 
-    # Preserve the completed default-feature ELF outside the shared Cargo target.
-    built_binary = target / TARGET / "release/nvpn"
-    (output / "binary").mkdir()
-    binary = output / "binary/nvpn"
-    shutil.copy2(built_binary, binary)
-    default_binary_sha = sha(binary)
-
-    cache = "nvpn-musl-" + TARGET + f"-{os.getuid()}-{os.getgid()}-" + image.removeprefix("sha256:")
-    container = ["docker", "run", "--rm", "--network", "none", "-u", f"{os.getuid()}:{os.getgid()}",
-        "-v", str(work) + ":/home/rust/src", "-v", cache + ":/tmp/nvpn-cache", "-w", "/home/rust/src",
-        "-e", "CARGO_HOME=/tmp/nvpn-cache/cargo", "-e", "CARGO_TARGET_DIR=/tmp/nvpn-cache/target",
-        "-e", "HOME=/home/rust/src",
-        "-e", "SOURCE_DATE_EPOCH=" + capture(["git", "show", "-s", "--format=%ct", "HEAD"], app),
-        "-e", "ZERO_AR_DATE=1", "-e", "LC_ALL=C", "-e", "TZ=UTC",
-        "-e", "BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl=-I/usr/local/musl/x86_64-unknown-linux-musl/include",
-        "-e", "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-unknown-linux-musl-gcc", image]
-    config = ['--config', 'patch.crates-io.nvpn-fips-core.path="/home/rust/src/.fips-core-diagnostic"']
-    tests = run("msg1-header-tests", container + ["flock", "/tmp/nvpn-cache/build.lock", "cargo", *config,
-        "test", "--frozen", "-p", CORE_NAME, "--lib", "--release", "--target", TARGET,
-        "node::wire::tests::test_msg1_header", "--", "--nocapture"])
-    assert "7 passed; 0 failed; 0 ignored;" in tests.read_text()
-    receipt["parser_tests"] = {"passed": 7, "failed": 0, "ignored": 0}
+    container = test_container.copy()
+    container[container.index(str(preflight) + ":/home/rust/src")] = str(work) + ":/home/rust/src"
     metadata = run("resolved-features", container + [
         "cargo", *config, "metadata", "--locked", "--offline", "--format-version", "1", "--filter-platform", TARGET])
     metadata_rows = [line for line in metadata.read_text().splitlines() if line.startswith("{")]
