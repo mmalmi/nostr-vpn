@@ -1,5 +1,6 @@
 """Build one exact diagnostic daemon on a dedicated hosted Linux runner."""
 import hashlib
+import difflib
 import json
 import os
 from pathlib import Path
@@ -108,6 +109,41 @@ try:
     receipt["expected_realized_lock_sha256"] = expected_lock
     shutil.copyfile(app / "Cargo.lock", evidence / "Cargo.lock.committed")
 
+    # Resolve the canonical driver's three path updates before building its image
+    # or daemon. Preserve the exact delta even when the strict lock gate fails.
+    run("resolver-toolchain", ["rustup", "toolchain", "install", "1.95.0", "--profile", "minimal"])
+    run("resolver-version", ["cargo", "+1.95.0", "--version", "--verbose"])
+    preflight = output / "lock-preflight"
+    preflight.mkdir()
+    archive = output / "app.tar"
+    subprocess.run(["git", "archive", "--format=tar", "--output=" + str(archive), "HEAD"], cwd=app, check=True)
+    subprocess.run(["tar", "-xf", str(archive), "-C", str(preflight)], check=True)
+    (preflight / ".fips-patch").symlink_to(fips, target_is_directory=True)
+    manifest = (app / "Cargo.toml").read_text().replace(
+        'exclude = ["linux"]',
+        'exclude = ["linux", ".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"]')
+    (preflight / "Cargo.toml").write_text(manifest)
+    resolver = ["cargo", "+1.95.0"]
+    for package, directory in (("nvpn-fips-endpoint", "fips-endpoint"),
+                               ("nvpn-fips-core", "fips-core"),
+                               ("nvpn-fips-identity", "fips-identity")):
+        resolver += ["--config", 'patch.crates-io.' + package + '.path=' + json.dumps(str(fips / "crates" / directory))]
+    for package in ("nvpn-fips-endpoint", "nvpn-fips-core", "nvpn-fips-identity"):
+        run("resolve-" + package, resolver + ["update", "-p", package], cwd=preflight)
+    shutil.copyfile(preflight / "Cargo.lock", evidence / "Cargo.lock.preflight")
+    run("expected-lock", ["python3", str(verifier), "--materialize", str(app / "Cargo.lock"), str(evidence / "Cargo.lock.expected"), *packages])
+    delta = "".join(difflib.unified_diff(
+        (evidence / "Cargo.lock.expected").read_text().splitlines(keepends=True),
+        (preflight / "Cargo.lock").read_text().splitlines(keepends=True),
+        fromfile="expected", tofile="resolved"))
+    (evidence / "lock-preflight.diff").write_text(delta)
+    receipt["preflight_lock_sha256"] = sha(preflight / "Cargo.lock")
+    verify_archive(preflight, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(),
+                                          "Cargo.lock": receipt["preflight_lock_sha256"]})
+    assert source(app, APP_SHA, APP_TREE) == before_app
+    assert source(fips, FIPS_SHA, FIPS_TREE) == before_fips
+    run("preflight-lock", ["python3", str(verifier), "--validate", str(app / "Cargo.lock"), str(preflight / "Cargo.lock"), *packages])
+
     image_context = output / "image"
     image_context.mkdir()
     original = (app / "Dockerfile.linux-vm-gate").read_text()
@@ -158,12 +194,9 @@ try:
     workdirs = list(build_root.glob("nvpn-linux-musl.*"))
     assert len(workdirs) == 1
     work = workdirs[0]
+    shutil.copyfile(work / "Cargo.lock", evidence / "Cargo.lock.realized")
     run("realized-lock", ["python3", str(verifier), "--validate", str(app / "Cargo.lock"), str(work / "Cargo.lock"), *packages])
     assert sha(work / "Cargo.lock") == expected_lock
-    shutil.copyfile(work / "Cargo.lock", evidence / "Cargo.lock.realized")
-    manifest = (app / "Cargo.toml").read_text().replace(
-        'exclude = ["linux"]',
-        'exclude = ["linux", ".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"]')
     verify_archive(work, before_app, {"Cargo.toml": hashlib.sha256(manifest.encode()).hexdigest(), "Cargo.lock": expected_lock})
     assert source(work / ".fips-patch", FIPS_SHA, FIPS_TREE) == before_fips
     assert source(app, APP_SHA, APP_TREE) == before_app
