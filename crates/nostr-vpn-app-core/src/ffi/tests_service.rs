@@ -204,6 +204,105 @@ exit 93
 
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
+    fn failed_wireguard_exit_reload_restores_the_previous_direct_config() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = unique_service_test_dir("nvpn-app-core-wireguard-rollback");
+        let script_path = dir.join("nvpn");
+        fs::write(
+            &script_path,
+            r#"#!/bin/sh
+if [ "$1" = "service" ] && [ "$2" = "status" ]; then
+  printf '%s\n' '{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"fi.siriusbusiness.nvpn.test","binary_version":"test"}'
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  printf '%s\n' '{"daemon":{"running":true,"state":null}}'
+  exit 0
+fi
+if [ "$1" = "reload" ]; then
+  printf 'reload\n' >> "$3.reloads"
+  if [ ! -f "$3.first-reload" ]; then
+    touch "$3.first-reload"
+    echo "simulated wireguard reload failure" >&2
+    exit 7
+  fi
+  grep -q 'internet_source = "direct"' "$3" || exit 92
+  exit 0
+fi
+exit 93
+"#,
+        )
+        .expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
+        runtime.nvpn_bin = Some(script_path);
+
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                internet_source: Some("wireguard".to_string()),
+                wireguard_exit_enabled: Some(true),
+                wireguard_exit_config: Some(
+                    r#"
+[Interface]
+PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128
+
+[Peer]
+PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = vpn.example.test:51820
+"#
+                    .to_string(),
+                ),
+                ..SettingsPatch::default()
+            },
+        });
+
+        assert!(
+            runtime.last_error.contains("simulated wireguard reload failure"),
+            "{}",
+            runtime.last_error
+        );
+        assert_eq!(runtime.config.internet_source, InternetSource::Direct);
+        assert!(!runtime.config.wireguard_exit.enabled);
+        assert!(runtime.config.wireguard_exit.address.is_empty());
+        let state = runtime.state();
+        assert_eq!(state.internet_source, "direct");
+        assert!(
+            state.error.contains("restored previous configuration"),
+            "{}",
+            state.error
+        );
+        let saved = AppConfig::load(&runtime.config_path).expect("load restored config");
+        assert_eq!(saved.internet_source, InternetSource::Direct);
+        let calls = fs::read_to_string(format!("{}.reloads", runtime.config_path.display()))
+            .expect("read fake nvpn reloads");
+        assert_eq!(
+            calls.lines().count(),
+            2,
+            "failed apply and rollback must each issue one reload:\n{calls}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
     fn config_edit_preserves_cached_live_service_when_service_query_fails() {
         use std::os::unix::fs::PermissionsExt;
 
