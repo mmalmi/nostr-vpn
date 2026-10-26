@@ -4,107 +4,160 @@
              xmlns:local="clr-namespace:NostrVpn.Windows"
              ShutdownMode="OnExplicitShutdown">
   <Application.Resources>
-    <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
-    <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
-    <local:NonEmptyStringToVisibilityConverter x:Key="NonEmptyStringToVisibility" />
-    <local:ObjectToVisibilityConverter x:Key="ObjectToVisibility" />
-    <local:NullToVisibilityConverter x:Key="NullToVisibility" />
-    <local:PageVisibilityConverter x:Key="PageVisibility" />
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <!-- Placeholder; ThemeService swaps index 0 between Themes/Light.xaml
+             and Themes/Dark.xaml for live theme switching. -->
+        <ResourceDictionary Source="Themes/Light.xaml" />
+      </ResourceDictionary.MergedDictionaries>
+      <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+      <local:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibility" />
+      <local:NonEmptyStringToVisibilityConverter x:Key="NonEmptyStringToVisibility" />
+      <local:ObjectToVisibilityConverter x:Key="ObjectToVisibility" />
+      <local:NullToVisibilityConverter x:Key="NullToVisibility" />
+      <local:PageVisibilityConverter x:Key="PageVisibility" />
 
-    <SolidColorBrush x:Key="WindowBg" Color="#F6F7F8" />
-    <SolidColorBrush x:Key="PanelBg" Color="#FFFFFF" />
-    <SolidColorBrush x:Key="SidebarBg" Color="#ECEFF2" />
-    <SolidColorBrush x:Key="TextPrimary" Color="#17202A" />
-    <SolidColorBrush x:Key="TextSecondary" Color="#68717C" />
-    <SolidColorBrush x:Key="Accent" Color="#7C3AED" />
-    <SolidColorBrush x:Key="AccentSoft" Color="#F0E8FF" />
-    <SolidColorBrush x:Key="Ok" Color="#12A150" />
-    <SolidColorBrush x:Key="Warn" Color="#A16207" />
-    <SolidColorBrush x:Key="Danger" Color="#DC2626" />
-    <SolidColorBrush x:Key="Line" Color="#DDE3EA" />
+      <Style TargetType="{x:Type Window}">
+        <Setter Property="FontFamily" Value="Segoe UI" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+      </Style>
 
-    <Style TargetType="{x:Type Window}">
-      <Setter Property="FontFamily" Value="Segoe UI" />
-      <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
-    </Style>
+      <Style TargetType="{x:Type Expander}">
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      </Style>
 
-    <Style x:Key="Card" TargetType="{x:Type Border}">
-      <Setter Property="Background" Value="{StaticResource PanelBg}" />
-      <Setter Property="BorderBrush" Value="{StaticResource Line}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="8" />
-      <Setter Property="Padding" Value="16" />
-      <Setter Property="Margin" Value="0,0,0,14" />
-    </Style>
+      <Style x:Key="Card" TargetType="{x:Type Border}">
+        <Setter Property="Background" Value="{DynamicResource PanelBg}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="16" />
+        <Setter Property="Margin" Value="0,0,0,14" />
+      </Style>
 
-    <Style TargetType="{x:Type Button}">
-      <Setter Property="MinHeight" Value="32" />
-      <Setter Property="Padding" Value="12,6" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="BorderBrush" Value="#CCD5DF" />
-      <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
-      <Setter Property="Cursor" Value="Hand" />
-    </Style>
+      <Style TargetType="{x:Type Button}">
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="Padding" Value="12,6" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="BorderBrush" Value="{DynamicResource ButtonBorder}" />
+        <Setter Property="Background" Value="{DynamicResource ButtonBg}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type Button}">
+              <Grid>
+                <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="3" />
+                <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" RecognizesAccessKey="True" />
+              </Grid>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                  <Setter TargetName="Surface" Property="Opacity" Value="0.85" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                  <Setter TargetName="Surface" Property="Opacity" Value="0.65" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="Opacity" Value="0.45" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
 
-    <Style x:Key="PrimaryButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
-      <Setter Property="Background" Value="{StaticResource Accent}" />
-      <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
-      <Setter Property="Foreground" Value="White" />
-      <Setter Property="FontWeight" Value="SemiBold" />
-    </Style>
-
-    <Style x:Key="NavButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
-      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-      <Setter Property="Background" Value="Transparent" />
-      <Setter Property="BorderBrush" Value="Transparent" />
-      <Setter Property="Margin" Value="0,2" />
-      <Setter Property="Padding" Value="10,8" />
-    </Style>
-
-    <Style TargetType="{x:Type TextBox}">
-      <Setter Property="MinHeight" Value="32" />
-      <Setter Property="Padding" Value="8,5" />
-      <Setter Property="BorderBrush" Value="#C9D2DC" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="Background" Value="#FFFFFF" />
-    </Style>
-
-    <Style TargetType="{x:Type CheckBox}">
-      <Setter Property="Margin" Value="0,4,18,4" />
-      <Setter Property="VerticalAlignment" Value="Center" />
-    </Style>
-
-    <Style x:Key="SwitchCheckBox" TargetType="{x:Type CheckBox}" BasedOn="{StaticResource {x:Type CheckBox}}">
-      <Setter Property="Margin" Value="0,4,0,4" />
-      <Setter Property="HorizontalAlignment" Value="Stretch" />
-      <Setter Property="Cursor" Value="Hand" />
-      <Setter Property="Template">
-        <Setter.Value>
-          <ControlTemplate TargetType="{x:Type CheckBox}">
-            <Grid MinHeight="32">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-              </Grid.ColumnDefinitions>
-              <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True" />
-              <Border x:Name="Track" Grid.Column="1" Width="42" Height="24" CornerRadius="12" Background="#DDE3EA" BorderBrush="#C9D2DC" BorderThickness="1">
-                <Ellipse x:Name="Thumb" Width="18" Height="18" Fill="#FFFFFF" HorizontalAlignment="Left" Margin="3" />
+      <Style TargetType="{x:Type TabItem}">
+        <Setter Property="Background" Value="{DynamicResource ButtonBg}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+        <Setter Property="Padding" Value="12,6" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type TabItem}">
+              <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource Line}" BorderThickness="1" Padding="{TemplateBinding Padding}" CornerRadius="3,3,0,0">
+                <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" HorizontalAlignment="Center" VerticalAlignment="Center" />
               </Border>
-            </Grid>
-            <ControlTemplate.Triggers>
-              <Trigger Property="IsChecked" Value="True">
-                <Setter TargetName="Track" Property="Background" Value="{StaticResource Accent}" />
-                <Setter TargetName="Track" Property="BorderBrush" Value="{StaticResource Accent}" />
-                <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
-              </Trigger>
-              <Trigger Property="IsEnabled" Value="False">
-                <Setter Property="Opacity" Value="0.55" />
-              </Trigger>
-            </ControlTemplate.Triggers>
-          </ControlTemplate>
-        </Setter.Value>
-      </Setter>
-    </Style>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                  <Setter TargetName="Surface" Property="Background" Value="{DynamicResource AccentSoft}" />
+                  <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                </Trigger>
+                <Trigger Property="IsMouseOver" Value="True">
+                  <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+
+      <Style x:Key="PrimaryButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="Background" Value="{DynamicResource Accent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
+        <Setter Property="Foreground" Value="{DynamicResource AccentText}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+      </Style>
+
+      <Style x:Key="NavButton" TargetType="{x:Type Button}" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="Margin" Value="0,2" />
+        <Setter Property="Padding" Value="10,8" />
+      </Style>
+
+      <Style TargetType="{x:Type TextBox}">
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="Padding" Value="8,5" />
+        <Setter Property="BorderBrush" Value="{DynamicResource InputBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Background" Value="{DynamicResource InputBg}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      </Style>
+
+      <Style TargetType="{x:Type CheckBox}">
+        <Setter Property="Margin" Value="0,4,18,4" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      </Style>
+
+      <Style TargetType="{x:Type RadioButton}">
+        <Setter Property="Margin" Value="0,4,18,4" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
+      </Style>
+
+      <Style x:Key="SwitchCheckBox" TargetType="{x:Type CheckBox}" BasedOn="{StaticResource {x:Type CheckBox}}">
+        <Setter Property="Margin" Value="0,4,0,4" />
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+          <Setter.Value>
+            <ControlTemplate TargetType="{x:Type CheckBox}">
+              <Grid MinHeight="32">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True" />
+                <Border x:Name="Track" Grid.Column="1" Width="42" Height="24" CornerRadius="12" Background="{DynamicResource SwitchTrackOff}" BorderBrush="{DynamicResource SwitchTrackBorder}" BorderThickness="1">
+                  <Ellipse x:Name="Thumb" Width="18" Height="18" Fill="{DynamicResource SwitchThumb}" HorizontalAlignment="Left" Margin="3" />
+                </Border>
+              </Grid>
+              <ControlTemplate.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                  <Setter TargetName="Track" Property="Background" Value="{DynamicResource Accent}" />
+                  <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                  <Setter TargetName="Thumb" Property="HorizontalAlignment" Value="Right" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                  <Setter Property="Opacity" Value="0.55" />
+                </Trigger>
+              </ControlTemplate.Triggers>
+            </ControlTemplate>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ResourceDictionary>
   </Application.Resources>
 </Application>

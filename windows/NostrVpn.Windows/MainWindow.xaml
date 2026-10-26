@@ -9,14 +9,15 @@
         MinHeight="560"
         WindowStartupLocation="CenterScreen"
         Icon="Assets/nostr-vpn.ico"
-        Background="{StaticResource WindowBg}">
+        Foreground="{DynamicResource TextPrimary}"
+        Background="{DynamicResource WindowBg}">
   <Grid>
     <Grid.ColumnDefinitions>
       <ColumnDefinition Width="220" />
       <ColumnDefinition Width="*" />
     </Grid.ColumnDefinitions>
 
-    <Border Grid.Column="0" Background="{StaticResource SidebarBg}" Padding="16">
+    <Border Grid.Column="0" Background="{DynamicResource SidebarBg}" Padding="16">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Top">
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowDevicesCommand}">
@@ -41,15 +42,15 @@
           </Button>
         </StackPanel>
 
-        <Border DockPanel.Dock="Bottom" Background="#FFFFFF" CornerRadius="8" Padding="12" Cursor="Hand" MouseLeftButtonUp="NetworkSwitcher_Click">
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource PanelBg}" CornerRadius="8" Padding="12" Cursor="Hand" MouseLeftButtonUp="NetworkSwitcher_Click">
           <DockPanel LastChildFill="True">
-            <TextBlock DockPanel.Dock="Right" FontFamily="Segoe MDL2 Assets" Text="&#xE70D;" FontSize="10" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="6,0,0,0" />
+            <TextBlock DockPanel.Dock="Right" FontFamily="Segoe MDL2 Assets" Text="&#xE70D;" FontSize="10" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="6,0,0,0" />
             <StackPanel>
               <StackPanel Orientation="Horizontal">
                 <Ellipse Width="7" Height="7" Fill="{Binding ShownNetworkStatusBrush}" VerticalAlignment="Center" Margin="0,0,7,0" Visibility="{Binding ShowNetworkStatusDot, Converter={StaticResource BoolToVisibility}}" />
                 <TextBlock Text="{Binding ActiveNetworkName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
               </StackPanel>
-              <TextBlock Text="{Binding HeroSubtitle}" Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="0,3,0,0" />
+              <TextBlock Text="{Binding HeroSubtitle}" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="0,3,0,0" />
             </StackPanel>
           </DockPanel>
         </Border>
@@ -57,7 +58,7 @@
     </Border>
 
     <DockPanel Grid.Column="1">
-      <Border DockPanel.Dock="Top" Padding="24,18" Background="{StaticResource WindowBg}">
+      <Border DockPanel.Dock="Top" Padding="24,18" Background="{DynamicResource WindowBg}">
         <Grid>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
@@ -66,7 +67,7 @@
           <StackPanel VerticalAlignment="Center">
             <StackPanel Orientation="Horizontal">
               <Ellipse Width="10" Height="10" Fill="{Binding ShownNetworkStatusBrush}" VerticalAlignment="Center" Margin="0,0,10,0" Visibility="{Binding ShowNetworkStatusDot, Converter={StaticResource BoolToVisibility}}" />
-              <TextBlock Text="{Binding ActiveNetworkName}" FontSize="26" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
+              <TextBlock Text="{Binding ActiveNetworkName}" FontSize="26" FontWeight="SemiBold" Foreground="{DynamicResource TextPrimary}" />
             </StackPanel>
             <TextBlock Text="{Binding VpnStatusText}" Foreground="{Binding VpnStatusBrush}" TextTrimming="CharacterEllipsis" />
           </StackPanel>
@@ -76,15 +77,15 @@
         </Grid>
       </Border>
 
-      <Border DockPanel.Dock="Top" Padding="24,4" Background="#F2F4F7" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVisibility}}">
+      <Border DockPanel.Dock="Top" Padding="24,4" Background="{DynamicResource UpdateBannerBg}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVisibility}}">
         <DockPanel LastChildFill="True">
           <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-            <CheckBox Content="Install automatically" IsChecked="{Binding AutoInstallUpdates, Mode=TwoWay}" FontSize="11" Foreground="{StaticResource TextSecondary}" Margin="0,0,12,0" />
+            <CheckBox Content="Install automatically" IsChecked="{Binding AutoInstallUpdates, Mode=TwoWay}" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,12,0" />
             <Button Content="Install" Command="{Binding InstallUpdateCommand}" MinWidth="72" MinHeight="26" Padding="10,3" />
           </StackPanel>
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="13" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0" />
-            <TextBlock Text="{Binding UpdateStripeText}" Foreground="{StaticResource TextPrimary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="13" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0" />
+            <TextBlock Text="{Binding UpdateStripeText}" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
           </StackPanel>
         </DockPanel>
       </Border>
@@ -96,7 +97,7 @@
         <Grid>
         <StackPanel Margin="24,0,24,24">
           <Border Style="{StaticResource Card}" Visibility="{Binding Notice, Converter={StaticResource NonEmptyStringToVisibility}}">
-            <TextBlock Text="{Binding Notice}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding Notice}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
           </Border>
 
           <StackPanel Visibility="{Binding HasActiveNetwork, Converter={StaticResource InverseBoolToVisibility}}">
@@ -130,11 +131,11 @@
                 <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}" />
                 <Expander Header="Manual join" Margin="0,8,0,0" AutomationProperties.AutomationId="ManualJoinExpander">
                   <StackPanel Margin="0,8,0,0">
-                    <TextBlock Text="Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <TextBlock Text="{Binding State.OwnNpub}" TextWrapping="Wrap" Margin="0,0,0,6" AutomationProperties.AutomationId="ManualJoinJoinerDeviceIdValue" />
                     <Button Content="Copy my Device ID" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding State.OwnNpub}" HorizontalAlignment="Left" Margin="0,0,0,8" />
                     <TextBox Text="{Binding ManualJoinAdminId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Admin Device ID" Margin="0,0,0,6" AutomationProperties.AutomationId="ManualJoinAdminId" />
-                    <TextBlock Text="Not a valid device ID" Foreground="{StaticResource Danger}" FontSize="11" Visibility="{Binding ManualJoinAdminErrorVisibility}" />
+                    <TextBlock Text="Not a valid device ID" Foreground="{DynamicResource Danger}" FontSize="11" Visibility="{Binding ManualJoinAdminErrorVisibility}" />
                     <TextBox Text="{Binding ManualJoinMeshId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Network ID" Margin="0,6,0,8" AutomationProperties.AutomationId="ManualJoinNetworkId" />
                     <Button Content="Add manually" Command="{Binding ManualAddNetworkCommand}" HorizontalAlignment="Left" AutomationProperties.AutomationId="ManualJoinSubmit" />
                   </StackPanel>
@@ -157,7 +158,7 @@
                     <Button DockPanel.Dock="Right" Command="{Binding ShowAddDeviceCommand}" Content="+ Add device" Visibility="{Binding ActiveNetwork.LocalIsAdmin, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="ManualJoinAdminOpen" />
                     <StackPanel>
                       <TextBlock Text="Devices" FontSize="18" FontWeight="SemiBold" />
-                      <TextBlock Text="{Binding HeroSubtitle}" Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="0,3,0,0" />
+                      <TextBlock Text="{Binding HeroSubtitle}" Foreground="{DynamicResource TextSecondary}" FontSize="12" Margin="0,3,0,0" />
                     </StackPanel>
                   </DockPanel>
 
@@ -166,6 +167,7 @@
                            SelectedValuePath="SelectionKey"
                            BorderThickness="0"
                            Background="Transparent"
+                           Foreground="{DynamicResource TextPrimary}"
                            Margin="0,14,0,0"
                            HorizontalContentAlignment="Stretch">
                     <ListBox.ItemContainerStyle>
@@ -184,8 +186,8 @@
                               <Setter Property="Margin" Value="0,0,0,8" />
                               <Style.Triggers>
                                 <DataTrigger Binding="{Binding IsSelected, RelativeSource={RelativeSource AncestorType={x:Type ListBoxItem}}}" Value="True">
-                                  <Setter Property="Background" Value="{StaticResource AccentSoft}" />
-                                  <Setter Property="BorderBrush" Value="{StaticResource Accent}" />
+                                  <Setter Property="Background" Value="{DynamicResource AccentSoft}" />
+                                  <Setter Property="BorderBrush" Value="{DynamicResource Accent}" />
                                 </DataTrigger>
                               </Style.Triggers>
                             </Style>
@@ -196,16 +198,16 @@
                               <ColumnDefinition Width="*" />
                               <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
-                            <Ellipse Width="8" Height="8" Fill="{StaticResource TextSecondary}" VerticalAlignment="Top" Margin="0,6,0,0" />
+                            <Ellipse Width="8" Height="8" Fill="{DynamicResource TextSecondary}" VerticalAlignment="Top" Margin="0,6,0,0" />
                             <StackPanel Grid.Column="1">
                               <WrapPanel>
                                 <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="This device" Margin="8,0,0,0" Foreground="{StaticResource Ok}" Visibility="{Binding IsSelf, Converter={StaticResource BoolToVisibility}}" />
-                                <TextBlock Text="Admin" Margin="8,0,0,0" Foreground="{StaticResource Accent}" Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisibility}}" />
-                                <TextBlock Text="Exit" Margin="8,0,0,0" Foreground="{StaticResource Warn}" Visibility="{Binding OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
-                                <TextBlock Text="via mesh" Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" Visibility="{Binding IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="This device" Margin="8,0,0,0" Foreground="{DynamicResource Ok}" Visibility="{Binding IsSelf, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="Admin" Margin="8,0,0,0" Foreground="{DynamicResource Accent}" Visibility="{Binding IsAdmin, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="Exit" Margin="8,0,0,0" Foreground="{DynamicResource Warn}" Visibility="{Binding OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
+                                <TextBlock Text="via mesh" Margin="8,0,0,0" Foreground="{DynamicResource TextSecondary}" Visibility="{Binding IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
                               </WrapPanel>
-                              <TextBlock Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0">
+                              <TextBlock Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" Margin="0,4,0,0">
                                 <Run Text="{Binding CleanTunnelIp, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding ConnectivityStateText, Mode=OneWay}" />
                               </TextBlock>
                             </StackPanel>
@@ -223,17 +225,17 @@
                   <StackPanel Visibility="{Binding SelectedParticipant, Converter={StaticResource ObjectToVisibility}}">
                     <DockPanel LastChildFill="True">
                       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top">
-                        <Ellipse Width="8" Height="8" Fill="{StaticResource TextSecondary}" Margin="0,6,7,0" />
-                        <TextBlock Text="{Binding SelectedParticipant.ConnectivityStateText}" Foreground="{StaticResource TextSecondary}" />
+                        <Ellipse Width="8" Height="8" Fill="{DynamicResource TextSecondary}" Margin="0,6,7,0" />
+                        <TextBlock Text="{Binding SelectedParticipant.ConnectivityStateText}" Foreground="{DynamicResource TextSecondary}" />
                       </StackPanel>
                       <StackPanel>
                         <TextBlock Text="{Binding SelectedParticipant.DisplayName}" FontSize="22" FontWeight="SemiBold" TextWrapping="Wrap" />
                         <WrapPanel Margin="0,8,0,0">
-                          <TextBlock Text="This device" Foreground="{StaticResource Ok}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsSelf, Converter={StaticResource BoolToVisibility}}" />
-                          <TextBlock Text="Admin" Foreground="{StaticResource Accent}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsAdmin, Converter={StaticResource BoolToVisibility}}" />
-                          <TextBlock Text="Exit" Foreground="{StaticResource Warn}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
-                          <TextBlock Text="direct connection" Foreground="{StaticResource Ok}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsFipsDirect, Converter={StaticResource BoolToVisibility}}" />
-                          <TextBlock Text="via mesh" Foreground="{StaticResource TextSecondary}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="This device" Foreground="{DynamicResource Ok}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsSelf, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="Admin" Foreground="{DynamicResource Accent}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsAdmin, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="Exit" Foreground="{DynamicResource Warn}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.OffersExitNode, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="direct connection" Foreground="{DynamicResource Ok}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsFipsDirect, Converter={StaticResource BoolToVisibility}}" />
+                          <TextBlock Text="via mesh" Foreground="{DynamicResource TextSecondary}" Margin="0,0,10,0" Visibility="{Binding SelectedParticipant.IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
                         </WrapPanel>
                       </StackPanel>
                     </DockPanel>
@@ -246,7 +248,7 @@
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
-                      <TextBlock Text="Name" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                      <TextBlock Text="Name" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                       <TextBox x:Name="AliasInput" Grid.Column="1" Text="{Binding SelectedParticipant.MagicDnsAlias, Mode=OneWay}" Margin="0,0,8,0" />
                       <Button Grid.Column="2" Content="Save" Tag="{Binding SelectedParticipant}" Click="SetParticipantAlias_Click" Margin="0,0,8,0" />
                       <Button Grid.Column="3" Content="Admin" Tag="{Binding SelectedParticipant}" Click="ToggleAdmin_Click" Margin="0,0,8,0" Visibility="{Binding SelectedParticipantCanManage, Converter={StaticResource BoolToVisibility}}" />
@@ -258,12 +260,12 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                       </Grid.ColumnDefinitions>
-                      <TextBlock Text="Hints" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                      <TextBlock Text="Hints" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                       <TextBox x:Name="EndpointHintsInput" Grid.Column="1" Text="{Binding SelectedParticipant.FipsEndpointHintsEditText, Mode=OneWay}" ToolTip="host or host:port" Margin="0,0,8,0" />
                       <Button Grid.Column="2" Content="Save" Tag="{Binding SelectedParticipant}" Click="SetEndpointHints_Click" />
                     </Grid>
 
-                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
+                    <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
                       <StackPanel>
                         <TextBlock Text="Addresses" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
                         <Grid>
@@ -276,11 +278,11 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                           </Grid.RowDefinitions>
-                          <TextBlock Text="MagicDNS" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                          <TextBlock Text="MagicDNS" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                           <TextBlock Grid.Column="1" Text="{Binding SelectedParticipant.MagicDnsDisplay}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                          <TextBlock Grid.Row="1" Text="VPN IP" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                          <TextBlock Grid.Row="1" Text="VPN IP" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                           <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedParticipant.CleanTunnelIp}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                          <TextBlock Grid.Row="2" Text="Device ID" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
+                          <TextBlock Grid.Row="2" Text="Device ID" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
                           <DockPanel Grid.Row="2" Grid.Column="1" LastChildFill="True">
                             <Button DockPanel.Dock="Right" Content="Copy" Tag="{Binding SelectedParticipant.Npub}" Click="CopyPeer_Click" Margin="8,0,0,0" />
                             <TextBlock Text="{Binding SelectedParticipant.Npub}" TextWrapping="Wrap" />
@@ -289,59 +291,59 @@
                       </StackPanel>
                     </Border>
 
-                    <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
+                    <Border BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
                       <StackPanel>
                         <TextBlock Text="Connectivity" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
                         <UniformGrid Columns="3" Rows="3">
                           <StackPanel Margin="0,0,12,12">
-                            <TextBlock Text="Role" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Role" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.RoleText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,12">
-                            <TextBlock Text="State" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="State" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.ConnectivityStateText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,12">
-                            <TextBlock Text="FIPS path" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="FIPS path" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.FipsPathText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Last seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Last seen" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.LastSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Latency age" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Latency age" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.FipsSrttAgeDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Control seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Control seen" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.LastFipsControlSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Data seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Data seen" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.LastFipsDataSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Sent" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Sent" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.TxBytesDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
-                            <TextBlock Text="Received" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="Received" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.RxBytesDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                         </UniformGrid>
                         <StackPanel Margin="0,0,12,0">
-                          <TextBlock Text="Address hints" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                          <TextBlock Text="Address hints" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
                           <TextBlock Text="{Binding SelectedParticipant.FipsEndpointHintsText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
-                        <TextBlock Text="{Binding SelectedParticipant.StatusDetailText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                        <TextBlock Text="{Binding SelectedParticipant.StatusDetailText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,8,0,0" />
                       </StackPanel>
                     </Border>
                   </StackPanel>
 
                   <StackPanel Visibility="{Binding SelectedParticipant, Converter={StaticResource NullToVisibility}}">
                     <TextBlock Text="Devices" FontSize="22" FontWeight="SemiBold" />
-                    <TextBlock Text="No devices yet" Foreground="{StaticResource TextSecondary}" Margin="0,8,0,0" />
+                    <TextBlock Text="No devices yet" Foreground="{DynamicResource TextSecondary}" Margin="0,8,0,0" />
                   </StackPanel>
                 </StackPanel>
               </Border>
@@ -380,11 +382,11 @@
                 <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}" />
                 <Expander Header="Manual join" Margin="0,8,0,0" AutomationProperties.AutomationId="ManualJoinExpander">
                   <StackPanel Margin="0,8,0,0">
-                    <TextBlock Text="Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                     <TextBlock Text="{Binding State.OwnNpub}" TextWrapping="Wrap" Margin="0,0,0,6" AutomationProperties.AutomationId="ManualJoinJoinerDeviceIdValue" />
                     <Button Content="Copy my Device ID" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding State.OwnNpub}" HorizontalAlignment="Left" Margin="0,0,0,8" />
                     <TextBox Text="{Binding ManualJoinAdminId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Admin Device ID" Margin="0,0,0,6" AutomationProperties.AutomationId="ManualJoinAdminId" />
-                    <TextBlock Text="Not a valid device ID" Foreground="{StaticResource Danger}" FontSize="11" Visibility="{Binding ManualJoinAdminErrorVisibility}" />
+                    <TextBlock Text="Not a valid device ID" Foreground="{DynamicResource Danger}" FontSize="11" Visibility="{Binding ManualJoinAdminErrorVisibility}" />
                     <TextBox Text="{Binding ManualJoinMeshId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Network ID" Margin="0,6,0,8" AutomationProperties.AutomationId="ManualJoinNetworkId" />
                     <Button Content="Add manually" Command="{Binding ManualAddNetworkCommand}" HorizontalAlignment="Left" AutomationProperties.AutomationId="ManualJoinSubmit" />
                   </StackPanel>
@@ -397,7 +399,7 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowLinkDeviceCard, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="Link Device" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
-                <TextBlock Text="Paste the joiner's request to open confirmation automatically, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBlock Text="Paste the joiner's request to open confirmation automatically, or add their Device ID below." Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <TextBox Text="{Binding JoinRequestInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Join request" />
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                   <Button Content="Import join request QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
@@ -408,13 +410,13 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ActiveNetwork.LocalIsAdmin, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="For manual join" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="Share your Device ID and Network ID, then add the joining Device ID below." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                <TextBlock Text="Share your Device ID and Network ID, then add the joining Device ID below." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,10" />
                 <TextBlock Text="{Binding State.OwnNpub}" TextWrapping="Wrap" Margin="0,0,0,4" AutomationProperties.AutomationId="ManualJoinAdminDeviceIdValue" />
                 <TextBlock Text="{Binding ActiveNetwork.NetworkId}" TextWrapping="Wrap" Margin="0,0,0,8" AutomationProperties.AutomationId="ManualJoinAdminNetworkIdValue" />
                 <Button Content="Copy admin Device ID" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding State.OwnNpub}" HorizontalAlignment="Left" Margin="0,0,0,6" />
                 <Button Content="Copy Network ID" Command="{Binding CopyNetworkIdCommand}" HorizontalAlignment="Left" Margin="0,0,0,10" />
                 <TextBox Text="{Binding ParticipantInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Joining Device ID" Margin="0,0,0,4" AutomationProperties.AutomationId="ManualJoinAdminDeviceId" />
-                <TextBlock Text="Not a valid device ID" Foreground="{StaticResource Danger}" FontSize="11" Visibility="{Binding ParticipantInputErrorVisibility}" />
+                <TextBlock Text="Not a valid device ID" Foreground="{DynamicResource Danger}" FontSize="11" Visibility="{Binding ParticipantInputErrorVisibility}" />
                 <TextBox Text="{Binding ParticipantAliasInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Name" Margin="0,6,0,8" AutomationProperties.AutomationId="ManualJoinAdminDeviceName" />
                 <Button Content="Add by Device ID" Command="{Binding AddParticipantCommand}" HorizontalAlignment="Left" AutomationProperties.AutomationId="ManualJoinAdminSubmit" />
               </StackPanel>
@@ -426,24 +428,24 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="Internet Source" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding State.ExitNodeStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,10" AutomationProperties.AutomationId="InternetSourceStatus" />
+                <TextBlock Text="{Binding State.ExitNodeStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,10" AutomationProperties.AutomationId="InternetSourceStatus" />
                 <Button Click="DirectExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8">
                   <DockPanel LastChildFill="False">
-                    <TextBlock DockPanel.Dock="Right" Text="Use this device's normal internet" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="Use this device's normal internet" Foreground="{DynamicResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding DirectExitMarker}" Margin="0,0,8,0" />
                     <TextBlock Text="This device" FontWeight="SemiBold" />
                   </DockPanel>
                 </Button>
                 <Button Click="WireguardExit_Click" IsEnabled="{Binding State.WireguardExitConfigured}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8">
                   <DockPanel LastChildFill="False">
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding WireguardExitSubtitle}" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding WireguardExitSubtitle}" Foreground="{DynamicResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding WireguardExitMarker}" Margin="0,0,8,0" />
                     <TextBlock Text="WireGuard upstream" FontWeight="SemiBold" />
                   </DockPanel>
                 </Button>
                 <Button Click="PaidAutomaticExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
                   <DockPanel LastChildFill="False">
-                    <TextBlock DockPanel.Dock="Right" Text="Experimental · choose a working, reasonably priced provider" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="Experimental · choose a working, reasonably priced provider" Foreground="{DynamicResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding PaidAutomaticExitMarker}" Margin="0,0,8,0" />
                     <TextBlock Text="Paid · Automatic · Experimental" FontWeight="SemiBold" />
                   </DockPanel>
@@ -459,7 +461,7 @@
                 </StackPanel>
                 <Button Click="PaidManualExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
                   <DockPanel LastChildFill="False">
-                    <TextBlock DockPanel.Dock="Right" Text="Experimental · browse internet sellers" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="Experimental · browse internet sellers" Foreground="{DynamicResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding PaidManualExitMarker}" Margin="0,0,8,0" />
                     <TextBlock Text="Paid · Choose manually" FontWeight="SemiBold" />
                   </DockPanel>
@@ -469,7 +471,7 @@
                     <DataTemplate>
                       <Button Tag="{Binding Npub}" Click="SetExitNode_Click" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
                         <DockPanel LastChildFill="False">
-                          <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                          <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}" Margin="12,0,0,0" />
                           <TextBlock Text="{Binding MagicDnsName}" FontWeight="SemiBold" />
                         </DockPanel>
                       </Button>
@@ -490,7 +492,7 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="WireGuard Upstream" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <TextBlock Text="Paste a WireGuard config from an upstream VPN provider such as Mullvad or Proton VPN." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBlock Text="Paste a WireGuard config from an upstream VPN provider such as Mullvad or Proton VPN." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <TextBox Text="{Binding WireguardExitConfig, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="NoWrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas" MinHeight="180" />
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                   <Button Content="Import File" Command="{Binding ImportWireGuardExitCommand}" Margin="0,0,8,0" />
@@ -502,7 +504,7 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="Exit DNS" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="MagicDNS stays local. Public DNS follows this policy while an internet exit is active." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                <TextBlock Text="MagicDNS stays local. Public DNS follows this policy while an internet exit is active." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,10" />
                 <TextBlock Text="Mode" FontWeight="SemiBold" />
                 <ComboBox SelectedValue="{Binding ExitDnsMode, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Tag" Margin="0,4,0,10" AutomationProperties.AutomationId="ExitDnsMode">
                   <ComboBoxItem Tag="automatic" Content="Automatic (recommended)" />
@@ -523,16 +525,16 @@
                 </StackPanel>
                 <StackPanel Visibility="{Binding ExitDnsThroughExitSelected, Converter={StaticResource BoolToVisibility}}">
                   <TextBox Text="{Binding ExitDnsThroughExitServers, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="DNS server IPs, comma separated" AutomationProperties.AutomationId="ExitDnsThroughServers" />
-                  <TextBlock Text="These DNS packets are sent only through the selected exit." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                  <TextBlock Text="These DNS packets are sent only through the selected exit." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 </StackPanel>
-                <TextBlock Text="Automatic uses profile DNS when supplied; otherwise built-in encrypted DNS." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBlock Text="Automatic uses profile DNS when supplied; otherwise built-in encrypted DNS." Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <Button Content="Save Exit DNS" Command="{Binding SaveExitDnsCommand}" HorizontalAlignment="Left" AutomationProperties.AutomationId="ExitDnsSave" />
               </StackPanel>
             </Border>
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=PublicExits}">
-            <TextBlock Text="{Binding State.ExitNodeStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" AutomationProperties.AutomationId="PaidExitCurrentInternet" />
+            <TextBlock Text="{Binding State.ExitNodeStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" AutomationProperties.AutomationId="PaidExitCurrentInternet" />
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
@@ -542,14 +544,14 @@
                   </StackPanel>
                   <StackPanel>
                     <TextBlock Text="Find Internet to Buy" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock Text="Experimental" Foreground="{StaticResource TextSecondary}" FontSize="12" />
-                    <TextBlock Foreground="{StaticResource TextSecondary}">
+                    <TextBlock Text="Experimental" Foreground="{DynamicResource TextSecondary}" FontSize="12" />
+                    <TextBlock Foreground="{DynamicResource TextSecondary}">
                       <Run Text="Wallet " /><Run Text="{Binding PaidRouteWalletBalanceText, Mode=OneWay}" />
                     </TextBlock>
                   </StackPanel>
                 </DockPanel>
-                <TextBlock Text="{Binding State.ExitNodeStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
-                <TextBlock Text="{Binding PaidRouteMarketStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="{Binding State.ExitNodeStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="{Binding PaidRouteMarketStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <DockPanel LastChildFill="True" Margin="0,0,0,8">
                   <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="8,0,0,0">
                     <Button Content="Add provider" Click="SetManualPaidExitProvider_Click" IsEnabled="{Binding CanSetManualPaidExitProvider}" Margin="0,0,8,0" />
@@ -557,7 +559,7 @@
                   </StackPanel>
                   <TextBox Text="{Binding ManualPaidExitProvider, UpdateSourceTrigger=PropertyChanged}" ToolTip="Provider npub or paid exit link" AutomationProperties.AutomationId="ManualPaidExitProvider" />
                 </DockPanel>
-                <TextBlock Text="{Binding State.PaidRouteMarket.ManualProviderStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" Visibility="{Binding State.PaidRouteMarket.ManualProviderStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                <TextBlock Text="{Binding State.PaidRouteMarket.ManualProviderStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" Visibility="{Binding State.PaidRouteMarket.ManualProviderStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                 <Grid Margin="0,0,0,8">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="80" />
@@ -580,8 +582,8 @@
                     <Button Content="Apply" Click="ApplyPaidRouteFilter_Click" />
                   </StackPanel>
                 </Grid>
-                <TextBlock Text="{Binding PaidRouteHiddenOffersText}" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,8" Visibility="{Binding PaidRouteHiddenOffersText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                <TextBlock Text="{Binding State.PaidRouteMarket.LastPaymentAction.DisplayStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding State.PaidRouteMarket.LastPaymentAction.DisplayStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                <TextBlock Text="{Binding PaidRouteHiddenOffersText}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,0,8" Visibility="{Binding PaidRouteHiddenOffersText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                <TextBlock Text="{Binding State.PaidRouteMarket.LastPaymentAction.DisplayStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding State.PaidRouteMarket.LastPaymentAction.DisplayStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                 <Button Content="Send payment" Click="SendPaidRoutePaymentEnvelope_Click" HorizontalAlignment="Left" Margin="0,6,0,10" Visibility="{Binding State.PaidRouteMarket.LastPaymentAction.EnvelopeJson, Converter={StaticResource NonEmptyStringToVisibility}}" />
                 <TextBlock Text="Available" FontWeight="SemiBold" Margin="0,8,0,6" />
                 <ItemsControl ItemsSource="{Binding PaidRouteVisibleOffers}">
@@ -596,11 +598,11 @@
                         <StackPanel>
                           <WrapPanel>
                             <TextBlock Text="{Binding DisplayCountry}" FontWeight="SemiBold" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding DisplayPrice}" Foreground="{StaticResource TextSecondary}" />
-                            <TextBlock Text="{Binding DisplayRating}" Foreground="{StaticResource TextSecondary}" Margin="8,0,0,0" />
+                            <TextBlock Text="{Binding DisplayPrice}" Foreground="{DynamicResource TextSecondary}" />
+                            <TextBlock Text="{Binding DisplayRating}" Foreground="{DynamicResource TextSecondary}" Margin="8,0,0,0" />
                           </WrapPanel>
-                          <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" />
-                          <TextBlock Text="{Binding DisplayMetricText}" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplayMetricText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                          <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Text="{Binding DisplayMetricText}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplayMetricText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                         </StackPanel>
                       </DockPanel>
                     </DataTemplate>
@@ -625,13 +627,13 @@
                         <StackPanel>
                           <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold" />
                           <WrapPanel>
-                            <TextBlock Text="{Binding DisplayDetail}" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding DisplayLocationText}" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" Visibility="{Binding DisplayLocationText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                            <TextBlock Text="{Binding DisplayPaidText}" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding DisplayBehindText}" Foreground="{StaticResource TextSecondary}" Visibility="{Binding DisplayBehindText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                            <TextBlock Text="{Binding DisplayDetail}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding DisplayLocationText}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" Visibility="{Binding DisplayLocationText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                            <TextBlock Text="{Binding DisplayPaidText}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding DisplayBehindText}" Foreground="{DynamicResource TextSecondary}" Visibility="{Binding DisplayBehindText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                           </WrapPanel>
-                          <TextBlock Text="{Binding DisplayMetricText}" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplayMetricText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                          <TextBlock Text="{Binding DisplaySettlementText}" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplaySettlementText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                          <TextBlock Text="{Binding DisplayMetricText}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplayMetricText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                          <TextBlock Text="{Binding DisplaySettlementText}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplaySettlementText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                         </StackPanel>
                       </DockPanel>
                     </DataTemplate>
@@ -647,28 +649,28 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="Share My Internet" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <TextBlock Text="{Binding PaidExitSellerStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="{Binding PaidExitSellerStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <StackPanel Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}">
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Share my internet" IsChecked="{Binding State.PaidExitSeller.Enabled, Mode=OneWay}" Click="PaidExitEnabled_Click" />
-                  <TextBlock Text="{Binding PaidExitSellerChannelCreditText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                  <TextBlock Text="{Binding PaidExitSellerChannelCreditHelpText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerChannelCreditHelpText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                  <TextBlock Text="{Binding PaidExitSellerPaymentStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerPaymentStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                  <TextBlock Text="{Binding PaidExitSellerSummary}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="{Binding PaidExitSellerChannelCreditText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="{Binding PaidExitSellerChannelCreditHelpText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerChannelCreditHelpText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                  <TextBlock Text="{Binding PaidExitSellerPaymentStatusText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerPaymentStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                  <TextBlock Text="{Binding PaidExitSellerSummary}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
                   <DockPanel LastChildFill="True" Margin="0,0,0,6">
                     <Button DockPanel.Dock="Right" Content="Save price" Click="SavePaidExitPrice_Click" IsEnabled="{Binding CanSavePaidExitPrice}" Margin="8,0,0,0" />
-                    <TextBlock DockPanel.Dock="Right" Text="msat/GB" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" Margin="6,0,0,0" />
+                    <TextBlock DockPanel.Dock="Right" Text="msat/GB" VerticalAlignment="Center" Foreground="{DynamicResource TextSecondary}" Margin="6,0,0,0" />
                     <TextBox Text="{Binding PaidExitPriceMsatPerGb, UpdateSourceTrigger=PropertyChanged}" ToolTip="Price in msat/GB" AutomationProperties.AutomationId="PaidExitPriceMsatPerGb" />
                   </DockPanel>
                   <DockPanel LastChildFill="True" Margin="0,0,0,6" Visibility="{Binding State.PaidExitSeller.ProviderLink, Converter={StaticResource NonEmptyStringToVisibility}}">
                     <Button DockPanel.Dock="Right" Content="Copy link" Tag="{Binding State.PaidExitSeller.ProviderLink}" Click="CopyWalletValue_Click" Margin="8,0,0,0" />
                     <TextBox Text="{Binding State.PaidExitSeller.ProviderLink}" IsReadOnly="True" />
                   </DockPanel>
-                  <TextBlock Text="{Binding PaidExitSellerTrialText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                  <TextBlock Text="{Binding PaidExitSellerChannelExpiryText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                  <TextBlock Text="{Binding PaidExitSellerSettlementText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerSettlementText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                  <TextBlock Text="{Binding PaidExitSellerPublicIpText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerPublicIpText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                  <TextBlock Text="{Binding PaidExitSellerMintsText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
-                  <TextBlock Text="{Binding PaidExitSellerSessionsText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                  <TextBlock Text="{Binding PaidExitSellerTrialText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="{Binding PaidExitSellerChannelExpiryText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="{Binding PaidExitSellerSettlementText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerSettlementText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                  <TextBlock Text="{Binding PaidExitSellerPublicIpText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" Visibility="{Binding PaidExitSellerPublicIpText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                  <TextBlock Text="{Binding PaidExitSellerMintsText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,6" />
+                  <TextBlock Text="{Binding PaidExitSellerSessionsText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
                   <TextBlock Text="Active Customers" FontWeight="SemiBold" Margin="0,8,0,6" />
                   <ItemsControl ItemsSource="{Binding State.PaidExitSeller.Sessions}">
                     <ItemsControl.ItemTemplate>
@@ -676,12 +678,12 @@
                         <StackPanel Margin="0,0,0,8">
                           <TextBlock Text="{Binding DisplayTitle}" FontWeight="SemiBold" />
                           <WrapPanel>
-                            <TextBlock Text="{Binding DisplayDetail}" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding DisplayPaidText}" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
-                            <TextBlock Text="{Binding DisplayBehindText}" Foreground="{StaticResource TextSecondary}" Visibility="{Binding DisplayBehindText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                            <TextBlock Text="{Binding DisplayDetail}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding DisplayPaidText}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
+                            <TextBlock Text="{Binding DisplayBehindText}" Foreground="{DynamicResource TextSecondary}" Visibility="{Binding DisplayBehindText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                           </WrapPanel>
-                          <TextBlock Text="{Binding DisplayMetricText}" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplayMetricText, Converter={StaticResource NonEmptyStringToVisibility}}" />
-                          <TextBlock Text="{Binding DisplaySettlementText}" Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplaySettlementText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                          <TextBlock Text="{Binding DisplayMetricText}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplayMetricText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                          <TextBlock Text="{Binding DisplaySettlementText}" Foreground="{DynamicResource TextSecondary}" TextTrimming="CharacterEllipsis" Visibility="{Binding DisplaySettlementText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                         </StackPanel>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
@@ -706,13 +708,13 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <TextBlock Text="Name" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Text="Name" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding NodeName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,12,8" />
-                  <TextBlock Grid.Column="2" Text="Tunnel IP" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="2" Text="Tunnel IP" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Column="3" Text="{Binding TunnelIp, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" />
-                  <TextBlock Grid.Row="1" Text="Endpoint" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Grid.Row="1" Text="Endpoint" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Endpoint, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,12,0" />
-                  <TextBlock Grid.Row="1" Grid.Column="2" Text="Listen Port" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Grid.Row="1" Grid.Column="2" Text="Listen Port" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ListenPort, UpdateSourceTrigger=PropertyChanged}" />
                 </Grid>
                 <Button Content="Save" Command="{Binding SaveNodeCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" />
@@ -728,11 +730,20 @@
               </StackPanel>
             </Border>
 
+            <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <TextBlock Text="Appearance" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <RadioButton Content="System" IsChecked="{Binding ThemeIsSystem, Mode=TwoWay}" AutomationProperties.AutomationId="ThemeSystemOption" />
+                <RadioButton Content="Light" IsChecked="{Binding ThemeIsLight, Mode=TwoWay}" AutomationProperties.AutomationId="ThemeLightOption" />
+                <RadioButton Content="Dark" IsChecked="{Binding ThemeIsDark, Mode=TwoWay}" AutomationProperties.AutomationId="ThemeDarkOption" />
+              </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource Card}" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="Wallet" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Show fiat value" IsChecked="{Binding State.WalletFiatEnabled, Mode=OneWay}" Click="WalletFiatEnabled_Click" />
-                <TextBlock Text="Rates from Coinbase and Kraken" Foreground="{StaticResource TextSecondary}" Margin="0,8,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock Text="Rates from Coinbase and Kraken" Foreground="{DynamicResource TextSecondary}" Margin="0,8,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}" />
                 <ComboBox SelectedValue="{Binding State.WalletFiatCurrency, Mode=OneWay}" SelectedValuePath="Content" SelectionChanged="WalletFiatCurrency_Changed" Margin="0,10,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}">
                   <ComboBoxItem Content="USD" /><ComboBoxItem Content="EUR" /><ComboBoxItem Content="GBP" />
                   <ComboBoxItem Content="CAD" /><ComboBoxItem Content="AUD" /><ComboBoxItem Content="JPY" /><ComboBoxItem Content="CHF" />
@@ -754,10 +765,10 @@
                         <Ellipse DockPanel.Dock="Left" Width="9" Height="9" Margin="0,5,8,0">
                           <Ellipse.Style>
                             <Style TargetType="Ellipse">
-                              <Setter Property="Fill" Value="#9CA3AF" />
+                              <Setter Property="Fill" Value="{DynamicResource StatusDotIdle}" />
                               <Style.Triggers>
                                 <DataTrigger Binding="{Binding Connected}" Value="True">
-                                  <Setter Property="Fill" Value="#16A34A" />
+                                  <Setter Property="Fill" Value="{DynamicResource StatusDotOk}" />
                                 </DataTrigger>
                               </Style.Triggers>
                             </Style>
@@ -785,7 +796,7 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="Public FIPS routing" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <TextBlock Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8">
+                <TextBlock Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,8">
                   <Run Text="FIPS gives .fips addresses end-to-end encryption and identity-based routing. Hosts can reach each other without static IPs, domain names, TLS certificates, or NAT port forwarding. " />
                   <Hyperlink NavigateUri="https://learn.fips.network/" RequestNavigate="OpenHyperlink_RequestNavigate">Learn FIPS</Hyperlink>
                 </TextBlock>
@@ -799,9 +810,9 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <TextBlock Text="Your public FIPS address" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,0,8" />
+                  <TextBlock Text="Your public FIPS address" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,0,8" />
                   <TextBox Grid.Column="1" Text="{Binding PublicFipsAddress, Mode=OneWay}" IsReadOnly="True" Margin="0,0,0,8" />
-                  <TextBlock Grid.Row="1" Text="Public .fips inbound TCP ports" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Grid.Row="1" Text="Public .fips inbound TCP ports" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding FipsHostInboundTcpPorts, UpdateSourceTrigger=PropertyChanged}" ToolTip="Comma-separated port numbers" />
                 </Grid>
                 <Button Content="Save" Command="{Binding SaveNodeCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" IsEnabled="{Binding PublicFipsRoutingEnabled}" />
@@ -829,10 +840,10 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <TextBlock Text="Active" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Text="Active" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding NetworkNameDraft, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,8" />
                   <Button Grid.Column="2" Content="Save" Command="{Binding SaveNetworkNameCommand}" Margin="0,0,0,8" />
-                  <TextBlock Grid.Row="1" Text="Network ID" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                  <TextBlock Grid.Row="1" Text="Network ID" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NetworkMeshIdDraft, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
                   <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal">
                     <Button Content="Copy" Command="{Binding CopyNetworkIdCommand}" Margin="0,0,8,0" />
@@ -861,15 +872,15 @@
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
                   <TextBlock DockPanel.Dock="Right"
                              Text="{Binding SystemVersionLabel}"
-                             Foreground="{StaticResource TextSecondary}"
+                             Foreground="{DynamicResource TextSecondary}"
                              FontSize="12"
                              Visibility="{Binding SystemVersionLabel, Converter={StaticResource NonEmptyStringToVisibility}}" />
                   <TextBlock Text="System" FontSize="18" FontWeight="SemiBold" />
                 </DockPanel>
                 <StackPanel Orientation="Horizontal">
-                  <TextBlock Text="{Binding ServiceSummary}" Foreground="{StaticResource TextSecondary}" Margin="0,0,18,0" />
-                  <TextBlock Text="{Binding CliSummary}" Foreground="{StaticResource TextSecondary}" Margin="0,0,18,0" />
-                  <TextBlock Text="{Binding UpdateStatus}" Foreground="{StaticResource TextSecondary}" />
+                  <TextBlock Text="{Binding ServiceSummary}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,18,0" />
+                  <TextBlock Text="{Binding CliSummary}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,18,0" />
+                  <TextBlock Text="{Binding UpdateStatus}" Foreground="{DynamicResource TextSecondary}" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                   <Button Content="Install service" Command="{Binding InstallServiceCommand}" Margin="0,0,8,0" />
@@ -898,23 +909,23 @@
                       <RowDefinition Height="Auto" />
                       <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <TextBlock Text="Interface" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Text="Interface" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Column="1" Text="{Binding DiagnosticsInterface}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
-                    <TextBlock Grid.Column="2" Text="Gateway" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Column="2" Text="Gateway" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Column="3" Text="{Binding DiagnosticsGateway}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                    <TextBlock Grid.Row="1" Text="IPv4" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="1" Text="IPv4" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding DiagnosticsIpv4}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
-                    <TextBlock Grid.Row="1" Grid.Column="2" Text="IPv6" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="1" Grid.Column="2" Text="IPv6" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding DiagnosticsIpv6}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                    <TextBlock Grid.Row="2" Text="Mapping" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="2" Text="Mapping" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DiagnosticsMapping}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
-                    <TextBlock Grid.Row="2" Grid.Column="2" Text="External" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="2" Grid.Column="2" Text="External" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding DiagnosticsExternal}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                    <TextBlock Grid.Row="3" Text="Remote roster" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="3" Text="Remote roster" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding DiagnosticsPeers}" TextTrimming="CharacterEllipsis" Margin="0,0,16,8" />
-                    <TextBlock Grid.Row="3" Grid.Column="2" Text="Roster FIPS" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,8" />
+                    <TextBlock Grid.Row="3" Grid.Column="2" Text="Roster FIPS" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,8" />
                     <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding DiagnosticsFips}" TextTrimming="CharacterEllipsis" Margin="0,0,0,8" />
-                    <TextBlock Grid.Row="4" Text="Other FIPS" Foreground="{StaticResource TextSecondary}" Margin="0,0,8,0" />
+                    <TextBlock Grid.Row="4" Text="Other FIPS" Foreground="{DynamicResource TextSecondary}" Margin="0,0,8,0" />
                     <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding DiagnosticsOtherFips}" TextTrimming="CharacterEllipsis" />
                   </Grid>
 
@@ -922,10 +933,10 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate>
                         <DockPanel Margin="0,0,0,8">
-                          <TextBlock DockPanel.Dock="Left" Text="{Binding Severity}" Foreground="{StaticResource Warn}" FontWeight="SemiBold" Width="82" />
+                          <TextBlock DockPanel.Dock="Left" Text="{Binding Severity}" Foreground="{DynamicResource Warn}" FontWeight="SemiBold" Width="82" />
                           <StackPanel>
                             <TextBlock Text="{Binding Summary}" />
-                            <TextBlock Text="{Binding Detail}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" />
                           </StackPanel>
                         </DockPanel>
                       </DataTemplate>
