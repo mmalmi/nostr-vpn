@@ -65,7 +65,7 @@ fn state_needs_render(previous: &NativeAppState, next: &NativeAppState) -> bool 
 
 fn drain_tray_commands(app: &AppRef) {
     if sync_tray_status(app) {
-        render(app);
+        render_background_change(app);
     }
 
     let commands = app.borrow_mut().tray.drain();
@@ -195,7 +195,7 @@ fn download_update(app: &AppRef) {
             model.update_sender.clone(),
         )
     };
-    render(app);
+    render_background_change(app);
     updater::download(asset, config_path, sender);
 }
 
@@ -296,7 +296,7 @@ fn drain_update_events(app: &AppRef) {
     if auto_download {
         download_update(app);
     } else {
-        render(app);
+        render_background_change(app);
     }
 }
 
