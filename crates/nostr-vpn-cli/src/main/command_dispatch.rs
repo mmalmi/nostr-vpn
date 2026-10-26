@@ -187,13 +187,13 @@ async fn run_command(command: Command) -> Result<()> {
                         peers,
                         state.expected_peer_count,
                         state.connected_peer_count,
-                        state.mesh_ready,
+                        Some(state.mesh_ready),
                         "daemon",
                     )
                 } else {
                     let peers = configured_fips_peer_announcements(&app, &network_id);
                     let expected = expected_peer_count(&app);
-                    (peers, expected, 0, false, "config")
+                    (peers, expected, 0, None, "config")
                 };
 
             if args.json {
@@ -371,9 +371,16 @@ async fn run_command(command: Command) -> Result<()> {
                     println!("daemon: stopped");
                 }
                 println!("status_source: {status_source}");
-                if expected_peers > 0 {
-                    println!("mesh_progress: {}/{}", peer_count, expected_peers);
-                    println!("mesh_ready: {mesh_ready}");
+                if let Some(mesh_ready) = mesh_ready {
+                    if expected_peers > 0 {
+                        println!("mesh_progress: {}/{}", peer_count, expected_peers);
+                        println!("mesh_ready: {mesh_ready}");
+                    }
+                } else {
+                    println!("mesh_ready: unknown");
+                    println!(
+                        "No live daemon state; foreground `nvpn connect` sessions are not reported here."
+                    );
                 }
                 if let Some(daemon_peers) = daemon_peers.as_ref() {
                     let reachable_count = daemon_peers.iter().filter(|p| p.reachable).count();

@@ -434,11 +434,21 @@ fn cleanup_linux_legacy_forwarding_rules(iface: &str) -> Result<()> {
     ] {
         let forward_in = crate::linux_exit_node_legacy_forward_in_rule(iface, family);
         let forward_out = crate::linux_exit_node_legacy_forward_out_rule(iface, family);
-        if let Err(error) = crate::linux_iptables_delete_rule(family, None, &forward_out) {
-            failures.push(format!("remove legacy forward-out rule: {error:#}"));
-        }
-        if let Err(error) = crate::linux_iptables_delete_rule(family, None, &forward_in) {
-            failures.push(format!("remove legacy forward-in rule: {error:#}"));
+        for (label, rule) in [("forward-out", &forward_out), ("forward-in", &forward_in)] {
+            if let Err(error) = crate::linux_iptables_delete_rule(family, None, rule) {
+                // This sweep is only for rules from older versions. A missing
+                // tool does not prove that kernel rules are absent, but must
+                // not make it a dependency of every private mesh session.
+                // Cleanup of rules tracked by this runtime remains strict.
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                {
+                    eprintln!("fips: skipping unavailable legacy firewall cleanup: {error:#}");
+                    break;
+                }
+                failures.push(format!("remove legacy {label} rule: {error:#}"));
+            }
         }
     }
     if failures.is_empty() {

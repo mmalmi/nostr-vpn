@@ -74,6 +74,53 @@ On Windows, run `nvpn service install` from an elevated shell and check it with
 
 Linux update checks select packages for your distribution and architecture. Automatic downloads stay in the background and are remembered across app restarts. Choose **Show download** to open the folder and install the package; the app never opens an installer or browser automatically.
 
+## Containers and headless nodes
+
+Use a Linux CLI archive matching the container architecture. Persist the config
+directory, including its key sidecars, and pass the same `--config` path to every
+command. The [Umbrel image and Compose files](umbrel) provide an existing packaged
+daemon and web interface; `Dockerfile.e2e` is a source-built test fixture.
+
+- Run with root, `/dev/net/tun`, `NET_ADMIN`, and `iproute2`. Include `nftables`
+  for exit protection and `iptables` for exit forwarding and legacy-rule cleanup.
+  Version 4.1.18 also requires `iptables` for plain mesh startup. Current source
+  skips the optional legacy sweep with a warning if the tool is missing; cleanup
+  of forwarding rules owned by the session still requires it.
+- Container restrictions can still block route cleanup: a read-only
+  `/proc/sys/net/ipv4/route/flush` makes `ip route flush cache` fail. Privileged
+  mode is a workaround for an isolated test container, not a universal production
+  requirement. Host networking gives the daemon access to the host's routes and
+  firewall; choose it only when that is intended.
+- Without systemd-resolved, split MagicDNS may remain available only at the local
+  address and port printed in the log (normally `127.0.0.1:1053`). That does not
+  make names resolve through the system resolver automatically. Linux secure DNS
+  is separate: in Docker it can manage `/etc/resolv.conf` and use port 53. See
+  [#79](https://github.com/mmalmi/nostr-vpn/issues/79) for the existing-local-resolver
+  conflict; a working mesh alone does not verify DNS.
+- Use `nvpn start --daemon --connect` for `nvpn status --json` health checks.
+  Require `status_source == "daemon"` before interpreting readiness. Foreground
+  `nvpn connect` sessions do not publish daemon state; config-only readiness is
+  unknown (`null` in JSON).
+
+The quick start above works for headless enrollment. For a manually provisioned
+two-node lab, `nvpn set --network-id` sets and enables the active network; editing
+TOML with `sed` is unnecessary. Initialize each node separately, exchange its
+public device ID, then run on each node with the appropriate values:
+
+```bash
+nvpn set --config "$CONFIG" --network-id "$NETWORK_ID" \
+  --device "$LOCAL_DEVICE_ID" --device "$PEER_DEVICE_ID" \
+  --endpoint "$LOCAL_ENDPOINT" --fips-peer-endpoint "$PEER_DEVICE_ID=$PEER_ENDPOINT" \
+  --fips-host-tunnel-enabled true --fips-advertise-public-endpoint false \
+  --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false \
+  --fips-webrtc-enabled false --lan-discovery-enabled false
+nvpn start --config "$CONFIG" --daemon --connect
+```
+
+Use the same network ID and device roster on both nodes. Endpoints are reachable
+`IP:port` pairs; their ports must match each node's listen port (51820 by default).
+Keep the independently generated private keys on their respective nodes.
+
 ## Paid Exits
 
 Buy or sell VPN bandwidth for Bitcoin. Providers can sell their own internet connection or a WireGuard VPN uplink. Providers advertise per-byte prices over Nostr; buyers fund Cashu Spilman channels and sign payment updates as they use bandwidth. Uploads count as sent; UDP replies and acknowledged TCP downloads count too, without double-billing TCP retransmissions. Choose a provider manually or automatically using connection quality, trusted ratings, and price.

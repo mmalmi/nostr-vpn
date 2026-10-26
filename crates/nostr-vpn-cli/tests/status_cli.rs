@@ -93,11 +93,11 @@ fn status_only_reports_fips_connections_from_platform_runtime_state() {
     };
     let output: serde_json::Value = serde_json::from_str(&status(true)).unwrap();
     assert_eq!(output["peer_count"], 0);
-    assert_eq!(output["mesh_ready"], false);
     let text = status(false);
     if cfg!(target_os = "macos") {
         // macOS status is root-owned; a fresh user-side snapshot cannot forge it.
         assert_eq!(output["daemon"]["running"], false);
+        assert!(output["mesh_ready"].is_null());
         assert!(output["daemon"]["state"].is_null());
         assert_ne!(output["daemon"]["state_file"], state_path.to_str().unwrap());
         assert!(text.contains("daemon: stopped"), "{text}");
@@ -108,6 +108,8 @@ fn status_only_reports_fips_connections_from_platform_runtime_state() {
         );
     } else {
         assert_eq!(output["daemon"]["running"], true);
+        assert_eq!(output["status_source"], "daemon");
+        assert_eq!(output["mesh_ready"], false);
         assert_eq!(
             output["daemon"]["state"]["fips_direct_roster_peer_count"],
             2
@@ -118,12 +120,27 @@ fn status_only_reports_fips_connections_from_platform_runtime_state() {
             text.contains("fips_peers: 5 connected (2 direct roster, 3 other)"),
             "{text}"
         );
+
+        state["mesh_ready"] = true.into();
+        fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
+        let output: serde_json::Value = serde_json::from_str(&status(true)).unwrap();
+        assert_eq!(output["status_source"], "daemon");
+        assert_eq!(output["mesh_ready"], true);
     }
 
     state["updated_at"] = 0.into();
     fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
     let text = status(false);
     assert!(text.contains("daemon: stopped"));
+    assert!(text.contains("mesh_ready: unknown"), "{text}");
+    assert!(
+        text.contains("foreground `nvpn connect` sessions"),
+        "{text}"
+    );
+    assert!(!text.contains("mesh_progress:"), "{text}");
+    let output: serde_json::Value = serde_json::from_str(&status(true)).unwrap();
+    assert_eq!(output["status_source"], "config");
+    assert!(output["mesh_ready"].is_null());
     assert!(
         !text.lines().any(|line| line.starts_with("fips_peers:")),
         "stopped daemon must not report stale links"

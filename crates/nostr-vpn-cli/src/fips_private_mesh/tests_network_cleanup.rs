@@ -1,3 +1,79 @@
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_legacy_firewall_cleanup_does_not_require_iptables() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CHILD_CASE: &str = "NVPN_LEGACY_FIREWALL_TEST_CASE";
+        if let Ok(case) = std::env::var(CHILD_CASE) {
+            let mut state = crate::LinuxExitNodeRuntime::default();
+            let result = super::cleanup_linux_forwarding_state("nvpn-test", &mut state);
+            assert_eq!(result.is_ok(), case == "missing", "{case}: {result:?}");
+
+            // Losing the tool must not erase ownership of rules we installed.
+            state.ipv4_outbound_iface = Some("underlay-test".into());
+            state.ipv4_tunnel_source_cidr = Some("10.44.0.0/16".into());
+            assert!(super::cleanup_linux_forwarding_state("nvpn-test", &mut state).is_err());
+            assert_eq!(state.ipv4_outbound_iface.as_deref(), Some("underlay-test"));
+            assert_eq!(state.ipv4_tunnel_source_cidr.as_deref(), Some("10.44.0.0/16"));
+            return;
+        }
+
+        let directory = std::env::temp_dir().join(format!(
+            "nvpn-legacy-firewall-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        for case in ["missing", "permission", "locked", "delete-failed"] {
+            if case != "missing" {
+                for tool in ["iptables", "ip6tables"] {
+                    let path = directory.join(tool);
+                    std::fs::write(
+                        &path,
+                        if case == "delete-failed" {
+                            "#!/bin/sh\n[ \"$1\" = -C ] && exit 0\nexit 4\n"
+                        } else {
+                            "#!/bin/sh\necho 'xtables lock unavailable' >&2\nexit 4\n"
+                        },
+                    )
+                    .unwrap();
+                    std::fs::set_permissions(
+                        path,
+                        std::fs::Permissions::from_mode(if case == "permission" {
+                            0o644
+                        } else {
+                            0o755
+                        }),
+                    )
+                    .unwrap();
+                }
+            }
+            // Child-local PATH keeps host firewall tools unreachable and avoids
+            // changing the environment of concurrently running tests.
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    std::thread::current().name().unwrap(),
+                    "--nocapture",
+                ])
+                .env("PATH", &directory)
+                .env(CHILD_CASE, case)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[derive(Default)]
     struct FakeLinuxNetworkCleanupActions {
         events: Vec<&'static str>,
