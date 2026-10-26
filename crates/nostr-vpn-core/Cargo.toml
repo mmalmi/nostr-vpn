@@ -40,6 +40,8 @@ nvpn-fips-core.workspace = true
 nvpn-fips-endpoint.workspace = true
 nvpn-fips-tcp.workspace = true
 nvpn-fips-tcp-endpoint.workspace = true
+nvpn-fips-file-transfer.workspace = true
+flume.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub = { workspace = true, optional = true }
 nostr-pubsub-fips = { workspace = true, optional = true }
@@ -65,8 +67,9 @@ reqwest = { workspace = true, optional = true }
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 security-framework = "2"
 
-[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc.workspace = true
+rustix.workspace = true
 
 [target.'cfg(target_os = "ios")'.dependencies]
 core-foundation = "0.9"
@@ -81,6 +84,11 @@ keyring-core = "1.0.0"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security_Cryptography",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_System_Threading",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
   "Win32_Storage_FileSystem",
 ] }
 

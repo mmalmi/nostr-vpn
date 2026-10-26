@@ -50,6 +50,10 @@ impl FipsPrivateTunnelRuntime {
         )
         .await?;
         let state_control = FipsControlTcpRuntime::start(Arc::clone(mesh.endpoint())).await?;
+        let file_transfers = nostr_vpn_core::file_transfers::FileTransferService::start(
+            Arc::clone(mesh.endpoint()),
+            cleanup_journal_config_path.to_path_buf(),
+        );
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
         let peer_statuses = mesh.peer_statuses();
         let exit_route_ready = fips_exit_route_ready(&config, &peer_statuses);
@@ -145,6 +149,7 @@ impl FipsPrivateTunnelRuntime {
             mesh,
             control_pubsub,
             state_control,
+            file_transfers,
             secure_dns,
             config: config.clone(),
             cleanup_journal_config_path: cleanup_journal_config_path.to_path_buf(),
@@ -436,6 +441,7 @@ impl FipsPrivateTunnelRuntime {
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
         }
+        drop(runtime.file_transfers);
         runtime.state_control.stop().await;
         runtime.stop.store(true, Ordering::Relaxed);
         windows_fips_record_cleanup(

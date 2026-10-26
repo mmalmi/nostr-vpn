@@ -40,6 +40,8 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 #[allow(clippy::large_enum_variant)]
 enum Command {
+    /// Send, receive, resume, and inspect files over the private mesh.
+    File(FileArgs),
     /// Initialize a local config file (keys are generated automatically).
     Init {
         #[arg(long)]

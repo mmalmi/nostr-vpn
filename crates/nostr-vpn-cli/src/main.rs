@@ -271,6 +271,7 @@ include!("main/runtime_helpers.rs");
 include!("main/runtime_roster.rs");
 include!("main/daemon_commands.rs");
 include!("main/doctor_and_parsing.rs");
+include!("main/file_transfers.rs");
 
 #[cfg(test)]
 mod tests {

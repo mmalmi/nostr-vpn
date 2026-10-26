@@ -2,6 +2,28 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeTransferFileState {
+    pub name: String,
+    pub size_bytes: u64,
+    pub local_path: Option<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeFileTransferState {
+    pub id: String,
+    pub peer_npub: String,
+    pub peer_name: String,
+    pub is_sender: bool,
+    pub files: Vec<NativeTransferFileState>,
+    pub status: String,
+    pub transferred_bytes: u64,
+    pub total_bytes: u64,
+    pub error: Option<String>,
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -433,6 +455,8 @@ pub struct NativePaidRouteMarketState {
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeAppState {
+    #[serde(default)]
+    pub file_transfers: Vec<NativeFileTransferState>,
     pub rev: u64,
     pub platform: String,
     pub mobile: bool,

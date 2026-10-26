@@ -412,6 +412,21 @@ pub(super) fn open_owned(config: &Path, path: &Path) -> Result<File> {
     verify_user(&file, &expected)?;
     Ok(file)
 }
+pub(super) fn visit_names(
+    config: &Path,
+    path: &Path,
+    mut visitor: impl FnMut(&std::ffi::OsStr),
+) -> Result<()> {
+    let expected = expected_owner(config)?;
+    let guards = lock_directories(path)?;
+    check_app_directories(config, &guards, &expected)?;
+    // These handles deny deletion/rename for every ancestor through enumeration.
+    for entry in fs::read_dir(path)? {
+        visitor(&entry?.file_name());
+    }
+    drop(guards);
+    Ok(())
+}
 pub(super) fn create_owned(config: &Path, path: &Path) -> Result<File> {
     let expected = expected_owner(config)?;
     let guards = lock_directories(path.parent().context("Missing file parent")?)?;
@@ -636,9 +651,10 @@ impl InboxDestination {
             "Invalid file transfer"
         );
         ensure!(
-            manifests
-                .iter()
-                .all(|file| valid_filename(&file.filename) && file.size_bytes <= MAX_FILE_BYTES),
+            manifests.iter().all(
+                |file| fips_file_transfer::wire::valid_filename(&file.filename)
+                    && file.size_bytes <= MAX_FILE_BYTES
+            ),
             "Invalid transfer file"
         );
         let expected = expected_owner(&self.config)?;

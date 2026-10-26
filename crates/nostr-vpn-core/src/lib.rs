@@ -14,6 +14,7 @@ pub mod fips_control;
 pub mod fips_control_tcp;
 pub mod fips_discovery;
 pub mod fips_mesh;
+pub mod file_transfers;
 pub mod identity_bridge;
 pub mod join_delivery;
 pub mod join_requests;

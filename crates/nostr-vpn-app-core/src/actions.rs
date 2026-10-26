@@ -12,6 +12,22 @@ use crate::state::SettingsPatch;
 pub enum NativeAppAction {
     GetState,
     Tick,
+    SendFiles {
+        npub: String,
+        paths: Vec<String>,
+    },
+    AcceptFileTransfer {
+        id: String,
+    },
+    DeclineFileTransfer {
+        id: String,
+    },
+    CancelFileTransfer {
+        id: String,
+    },
+    ResumeFileTransfer {
+        id: String,
+    },
     ConnectVpn,
     DisconnectVpn,
     InstallCli,

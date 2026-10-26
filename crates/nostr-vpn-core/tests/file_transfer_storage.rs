@@ -307,3 +307,156 @@ fn linked_download_ancestor_and_state_file_are_rejected() {
     assert!(read_state(&fixture.config).is_err());
     assert_eq!(fs::read(target).unwrap(), b"hello");
 }
+
+#[test]
+fn inbox_history_pages_beyond_four_megabytes_and_downloads_opaque_old_receipts() {
+    use nostr_vpn_core::file_transfers::inbox;
+    let fixture = Fixture::new();
+    let saved = fixture.received();
+    let mut oldest = fixture.state(&saved);
+    oldest.id = "0000-opaque-old-receipt".into();
+    inbox::save(&fixture.config, &oldest).unwrap();
+    for number in 0..260 {
+        let mut state = oldest.clone();
+        state.id = format!("receipt-{number:04}");
+        state.files = (0..32)
+            .map(|index| {
+                let name = format!("{index:02}-{}.txt", "x".repeat(230));
+                FileState {
+                    name: name.clone(),
+                    size_bytes: 0,
+                    local_path: Some(
+                        state_dir(&fixture.config)
+                            .join("inbox")
+                            .join(&state.id)
+                            .join(name)
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                }
+            })
+            .collect();
+        state.total_bytes = 0;
+        state.transferred_bytes = 0;
+        inbox::save(&fixture.config, &state).unwrap();
+    }
+    let catalog_bytes: u64 = fs::read_dir(state_dir(&fixture.config).join("inbox-history"))
+        .unwrap()
+        .map(|entry| entry.unwrap().metadata().unwrap().len())
+        .sum();
+    assert!(catalog_bytes > 4 * 1024 * 1024);
+    let mut cursor = None;
+    let mut ids = Vec::new();
+    loop {
+        let page = inbox::page(&fixture.config, cursor.as_deref()).unwrap();
+        assert!(page.transfers.len() <= 64);
+        ids.extend(page.transfers.into_iter().map(|state| state.id));
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(ids.len(), 261);
+    assert!(ids.windows(2).all(|pair| pair[0] > pair[1]));
+    assert_eq!(ids.last().unwrap(), &oldest.id);
+    // Public live state no longer contains the old transfer; the opaque ID still
+    // resolves through its durable inbox receipt, without treating IDs as paths.
+    fs::write(state_dir(&fixture.config).join("state.json"), b"[]").unwrap();
+    let (_, mut file) = completed_file(&fixture.config, &oldest.id, 0).unwrap();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, b"hello");
+    assert!(inbox::read(&fixture.config, "../0000-opaque-old-receipt").is_err());
+    assert!(inbox::page(&fixture.config, Some("../escape")).is_err());
+}
+
+#[test]
+fn inbox_receipts_reject_wrong_identity_direction_locations_and_oversized_records() {
+    use nostr_vpn_core::file_transfers::inbox;
+    let fixture = Fixture::new();
+    let saved = fixture.received();
+    let state = fixture.state(&saved);
+    inbox::save(&fixture.config, &state).unwrap();
+    assert_eq!(
+        inbox::read(&fixture.config, &state.id).unwrap().unwrap(),
+        state
+    );
+    for bad_path in [
+        fixture.source(),
+        state_dir(&fixture.config).join("inbox/batch/../escape"),
+        state_dir(&fixture.config).join("inbox/too/deep/file"),
+    ] {
+        let mut invalid = state.clone();
+        invalid.files[0].local_path = Some(bad_path.to_string_lossy().into_owned());
+        assert!(inbox::save(&fixture.config, &invalid).is_err());
+    }
+    let mut invalid = state.clone();
+    invalid.is_sender = true;
+    assert!(inbox::save(&fixture.config, &invalid).is_err());
+    invalid = state.clone();
+    invalid.status = "paused".into();
+    assert!(inbox::save(&fixture.config, &invalid).is_err());
+    invalid = state.clone();
+    invalid.peer_name = "x".repeat(128 * 1024);
+    assert!(inbox::save(&fixture.config, &invalid).is_err());
+    invalid = state.clone();
+    invalid.id = "different".into();
+    let path = state_dir(&fixture.config)
+        .join("inbox-history")
+        .join(format!("{}.json", state.id));
+    fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+    assert!(inbox::read(&fixture.config, &state.id).is_err());
+    assert!(
+        inbox::page(&fixture.config, None)
+            .unwrap()
+            .transfers
+            .is_empty()
+    );
+    assert_eq!(fs::read(&saved).unwrap(), b"hello");
+}
+
+#[cfg(unix)]
+#[test]
+fn inbox_pagination_rejects_exchanged_history_and_ancestor_links() {
+    use nostr_vpn_core::file_transfers::inbox;
+    use std::os::unix::fs::symlink;
+    for exchange_ancestor in [false, true] {
+        let fixture = Fixture::new();
+        let saved = fixture.received();
+        inbox::save(&fixture.config, &fixture.state(&saved)).unwrap();
+        assert_eq!(
+            inbox::page(&fixture.config, None).unwrap().transfers.len(),
+            1
+        );
+        let external = fixture.directory.join("unrelated");
+        fs::create_dir(&external).unwrap();
+        let secret_history = external.join("inbox-history");
+        fs::create_dir(&secret_history).unwrap();
+        // Even invalid receipt files must not expose their names through a
+        // pagination cursor after an untrusted directory replacement.
+        for number in 0..65 {
+            fs::write(
+                secret_history.join(format!("private-{number:04}.json")),
+                b"{}",
+            )
+            .unwrap();
+        }
+        let original = if exchange_ancestor {
+            state_dir(&fixture.config)
+        } else {
+            state_dir(&fixture.config).join("inbox-history")
+        };
+        fs::rename(&original, fixture.directory.join("retained-storage")).unwrap();
+        symlink(
+            if exchange_ancestor {
+                &external
+            } else {
+                &secret_history
+            },
+            &original,
+        )
+        .unwrap();
+        assert!(inbox::page(&fixture.config, None).is_err());
+        assert_eq!(fs::read_dir(&secret_history).unwrap().count(), 65);
+    }
+}
