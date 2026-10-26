@@ -222,7 +222,6 @@ fn peerfinding_without_paid_exit_never_subscribes_to_or_retains_paid_offers() {
         &peer_rating_filter(&publisher),
         &updates,
         relay_advert_filters(None, &[]),
-        MAX_PUBSUB_PEERS,
     )
     .into_iter()
     .chain(fips_subscription_filters(
@@ -259,7 +258,6 @@ fn subscriptions_do_not_request_untrusted_machine_ratings() {
             &peer_rating_filter(&owner),
             &updates,
             relay_advert_filters(None, &[]),
-            MAX_PUBSUB_PEERS,
         ),
         fips_subscription_filters(&peer_rating_filter(&owner), &updates),
     ] {

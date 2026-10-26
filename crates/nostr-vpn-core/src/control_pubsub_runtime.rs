@@ -596,6 +596,8 @@ async fn run(
             }
         }
     }
+    // Join provider tasks and drop their service receiver before stop() returns.
+    fips_pubsub.shutdown_shared().await;
     if let Err(error) = flush_control_events(&events).await {
         tracing::warn!(%error, "failed to flush control pubsub cache on shutdown");
     }
