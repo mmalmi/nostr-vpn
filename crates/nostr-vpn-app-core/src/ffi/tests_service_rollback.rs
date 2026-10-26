@@ -183,8 +183,7 @@ exit 93
             .config
             .save(&runtime.config_path)
             .expect("save test config");
-        let previous_wireguard = serde_json::to_value(&runtime.config.wireguard_exit)
-            .expect("serialize previous WireGuard settings");
+        let previous_wireguard = runtime.config.wireguard_exit.clone();
         runtime.nvpn_bin = Some(script_path);
 
         runtime.dispatch(NativeAppAction::UpdateSettings {
@@ -235,11 +234,7 @@ Endpoint = vpn.example.test:51820
         )
         .expect("parse config observed by rollback reload");
         assert_eq!(reloaded.internet_source, InternetSource::Direct);
-        assert_eq!(
-            serde_json::to_value(&reloaded.wireguard_exit)
-                .expect("serialize restored WireGuard settings"),
-            previous_wireguard
-        );
+        assert_eq!(reloaded.wireguard_exit, previous_wireguard);
         let calls = fs::read_to_string(format!("{}.reloads", runtime.config_path.display()))
             .expect("read fake nvpn reloads");
         assert_eq!(
