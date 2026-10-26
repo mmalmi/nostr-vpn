@@ -555,16 +555,7 @@ fn validate_windows_wireguard_config(
         }
         Ok(_) | Err(_) => {}
     }
-    let routes_ipv6 = config
-        .allowed_ips
-        .iter()
-        .any(|route| nostr_vpn_core::config::route_is_ipv6(route));
-    if routes_ipv6 && config.address_v6.trim().is_empty() {
-        return Err(anyhow!(
-            "WireGuard exit with IPv6 AllowedIPs needs an IPv6 Address; re-import the \
-             provider config so its dual-stack Address line is kept"
-        ));
-    }
+    crate::wg_upstream_runtime::windows_wireguard_ipv6_default(config)?;
     Ok(())
 }
 
@@ -698,7 +689,24 @@ mod windows_endpoint_bypass_tests {
         config.address_v6 = "fc00:bbbb:bbbb:bb01::1:46c2/128".to_string();
         validate_windows_wireguard_config(&config, &exit_dns)
             .expect("dual-stack provider config with ::/0 connects");
+        let address_v4 = config.address.clone();
+        config.address = config.address_v6.clone();
+        assert!(
+            validate_windows_wireguard_config(&config, &exit_dns)
+                .expect_err("IPv6-only Address cannot carry the IPv4 default route")
+                .to_string()
+                .contains("need an IPv4 Address")
+        );
+        config.address = address_v4;
         config.allowed_ips.retain(|route| route != "::/0");
+        config.allowed_ips.push("fd00::/64".to_string());
+        assert!(
+            validate_windows_wireguard_config(&config, &exit_dns)
+                .expect_err("a private IPv6 subnet must not install a default route")
+                .to_string()
+                .contains("must include ::/0")
+        );
+        config.allowed_ips.retain(|route| route != "fd00::/64");
         config.address_v6.clear();
         validate_windows_wireguard_config(&config, &exit_dns).expect("literal IPv4-only config");
     }

@@ -230,7 +230,7 @@ pub fn wireguard_exit_config_text(config: &WireGuardExitConfig) -> String {
     }
 
     let mut address = config.address.clone();
-    if !config.address_v6.trim().is_empty() {
+    if !config.address_v6.trim().is_empty() && config.address_v6.trim() != config.address.trim() {
         address.push_str(", ");
         address.push_str(config.address_v6.trim());
     }

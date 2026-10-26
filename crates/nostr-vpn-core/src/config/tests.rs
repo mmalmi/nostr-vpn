@@ -850,6 +850,14 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("AllowedIPs = 0.0.0.0/0, ::/0"), "{text}");
+        let ipv6_only =
+            parse_wireguard_exit_config(&text.replace("Address = 10.64.70.195/32, ", "Address = "))
+                .expect("preserve IPv6-only import compatibility");
+        assert_eq!(ipv6_only.address, ipv6_only.address_v6);
+        assert!(
+            wireguard_exit_config_text(&ipv6_only)
+                .contains("Address = fc00:bbbb:bbbb:bb01::1:46c2/128\n")
+        );
     }
 
     #[test]
