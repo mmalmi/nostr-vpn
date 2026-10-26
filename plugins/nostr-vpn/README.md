@@ -37,11 +37,12 @@ For local evaluation, run `claude --plugin-dir ./plugins/nostr-vpn` from this ch
 Grok Build supports Claude-compatible plugins. From this checkout:
 
 ```sh
-grok --plugin-dir ./plugins/nostr-vpn
+grok plugin install ./plugins/nostr-vpn
+grok inspect --json
 ```
 
-Use its plugin/skills menu to select the workflow. Grok Bot is a separate
-surface: give it the [workflow guide](https://github.com/mmalmi/nostr-vpn/blob/master/docs/agents.md) and ask it to perform the task
+Start a new session and use its plugin/skills menu to select the workflow.
+Grok Bot is a separate surface: give it the [workflow guide](https://github.com/mmalmi/nostr-vpn/blob/master/docs/agents.md) and ask it to perform the task
 with its terminal, then save the verified procedure as a skill. This repository
 is not automatically listed in Grok Bot's Connect apps directory.
 
