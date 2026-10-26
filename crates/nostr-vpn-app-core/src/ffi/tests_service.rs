@@ -227,7 +227,7 @@ if [ "$1" = "reload" ]; then
     echo "simulated wireguard reload failure" >&2
     exit 7
   fi
-  grep -q 'internet_source = "direct"' "$3" || exit 92
+  cmp -s "$3" "$3.before" || exit 92
   exit 0
 fi
 exit 93
@@ -250,6 +250,9 @@ exit 93
             .config
             .save(&runtime.config_path)
             .expect("save test config");
+        // Direct is omitted by serialization; verify the exact saved baseline.
+        fs::copy(&runtime.config_path, dir.join("config.toml.before"))
+            .expect("save pre-change config for reload verification");
         runtime.nvpn_bin = Some(script_path);
 
         runtime.dispatch(NativeAppAction::UpdateSettings {
