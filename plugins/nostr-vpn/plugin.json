@@ -1,0 +1,37 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "nostr-vpn",
+  "description": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nostr VPN contributors",
+    "url": "https://nostrvpn.org/"
+  },
+  "homepage": "https://nostrvpn.org/",
+  "repository": "https://github.com/mmalmi/nostr-vpn",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "permissionless",
+    "nostr",
+    "nostr-vpn"
+  ],
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "onboardingSkill": "./skills/nostr-vpn/SKILL.md",
+      "interface": {
+        "displayName": "Nostr VPN",
+        "shortDescription": "Private networks, no signup",
+        "longDescription": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions. Requires the command line tool on the execution host; the plugin provides instructions and does not install software or change settings by itself.",
+        "developerName": "Nostr VPN contributors",
+        "category": "Developer Tools",
+        "capabilities": [],
+        "websiteURL": "https://nostrvpn.org/",
+        "defaultPrompt": "Check whether this computer can run Nostr VPN and help me join an approved private network.",
+        "logo": "./skills/nostr-vpn/assets/icon.svg",
+        "composerIcon": "./skills/nostr-vpn/assets/icon.svg"
+      }
+    }
+  }
+}

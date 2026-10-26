@@ -1,0 +1,20 @@
+{
+  "name": "nostr-vpn-plugins",
+  "interface": {
+    "displayName": "Nostr VPN"
+  },
+  "plugins": [
+    {
+      "name": "nostr-vpn",
+      "source": {
+        "source": "local",
+        "path": "./plugins/nostr-vpn"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

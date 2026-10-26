@@ -1,0 +1,18 @@
+{
+  "name": "nostr-vpn",
+  "description": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Nostr VPN contributors",
+    "url": "https://nostrvpn.org/"
+  },
+  "homepage": "https://nostrvpn.org/",
+  "repository": "https://github.com/mmalmi/nostr-vpn",
+  "license": "MIT",
+  "keywords": [
+    "agents",
+    "permissionless",
+    "nostr",
+    "nostr-vpn"
+  ]
+}

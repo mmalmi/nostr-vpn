@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Nostr VPN">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#07031d" />
+      <stop offset="55%" stop-color="#12083b" />
+      <stop offset="100%" stop-color="#221064" />
+    </linearGradient>
+    <linearGradient id="edge" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff4bcf" />
+      <stop offset="100%" stop-color="#5aa7ff" />
+    </linearGradient>
+    <radialGradient id="node" cx="36%" cy="28%" r="80%">
+      <stop offset="0%" stop-color="#b9fbff" />
+      <stop offset="100%" stop-color="#2dd3ff" />
+    </radialGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)" />
+
+  <g stroke="url(#edge)" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <polyline points="300,740 300,280 724,740 724,280" stroke-width="60" />
+  </g>
+
+  <g fill="url(#node)" stroke="#f26bf0" stroke-width="12">
+    <circle cx="300" cy="280" r="48" />
+    <circle cx="300" cy="740" r="48" />
+    <circle cx="724" cy="280" r="48" />
+    <circle cx="724" cy="740" r="48" />
+  </g>
+</svg>

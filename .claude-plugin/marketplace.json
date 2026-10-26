@@ -1,0 +1,16 @@
+{
+  "name": "nostr-vpn-plugins",
+  "owner": {
+    "name": "Nostr VPN contributors"
+  },
+  "plugins": [
+    {
+      "name": "nostr-vpn",
+      "source": "./plugins/nostr-vpn",
+      "description": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions."
+    }
+  ],
+  "metadata": {
+    "description": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions."
+  }
+}

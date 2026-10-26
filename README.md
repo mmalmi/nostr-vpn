@@ -10,7 +10,7 @@ Nostr identities and signed rosters control enrollment; peers connect directly w
 
 Connect people, servers, and agent hosts without an email, phone number, or VPN
 provider account. See [agent onboarding and headless approval](docs/agents.md)
-and the [agent plugin](docs/agent-plugin.md).
+and the [agent plugin](plugins/nostr-vpn/README.md).
 
 The fork is optimized for high-rate VPN traffic. In comparable direct-path benchmarks it delivers roughly three times the original implementation's throughput by keeping packet ownership, buffers, and session state together, batching I/O and cryptography, reusing packet storage, and avoiding packet-by-packet queue hops, allocations, copies, and repeated lookups. It preserves the FIPS protocol surface.
 

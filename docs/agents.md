@@ -4,7 +4,7 @@ Nostr VPN connects computers, phones, servers, and agent hosts without an email,
 phone number, or VPN provider account. Each device generates and keeps its own
 keys. An administrator explicitly approves membership in a private network.
 
-Use the [`nostr-vpn` agent plugin](agent-plugin.md) for supported agent clients,
+Use the [`nostr-vpn` agent plugin](../plugins/nostr-vpn/README.md) for supported agent clients,
 or follow this guide with the `nvpn` CLI. The plugin uses the same CLI.
 
 ## Install and check the environment
