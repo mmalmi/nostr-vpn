@@ -145,6 +145,9 @@ function isProductInput(path, platform) {
   // not linked or copied into any of the five native platform artifacts whose
   // retained receipts this classifier governs.
   if (path.startsWith('web/control-panel/')) return false
+  // Runtime mounts belong to the separately rendered Umbrel deployment;
+  // this file is not compiled or copied into native platform binaries.
+  if (path === 'umbrel/docker-compose.yml') return false
   if (
     path === 'crates/nostr-vpn-cli/src/wireguard_exit/linux_tests.rs'
     || path.startsWith('crates/nostr-vpn-cli/src/wireguard_exit/linux_tests/')

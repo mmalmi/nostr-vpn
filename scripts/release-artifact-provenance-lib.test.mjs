@@ -350,7 +350,7 @@ for (const [helper, nearbyHelper] of [
   })
 }
 
-test('component proof separates the Umbrel web product from native platform inputs', () => {
+test('component proof separates Umbrel deployment and web inputs from native platforms', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-umbrel-publisher-component-proof-'))
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
@@ -368,6 +368,18 @@ test('component proof separates the Umbrel web product from native platform inpu
     git('config', 'user.name', 'Release Test')
     git('config', 'user.email', 'release@example.invalid')
     const receipt = commit('README.md', 'base\n', 'receipt source')
+    const deployment = commit(
+      'umbrel/docker-compose.yml',
+      'services:\n  nvpn:\n    volumes: ["app-state:/var/lib/nvpn/egress"]\n',
+      'Umbrel runtime persistence change',
+    )
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({
+        candidateRoot: root, platform,
+        receiptCommit: receipt.commit, receiptTree: receipt.tree,
+        candidateCommit: deployment.commit, candidateTree: deployment.tree,
+      }))
+    }
     const publisher = commit(
       'scripts/umbrel-release.mjs',
       'console.log("publish Umbrel image")\n',

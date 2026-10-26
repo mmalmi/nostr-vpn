@@ -101,17 +101,87 @@ class ProductionCpuEvidenceTests(unittest.TestCase):
         self.seal()
         self.assertTrue(verifier.validate(self.args)["passed"])
 
-    def test_cpu_over_threshold(self):
+    def high_cpu(self):
         xml = self.root / "trace/sysmon.xml"
         xml.write_text(xml.read_text().replace("900000000</cpu>", "1500000000</cpu>"))
         self.measured.update(trace.analyze(SimpleNamespace(xml=xml, toc=self.root / "trace/toc.xml", pid=123,
                                                          process_name="Nostr VPN Tunnel", device_sha256=self.inputs["traceDeviceSha256"])))
         self.measured["xmlSha256"] = verifier.digest(xml)
         self.recording["cpu"] = self.measured
+        self.recording["exitCode"] = 1
+        self.recording["commands"][-1]["exitCode"] = 1
         self.accepted["cpuPercent"] = self.measured["cpuPercent"]
+        self.accepted.update(exitCode=1, releaseAcceptanceProven=False)
         self.write("trace/cpu-measurement.json", self.measured)
         self.write("trace/recording.json", self.recording)
         self.seal()
+
+    def cpu_exception(self):
+        self.args.release_commit = "c" * 40
+        self.args.release_version = "4.1.19"
+        self.args.release_exception = self.root / "exception.json"
+        self.exception = {"scope": "ios-idle-cpu-release-exception",
+                          "decision": "accept-known-cpu-issue",
+                          "releaseCommit": self.args.release_commit,
+                          "releaseVersion": self.args.release_version,
+                          "measurementReceiptSha256": verifier.digest(self.args.receipt),
+                          "artifactReceiptSha256": verifier.digest(self.args.artifact_receipt),
+                          "appBundleTreeSha256": self.inputs["appBundleTreeSha256"],
+                          "cpuPercent": self.measured["cpuPercent"], "thresholdPercent": 2,
+                          "authorization": "Explicit test release-owner decision"}
+        self.write("exception.json", self.exception)
+
+    def test_cpu_over_threshold(self):
+        self.high_cpu()
+        with self.assertRaises(ValueError):
+            verifier.validate(self.args)
+
+    def test_explicit_exception_preserves_failed_measurement(self):
+        self.high_cpu()
+        self.cpu_exception()
+        before = self.args.receipt.read_bytes()
+        result = verifier.validate(self.args)
+        self.assertFalse(result["passed"])
+        self.assertTrue(result["releaseAccepted"])
+        self.assertEqual(result["cpuPercent"], 2.5)
+        self.assertEqual(result["releaseExceptionSha256"], verifier.digest(self.args.release_exception))
+        self.assertEqual(self.args.receipt.read_bytes(), before)
+
+    def test_exception_cannot_cover_another_release_or_measurement(self):
+        self.high_cpu()
+        self.cpu_exception()
+        for key in self.exception:
+            changed = {**self.exception, key: ""}
+            self.write("exception.json", changed)
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                verifier.validate(self.args)
+
+    def test_exception_cannot_waive_capture_or_cleanup_failure(self):
+        self.high_cpu()
+        for target in [self.recording["commands"][0], self.recording["commands"][-1], self.accepted]:
+            key = "cleanupExitCode" if target is self.accepted else "exitCode"
+            old = target[key]
+            target[key] = 2
+            self.write("trace/recording.json", self.recording)
+            self.seal()
+            self.cpu_exception()
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                verifier.validate(self.args)
+            target[key] = old
+
+    def test_exception_cannot_waive_changed_artifact_or_forged_cpu(self):
+        self.high_cpu()
+        self.cpu_exception()
+        (self.args.app / "fixture").write_text("different product")
+        with self.assertRaises(ValueError):
+            verifier.validate(self.args)
+        (self.args.app / "fixture").write_text("synthetic test artifact")
+        self.measured["cpuPercent"] = 0.01
+        self.accepted["cpuPercent"] = 0.01
+        self.write("trace/cpu-measurement.json", self.measured)
+        self.write("trace/recording.json", self.recording)
+        self.seal()
+        self.cpu_exception()
         with self.assertRaises(ValueError):
             verifier.validate(self.args)
 
