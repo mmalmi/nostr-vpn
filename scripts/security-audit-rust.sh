@@ -15,6 +15,22 @@ ensure_cargo_audit() {
 
 ensure_cargo_audit
 
+# Temporary 4.1.19 native-only Zstd applicability review. The guard pins both
+# lockfiles, registry sources, features and consumers; changed scope fails closed.
+# HTTP decompression is reachable, but these specific vulnerable paths are not:
+# - 0391: compression-codecs owns a fresh decoder, never borrowed with_context.
+# - 0395/0399/0402/0404: experimental APIs disabled.
+# - 0396/0398/0405: seekable disabled; 0401: zdict_builder disabled.
+# - 0397: around_pos receives exactly the initialized written_len, never capacity.
+# - 0400: decoder streams and resets between members; no mixed bulk operations.
+# - 0403: bundled C library built without legacy support; no system-library override.
+# - 0406: no zstdmt and tower exposes only decompression; 0410: native, not wasm32.
+# Review: https://github.com/RustSec/advisory-db/tree/main/crates/zstd-safe
+# Retained release artifacts additionally require bundled-library provenance.
+# Remove this exception when the dependency chain accepts the patched versions.
+mkdir -p artifacts/security-audit
+python3 scripts/release-gate-zstd-audit-scope.py > artifacts/security-audit/zstd-scope.json
+
 # Temporary accepted upstream warnings:
 # - RUSTSEC-2024-0384: `instant` is pulled by nostr 0.44.x; remove once fips/nostr
 #   can move to the stable nostr line that replaces it.
@@ -45,6 +61,20 @@ audit_args=(
   --ignore RUSTSEC-2026-0243
   --ignore RUSTSEC-2026-0253
   --ignore RUSTSEC-2026-0374
+  --ignore RUSTSEC-2026-0391
+  --ignore RUSTSEC-2026-0395
+  --ignore RUSTSEC-2026-0396
+  --ignore RUSTSEC-2026-0397
+  --ignore RUSTSEC-2026-0398
+  --ignore RUSTSEC-2026-0399
+  --ignore RUSTSEC-2026-0400
+  --ignore RUSTSEC-2026-0401
+  --ignore RUSTSEC-2026-0402
+  --ignore RUSTSEC-2026-0403
+  --ignore RUSTSEC-2026-0404
+  --ignore RUSTSEC-2026-0405
+  --ignore RUSTSEC-2026-0406
+  --ignore RUSTSEC-2026-0410
 )
 
 cargo audit "${audit_args[@]}"

@@ -14,6 +14,8 @@ const harnessOnlyPaths = new Set([
   'Dockerfile.mobile-wireguard-exit-e2e.dockerignore',
   'scripts/android-release-foreground-idle-receipt.mjs',
   'scripts/native-lab.py',
+  // This audit command validates dependencies; it is never a native build input.
+  'scripts/security-audit-rust.sh',
   'scripts/docker-replace-nvpn-binary',
   // Included only by ffi.rs's cfg(test) module; the parent remains a product input.
   'crates/nostr-vpn-app-core/src/ffi/tests_network/exit_state.rs',
