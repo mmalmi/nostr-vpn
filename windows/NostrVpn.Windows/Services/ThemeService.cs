@@ -44,10 +44,10 @@ public sealed class ThemeService : IDisposable
         {
             return;
         }
-        _preference = theme;
         using var key = Registry.CurrentUser.CreateSubKey(AppKeyPath);
         key?.SetValue(ThemeValueName, theme);
-        ApplyTheme(Resolve(_preference));
+        ApplyTheme(Resolve(theme));
+        _preference = theme;
     }
 
     public void Dispose()
@@ -77,15 +77,17 @@ public sealed class ThemeService : IDisposable
 
     private void ApplyTheme(string theme)
     {
-        if (theme == _appliedTheme)
-        {
-            return;
-        }
-        _appliedTheme = theme;
         _dispatcher.Invoke(() =>
+        {
+            if (_disposed || theme == _appliedTheme)
+            {
+                return;
+            }
             Application.Current.Resources.MergedDictionaries[0] =
-                new ResourceDictionary { Source = new Uri($"Themes/{theme}.xaml", UriKind.Relative) });
-        Applied?.Invoke();
+                new ResourceDictionary { Source = new Uri($"Themes/{theme}.xaml", UriKind.Relative) };
+            _appliedTheme = theme;
+            Applied?.Invoke();
+        });
     }
 
     private static string LoadPreference()

@@ -52,6 +52,12 @@ public sealed partial class AppViewModel
         {
             Notice = error.Message;
         }
+        finally
+        {
+            OnPropertyChanged(nameof(ThemeIsSystem));
+            OnPropertyChanged(nameof(ThemeIsLight));
+            OnPropertyChanged(nameof(ThemeIsDark));
+        }
     }
 
     private void OnThemeApplied()

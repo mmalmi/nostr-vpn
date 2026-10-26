@@ -28,7 +28,7 @@
         <Button Grid.Column="2" Content="Add" Click="AddPaidRouteWalletMint_Click" IsEnabled="{Binding CanAddPaidRouteWalletMint}" />
       </Grid>
 
-      <TabControl Margin="0,4,0,8">
+      <TabControl Margin="0,4,0,8" Background="{DynamicResource PanelBg}" BorderBrush="{DynamicResource Line}">
         <TabItem Header="Receive">
           <StackPanel Margin="8">
             <TextBlock Text="Lightning" FontWeight="SemiBold" Margin="0,0,0,6" />
