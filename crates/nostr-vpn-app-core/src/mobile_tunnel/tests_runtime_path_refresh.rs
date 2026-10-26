@@ -43,10 +43,21 @@ fn mobile_path_refresh_apps() -> [AppConfig; 3] {
 
 fn mobile_path_refresh_config(app: &AppConfig) -> MobileTunnelConfig {
     let mut config = MobileTunnelConfig::from_app(app).expect("mobile config");
-    config.listen_port = available_udp_port();
+    config.listen_port = 0;
     config.share_local_candidates = false;
     config.peer_hints.clear();
     config
+}
+
+async fn mobile_path_listen_port(endpoint: &FipsEndpoint) -> u16 {
+    endpoint
+        .bound_udp_listen_addrs()
+        .await
+        .expect("bound UDP listeners")
+        .into_iter()
+        .find(|addr| addr.is_ipv4())
+        .expect("bound IPv4 listener")
+        .port()
 }
 
 async fn mobile_path_peer(endpoint: &FipsEndpoint, participant: &str) -> Option<FipsEndpointPeer> {
@@ -163,12 +174,25 @@ fn run_mobile_path_refresh_recovery(background_timer: bool) {
                 let [server_app, phone_app, healthy_app] = mobile_path_refresh_apps();
                 let server_key = server_app.own_nostr_pubkey_hex().expect("server key");
                 let healthy_key = healthy_app.own_nostr_pubkey_hex().expect("healthy key");
-                let server_config = mobile_path_refresh_config(&server_app);
+                let mut server_config = mobile_path_refresh_config(&server_app);
                 let mut phone_config = mobile_path_refresh_config(&phone_app);
                 let healthy_config = mobile_path_refresh_config(&healthy_app);
                 assert_ne!(phone_config.local_address, server_config.local_address);
                 assert_ne!(phone_config.local_address, healthy_config.local_address);
                 assert_ne!(server_config.local_address, healthy_config.local_address);
+                let mut server = Box::pin(MobileTunnel::start_async(
+                    server_config.clone(),
+                    server_app.clone(),
+                ))
+                .await
+                .expect("server");
+                let mut healthy = Box::pin(MobileTunnel::start_async(healthy_config, healthy_app))
+                    .await
+                    .expect("healthy peer");
+                // Use ports already owned by the live endpoints, so parallel
+                // tests cannot claim them between reservation and startup.
+                // Retain the server's actual port for its later restart.
+                server_config.listen_port = mobile_path_listen_port(&server.endpoint).await;
                 // Only the phone can dial. A restarted server cannot repair the
                 // test by initiating its own reverse connection to the phone.
                 add_direct_mobile_peer_hint(
@@ -179,17 +203,8 @@ fn run_mobile_path_refresh_recovery(background_timer: bool) {
                 add_direct_mobile_peer_hint(
                     &mut phone_config,
                     &healthy_key,
-                    healthy_config.listen_port,
+                    mobile_path_listen_port(&healthy.endpoint).await,
                 );
-                let mut server = Box::pin(MobileTunnel::start_async(
-                    server_config.clone(),
-                    server_app.clone(),
-                ))
-                .await
-                .expect("server");
-                let mut healthy = Box::pin(MobileTunnel::start_async(healthy_config, healthy_app))
-                    .await
-                    .expect("healthy peer");
                 let mut phone =
                     Box::pin(MobileTunnel::start_async(phone_config.clone(), phone_app))
                         .await
