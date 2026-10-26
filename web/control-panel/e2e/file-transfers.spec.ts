@@ -84,3 +84,69 @@ test('offline transfers explain connection requirement and service errors', asyn
   await expect(transfers.getByRole('button', { name: 'Accept', exact: true })).toBeDisabled();
   await expect(transfers.getByText('From · 0 B', { exact: true })).toHaveCount(0);
 });
+
+test('earlier files page through the inbox without replacing live transfers', async ({ page }) => {
+  const current = state('Connected', true);
+  const received = (id: string, name: string): FileTransfer => ({
+    id, peerNpub: 'npub-peer', peerName: 'Laptop', isSender: false,
+    files: [{ name, sizeBytes: 12, localPath: null }], status: 'completed',
+    transferredBytes: 12, totalBytes: 12, error: null,
+  });
+  const recent = received('recent', 'recent.txt');
+  current.fileTransfers = [recent];
+  const cursors: (string | null)[] = [];
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/files') {
+      const cursor = url.searchParams.get('before');
+      cursors.push(cursor);
+      return route.fulfill({ json: cursor === null ? {
+        transfers: [{ ...recent, status: 'paused' }], nextCursor: 'opaque/cursor+1',
+      } : cursor === 'opaque/cursor+1' ? {
+        transfers: [received('older', 'older.txt')], nextCursor: 'opaque/cursor+2',
+      } : {
+        transfers: [received('older', 'older.txt'), received('oldest', 'oldest.txt')], nextCursor: null,
+      } });
+    }
+    return route.fulfill({ json: current });
+  });
+  await page.goto('/');
+  const transfers = page.getByRole('region', { name: 'File transfers' });
+  await transfers.getByRole('button', { name: 'Earlier files', exact: true }).click();
+  await expect(transfers.getByRole('link', { name: 'Save older.txt' })).toHaveAttribute('href', '/api/files/older/0');
+  await expect(transfers.getByRole('link', { name: 'Save recent.txt' })).toHaveCount(1);
+  await expect(transfers.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(0);
+  await transfers.getByRole('button', { name: 'Earlier files', exact: true }).click();
+  await expect(transfers.getByRole('link', { name: 'Save oldest.txt' })).toHaveAttribute('href', '/api/files/oldest/0');
+  await expect(transfers.getByRole('link', { name: 'Save older.txt' })).toHaveCount(1);
+  await expect(transfers.getByRole('button', { name: 'Earlier files', exact: true })).toHaveCount(0);
+  expect(cursors).toEqual([null, 'opaque/cursor+1', 'opaque/cursor+2']);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(transfers).toBeVisible();
+  const bounds = await transfers.boundingBox();
+  expect(bounds!.height).toBeLessThanOrEqual(260);
+  await page.screenshot({ path: '../../artifacts/file-transfers/web-inbox-history-mobile.png', fullPage: true });
+});
+
+test('earlier files remain accessible with no recent transfers and retry a failed page', async ({ page }) => {
+  const current = state('Disconnected', false);
+  current.fileTransfers = [];
+  let attempts = 0;
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/files') {
+      attempts += 1;
+      if (attempts === 1) return route.fulfill({ status: 503, json: { error: 'Could not read inbox.' } });
+      return route.fulfill({ json: { transfers: [], nextCursor: null } });
+    }
+    return route.fulfill({ json: current });
+  });
+  await page.goto('/');
+  const transfers = page.getByRole('region', { name: 'File transfers' });
+  await transfers.getByRole('button', { name: 'Earlier files', exact: true }).click();
+  await expect(transfers.getByRole('alert')).toHaveText('Could not read inbox.');
+  await transfers.getByRole('button', { name: 'Earlier files', exact: true }).click();
+  await expect(transfers.getByText('No received files yet.')).toBeVisible();
+  await expect(transfers.getByRole('button', { name: 'Earlier files', exact: true })).toHaveCount(0);
+  expect(attempts).toBe(2);
+});

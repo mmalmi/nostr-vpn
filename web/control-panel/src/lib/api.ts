@@ -1,4 +1,4 @@
-import type { UiState } from './types';
+import type { FileTransfer, UiState } from './types';
 
 export type QrMatrix = {
   width: number;
@@ -67,4 +67,11 @@ export function fileAction(id: string, action: 'accept' | 'decline' | 'cancel' |
 
 export function fileDownloadUrl(id: string, index: number): string {
   return `${apiBase}/api/files/${encodeURIComponent(id)}/${index}`;
+}
+
+export async function fileHistory(before?: string): Promise<{ transfers: FileTransfer[]; nextCursor: string | null }> {
+  const query = before ? `?${new URLSearchParams({ before })}` : '';
+  const response = await fetch(`${apiBase}/api/files${query}`);
+  if (!response.ok) throw new Error(await responseError(response));
+  return response.json();
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fileAction, fileDownloadUrl } from './api';
+  import { fileAction, fileDownloadUrl, fileHistory } from './api';
   import { formatBytes } from './format';
   import type { FileTransfer } from './types';
   export let connected = true;
@@ -7,6 +7,28 @@
   export let onChanged: () => void = () => {};
   let busy = '';
   let error = '';
+  let history: FileTransfer[] = [];
+  let nextCursor: string | null | undefined;
+  let loadingHistory = false;
+  $: liveIds = new Set(transfers.map(transfer => transfer.id));
+  $: visibleTransfers = [...transfers, ...history.filter(transfer => !liveIds.has(transfer.id))];
+
+  async function earlierFiles() {
+    if (loadingHistory || nextCursor === null) return;
+    loadingHistory = true; error = '';
+    try {
+      const knownIds = new Set(visibleTransfers.map(transfer => transfer.id));
+      // The first history page can be the same 64 recent files already shown live.
+      for (let request = 0; request < 2; request += 1) {
+        const cursor: string | undefined = nextCursor ?? undefined;
+        const page = await fileHistory(cursor);
+        history = [...new Map([...history, ...page.transfers].map(transfer => [transfer.id, transfer])).values()];
+        nextCursor = page.nextCursor;
+        if (page.transfers.some(transfer => !knownIds.has(transfer.id)) || nextCursor === null || nextCursor === cursor) break;
+      }
+    } catch (reason) { error = reason instanceof Error ? reason.message : 'Could not load earlier files'; }
+    finally { loadingHistory = false; }
+  }
   async function act(id: string, action: 'accept' | 'decline' | 'cancel' | 'resume') {
     busy = id; error = '';
     try { await fileAction(id, action); onChanged(); }
@@ -15,12 +37,17 @@
   }
 </script>
 
-{#if transfers.length}
   <section class="detail-surface transfers" aria-label="File transfers">
-    <h3>Files</h3>
+    <div class="files-heading">
+      <h3>Files</h3>
+      {#if nextCursor !== null}
+        <button class="small-button" disabled={loadingHistory} on:click={earlierFiles}>{loadingHistory ? 'Loading…' : 'Earlier files'}</button>
+      {/if}
+    </div>
     {#if !connected}<p class="muted-copy">Connect VPN to continue transfers.</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
-    {#each transfers as transfer (transfer.id)}
+    {#if !visibleTransfers.length && nextCursor === null}<p class="muted-copy">No received files yet.</p>{/if}
+    {#each visibleTransfers as transfer (transfer.id)}
       <div class="transfer">
         {#if transfer.status === 'unavailable'}
           <strong>Files unavailable</strong>
@@ -50,11 +77,11 @@
       </div>
     {/each}
   </section>
-{/if}
 
 <style>
   .transfers { margin: 16px; max-height: 260px; overflow: auto; gap: 4px; }
   h3 { margin: 0; }
+  .files-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .transfer { padding: 8px 0; overflow-wrap: anywhere; }
   .transfer + .transfer { border-top: 1px solid var(--border, #8884); }
   progress { width: 100%; margin-top: 8px; }
