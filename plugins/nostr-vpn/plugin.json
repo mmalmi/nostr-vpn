@@ -2,9 +2,9 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "nostr-vpn",
   "description": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
-    "name": "Nostr VPN contributors",
+    "name": "Sirius Business Ltd",
     "url": "https://nostrvpn.org/"
   },
   "homepage": "https://nostrvpn.org/",
@@ -24,7 +24,7 @@
         "displayName": "Nostr VPN",
         "shortDescription": "Private networks, no signup",
         "longDescription": "Set up and inspect a Nostr VPN private mesh with the nvpn CLI. Use local keys and signed administrator approval instead of a VPN provider account. Connecting requires host networking permissions. Requires the command line tool on the execution host; the plugin provides instructions and does not install software or change settings by itself.",
-        "developerName": "Nostr VPN contributors",
+        "developerName": "Sirius Business Ltd",
         "category": "Developer Tools",
         "capabilities": [],
         "websiteURL": "https://nostrvpn.org/",
