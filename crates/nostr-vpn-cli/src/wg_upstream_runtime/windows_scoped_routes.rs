@@ -531,6 +531,16 @@ static WINDOWS_PENDING_ROUTE_CLEANUP: std::sync::Mutex<WindowsRouteCleanupSnapsh
         owned_routes: Vec::new(),
     });
 
+// The pending registry is global process state; tests that retain into it or
+// assert on its contents must not interleave.
+#[cfg(test)]
+pub(crate) fn windows_pending_cleanup_registry_guard() -> std::sync::MutexGuard<'static, ()> {
+    static WINDOWS_PENDING_CLEANUP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    WINDOWS_PENDING_CLEANUP_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[cfg(any(test, target_os = "windows"))]
 fn retain_pending_windows_route_cleanup(cleanup: WindowsRouteCleanupSnapshot) {
     if cleanup.is_empty() {
