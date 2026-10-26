@@ -450,6 +450,7 @@ impl Drop for WgUpstreamRuntime {
 pub struct WireGuardExitFingerprint {
     pub enabled: bool,
     pub address: String,
+    pub address_v6: String,
     pub private_key: String,
     pub peer_public_key: String,
     pub peer_preshared_key: String,
@@ -463,6 +464,7 @@ impl WireGuardExitFingerprint {
         Self {
             enabled: config.enabled,
             address: config.address.clone(),
+            address_v6: config.address_v6.clone(),
             private_key: config.private_key.clone(),
             peer_public_key: config.peer_public_key.clone(),
             peer_preshared_key: config.peer_preshared_key.clone(),

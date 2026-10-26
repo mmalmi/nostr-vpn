@@ -835,6 +835,7 @@ mod tests {
         .expect("provider config parses");
 
         assert_eq!(imported.address, "10.64.70.195/32");
+        assert_eq!(imported.address_v6, "fc00:bbbb:bbbb:bb01::1:46c2/128");
         assert_eq!(imported.private_key, TEST_WG_PRIVATE_KEY);
         assert_eq!(imported.peer_public_key, TEST_WG_PUBLIC_KEY);
         assert_eq!(imported.peer_preshared_key, TEST_WG_PRESHARED_KEY);
@@ -843,7 +844,20 @@ mod tests {
         assert_eq!(imported.dns, vec!["1.1.1.1", "10.64.0.1"]);
         assert_eq!(imported.mtu, 1380);
         assert_eq!(imported.persistent_keepalive_secs, 20);
-        assert!(wireguard_exit_config_text(&imported).contains("[Peer]"));
+        let text = wireguard_exit_config_text(&imported);
+        assert!(
+            text.contains("Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128"),
+            "{text}"
+        );
+        assert!(text.contains("AllowedIPs = 0.0.0.0/0, ::/0"), "{text}");
+        let ipv6_only =
+            parse_wireguard_exit_config(&text.replace("Address = 10.64.70.195/32, ", "Address = "))
+                .expect("preserve IPv6-only import compatibility");
+        assert_eq!(ipv6_only.address, ipv6_only.address_v6);
+        assert!(
+            wireguard_exit_config_text(&ipv6_only)
+                .contains("Address = fc00:bbbb:bbbb:bb01::1:46c2/128\n")
+        );
     }
 
     #[test]

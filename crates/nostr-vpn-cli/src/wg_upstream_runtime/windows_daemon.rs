@@ -8,6 +8,34 @@
 #[cfg(target_os = "windows")]
 const WINDOWS_NATIVE_RECONCILE_TIMEOUT: Duration = Duration::from_secs(20);
 
+#[cfg(any(test, target_os = "windows"))]
+pub(crate) fn windows_wireguard_ipv6_default(config: &WireGuardExitConfig) -> Result<bool> {
+    let routes_ipv6 = config
+        .allowed_ips
+        .iter()
+        .any(|route| nostr_vpn_core::config::route_is_ipv6(route));
+    if !routes_ipv6 {
+        return Ok(false);
+    }
+    if !config.allowed_ips.iter().any(|route| route == "::/0") {
+        return Err(anyhow!(
+            "Windows WireGuard exit IPv6 AllowedIPs must include ::/0; partial IPv6 routes are not supported"
+        ));
+    }
+    if nostr_vpn_core::config::route_is_ipv6(&config.address) {
+        return Err(anyhow!(
+            "Windows WireGuard exits need an IPv4 Address as well as an IPv6 Address"
+        ));
+    }
+    if !nostr_vpn_core::config::route_is_ipv6(&config.address_v6) {
+        return Err(anyhow!(
+            "WireGuard exit with IPv6 AllowedIPs needs an IPv6 Address; re-import the \
+             provider config so its dual-stack Address line is kept"
+        ));
+    }
+    Ok(true)
+}
+
 #[cfg(target_os = "windows")]
 pub async fn apply_daemon_wg_upstream(
     config: &WireGuardExitConfig,
@@ -67,6 +95,7 @@ async fn apply_daemon_wg_upstream_native(
     excluded_tunnel_interfaces: &[u32],
     cleanup_journal_config_path: &Path,
 ) -> Result<DaemonWgUpstream> {
+    let manage_default_v6 = windows_wireguard_ipv6_default(config)?;
     let tools = resolve_windows_wireguard_tools()?;
     retry_pending_windows_native_cleanup_journaled(cleanup_journal_config_path)
         .context("clean up pending native WireGuard before startup")?;
@@ -275,6 +304,7 @@ async fn apply_daemon_wg_upstream_native(
         interface_index,
         upstream,
         excluded_tunnel_interfaces,
+        manage_default_v6,
         cleanup_journal_config_path,
     ) {
         Ok(route) => route,
