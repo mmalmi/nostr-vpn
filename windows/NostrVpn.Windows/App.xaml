@@ -22,7 +22,7 @@
         <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
       </Style>
 
-      <Style TargetType="{x:Type TextBlock}">
+      <Style TargetType="{x:Type Expander}">
         <Setter Property="Foreground" Value="{DynamicResource TextPrimary}" />
       </Style>
 

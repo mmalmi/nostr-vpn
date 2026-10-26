@@ -9,6 +9,7 @@
         MinHeight="560"
         WindowStartupLocation="CenterScreen"
         Icon="Assets/nostr-vpn.ico"
+        Foreground="{DynamicResource TextPrimary}"
         Background="{DynamicResource WindowBg}">
   <Grid>
     <Grid.ColumnDefinitions>
@@ -166,6 +167,7 @@
                            SelectedValuePath="SelectionKey"
                            BorderThickness="0"
                            Background="Transparent"
+                           Foreground="{DynamicResource TextPrimary}"
                            Margin="0,14,0,0"
                            HorizontalContentAlignment="Stretch">
                     <ListBox.ItemContainerStyle>
