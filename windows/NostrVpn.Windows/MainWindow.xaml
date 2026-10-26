@@ -149,8 +149,15 @@
               <Button DockPanel.Dock="Right" Content="Received files" Click="ShowReceivedFiles_Click" />
               <TextBlock Text="Files" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
             </DockPanel>
+            <Border Style="{StaticResource Card}" Margin="0,0,0,8" Visibility="{Binding PreparingFiles, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="{Binding FilePreparationDetail}" TextWrapping="Wrap" />
+                <ProgressBar IsIndeterminate="True" Height="4" Margin="0,8" />
+                <Button Content="Cancel" Click="CancelFilePreparation_Click" HorizontalAlignment="Left" />
+              </StackPanel>
+            </Border>
             <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
-            <ItemsControl ItemsSource="{Binding State.FileTransfers}" Margin="0,0,0,12">
+            <ItemsControl x:Name="FileTransferList" ItemsSource="{Binding State.FileTransfers}" Margin="0,0,0,12">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
                   <Border Style="{StaticResource Card}" Margin="0,0,0,8">
@@ -161,9 +168,9 @@
                       <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Warn}" TextWrapping="Wrap" />
                       <WrapPanel Margin="0,8,0,0">
                         <Button Content="Accept" Tag="{Binding}" CommandParameter="accept" Click="FileTransferAction_Click" IsEnabled="{Binding DataContext.State.VpnActive, RelativeSource={RelativeSource AncestorType=Window}}" ToolTip="Connect VPN to continue transfers" Visibility="{Binding CanAccept, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
-                        <Button Content="Decline" Tag="{Binding}" CommandParameter="decline" Click="FileTransferAction_Click" IsEnabled="{Binding DataContext.State.VpnActive, RelativeSource={RelativeSource AncestorType=Window}}" ToolTip="Connect VPN to continue transfers" Visibility="{Binding CanAccept, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
+                        <Button Content="Decline" Tag="{Binding}" CommandParameter="decline" Click="FileTransferAction_Click" Visibility="{Binding CanAccept, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
                         <Button Content="Resume" Tag="{Binding}" CommandParameter="resume" Click="FileTransferAction_Click" IsEnabled="{Binding DataContext.State.VpnActive, RelativeSource={RelativeSource AncestorType=Window}}" ToolTip="Connect VPN to continue transfers" Visibility="{Binding CanResume, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
-                        <Button Content="Cancel" Tag="{Binding}" CommandParameter="cancel" Click="FileTransferAction_Click" IsEnabled="{Binding DataContext.State.VpnActive, RelativeSource={RelativeSource AncestorType=Window}}" ToolTip="Connect VPN to continue transfers" Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
+                        <Button Content="Cancel" Tag="{Binding}" CommandParameter="cancel" Click="FileTransferAction_Click" Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
                         <Button Content="Show files" Tag="{Binding}" Click="ShowTransferFiles_Click" Visibility="{Binding CanShowFiles, Converter={StaticResource BoolToVisibility}}" />
                       </WrapPanel>
                     </StackPanel>

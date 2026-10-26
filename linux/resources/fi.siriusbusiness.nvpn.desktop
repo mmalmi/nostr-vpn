@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr VPN
+Exec=nostr-vpn
+Icon=nostr-vpn
+Terminal=false
+NoDisplay=true
+X-GNOME-UsesNotifications=true

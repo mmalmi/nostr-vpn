@@ -520,6 +520,9 @@ data_files = {
         (repo_root / "linux/resources/nostr-vpn.desktop").read_bytes(),
         0o644,
     ),
+    "./usr/share/applications/fi.siriusbusiness.nvpn.desktop": (
+        (repo_root / "linux/resources/fi.siriusbusiness.nvpn.desktop").read_bytes(), 0o644,
+    ),
     "./usr/share/Thunar/sendto/nvpn.desktop": (
         (repo_root / "linux/resources/nvpn-sendto.desktop").read_bytes(), 0o644,
     ),

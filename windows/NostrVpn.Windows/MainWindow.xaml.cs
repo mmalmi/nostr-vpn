@@ -18,6 +18,13 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         DataContext = viewModel;
+        viewModel.FileTransferRequested += id => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            FileTransferList.UpdateLayout();
+            var transfer = viewModel.State.FileTransfers.FirstOrDefault(item => item.Id == id);
+            if (transfer is not null && FileTransferList.ItemContainerGenerator.ContainerFromItem(transfer) is FrameworkElement row)
+                row.BringIntoView();
+        }));
     }
 
     private AppViewModel ViewModel => (AppViewModel)DataContext;
@@ -42,27 +49,69 @@ public partial class MainWindow : Window
     public async Task ChooseFileRecipientAsync(string[] files)
     {
         await ViewModel.RefreshAsync();
-        var peers = ViewModel.State.Networks.Where(network => network.Enabled)
-            .SelectMany(network => network.Participants).Where(peer => !peer.IsSelf && peer.RosterAccepted && peer.Reachable)
-            .DistinctBy(peer => peer.Npub).ToArray();
-        if (!ViewModel.State.VpnActive || peers.Length == 0)
-        {
-            MessageBox.Show(this, "Connect VPN with an online device, then try Send To again.", "Send files");
-            return;
-        }
         var dialog = new Window { Title = "Send files", Owner = this, Width = 360, SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize };
         var panel = new StackPanel { Margin = new Thickness(20) };
-        panel.Children.Add(new TextBlock { Text = $"Send {files.Length} files to", Margin = new Thickness(0, 0, 0, 12) });
-        var picker = new ComboBox { ItemsSource = peers, DisplayMemberPath = "DisplayName", SelectedIndex = 0, Margin = new Thickness(0, 0, 0, 16) };
+        var names = files.Select(System.IO.Path.GetFileName).ToArray();
+        ulong size = 0;
+        foreach (var file in files) { try { size += (ulong)new System.IO.FileInfo(file).Length; } catch (System.IO.IOException) { } catch (UnauthorizedAccessException) { } }
+        panel.Children.Add(new TextBlock { Text = $"{names.FirstOrDefault()}{(names.Length > 1 ? $" + {names.Length - 1} files" : "")} · {NativeFileTransferState.FormatSize(size)}", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+        var picker = new ComboBox { DisplayMemberPath = "Label", Margin = new Thickness(0, 0, 0, 12) };
         panel.Children.Add(picker);
+        var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+        panel.Children.Add(status);
         var send = new Button { Content = "Send", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right };
-        send.Click += (_, _) => dialog.DialogResult = true;
+        var change = new Button { Content = "Choose another device", HorizontalAlignment = HorizontalAlignment.Right, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 8, 0, 0) };
+        string? requestedPeer = null;
+        var closing = false;
+        void RefreshRecipients()
+        {
+            var selected = (picker.SelectedItem as FileRecipient)?.Npub;
+            var peers = ViewModel.State.Networks.Where(network => network.Enabled)
+                .SelectMany(network => network.Participants.Where(peer => !peer.IsSelf && peer.RosterAccepted)
+                    .Select(peer => new FileRecipient(peer.Npub, $"{peer.DisplayName} · {NativeFileTransferState.ShortIdentity(peer.Npub)} · {(peer.Reachable ? "Online" : "Offline")}", peer.Reachable)))
+                .DistinctBy(peer => peer.Npub).OrderByDescending(peer => peer.Reachable).ThenBy(peer => peer.Label).ToArray();
+            if (picker.ItemsSource is not FileRecipient[] previous || !previous.SequenceEqual(peers))
+            {
+                picker.ItemsSource = peers;
+                picker.SelectedItem = peers.FirstOrDefault(peer => peer.Npub == selected);
+            }
+            picker.IsEnabled = requestedPeer is null;
+            change.Visibility = requestedPeer is null ? Visibility.Collapsed : Visibility.Visible;
+            send.IsEnabled = requestedPeer is null && picker.SelectedItem is FileRecipient && !ViewModel.ActionInFlight;
+            send.Content = ViewModel.State.VpnActive ? "Send" : "Connect and send";
+            status.Text = requestedPeer is not null ? "Waiting for the device… Keep this window open."
+                : peers.Length == 0 ? "Add another device to your network to send files."
+                : !ViewModel.State.VpnActive ? "Connect to send. Your selected files will stay here."
+                : "Choose a device. Offline devices can be selected while you wait.";
+            if (!closing && requestedPeer is not null && ViewModel.State.VpnActive && peers.Any(peer => peer.Npub == requestedPeer && peer.Reachable))
+            { closing = true; dialog.DialogResult = true; }
+        }
+        picker.SelectionChanged += (_, _) => send.IsEnabled = requestedPeer is null && picker.SelectedItem is FileRecipient && !ViewModel.ActionInFlight;
+        send.Click += async (_, _) =>
+        {
+            if (picker.SelectedItem is not FileRecipient recipient) return;
+            requestedPeer = recipient.Npub;
+            if (!ViewModel.State.VpnEnabled) await ViewModel.ToggleVpnAsync();
+            if (!ViewModel.State.VpnEnabled) { requestedPeer = null; status.Text = ViewModel.Notice; }
+            RefreshRecipients();
+        };
         panel.Children.Add(send);
+        change.Click += (_, _) => { requestedPeer = null; RefreshRecipients(); };
+        panel.Children.Add(change);
+        var cancel = new Button { Content = "Cancel", IsCancel = true, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
+        panel.Children.Add(cancel);
         dialog.Content = panel;
-        if (dialog.ShowDialog() == true && picker.SelectedItem is NativeParticipantState peer)
-            await ViewModel.SendFilesToAsync(peer.Npub, files);
+        var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        timer.Tick += (_, _) => RefreshRecipients();
+        dialog.Loaded += (_, _) => { RefreshRecipients(); timer.Start(); };
+        dialog.Closed += (_, _) => { closing = true; timer.Stop(); };
+        if (dialog.ShowDialog() == true && requestedPeer is not null)
+            await ViewModel.SendFilesToAsync(requestedPeer, files);
     }
+
+    private sealed record FileRecipient(string Npub, string Label, bool Reachable);
+    private void CancelFilePreparation_Click(object sender, RoutedEventArgs e) => ViewModel.CancelFilePreparation();
 
     private async void SendFiles_Click(object sender, RoutedEventArgs e) => await ViewModel.ChooseFilesAsync();
 

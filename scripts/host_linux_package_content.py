@@ -173,6 +173,9 @@ def expected_deb_payload(
             0o644,
             (repo_root / "linux/resources/nostr-vpn.desktop").read_bytes(),
         ),
+        "./usr/share/applications/fi.siriusbusiness.nvpn.desktop": (
+            "file", 0o644, (repo_root / "linux/resources/fi.siriusbusiness.nvpn.desktop").read_bytes(),
+        ),
         "./usr/share/Thunar/sendto/nvpn.desktop": (
             "file", 0o644, (repo_root / "linux/resources/nvpn-sendto.desktop").read_bytes(),
         ),

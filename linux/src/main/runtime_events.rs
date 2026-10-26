@@ -9,6 +9,7 @@ fn sync_launch_on_startup_setting(app: &AppRef) {
 }
 
 fn set_state(app: &AppRef, state: NativeAppState) {
+    notify_file_transfers(app, &state);
     let mut model = app.borrow_mut();
     if state.health.len() > model.state.health.len() {
         model.diagnostics_expanded = true;
@@ -26,7 +27,9 @@ fn state_needs_render(previous: &NativeAppState, next: &NativeAppState) -> bool 
     // the page so action callbacks cannot retain obsolete state.
     fn structure(mut state: NativeAppState) -> NativeAppState {
         state.rev = 0;
-        for transfer in &mut state.file_transfers { transfer.transferred_bytes = 0; }
+        for transfer in &mut state.file_transfers {
+            transfer.transferred_bytes = 0;
+        }
         state.vpn_status.clear();
         state.runtime_status_detail.clear();
         state.connected_peer_count = 0;
@@ -396,7 +399,9 @@ fn drain_pending_urls(runtime: &AppRuntime) {
         return;
     }
     let files: Vec<PathBuf> = runtime.pending_files.borrow_mut().drain(..).collect();
-    if !files.is_empty() { choose_file_recipient(&app, files); }
+    if !files.is_empty() {
+        choose_file_recipient(&app, files);
+    }
     let urls: Vec<String> = runtime.pending_urls.borrow_mut().drain(..).collect();
     for url in urls {
         handle_deep_link(&app, &url);
