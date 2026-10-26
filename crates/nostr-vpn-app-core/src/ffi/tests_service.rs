@@ -227,7 +227,7 @@ if [ "$1" = "reload" ]; then
     echo "simulated wireguard reload failure" >&2
     exit 7
   fi
-  cmp -s "$3" "$3.before" || exit 92
+  cp "$3" "$3.rollback" || exit 92
   exit 0
 fi
 exit 93
@@ -250,9 +250,8 @@ exit 93
             .config
             .save(&runtime.config_path)
             .expect("save test config");
-        // Direct is omitted by serialization; verify the exact saved baseline.
-        fs::copy(&runtime.config_path, dir.join("config.toml.before"))
-            .expect("save pre-change config for reload verification");
+        let previous_wireguard = serde_json::to_value(&runtime.config.wireguard_exit)
+            .expect("serialize previous WireGuard settings");
         runtime.nvpn_bin = Some(script_path);
 
         runtime.dispatch(NativeAppAction::UpdateSettings {
@@ -293,6 +292,19 @@ Endpoint = vpn.example.test:51820
         );
         let saved = AppConfig::load(&runtime.config_path).expect("load restored config");
         assert_eq!(saved.internet_source, InternetSource::Direct);
+        // Inspect the configuration seen by the rollback reload. Direct is
+        // omitted by serde, and HashMap table order can change across saves.
+        let reloaded: AppConfig = toml::from_str(
+            &fs::read_to_string(dir.join("config.toml.rollback"))
+                .expect("read config observed by rollback reload"),
+        )
+        .expect("parse config observed by rollback reload");
+        assert_eq!(reloaded.internet_source, InternetSource::Direct);
+        assert_eq!(
+            serde_json::to_value(&reloaded.wireguard_exit)
+                .expect("serialize restored WireGuard settings"),
+            previous_wireguard
+        );
         let calls = fs::read_to_string(format!("{}.reloads", runtime.config_path.display()))
             .expect("read fake nvpn reloads");
         assert_eq!(
