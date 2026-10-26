@@ -20,6 +20,52 @@ namespace NostrVpn.Windows.ViewModels;
 
 public sealed partial class AppViewModel
 {
+    public bool ThemeIsSystem
+    {
+        get => _themeService.Preference == ThemeService.System;
+        set => SetThemePreference(ThemeService.System, value);
+    }
+
+    public bool ThemeIsLight
+    {
+        get => _themeService.Preference == ThemeService.Light;
+        set => SetThemePreference(ThemeService.Light, value);
+    }
+
+    public bool ThemeIsDark
+    {
+        get => _themeService.Preference == ThemeService.Dark;
+        set => SetThemePreference(ThemeService.Dark, value);
+    }
+
+    private void SetThemePreference(string theme, bool selected)
+    {
+        if (!selected)
+        {
+            return;
+        }
+        try
+        {
+            _themeService.SetPreference(theme);
+        }
+        catch (Exception error)
+        {
+            Notice = error.Message;
+        }
+        finally
+        {
+            OnPropertyChanged(nameof(ThemeIsSystem));
+            OnPropertyChanged(nameof(ThemeIsLight));
+            OnPropertyChanged(nameof(ThemeIsDark));
+        }
+    }
+
+    private void OnThemeApplied()
+    {
+        OnPropertyChanged(nameof(ShownNetworkStatusBrush));
+        OnPropertyChanged(nameof(VpnStatusBrush));
+    }
+
     private Task SaveNodeAsync()
     {
         ushort? port = ushort.TryParse(ListenPort.Trim(), out var parsed) ? parsed : null;

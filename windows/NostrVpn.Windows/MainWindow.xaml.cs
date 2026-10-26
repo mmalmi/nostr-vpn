@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Navigation;
 using NostrVpn.Windows.Core;
+using NostrVpn.Windows.Services;
 using NostrVpn.Windows.ViewModels;
 
 namespace NostrVpn.Windows;
@@ -56,6 +57,9 @@ public partial class MainWindow : Window
         {
             PlacementTarget = anchor,
             Placement = PlacementMode.Top,
+            Background = ThemeService.Brush("PanelBg"),
+            BorderBrush = ThemeService.Brush("Line"),
+            Foreground = ThemeService.Brush("TextPrimary"),
         };
         foreach (var network in ViewModel.State.Networks)
         {
@@ -85,7 +89,9 @@ public partial class MainWindow : Window
             row.Children.Add(new TextBlock
             {
                 Text = "●",
-                Foreground = network.Enabled ? Brushes.SeaGreen : Brushes.DarkGray,
+                Foreground = network.Enabled
+                    ? ThemeService.Brush("StatusDotOk")
+                    : ThemeService.Brush("StatusDotIdle"),
                 Margin = new Thickness(0, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center,
             });
