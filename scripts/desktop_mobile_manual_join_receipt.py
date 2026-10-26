@@ -284,8 +284,44 @@ def validate_android_install_receipt(
     require_exact(receipt, "canonicalProcessCount", 1, label)
 
 
+def validate_profile_isolation(
+    evidence: dict[str, Any], platform: str, desktop: dict[str, Any] | None
+) -> dict[str, Any]:
+    label = f"{platform} desktop profile isolation"
+    isolation = evidence.get("profileIsolation")
+    if evidence.get("appLaunchArgumentsOrEnvironment") is False and "profileIsolation" not in evidence:
+        return {"appLaunchArgumentsOrEnvironment": False}
+    if platform != "windows" or evidence.get("appLaunchArgumentsOrEnvironment") is not True:
+        fail(f"{label} only permits explicit Windows production profile isolation")
+    expected_keys = {
+        "schema", "kind", "environmentKeys", "appArguments", "guiDirectorySha256",
+        "serviceDirectorySha256", "originalDirectorySha256", "originalBeforeSha256",
+        "originalAfterSha256", "originalProfileUnchanged", "appSha256", "serviceCliSha256",
+        "guiModes", "serviceInstallCount",
+    }
+    if not isinstance(isolation, dict) or set(isolation) != expected_keys or not desktop:
+        fail(f"{label} lacks complete profile/artifact bindings")
+    for key, expected in {
+        "schema": 1, "kind": "production-data-directory",
+        "environmentKeys": ["NVPN_APP_DATA_DIR"], "appArguments": [],
+        "originalProfileUnchanged": True, "serviceInstallCount": 2,
+        "guiModes": ["AdminAdd", "Bootstrap", "CreateAdmin", "ManualJoin", "Verify", "Verify"],
+        "appSha256": desktop.get("appSha256"), "serviceCliSha256": desktop.get("cliSha256"),
+    }.items():
+        if type(isolation.get(key)) is not type(expected) or isolation.get(key) != expected:
+            fail(f"{label} has invalid {key}")
+    for key in expected_keys:
+        if key.endswith("Sha256"):
+            require_sha256(isolation[key], f"{label} {key}")
+    if (isolation["guiDirectorySha256"] != isolation["serviceDirectorySha256"]
+            or isolation["guiDirectorySha256"] == isolation["originalDirectorySha256"]
+            or isolation["originalBeforeSha256"] != isolation["originalAfterSha256"]):
+        fail(f"{label} changed the original profile or mismatched GUI/service directories")
+    return {"appLaunchArgumentsOrEnvironment": True, "profileIsolation": isolation}
+
+
 def validate_phase_evidence(
-    evidence: dict[str, Any], platform: str
+    evidence: dict[str, Any], platform: str, desktop: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     label = f"{platform} desktop↔Pixel phase evidence"
     require_exact(evidence, "schema", 1, label)
@@ -293,7 +329,7 @@ def validate_phase_evidence(
     require_exact(evidence, "publicUiOnly", True, label)
     require_exact(evidence, "privateStateRead", False, label)
     require_exact(evidence, "fixtureInvoked", False, label)
-    require_exact(evidence, "appLaunchArgumentsOrEnvironment", False, label)
+    isolation = validate_profile_isolation(evidence, platform, desktop)
     require_exact(
         evidence,
         "acceptedSelectorSemantics",
@@ -329,6 +365,7 @@ def validate_phase_evidence(
         }
     return {
         "completionDeadlineSeconds": deadline,
+        **isolation,
         **validated_roles,
     }
 
@@ -485,7 +522,7 @@ def build_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "fipsVersion": args.expected_android_fips_version,
         }
     )
-    phases = validate_phase_evidence(phase_source, args.platform)
+    phases = validate_phase_evidence(phase_source, args.platform, desktop)
     return {
         "schema": 2,
         "platform": args.platform,
@@ -496,7 +533,6 @@ def build_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "publicUiOnly": True,
         "privateStateRead": False,
         "fixtureInvoked": False,
-        "appLaunchArgumentsOrEnvironment": False,
         "acceptedSelectorSemantics": "participant-state-not-pending",
         "desktopRelaunchDurability": True,
         "pixelRelaunchDurability": True,

@@ -2542,6 +2542,61 @@ test('release receipt collection requires exact source and strict public UI gate
     )
     writeFileSync(paths.windows.network, windowsNetwork)
 
+    // Profile selection is permitted only for Windows, with exact bindings.
+    const defaultWindowsJoin = readFileSync(paths.windows.public_ui_join, 'utf8')
+    const isolatedWindowsJoin = JSON.parse(defaultWindowsJoin)
+    isolatedWindowsJoin.appLaunchArgumentsOrEnvironment = true
+    isolatedWindowsJoin.profileIsolation = {
+      schema: 1, kind: 'production-data-directory',
+      environmentKeys: ['NVPN_APP_DATA_DIR'], appArguments: [],
+      guiDirectorySha256: 'c'.repeat(64), serviceDirectorySha256: 'c'.repeat(64),
+      originalDirectorySha256: 'd'.repeat(64),
+      originalBeforeSha256: 'e'.repeat(64), originalAfterSha256: 'e'.repeat(64),
+      originalProfileUnchanged: true,
+      appSha256: isolatedWindowsJoin.artifact.desktop.appSha256,
+      serviceCliSha256: isolatedWindowsJoin.artifact.desktop.cliSha256,
+      guiModes: ['AdminAdd', 'Bootstrap', 'CreateAdmin', 'ManualJoin', 'Verify', 'Verify'],
+      serviceInstallCount: 2,
+    }
+    const collectWithIsolation = () => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    })
+    writeFileSync(paths.windows.public_ui_join, JSON.stringify(isolatedWindowsJoin))
+    assert.doesNotThrow(collectWithIsolation)
+    for (const mutate of [
+      (r) => { r.appLaunchArgumentsOrEnvironment = false },
+      (r) => { delete r.profileIsolation },
+      (r) => { r.profileIsolation.environmentKeys.push('NVPN_CLI_PATH') },
+      (r) => { r.profileIsolation.appArguments.push('--injected-peer') },
+      (r) => { r.profileIsolation.serviceDirectorySha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.originalDirectorySha256 = 'c'.repeat(64) },
+      (r) => { r.profileIsolation.originalAfterSha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.originalProfileUnchanged = false },
+      (r) => { r.profileIsolation.appSha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.serviceCliSha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.serviceInstallCount = 1 },
+      (r) => { r.profileIsolation.guiModes.pop() },
+      (r) => { r.profileIsolation.extra = true },
+      (r) => { r.privateStateRead = true },
+      (r) => { r.fixtureInvoked = true },
+      (r) => { r.completionDeadlineSeconds = 16 },
+      (r) => { r.desktopAdminPixelJoiner.desktopRelaunchAccepted = false },
+      (r) => { r.pixelAdminDesktopJoiner.deliveryMilliseconds = 15001 },
+    ]) {
+      const rejected = structuredClone(isolatedWindowsJoin)
+      mutate(rejected)
+      writeFileSync(paths.windows.public_ui_join, JSON.stringify(rejected))
+      assert.throws(collectWithIsolation)
+    }
+    writeFileSync(paths.windows.public_ui_join, defaultWindowsJoin)
+    const defaultLinuxJoin = readFileSync(paths.linux.public_ui_join, 'utf8')
+    const linuxWithOverride = JSON.parse(defaultLinuxJoin)
+    linuxWithOverride.appLaunchArgumentsOrEnvironment = true
+    linuxWithOverride.profileIsolation = isolatedWindowsJoin.profileIsolation
+    writeFileSync(paths.linux.public_ui_join, JSON.stringify(linuxWithOverride))
+    assert.throws(collectWithIsolation, /profile isolation/)
+    writeFileSync(paths.linux.public_ui_join, defaultLinuxJoin)
+
     writeFileSync(paths.windows.public_ui_join, JSON.stringify({
       ...source,
       schema: 1,
