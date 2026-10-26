@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT/crates/nostr-vpn-app-core"
 MACOS_DIR="$ROOT/macos"
 MACOS_ENTITLEMENTS="$MACOS_DIR/NostrVpnMac.entitlements"
+export NVPN_MACOS_SHARE_APP_GROUP="${NVPN_MACOS_SHARE_APP_GROUP:-group.fi.siriusbusiness.nvpn.shared}"
 BINDINGS_DIR="$MACOS_DIR/Bindings"
 FRAMEWORKS_DIR="$MACOS_DIR/Frameworks"
 BUILD_DIR="$MACOS_DIR/.build"
@@ -753,21 +754,34 @@ app_is_stapled() {
 }
 
 sign_release_app_deep() {
-  local app_path="$1"
-  local identity="$2"
-  local entitlement_args=()
-
-  if [[ -f "$MACOS_ENTITLEMENTS" ]]; then
-    entitlement_args=(--entitlements "$MACOS_ENTITLEMENTS")
-  fi
-
+  local app_path="$1" identity="$2" entitlements_dir
+  local share_extension="$app_path/Contents/PlugIns/ShareFiles.appex"
+  [[ -d "$share_extension" ]] || { echo "macOS file sharing extension is missing" >&2; return 1; }
+  entitlements_dir="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-macos-entitlements.XXXXXX")"
+  chmod 700 "$entitlements_dir"
+  python3 - "$MACOS_ENTITLEMENTS" "$MACOS_DIR/ShareFiles/ShareFiles.entitlements" "$entitlements_dir" <<'PYTHON'
+import os, pathlib, plistlib, sys
+app_source, share_source, destination = map(pathlib.Path, sys.argv[1:])
+group = os.environ["NVPN_MACOS_SHARE_APP_GROUP"]
+for source, name in [(app_source, "app.plist"), (share_source, "share.plist")]:
+    value = plistlib.loads(source.read_bytes())
+    value["com.apple.security.application-groups"] = [group]
+    (destination / name).write_bytes(plistlib.dumps(value))
+PYTHON
   while IFS= read -r -d '' executable; do
     if file "$executable" | grep -Eq 'Mach-O'; then
       run_codesign --force "$(codesign_timestamp_arg)" --options runtime --sign "$identity" "$executable"
     fi
   done < <(find "$app_path/Contents" -type f -print0)
-
-  run_codesign --force --deep "$(codesign_timestamp_arg)" --options runtime "${entitlement_args[@]}" --sign "$identity" "$app_path"
+  if ! run_codesign --force "$(codesign_timestamp_arg)" --options runtime \
+    --entitlements "$entitlements_dir/share.plist" --sign "$identity" "$share_extension" \
+    || ! run_codesign --force "$(codesign_timestamp_arg)" --options runtime \
+    --entitlements "$entitlements_dir/app.plist" --sign "$identity" "$app_path"
+  then
+    rm -rf "$entitlements_dir"
+    return 1
+  fi
+  rm -rf "$entitlements_dir"
   codesign --verify --deep --strict --verbose=2 "$app_path"
 }
 
@@ -783,16 +797,24 @@ run_macos_app() {
   TARGETS="${NVPN_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
   XCODE_CONFIGURATION="${NVPN_MACOS_XCODE_CONFIGURATION:-Release}"
 
-  run_macos_xcframework
-  run_macos_xcodeproj
-
   signing_identity="$(developer_id_identity || true)"
   if [[ -n "$signing_identity" ]]; then
     verify_signing_identity "$signing_identity"
+    local signing_label
+    signing_label="$(security find-identity -v -p codesigning | awk -F '"' -v identity="$signing_identity" '$2 == identity || index($1, identity) > 0 { print $2; exit }')"
+    if [[ "$signing_label" =~ \(([A-Z0-9]{10})\)$ ]]; then
+      team_id="${BASH_REMATCH[1]}"
+      export NVPN_MACOS_SHARE_APP_GROUP="$team_id.fi.siriusbusiness.nvpn.shared"
+    else
+      echo "Could not resolve the macOS signing team for the file sharing app group" >&2
+      return 1
+    fi
   elif bool_is_true "${NVPN_MACOS_REQUIRE_SIGNING:-false}"; then
     echo "Developer ID signing is required for release artifacts. Set MACOS_SIGNING_IDENTITY." >&2
     exit 1
   fi
+  run_macos_xcframework
+  run_macos_xcodeproj
   sign_args+=(CODE_SIGNING_ALLOWED=NO)
 
   SWIFTC_MAXIMUM_DETERMINISM="${NVPN_MACOS_SWIFTC_MAXIMUM_DETERMINISM:-1}" \

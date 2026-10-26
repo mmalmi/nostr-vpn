@@ -121,6 +121,10 @@ struct DeviceDetailSheet: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
+                if !isMe {
+                    if !model.state.vpnActive { Text("Connect VPN to send files.").font(.caption).foregroundStyle(.secondary) }
+                    FileSendButton(model: model, npub: participant.npub, enabled: network.enabled && participant.reachable)
+                }
                 AppCard {
                     HStack(spacing: 8) {
                         Circle()

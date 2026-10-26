@@ -13,6 +13,7 @@ let defaultUpdatePollIntervalNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000
 
 @MainActor
 final class AppManager: ObservableObject {
+    var processingFileShare = false
     @Published var state: NativeAppState
     @Published var paidExitChooserRequested = false
     @Published var sellingSettingsRequested = false
@@ -222,6 +223,8 @@ final class AppManager: ObservableObject {
                 return
             }
             state = nextState
+            publishFileSharePeers()
+            consumeFileShareRequests()
             maybePromptServiceUpdate(nextState)
         } while refreshPending && !Task.isCancelled
     }
@@ -297,6 +300,7 @@ final class AppManager: ObservableObject {
             }.value
             await MainActor.run {
                 self.state = nextState
+                self.publishFileSharePeers()
                 self.actionInFlight = false
                 self.actionStatus = nextState.error.isEmpty ? successStatus : nextState.error
                 self.actionError = nextState.error

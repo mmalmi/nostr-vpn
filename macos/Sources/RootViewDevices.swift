@@ -97,6 +97,7 @@ extension RootView {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    FileTransfersView(manager: manager)
                     let activeSearch = showSearch ? search.wrappedValue : ""
                     let participants = visibleParticipants(network, search: activeSearch)
                     let selectedPubkeyHex = selectedParticipant(in: network)?.pubkeyHex
@@ -246,6 +247,13 @@ extension RootView {
             if let participant = selectedParticipant(in: network) {
                 VStack(alignment: .leading, spacing: 22) {
                     deviceDetailHeader(participant, network: network)
+                    if !isSelf(participant) {
+                        Button { manager.chooseFiles(to: participant.npub) } label: {
+                            Label("Send files", systemImage: "paperplane.fill")
+                        }
+                        .disabled(!manager.state.vpnActive || !network.enabled || !participant.reachable || manager.actionInFlight)
+                        .help(manager.state.vpnActive ? "Send files to this device" : "Connect VPN to send files")
+                    }
                     if network.localIsAdmin {
                         deviceAdminSection(participant, network: network)
                     }

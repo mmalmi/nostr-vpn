@@ -147,6 +147,7 @@ chmod +x "$TEMP_ROOT/bin/ideviceinfo"
   NVPN_IOS_CODE_SIGN_IDENTITY=fixture-signer
   NVPN_IOS_PROVISIONING_PROFILE_UUID=fixture-app-profile
   NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID=fixture-tunnel-profile
+  NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID=fixture-share-profile
   NVPN_BUILD_GIT_SHA=fixture-source
   NVPN_BUILD_TIMESTAMP_UTC=fixture-time
   ios_release_network_xcode_command

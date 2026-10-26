@@ -101,6 +101,7 @@ final class AppModel: ObservableObject {
         core = client
         let compatibility = Self.appStoreCompatibleState(client.state(), core: client)
         state = compatibility.state
+        publishFileSharePeers()
         appStoreTunnelRefreshPending =
             compatibility.removedPaidConfiguration && compatibility.vpnWasRunning
         #if DEBUG
@@ -342,6 +343,7 @@ final class AppModel: ObservableObject {
     ) -> Bool {
         let compatibility = Self.appStoreCompatibleState(current, core: core)
         state = compatibility.state
+        publishFileSharePeers()
         state.vpnEnabled = vpnDesiredState.adoptNativeState(
             runtimeEnabled: state.vpnEnabled,
             successfulTransportStart: successfulTransportStart
