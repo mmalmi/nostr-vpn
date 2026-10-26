@@ -55,6 +55,71 @@ function exactGithubRepository({ repoRoot, expected = '' }) {
   return repository
 }
 
+// Release identity lives in immutable lightweight tags. Development branches
+// can advance or diverge independently of an already staged release.
+export function inspectReleaseTagRefs({
+  repoRoot,
+  tag,
+  commit,
+  requirePublished = false,
+  runCommand = spawnSync,
+}) {
+  const reference = `refs/tags/${tag}`
+  const refs = {}
+  for (const [remote, key] of [
+    ['github', 'githubTag'],
+    ['origin', 'htreeTag'],
+  ]) {
+    const result = runCommand(
+      'git',
+      ['ls-remote', '--exit-code', remote, reference],
+      { cwd: repoRoot, encoding: 'utf8', stdio: 'pipe' },
+    )
+    const stdout = String(result.stdout ?? '').trim()
+    if (!result.error && result.status === 2 && !stdout) {
+      refs[key] = ''
+      continue
+    }
+    if (result.error || result.status !== 0) {
+      throw new Error(`Could not inspect ${remote} release tag ${tag}.`)
+    }
+    const rows = stdout.split('\n')
+    const [sha, returnedReference, ...extra] = rows[0].split(/\s+/)
+    if (
+      rows.length !== 1
+      || extra.length
+      || returnedReference !== reference
+      || !/^[0-9a-f]{40}$/.test(sha)
+    ) {
+      throw new Error(`${remote} release tag ${tag} returned an invalid exact ref.`)
+    }
+    if (sha !== commit) {
+      throw new Error(`${remote} tag ${tag} conflicts with the staged commit.`)
+    }
+    refs[key] = sha
+  }
+  if (requirePublished && Object.values(refs).some((sha) => sha !== commit)) {
+    throw new Error('Published release refs do not all resolve to the staged commit.')
+  }
+  return refs
+}
+
+function exactGithubReleaseSource({ repoRoot, tag, commit, expected = '' }) {
+  const repository = exactGithubRepository({ repoRoot, expected })
+  const reference = `refs/tags/${tag}`
+  const tagType = run('git', ['cat-file', '-t', reference], { cwd: repoRoot }).stdout.trim()
+  const tagCommit = run(
+    'git',
+    ['rev-parse', '-q', '--verify', `${reference}^{commit}`],
+    { cwd: repoRoot },
+  ).stdout.trim()
+  if (tagType !== 'commit' || tagCommit !== commit) {
+    throw new Error(`Release tag ${tag} must be a lightweight tag at the staged commit.`)
+  }
+  inspectReleaseTagRefs({ repoRoot, tag, commit, requirePublished: true })
+  return repository
+}
+
 function expectedAssets(stageDir, manifest) {
   return manifest.assets.map((asset) => {
     const path = join(stageDir, asset.path)
@@ -269,8 +334,10 @@ function repairExactRelease({
   }
   if (plan.missing.length > 0) {
     beforeMutation()
-    const mutationRepository = exactGithubRepository({
+    const mutationRepository = exactGithubReleaseSource({
       repoRoot,
+      tag,
+      commit,
       expected: repository,
     })
     run(
@@ -288,8 +355,10 @@ function repairExactRelease({
   }
   if (plan.metadataNeedsEdit) {
     beforeMutation()
-    const mutationRepository = exactGithubRepository({
+    const mutationRepository = exactGithubReleaseSource({
       repoRoot,
+      tag,
+      commit,
       expected: repository,
     })
     run(
@@ -343,28 +412,7 @@ export function preflightGithubRelease({
   if (viewedRepository !== repository) {
     throw new Error('GitHub CLI repository differs from the exact github remote.')
   }
-  const tagCommit = run(
-    'git',
-    ['rev-parse', '-q', '--verify', `${tag}^{commit}`],
-    { cwd: repoRoot },
-  ).stdout.trim()
-  if (tagCommit !== commit) {
-    throw new Error(`GitHub release tag ${tag} differs from staged commit ${commit}.`)
-  }
-  for (const [remote, reference, label] of [
-    ['github', 'refs/heads/master', 'GitHub master'],
-    ['github', `refs/tags/${tag}`, `GitHub tag ${tag}`],
-    ['origin', 'refs/heads/master', 'htree master'],
-  ]) {
-    const remoteRef = run(
-      'git',
-      ['ls-remote', '--exit-code', remote, reference],
-      { cwd: repoRoot },
-    ).stdout.trim().split(/\s+/)[0]
-    if (remoteRef !== commit) {
-      throw new Error(`${label} does not resolve to staged commit ${commit}.`)
-    }
-  }
+  exactGithubReleaseSource({ repoRoot, tag, commit, expected: repository })
   return { repository }
 }
 
@@ -384,8 +432,10 @@ export function publishExactGithubRelease({
   if (dryRun) {
     return { created: false, verified: true }
   }
-  const exactRepository = exactGithubRepository({
+  const exactRepository = exactGithubReleaseSource({
     repoRoot,
+    tag,
+    commit,
     expected: repository,
   })
   const notes = renderGithubReleaseNotes({
@@ -402,8 +452,10 @@ export function publishExactGithubRelease({
       throw new Error(viewed.error || 'Could not inspect existing GitHub release.')
     }
     beforeMutation()
-    const mutationRepository = exactGithubRepository({
+    const mutationRepository = exactGithubReleaseSource({
       repoRoot,
+      tag,
+      commit,
       expected: exactRepository,
     })
     const arguments_ = [
@@ -476,5 +528,6 @@ export function publishExactGithubRelease({
     tag,
     assets,
   })
+  exactGithubReleaseSource({ repoRoot, tag, commit, expected: exactRepository })
   return { created, verified: true }
 }

@@ -2949,9 +2949,9 @@ test('corrected GitHub release is explicitly promoted as latest', () => {
 
   assert.match(publisher, /'--latest'/)
   assert.match(publisher, /'--verify-tag'/)
-  assert.match(publisher, /'refs\/heads\/master'/)
+  assert.doesNotMatch(publisher, /refs\/heads\/master/)
   assert.match(publisher, /`refs\/tags\/\$\{tag\}`/)
-  assert.match(publisher, /\['origin', 'refs\/heads\/master'/)
+  assert.match(publisher, /\['origin', 'htreeTag'\]/)
 })
 
 test('Windows corrected-release tags keep installer version at the marketing version', () => {
