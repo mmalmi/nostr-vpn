@@ -1605,6 +1605,12 @@ raise SystemExit(
 
 verify_production_ios_idle_cpu() {
     local artifact_app_sha
+    local -a exception_args=()
+    if [[ -n "${NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION:-}" ]]; then
+      exception_args=(--release-exception "$NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION"
+        --release-commit "$NVPN_EXPECTED_APP_GIT_SHA"
+        --release-version "$(node -p 'require("./package.json").version')")
+    fi
     # A harness-only correction must not rebuild or relabel the signed app.
     # Prove its product inputs are unchanged, then validate CPU evidence
     # against the original artifact source and all original measurement bytes.
@@ -1627,7 +1633,8 @@ JS
       --artifact-receipt "${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}" \
       --app "${NVPN_MOBILE_IOS_RELEASE_APP_PATH:?Missing production app}" \
       --app-git-sha "$artifact_app_sha" \
-      --fips-git-sha "$NVPN_EXPECTED_FIPS_GIT_SHA"
+      --fips-git-sha "$NVPN_EXPECTED_FIPS_GIT_SHA" \
+      "${exception_args[@]}"
 }
 
 run_mobile_idle_cpu_gates() {
