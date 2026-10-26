@@ -49,11 +49,11 @@ function fakePublication({
   githubMaster = previous,
   githubTag = '',
   htreeMaster = previous,
+  htreeTag = '',
   localTag = false,
   workflow = 'none',
   conflictingCid = '',
   failDraft = false,
-  divergentMaster = false,
   driftBeforeWorkflowList = false,
   workflowHeadSha = commit,
   mismatchedPushUrl = '',
@@ -66,6 +66,7 @@ function fakePublication({
     githubMaster,
     githubTag,
     htreeMaster,
+    htreeTag,
     localTag,
     workflow,
   }
@@ -128,26 +129,12 @@ function fakePublication({
     if (command === 'git' && args[0] === 'ls-remote') {
       const remote = args[2]
       const reference = args[3]
-      let sha = ''
-      if (remote === 'github' && reference === 'refs/heads/master') {
-        sha = state.githubMaster
-      } else if (
-        remote === 'github'
-        && reference === `refs/tags/${tag}`
-      ) {
-        sha = state.githubTag
-      } else if (
-        remote === 'origin'
-        && reference === 'refs/heads/master'
-      ) {
-        sha = state.htreeMaster
-      }
+      assert.equal(reference, `refs/tags/${tag}`)
+      assert.ok(['github', 'origin'].includes(remote))
+      const sha = state[remote === 'github' ? 'githubTag' : 'htreeTag']
       return sha
         ? result(0, `${sha}\t${reference}`)
         : result(2)
-    }
-    if (command === 'git' && args[0] === 'merge-base') {
-      return divergentMaster ? result(1) : result()
     }
     if (command === 'git' && args[0] === 'cat-file') {
       return state.localTag ? result(0, 'commit') : result(128)
@@ -167,7 +154,6 @@ function fakePublication({
           name: 'github-push',
           args,
         })
-        state.githubMaster = commit
         state.githubTag = commit
       } else {
         events.push({
@@ -175,7 +161,7 @@ function fakePublication({
           name: 'htree-push',
           args,
         })
-        state.htreeMaster = commit
+        state.htreeTag = commit
       }
       return result()
     }
@@ -189,8 +175,7 @@ function fakePublication({
         state.workflow = 'queued'
       }
       if (driftBeforeWorkflowList) {
-        state.githubMaster = previous
-        state.githubTag = ''
+        state[driftBeforeWorkflowList === 'origin' ? 'htreeTag' : 'githubTag'] = ''
       }
       const rows = []
       if (conflictingCid) {
@@ -280,10 +265,8 @@ test('exact ref publication gates every external phase and waits for exact CI', 
   const github = fake.events.find((event) => event.name === 'github-push')
   assert.deepEqual(github.args, [
     'push',
-    '--atomic',
     '--no-follow-tags',
     'github',
-    `${commit}:refs/heads/master`,
     `${commit}:refs/tags/${tag}`,
   ])
   const htree = fake.events.find((event) => event.name === 'htree-push')
@@ -291,7 +274,7 @@ test('exact ref publication gates every external phase and waits for exact CI', 
     'push',
     '--no-follow-tags',
     'origin',
-    `${commit}:refs/heads/master`,
+    `${commit}:refs/tags/${tag}`,
   ])
   const dispatch = fake.events.find(
     (event) => event.name === 'workflow-dispatch',
@@ -317,7 +300,7 @@ test('exact successful retry performs no external mutation or duplicate dispatch
   const fake = fakePublication({
     githubMaster: commit,
     githubTag: commit,
-    htreeMaster: commit,
+    htreeTag: commit,
     localTag: true,
     workflow: 'success',
   })
@@ -390,21 +373,20 @@ test('non-root or malformed draft CID is rejected before any command', () => {
   }
 })
 
-test('remote tag conflict stops before tag or external mutation', () => {
-  const fake = fakePublication({ githubTag: 'd'.repeat(40) })
-  assert.throws(
-    () => publishReleaseRefs(options(), {
-      runCommand: fake.runCommand,
-      sleep: () => {},
-      validateGate: successfulGate(fake.events),
-    }),
-    /tag .* conflicts/i,
-  )
-  assert.equal(
-    fake.events.some((event) => event.name === 'local-tag'),
-    false,
-  )
-  assert.deepEqual(mutationNames(fake.events), [])
+test('conflicting release tags on either remote stop before any mutation', () => {
+  for (const key of ['githubTag', 'htreeTag']) {
+    const fake = fakePublication({ [key]: previous })
+    assert.throws(
+      () => publishReleaseRefs(options(), {
+        runCommand: fake.runCommand,
+        sleep: () => {},
+        validateGate: successfulGate(fake.events),
+      }),
+      /tag .* conflicts/i,
+    )
+    assert.equal(fake.events.some((event) => event.name === 'local-tag'), false)
+    assert.deepEqual(mutationNames(fake.events), [])
+  }
 })
 
 test('different configured push URL stops before tag or external mutation', () => {
@@ -441,21 +423,58 @@ test('multiple configured push URLs stop before external mutation', () => {
   }
 })
 
-test('divergent remote master stops before tag or external mutation', () => {
-  const fake = fakePublication({ divergentMaster: true })
-  assert.throws(
-    () => publishReleaseRefs(options(), {
+test('newer or divergent masters are preserved while only release tags publish', () => {
+  const fake = fakePublication({ githubMaster: previous, htreeMaster: 'd'.repeat(40) })
+  publishReleaseRefs(options(), {
+    runCommand: fake.runCommand,
+    sleep: () => {},
+    validateGate: successfulGate(fake.events),
+  })
+  assert.equal(fake.state.githubMaster, previous)
+  assert.equal(fake.state.htreeMaster, 'd'.repeat(40))
+  assert.equal(fake.state.githubTag, commit)
+  assert.equal(fake.state.htreeTag, commit)
+  for (const event of fake.events.filter(({ name }) => name.endsWith('-push'))) {
+    assert.deepEqual(event.args, [
+      'push', '--no-follow-tags', event.name === 'github-push' ? 'github' : 'origin',
+      `${commit}:refs/tags/${tag}`,
+    ])
+  }
+})
+
+test('tag conflicts arising during a gate replay stop the next push', () => {
+  for (const key of ['githubTag', 'htreeTag']) {
+    const fake = fakePublication()
+    const gate = successfulGate(fake.events)
+    assert.throws(() => publishReleaseRefs(options(), {
       runCommand: fake.runCommand,
       sleep: () => {},
+      validateGate: (gateOptions) => {
+        const result = gate(gateOptions)
+        if (gateOptions.requireTag) fake.state[key] = previous
+        return result
+      },
+    }), /tag .* conflicts/i)
+    assert.deepEqual(mutationNames(fake.events), [])
+  }
+})
+
+test('a rejected tag push stops publication without forcing or dispatching', () => {
+  for (const remote of ['github', 'origin']) {
+    const fake = fakePublication()
+    assert.throws(() => publishReleaseRefs(options(), {
+      runCommand: (command, args, commandOptions) => {
+        if (command === 'git' && args[0] === 'push' && args.includes(remote)) {
+          assert.deepEqual(args, ['push', '--no-follow-tags', remote, `${commit}:refs/tags/${tag}`])
+          return { status: 1, stdout: '', stderr: 'tag already exists' }
+        }
+        return fake.runCommand(command, args, commandOptions)
+      },
+      sleep: () => {},
       validateGate: successfulGate(fake.events),
-    }),
-    /not an ancestor/i,
-  )
-  assert.equal(
-    fake.events.some((event) => event.name === 'local-tag'),
-    false,
-  )
-  assert.deepEqual(mutationNames(fake.events), [])
+    }), /tag already exists/i)
+    assert.deepEqual(mutationNames(fake.events), remote === 'github' ? [] : ['github-push'])
+  }
 })
 
 test('gate failure after GitHub stops htree and workflow mutations', () => {
@@ -475,7 +494,7 @@ test('different-CID workflow for exact tag and commit fails closed', () => {
   const fake = fakePublication({
     githubMaster: commit,
     githubTag: commit,
-    htreeMaster: commit,
+    htreeTag: commit,
     localTag: true,
     conflictingCid: 'nhash1acdefghjklmnpqrstuvwxyz023456780',
   })
@@ -494,7 +513,7 @@ test('workflow appearing after final gate is resumed without dispatch', () => {
   const fake = fakePublication({
     githubMaster: commit,
     githubTag: commit,
-    htreeMaster: commit,
+    htreeTag: commit,
     localTag: true,
     workflowAppearsOnList: 2,
   })
@@ -514,7 +533,7 @@ test('duplicate identical workflow runs are rejected', () => {
   const fake = fakePublication({
     githubMaster: commit,
     githubTag: commit,
-    htreeMaster: commit,
+    htreeTag: commit,
     localTag: true,
     workflow: 'queued',
     duplicateExactRuns: true,
@@ -530,31 +549,31 @@ test('duplicate identical workflow runs are rejected', () => {
   assert.deepEqual(mutationNames(fake.events), [])
 })
 
-test('remote ref drift during successful workflow resume fails closed', () => {
-  const fake = fakePublication({
-    githubMaster: commit,
-    githubTag: commit,
-    htreeMaster: commit,
-    localTag: true,
-    workflow: 'success',
-    driftBeforeWorkflowList: true,
-  })
-  assert.throws(
-    () => publishReleaseRefs(options(), {
-      runCommand: fake.runCommand,
-      sleep: () => {},
-      validateGate: successfulGate(fake.events),
-    }),
-    /release refs do not all resolve/i,
-  )
-  assert.deepEqual(mutationNames(fake.events), [])
+test('tag loss before dispatch or after workflow resume fails closed on either remote', () => {
+  for (const remote of ['github', 'origin']) {
+    for (const workflow of ['none', 'success']) {
+      const fake = fakePublication({
+        githubTag: commit,
+        htreeTag: commit,
+        localTag: true,
+        workflow,
+        driftBeforeWorkflowList: remote,
+      })
+      assert.throws(() => publishReleaseRefs(options(), {
+        runCommand: fake.runCommand,
+        sleep: () => {},
+        validateGate: successfulGate(fake.events),
+      }), /release refs (do not all resolve|changed)/i)
+      assert.deepEqual(mutationNames(fake.events), [])
+    }
+  }
 })
 
 test('same exact workflow inputs with a different event head fail closed', () => {
   const fake = fakePublication({
     githubMaster: commit,
     githubTag: commit,
-    htreeMaster: commit,
+    htreeTag: commit,
     localTag: true,
     workflow: 'success',
     workflowHeadSha: previous,
