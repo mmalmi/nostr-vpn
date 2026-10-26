@@ -30,6 +30,8 @@ All notable changes to this project are documented in this file.
   directory owned by the user.
 - Update TLS certificate validation dependencies on desktop and mobile,
   including the separately resolved Linux desktop app.
+- Fix cryptographic timing vulnerabilities in WebRTC connections and update
+  asynchronous I/O dependencies for the latest security fixes.
 
 ## 4.1.18 - 2026-10-19
 

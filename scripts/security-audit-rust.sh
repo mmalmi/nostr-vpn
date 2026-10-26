@@ -31,6 +31,10 @@ ensure_cargo_audit
 #   dependency lines. The reported unwind requires a panicking key Drop plus
 #   catch_unwind; these paths use ordinary owned keys and do not recover across
 #   their drop panics. Remove when both lines accept patched lru >= 0.18.2.
+# - RUSTSEC-2026-0374: `basic-toml` 0.1.10 is an unmaintained build-time
+#   dependency of Askama's derive macro through UniFFI 0.29.5. The hosted
+#   release checks already accept this informational advisory; it is not the
+#   VPN runtime TOML parser. Remove when UniFFI/Askama drops basic-toml.
 audit_args=(
   --deny warnings
   --ignore RUSTSEC-2024-0384
@@ -40,6 +44,7 @@ audit_args=(
   --ignore RUSTSEC-2026-0195
   --ignore RUSTSEC-2026-0243
   --ignore RUSTSEC-2026-0253
+  --ignore RUSTSEC-2026-0374
 )
 
 cargo audit "${audit_args[@]}"
