@@ -26,7 +26,7 @@ const fipsPackageNames = [
   'nvpn-fips-endpoint',
   'nvpn-fips-identity',
 ]
-const fipsPatchedPackageNames = [
+const legacyFipsPatchedPackageNames = [
   ...fipsPackageNames,
   'nvpn-mdns-sd',
   'nvpn-turn',
@@ -556,6 +556,15 @@ export function exactFipsPublicationCandidate({
   const lock = readFileSync(rootCargoLockPath, 'utf8')
   cargoLockRegistryPackage(lock, 'nvpn-fips-core', expectedFipsVersion)
   cargoLockRegistryPackage(lock, 'nvpn-fips-endpoint', expectedFipsVersion)
+  const webrtcVersion = cargoLockUniqueRegistryPackage(lock, 'nvpn-webrtc').version
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(webrtcVersion)) {
+    throw new Error(`${label} has an unsupported nvpn-webrtc version.`)
+  }
+  const [major, minor, patch] = webrtcVersion.split('.').map(Number)
+  const fipsPatchedPackageNames = [...legacyFipsPatchedPackageNames]
+  if (major > 0 || minor > 17 || (minor === 17 && patch >= 4)) {
+    fipsPatchedPackageNames.push('nvpn-dtls')
+  }
   const packageVersions = Object.fromEntries(
     fipsPatchedPackageNames.map((name) => [
       name,
@@ -830,8 +839,8 @@ export function linuxPublicationVerificationPlan({
     !receiptFipsPackages ||
     typeof receiptFipsPackages !== 'object' ||
     Array.isArray(receiptFipsPackages) ||
-    Object.keys(receiptFipsPackages).length !== fipsPatchedPackageNames.length ||
-    fipsPatchedPackageNames.some(
+    Object.keys(receiptFipsPackages).length !== Object.keys(fips.fipsPatchedLockPackages).length ||
+    Object.keys(fips.fipsPatchedLockPackages).some(
       (name) =>
         receiptFipsPackages[name] !== fips.fipsPatchedLockPackages[name],
     )

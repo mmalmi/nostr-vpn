@@ -182,8 +182,8 @@ done < <(
   python3 "$PATCH_LOCK_VERIFIER" \
     --manifest-specs "$NVPN_FIPS_REPO_PATH"
 )
-[[ "${#FIPS_PATCH_PACKAGES[@]}" == 8 ]] || {
-  echo "Host Linux VM bundle lacks the eight exact FIPS source packages" >&2
+python3 "$PATCH_LOCK_VERIFIER" --validate-specs "${FIPS_PATCH_PACKAGES[@]}" || {
+  echo "Host Linux VM bundle lacks the exact FIPS source packages" >&2
   exit 2
 }
 ROOT_REALIZED_CARGO_LOCK_SHA256="$(
@@ -619,6 +619,7 @@ for artifact in nostr-vpn.deb nvpn-x86_64-unknown-linux-musl.tar.gz; do
   install -m 0444 "$TEMP_DIR/output/$artifact" "$TEMP_DIR/final/$artifact"
 done
 python3 - \
+  "$PATCH_LOCK_VERIFIER" \
   "$TEMP_DIR/final/receipt.json" \
   "$TEMP_DIR/final" \
   "$APP_GIT_SHA" \
@@ -650,9 +651,11 @@ import hashlib
 import json
 import pathlib
 import re
+import runpy
 import sys
 
 (
+    lock_verifier_arg,
     receipt_arg,
     bundle_arg,
     app_sha,
@@ -730,20 +733,9 @@ if not rustc_version.startswith(f"rustc {rust_toolchain} "):
     raise SystemExit("Linux release builder used the wrong rustc toolchain")
 if not cargo_version.startswith(f"cargo {rust_toolchain} "):
     raise SystemExit("Linux release builder used the wrong cargo toolchain")
-fips_patch_packages = dict(
-    spec.split("=", 1) for spec in fips_patch_specs
+fips_patch_packages = runpy.run_path(lock_verifier_arg)["package_specs"](
+    fips_patch_specs
 )
-if set(fips_patch_packages) != {
-    "nvpn-fips-core",
-    "nvpn-fips-endpoint",
-    "nvpn-fips-identity",
-    "nvpn-mdns-sd",
-    "nvpn-turn",
-    "nvpn-webrtc",
-    "nvpn-webrtc-ice",
-    "nvpn-webrtc-util",
-}:
-    raise SystemExit("unexpected exact FIPS patched lock package set")
 names = {
     "app": "nostr-vpn",
     "cli": "nvpn",

@@ -27,10 +27,22 @@ PATCH_CRATES = {
     "nvpn-webrtc-ice": "vendor/webrtc-ice",
     "nvpn-webrtc-util": "vendor/webrtc-util",
 }
+DTLS_CRATE = {"nvpn-dtls": "vendor/dtls"}
 
 
 def fail(message: str) -> "NoReturn":
     raise SystemExit(f"exact FIPS patched lock verification failed: {message}")
+
+
+def patch_crates(webrtc_version: str) -> dict[str, str]:
+    # nvpn-webrtc 0.17.4 introduced the local DTLS security fork. Select by
+    # version, never by presence: a missing fork must not look like old evidence.
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", webrtc_version) is None:
+        fail("unsupported nvpn-webrtc version")
+    crates = dict(PATCH_CRATES)
+    if tuple(map(int, webrtc_version.split("."))) >= (0, 17, 4):
+        crates.update(DTLS_CRATE)
+    return crates
 
 
 def package_specs(arguments: list[str]) -> dict[str, str]:
@@ -46,7 +58,7 @@ def package_specs(arguments: list[str]) -> dict[str, str]:
         ):
             fail(f"invalid or duplicate package specification: {argument}")
         result[name] = version
-    if set(result) != set(PATCH_CRATES):
+    if set(result) != set(patch_crates(result.get("nvpn-webrtc", ""))):
         fail("package specifications differ from the exact FIPS patch set")
     return result
 
@@ -54,7 +66,12 @@ def package_specs(arguments: list[str]) -> dict[str, str]:
 def manifest_specs(root_arg: str) -> dict[str, str]:
     root = pathlib.Path(root_arg)
     result: dict[str, str] = {}
-    for package_name, crate_dir in PATCH_CRATES.items():
+    crates = dict(PATCH_CRATES)
+    for package_name, crate_dir in list(crates.items()) + list(DTLS_CRATE.items()):
+        if package_name == "nvpn-dtls":
+            crates = patch_crates(result["nvpn-webrtc"])
+            if package_name not in crates:
+                continue
         manifest = root / crate_dir / "Cargo.toml"
         try:
             text = manifest.read_text(encoding="utf-8")
@@ -79,6 +96,40 @@ def manifest_specs(root_arg: str) -> dict[str, str]:
         if name != package_name or not version:
             fail(f"manifest package identity differs for {package_name}")
         result[name] = version
+    if "nvpn-dtls" in result:
+        webrtc = (root / PATCH_CRATES["nvpn-webrtc"] / "Cargo.toml").read_text()
+        tables = re.findall(
+            r'(?ms)^\[dependencies\.dtls\]\s*$(.*?)(?=^\[|\Z)', webrtc
+        )
+        if len(tables) != 1:
+            fail("nvpn-webrtc lacks one DTLS dependency table")
+        for field, expected in {
+            "package": "nvpn-dtls",
+            "path": "../dtls",
+            "version": "=" + result["nvpn-dtls"],
+        }.items():
+            if re.findall(rf'(?m)^{field} = "([^"]+)"\s*$', tables[0]) != [expected]:
+                fail(f"nvpn-webrtc DTLS dependency {field} differs")
+    return package_specs([f"{name}={version}" for name, version in result.items()])
+
+
+def lock_specs(committed: bytes) -> dict[str, str]:
+    text = committed.decode("utf-8")
+    versions: dict[str, list[str]] = {}
+    for block in text.split(PACKAGE_HEADER)[1:]:
+        names = re.findall(r'(?m)^name = "([^"]+)"$', block)
+        values = re.findall(r'(?m)^version = "([^"]+)"$', block)
+        if len(names) == len(values) == 1:
+            versions.setdefault(names[0], []).append(values[0])
+    webrtc = versions.get("nvpn-webrtc", [])
+    if len(webrtc) != 1:
+        fail("committed lock lacks one nvpn-webrtc package")
+    result = {}
+    for name in patch_crates(webrtc[0]):
+        if len(versions.get(name, [])) != 1:
+            fail(f"committed lock lacks one exact target package: {name}")
+        result[name] = versions[name][0]
+    expected_realized_lock(committed, result)
     return result
 
 
@@ -166,6 +217,13 @@ def expected_realized_lock(
 
 
 def main() -> None:
+    if len(sys.argv) >= 3 and sys.argv[1] == "--validate-specs":
+        package_specs(sys.argv[2:])
+        return
+    if len(sys.argv) == 3 and sys.argv[1] == "--lock-specs":
+        for name, version in lock_specs(pathlib.Path(sys.argv[2]).read_bytes()).items():
+            print(f"{name}={version}")
+        return
     if len(sys.argv) == 3 and sys.argv[1] == "--manifest-specs":
         for name, version in manifest_specs(sys.argv[2]).items():
             print(f"{name}={version}")
@@ -178,6 +236,8 @@ def main() -> None:
         fail(
             "usage: verify-cargo-path-patch-lock.py "
             "--manifest-specs FIPS_ROOT | "
+            "--lock-specs COMMITTED_LOCK | "
+            "--validate-specs NAME=VERSION [...] | "
             "--expected-sha256 COMMITTED_LOCK NAME=VERSION [...] | "
             "--materialize COMMITTED_LOCK OUTPUT NAME=VERSION [...] | "
             "--validate COMMITTED_LOCK REALIZED_LOCK NAME=VERSION [...]"
