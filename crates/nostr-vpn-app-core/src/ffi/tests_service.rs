@@ -257,7 +257,7 @@ exit 93
                 internet_source: Some("wireguard".to_string()),
                 wireguard_exit_enabled: Some(true),
                 wireguard_exit_config: Some(
-                    r#"
+                    r"
 [Interface]
 PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
 Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128
@@ -266,7 +266,7 @@ Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128
 PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = vpn.example.test:51820
-"#
+"
                     .to_string(),
                 ),
                 ..SettingsPatch::default()
