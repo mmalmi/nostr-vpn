@@ -13,6 +13,8 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Prevent paid Internet buyers from accessing the seller's private host,
+  local network, or other mesh routes.
 - Preserve Umbrel firewall protection state when its container is recreated.
 - Manage Windows services directly and handle installation paths with spaces.
 - Let Linux users select an available webcam for QR scanning, hide inaccessible
