@@ -259,7 +259,7 @@ fips_packages=()
 while IFS= read -r package; do
   fips_packages+=("$package")
 done < <(python3 "$PATCH_LOCK_VERIFIER" --manifest-specs "$REMOTE_ROOT/fips")
-[[ "${#fips_packages[@]}" == 8 ]]
+python3 "$PATCH_LOCK_VERIFIER" --validate-specs "${fips_packages[@]}"
 python3 "$PATCH_LOCK_VERIFIER" \
   --materialize "$REMOTE_ROOT/app/Cargo.lock" \
   "$REMOTE_ROOT/root-realized.lock" \

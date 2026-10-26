@@ -7,6 +7,7 @@ import hashlib
 import json
 import pathlib
 import re
+import runpy
 import stat
 import sys
 
@@ -29,7 +30,7 @@ def sha256_path(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-if len(sys.argv) != 26:
+if len(sys.argv) not in (26, 27):
     fail(
         "usage: verify-host-linux-vm-bundle.py "
         "BUNDLE RECEIPT APP_SHA APP_TREE APP_VERSION "
@@ -88,27 +89,10 @@ for label, value in (
 if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rust_toolchain) is None:
     fail("Rust toolchain version is invalid")
 
-fips_patch_packages: dict[str, str] = {}
-for specification in fips_patch_specs:
-    name, separator, version = specification.partition("=")
-    if (
-        separator != "="
-        or name in fips_patch_packages
-        or re.fullmatch(r"[0-9A-Za-z_.+-]+", version) is None
-    ):
-        fail("exact FIPS patched lock package specification is invalid")
-    fips_patch_packages[name] = version
-if set(fips_patch_packages) != {
-    "nvpn-fips-core",
-    "nvpn-fips-endpoint",
-    "nvpn-fips-identity",
-    "nvpn-mdns-sd",
-    "nvpn-turn",
-    "nvpn-webrtc",
-    "nvpn-webrtc-ice",
-    "nvpn-webrtc-util",
-}:
-    fail("exact FIPS patched lock package set differs")
+lock_verifier = runpy.run_path(
+    str(pathlib.Path(__file__).with_name("verify-cargo-path-patch-lock.py"))
+)
+fips_patch_packages = lock_verifier["package_specs"](fips_patch_specs)
 
 expected_metadata = {
     "schema": 2,

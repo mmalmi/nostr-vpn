@@ -319,6 +319,7 @@ const fipsPackages = Object.fromEntries(
     'nvpn-webrtc',
     'nvpn-webrtc-ice',
     'nvpn-webrtc-util',
+    'nvpn-dtls',
   ].map((name) => [
     name,
     committedRegistryPackageVersion(name),
@@ -580,7 +581,7 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
     plan.verifierPath,
     join(realpathSync(root), 'scripts', 'verify-host-linux-vm-bundle.py'),
   )
-  assert.equal(plan.verifierArgs.length, 25)
+  assert.equal(plan.verifierArgs.length, 17 + fipsSpecs.length)
   assert.deepEqual(plan.verifierArgs.slice(0, 3), [
     realpathSync(bundlePath),
     realpathSync(bundleReceiptPath),
@@ -590,6 +591,19 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
   assert.equal(plan.verifierArgs[13], 'remote-native')
   assert.equal(plan.verifierArgs[14], '1.95.0')
   assert.deepEqual(plan.verifierArgs.slice(17), fipsSpecs)
+
+  for (const mutation of [
+    (packages) => { delete packages['nvpn-dtls'] },
+    (packages) => { packages['nvpn-dtls'] = '0.17.2' },
+    (packages) => { packages.unknown = packages['nvpn-dtls']; delete packages['nvpn-dtls'] },
+  ]) {
+    const packages = { ...fipsPackages }
+    mutation(packages)
+    assert.throws(
+      () => planFor({ gateReceipt: { ...exactGateReceipt, fipsPatchedLockPackages: packages } }),
+      /fipsPatchedLockPackages/,
+    )
+  }
 
   const dirtyPath = join(root, 'untracked-publication-input')
   writeFileSync(dirtyPath, 'dirty\n')
@@ -766,6 +780,31 @@ test('frozen FIPS publication identity comes from explicit proof and sealed Carg
     }),
     expected,
   )
+})
+
+test('legacy 107 publication retains the eight-package receipt contract', (context) => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-legacy-fips-proof-'))
+  context.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(join(root, 'scripts'))
+  copyFixtureInput(process.cwd(), 'scripts/verify-cargo-path-patch-lock.py',
+    join(root, 'scripts/verify-cargo-path-patch-lock.py'))
+  const packages = {
+    ...fipsPackages,
+    'nvpn-fips-core': '0.4.107',
+    'nvpn-fips-endpoint': '0.4.107',
+    'nvpn-webrtc': '0.17.3',
+  }
+  delete packages['nvpn-dtls']
+  writeFileSync(join(root, 'Cargo.lock'), 'version = 4\n\n' + Object.entries(packages)
+    .map(([name, version]) => `[[package]]\nname = "${name}"\nversion = "${version}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "${'a'.repeat(64)}"\n`)
+    .join('\n'))
+  const candidate = exactFipsPublicationCandidate({ candidateRoot: root, env: {
+    NVPN_EXPECTED_FIPS_GIT_SHA: 'a'.repeat(40),
+    NVPN_EXPECTED_FIPS_GIT_TREE: 'b'.repeat(40),
+    NVPN_EXPECTED_FIPS_VERSION: '0.4.107',
+  } })
+  assert.deepEqual(candidate.fipsPatchedLockPackages, packages)
+  assert.equal(candidate.fipsSpecifications.length, 8)
 })
 
 test('Windows publication requires installer and artifact receipts to bind exact FIPS', () => {

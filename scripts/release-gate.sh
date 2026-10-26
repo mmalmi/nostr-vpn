@@ -1102,7 +1102,7 @@ for (const [key, value] of Object.entries(expected)) {
 const lockTool = `${root}/scripts/verify-cargo-path-patch-lock.py`
 const python = (...args) => execFileSync('python3', args, { cwd: root, encoding: 'utf8' }).trim()
 const specs = python(lockTool, '--manifest-specs', process.env.NVPN_FIPS_REPO_PATH).split('\n')
-if (specs.length !== 8) throw new Error('Retained Linux bundle lacks eight exact FIPS source packages')
+python(lockTool, '--validate-specs', ...specs)
 const rustToolchain = process.env.NVPN_HOST_LINUX_VM_RUST_TOOLCHAIN || '1.95.0'
 execFileSync('python3', [`${root}/scripts/verify-host-linux-vm-bundle.py`, bundle, `${bundle}/receipt.json`,
   receipt.appGitSha, receipt.appGitTree, expected.appVersion,

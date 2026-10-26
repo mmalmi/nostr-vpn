@@ -36,11 +36,21 @@ done
 [[ -f "$NATIVE_BUILDER_LIB" ]] \
   || fail "native Linux builder helper is missing"
 
-"$ISOLATION_HARNESS"
-"$CLEANUP_HARNESS"
-"$RECOVERY_HARNESS"
-"$IMPORT_ENV_ISOLATION_HARNESS"
-"$JOIN_SERVICE_CLEANUP_HARNESS"
+case "${1:-}" in
+  --source-fixtures-only)
+    [[ "$#" == 1 ]] || fail "unexpected fixture arguments"
+    ;;
+  '')
+    "$ISOLATION_HARNESS"
+    "$CLEANUP_HARNESS"
+    "$RECOVERY_HARNESS"
+    "$IMPORT_ENV_ISOLATION_HARNESS"
+    "$JOIN_SERVICE_CLEANUP_HARNESS"
+    ;;
+  *) fail "usage: $0 [--source-fixtures-only]" ;;
+esac
+
+python3 "$ROOT/scripts/test-cargo-path-patch-lock.py"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-host-linux-bundle-contract.XXXXXX")"
 backup="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-host-linux-bundle-backup.XXXXXX")"
@@ -681,6 +691,34 @@ verify_fixture() {
 
 verify_fixture remote-native \
   | grep -Fq HOST_LINUX_VM_BUNDLE_VERIFIED
+
+# Bind the DTLS leaf in both the receipt and verifier arguments, then retain
+# the legacy fixture for the existing artifact and source adversaries below.
+cp "$tmp/receipt.json" "$backup/receipt-legacy.json"
+legacy_patch_specs=("${patch_specs[@]}")
+patch_specs[5]=nvpn-webrtc=0.17.4
+patch_specs+=(nvpn-dtls=0.17.3)
+python3 - "$tmp/receipt.json" <<'PY'
+import json
+import pathlib
+import sys
+path = pathlib.Path(sys.argv[1])
+receipt = json.loads(path.read_text())
+receipt["fipsPatchedLockPackages"].update({
+    "nvpn-webrtc": "0.17.4", "nvpn-dtls": "0.17.3",
+})
+path.write_text(json.dumps(receipt) + "\n")
+PY
+verify_fixture remote-native | grep -Fq HOST_LINUX_VM_BUNDLE_VERIFIED
+for invalid_dtls in missing nvpn-dtls=0.17.2 unknown=0.17.3; do
+  patch_specs=("${patch_specs[@]:0:8}")
+  [[ "$invalid_dtls" == missing ]] || patch_specs+=("$invalid_dtls")
+  if verify_fixture remote-native >/dev/null 2>&1; then
+    fail "bundle verifier accepted $invalid_dtls DTLS specification"
+  fi
+done
+patch_specs=("${legacy_patch_specs[@]}")
+cp "$backup/receipt-legacy.json" "$tmp/receipt.json"
 
 # Exercise the production peer-cache writer against the fully verified bundle.
 # Its cache must preserve the native binary and reject a different candidate.

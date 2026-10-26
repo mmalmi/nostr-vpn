@@ -21,7 +21,7 @@ fips_packages=()
 while IFS= read -r package; do
   fips_packages+=("$package")
 done < <(python3 "$lock_verifier" --manifest-specs /workspace/fips)
-[[ "${#fips_packages[@]}" == 8 ]]
+python3 "$lock_verifier" --validate-specs "${fips_packages[@]}"
 
 export CARGO_TARGET_DIR=/target-root
 [[ "$CARGO_HOME" == /cargo-home && "$HOME" == /cargo-home ]]
