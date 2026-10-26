@@ -413,7 +413,17 @@ fn ensure_windows_native_wireguard_config_root_is_safe(config_root: &Path) -> Re
         .parent()
         .expect("native WireGuard app root has a ProgramData parent");
     for component in [program_data, app_root, config_root] {
-        ensure_windows_path_is_not_reparse_point(component)?;
+        // A component that was never created cannot hide a reparse point;
+        // ownership audits must succeed on a machine with no prior install.
+        match std::fs::symlink_metadata(component) {
+            Ok(_) => ensure_windows_path_is_not_reparse_point(component)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("inspect native WireGuard path {}", component.display())
+                });
+            }
+        }
     }
     Ok(())
 }

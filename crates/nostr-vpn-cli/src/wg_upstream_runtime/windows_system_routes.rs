@@ -76,6 +76,7 @@ fn apply_windows_endpoint_bypass_route(
     wg_iface_index: u32,
     upstream: SocketAddr,
     excluded_tunnel_interfaces: &[u32],
+    manage_default_v6: bool,
     cleanup_journal_config_path: &Path,
 ) -> Result<WindowsFullDefaultRoute> {
     apply_windows_managed_default_routes(
@@ -83,6 +84,7 @@ fn apply_windows_endpoint_bypass_route(
         upstream,
         excluded_tunnel_interfaces,
         true,
+        manage_default_v6,
         cleanup_journal_config_path,
     )
 }
@@ -93,6 +95,7 @@ fn apply_windows_managed_default_routes(
     upstream: SocketAddr,
     excluded_tunnel_interfaces: &[u32],
     manage_default: bool,
+    manage_default_v6: bool,
     cleanup_journal_config_path: &Path,
 ) -> Result<WindowsFullDefaultRoute> {
     retry_pending_windows_route_cleanup_journaled(cleanup_journal_config_path)?;
@@ -114,6 +117,7 @@ fn apply_windows_managed_default_routes(
         upstream_ip,
         underlay,
         manage_default,
+        manage_default_v6,
     ) {
         Ok(routes) => routes,
         Err(mut failure) => {
@@ -442,13 +446,13 @@ fn resolve_windows_interface_index_for_alias_name(alias: &str) -> Result<u32> {
 fn windows_route_add_args(route: &WindowsRouteSpec) -> Vec<String> {
     let mut args = vec![
         "interface".to_string(),
-        "ipv4".to_string(),
+        windows_route_family(route).to_string(),
         "add".to_string(),
         "route".to_string(),
         route.prefix.clone(),
         format!("interface={}", route.interface_index),
     ];
-    if route.next_hop != "0.0.0.0" {
+    if !route.next_hop_is_on_link() {
         args.push(format!("nexthop={}", route.next_hop));
     }
     args.extend([
@@ -469,7 +473,7 @@ fn windows_route_set_args(route: &WindowsRouteSpec) -> Vec<String> {
 fn windows_route_delete_args(route: &WindowsRouteSpec) -> Vec<String> {
     vec![
         "interface".to_string(),
-        "ipv4".to_string(),
+        windows_route_family(route).to_string(),
         "delete".to_string(),
         "route".to_string(),
         route.prefix.clone(),
@@ -477,6 +481,21 @@ fn windows_route_delete_args(route: &WindowsRouteSpec) -> Vec<String> {
         format!("nexthop={}", route.next_hop),
         "store=active".to_string(),
     ]
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn windows_route_family(route: &WindowsRouteSpec) -> &'static str {
+    if route
+        .prefix
+        .split_once('/')
+        .map_or(route.prefix.as_str(), |(address, _)| address)
+        .parse::<std::net::Ipv6Addr>()
+        .is_ok()
+    {
+        "ipv6"
+    } else {
+        "ipv4"
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -491,28 +510,32 @@ fn windows_route_exists(route: &WindowsRouteSpec, exact_attributes: bool) -> Res
     let (destination, prefix_length) = route
         .prefix
         .split_once('/')
-        .ok_or_else(|| anyhow!("Windows route prefix must be IPv4 CIDR: {}", route.prefix))?;
-    let destination = destination
+        .ok_or_else(|| anyhow!("Windows route prefix must be CIDR: {}", route.prefix))?;
+    let destination: std::net::IpAddr = destination
         .parse()
-        .with_context(|| format!("invalid Windows route IPv4 address {destination}"))?;
+        .with_context(|| format!("invalid Windows route address {destination}"))?;
     let prefix_length = prefix_length
         .parse::<u8>()
         .with_context(|| format!("invalid Windows route prefix length {prefix_length}"))?;
-    if prefix_length > 32 {
+    let max_prefix_length = match destination {
+        std::net::IpAddr::V4(_) => 32,
+        std::net::IpAddr::V6(_) => 128,
+    };
+    if prefix_length > max_prefix_length {
         return Err(anyhow!(
             "invalid Windows route prefix length {prefix_length}"
         ));
     }
-    let next_hop = route
+    let next_hop: std::net::IpAddr = route
         .next_hop
         .parse()
         .with_context(|| format!("invalid Windows route next hop {}", route.next_hop))?;
     let mut row = MIB_IPFORWARD_ROW2::default();
     unsafe { InitializeIpForwardEntry(&mut row) };
     row.InterfaceIndex = route.interface_index;
-    row.DestinationPrefix.Prefix = windows_sockaddr_for_ipv4(destination);
+    row.DestinationPrefix.Prefix = windows_sockaddr_for_ip(destination);
     row.DestinationPrefix.PrefixLength = prefix_length;
-    row.NextHop = windows_sockaddr_for_ipv4(next_hop);
+    row.NextHop = windows_sockaddr_for_ip(next_hop);
     let status = unsafe { GetIpForwardEntry2(&mut row) };
     match status {
         ERROR_SUCCESS => Ok(!exact_attributes || row.Metric == route.metric),
@@ -523,24 +546,40 @@ fn windows_route_exists(route: &WindowsRouteSpec, exact_attributes: bool) -> Res
 }
 
 #[cfg(target_os = "windows")]
-fn windows_sockaddr_for_ipv4(
-    address: std::net::Ipv4Addr,
+fn windows_sockaddr_for_ip(
+    address: std::net::IpAddr,
 ) -> windows_sys::Win32::Networking::WinSock::SOCKADDR_INET {
     use windows_sys::Win32::Networking::WinSock::{
-        AF_INET, IN_ADDR, IN_ADDR_0, SOCKADDR_IN, SOCKADDR_INET,
+        AF_INET, AF_INET6, IN6_ADDR, IN6_ADDR_0, IN_ADDR, IN_ADDR_0, SOCKADDR_IN, SOCKADDR_IN6,
+        SOCKADDR_IN6_0, SOCKADDR_INET,
     };
 
-    SOCKADDR_INET {
-        Ipv4: SOCKADDR_IN {
-            sin_family: AF_INET,
-            sin_port: 0,
-            sin_addr: IN_ADDR {
-                S_un: IN_ADDR_0 {
-                    // `S_addr` stores network-order bytes in native memory.
-                    S_addr: u32::from_ne_bytes(address.octets()),
+    match address {
+        std::net::IpAddr::V4(address) => SOCKADDR_INET {
+            Ipv4: SOCKADDR_IN {
+                sin_family: AF_INET,
+                sin_port: 0,
+                sin_addr: IN_ADDR {
+                    S_un: IN_ADDR_0 {
+                        // `S_addr` stores network-order bytes in native memory.
+                        S_addr: u32::from_ne_bytes(address.octets()),
+                    },
                 },
+                sin_zero: [0; 8],
             },
-            sin_zero: [0; 8],
+        },
+        std::net::IpAddr::V6(address) => SOCKADDR_INET {
+            Ipv6: SOCKADDR_IN6 {
+                sin6_family: AF_INET6,
+                sin6_port: 0,
+                sin6_flowinfo: 0,
+                sin6_addr: IN6_ADDR {
+                    u: IN6_ADDR_0 {
+                        Byte: address.octets(),
+                    },
+                },
+                Anonymous: SOCKADDR_IN6_0 { sin6_scope_id: 0 },
+            },
         },
     }
 }

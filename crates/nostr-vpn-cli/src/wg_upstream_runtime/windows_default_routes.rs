@@ -41,6 +41,16 @@ impl WindowsRouteSpec {
         }
     }
 
+    fn wireguard_default_v6(interface_index: u32) -> Self {
+        Self {
+            prefix: "::/0".to_string(),
+            interface_index,
+            next_hop: "::".to_string(),
+            metric: 1,
+            interface_identity: None,
+        }
+    }
+
     fn direct(prefix: &str, interface_index: u32) -> Result<Self> {
         let prefix = prefix.trim();
         let (address, prefix_len) = prefix
@@ -64,12 +74,16 @@ impl WindowsRouteSpec {
         })
     }
 
+    fn next_hop_is_on_link(&self) -> bool {
+        self.next_hop == "0.0.0.0" || self.next_hop == "::"
+    }
+
     fn is_identityless_legacy_physical_bypass(&self) -> bool {
-        self.interface_identity.is_none() && self.next_hop != "0.0.0.0"
+        self.interface_identity.is_none() && !self.next_hop_is_on_link()
     }
 
     fn is_identityless_legacy_tunnel_route(&self) -> bool {
-        self.interface_identity.is_none() && self.next_hop == "0.0.0.0"
+        self.interface_identity.is_none() && self.next_hop_is_on_link()
     }
 }
 
@@ -252,9 +266,12 @@ struct WindowsManagedDefaultRoutes {
     bypass_owned: bool,
     manage_default: bool,
     default_owned: bool,
+    manage_default_v6: bool,
+    default_v6_owned: bool,
     orphaned_bypass_routes: Vec<WindowsRouteSpec>,
     bypass_interface_identity: Option<Box<str>>,
     default_interface_identity: Option<Box<str>>,
+    default_v6_interface_identity: Option<Box<str>>,
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -265,6 +282,7 @@ impl WindowsManagedDefaultRoutes {
         upstream_ip: std::net::Ipv4Addr,
         underlay: WindowsDefaultRoute,
         manage_default: bool,
+        manage_default_v6: bool,
     ) -> std::result::Result<Self, WindowsRouteApplyFailure<Self>> {
         let mut routes = Self {
             wg_iface_index,
@@ -273,9 +291,12 @@ impl WindowsManagedDefaultRoutes {
             bypass_owned: false,
             manage_default,
             default_owned: false,
+            manage_default_v6,
+            default_v6_owned: false,
             orphaned_bypass_routes: Vec::new(),
             bypass_interface_identity: None,
             default_interface_identity: None,
+            default_v6_interface_identity: None,
         };
         if let Err(error) = validate_windows_underlay(&routes.underlay, &[wg_iface_index]) {
             return Err(WindowsRouteApplyFailure {
@@ -328,6 +349,37 @@ impl WindowsManagedDefaultRoutes {
                     return Err(WindowsRouteApplyFailure {
                         error: with_windows_route_rollback(
                             error.context("install WireGuard default route"),
+                            rollback,
+                        ),
+                        cleanup: routes,
+                    });
+                }
+            }
+        }
+        if manage_default_v6 {
+            let mut default = WindowsRouteSpec::wireguard_default_v6(wg_iface_index);
+            if let Err(error) = runner.bind_interface_identity(&mut default) {
+                let rollback = routes.revert_with(runner);
+                return Err(WindowsRouteApplyFailure {
+                    error: with_windows_route_rollback(
+                        error.context("bind WireGuard IPv6 default route to tunnel interface"),
+                        rollback,
+                    ),
+                    cleanup: routes,
+                });
+            }
+            routes.default_v6_interface_identity = default
+                .interface_identity
+                .as_deref()
+                .map(str::to_owned)
+                .map(String::into_boxed_str);
+            match ensure_windows_route(runner, &default) {
+                Ok(owned) => routes.default_v6_owned = owned,
+                Err(error) => {
+                    let rollback = routes.revert_with(runner);
+                    return Err(WindowsRouteApplyFailure {
+                        error: with_windows_route_rollback(
+                            error.context("install WireGuard IPv6 default route"),
                             rollback,
                         ),
                         cleanup: routes,
@@ -413,6 +465,27 @@ impl WindowsManagedDefaultRoutes {
                 }
             }
         }
+        if self.manage_default_v6 {
+            let route = self.default_v6_route_spec();
+            match ensure_tracked_windows_route(runner, &route, self.default_v6_owned) {
+                Ok(true) => self.default_v6_owned = true,
+                Ok(false) => {}
+                Err(error) => {
+                    let rollback = if fresh_owned {
+                        delete_windows_route_with_retry(runner, &fresh_bypass)
+                    } else {
+                        Ok(())
+                    };
+                    if fresh_owned && rollback.is_err() {
+                        self.orphaned_bypass_routes.push(fresh_bypass);
+                    }
+                    return Err(with_windows_route_rollback(
+                        error.context("repair WireGuard IPv6 default route after underlay refresh"),
+                        rollback,
+                    ));
+                }
+            }
+        }
         if self.bypass_owned
             && let Err(error) = delete_windows_route_with_retry(runner, &stale_bypass)
         {
@@ -445,6 +518,15 @@ impl WindowsManagedDefaultRoutes {
             match delete_windows_route_with_retry(runner, &route) {
                 Ok(()) => self.default_owned = false,
                 Err(error) => failures.push(format!("remove WireGuard default route: {error:#}")),
+            }
+        }
+        if self.default_v6_owned {
+            let route = self.default_v6_route_spec();
+            match delete_windows_route_with_retry(runner, &route) {
+                Ok(()) => self.default_v6_owned = false,
+                Err(error) => {
+                    failures.push(format!("remove WireGuard IPv6 default route: {error:#}"))
+                }
             }
         }
         if self.bypass_owned {
@@ -525,13 +607,43 @@ impl WindowsManagedDefaultRoutes {
         } else {
             false
         };
-        Ok(repaired_bypass || repaired_default)
+        let repaired_default_v6 = if self.manage_default_v6 {
+            let route = self.default_v6_route_spec();
+            match ensure_tracked_windows_route(runner, &route, self.default_v6_owned) {
+                Ok(owned) => {
+                    if owned {
+                        self.default_v6_owned = true;
+                    }
+                    owned
+                }
+                Err(error) => {
+                    let rollback = if repaired_bypass {
+                        delete_windows_route_with_retry(runner, &bypass)
+                    } else {
+                        Ok(())
+                    };
+                    if repaired_bypass && rollback.is_ok() {
+                        self.bypass_owned = false;
+                    }
+                    return Err(with_windows_route_rollback(
+                        error.context("ensure current WireGuard IPv6 default route"),
+                        rollback,
+                    ));
+                }
+            }
+        } else {
+            false
+        };
+        Ok(repaired_bypass || repaired_default || repaired_default_v6)
     }
 
     fn cleanup_snapshot(&self) -> WindowsRouteCleanupSnapshot {
         let mut owned_routes = Vec::new();
         if self.default_owned {
             owned_routes.push(self.default_route_spec());
+        }
+        if self.default_v6_owned {
+            owned_routes.push(self.default_v6_route_spec());
         }
         if self.bypass_owned {
             owned_routes.push(self.bypass_route_spec());
@@ -555,9 +667,19 @@ impl WindowsManagedDefaultRoutes {
         route
     }
 
+    fn default_v6_route_spec(&self) -> WindowsRouteSpec {
+        let mut route = WindowsRouteSpec::wireguard_default_v6(self.wg_iface_index);
+        route.interface_identity = self
+            .default_v6_interface_identity
+            .as_deref()
+            .map(str::to_owned);
+        route
+    }
+
     fn take_cleanup_snapshot(&mut self) -> WindowsRouteCleanupSnapshot {
         let cleanup = self.cleanup_snapshot();
         self.default_owned = false;
+        self.default_v6_owned = false;
         self.bypass_owned = false;
         self.orphaned_bypass_routes.clear();
         cleanup
