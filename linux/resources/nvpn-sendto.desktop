@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr VPN
+Icon=nostr-vpn
+Exec=nostr-vpn --send-files %F
+MimeType=application/octet-stream;
+NoDisplay=true

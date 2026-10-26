@@ -173,6 +173,12 @@ def expected_deb_payload(
             0o644,
             (repo_root / "linux/resources/nostr-vpn.desktop").read_bytes(),
         ),
+        "./usr/share/Thunar/sendto/nvpn.desktop": (
+            "file", 0o644, (repo_root / "linux/resources/nvpn-sendto.desktop").read_bytes(),
+        ),
+        "./usr/share/kio/servicemenus/nvpn-sendfiles.desktop": (
+            "file", 0o644, (repo_root / "linux/resources/nvpn-sendfiles.desktop").read_bytes(),
+        ),
         "./usr/share/doc/nostr-vpn/copyright": (
             "file",
             0o644,

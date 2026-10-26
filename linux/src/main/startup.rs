@@ -25,8 +25,15 @@ fn main() -> glib::ExitCode {
         app.connect_command_line(move |app, command_line| {
             let mut present = true;
             let mut urls = Vec::new();
+            let mut sending_files = false;
             for arg in command_line.arguments() {
                 let arg = arg.to_string_lossy();
+                if arg == "--send-files" { sending_files = true; present = true; continue; }
+                if sending_files {
+                    let path = PathBuf::from(arg.as_ref());
+                    if path.is_absolute() { runtime.pending_files.borrow_mut().push(path); }
+                    continue;
+                }
                 if arg == "--hidden" {
                     present = false;
                 }

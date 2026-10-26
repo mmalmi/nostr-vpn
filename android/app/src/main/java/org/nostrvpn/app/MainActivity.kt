@@ -42,6 +42,7 @@ import org.nostrvpn.app.vpn.AndroidVpnRoutingPolicy
 import org.nostrvpn.app.vpn.VpnStartState
 
 class MainActivity : ComponentActivity() {
+    private var sharedUris by mutableStateOf<List<android.net.Uri>>(emptyList())
     private var deepLink by mutableStateOf<String?>(null)
     private var debugRequest by mutableStateOf(AndroidDebugRequest())
     private var releaseJoinImageImportEnabled by mutableStateOf(false)
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         legacyPackageToRemove = AndroidLegacyPackageMigration.packageToRemove(this)
         deepLink = intent?.dataString
+        sharedUris = sharedFileUris(intent)
         debugRequest = AndroidDebugRequest.from(intent)
         releaseJoinImageImportEnabled =
             intent?.getBooleanExtra(EXTRA_RELEASE_JOIN_IMAGE_IMPORT, false) == true
@@ -110,6 +112,11 @@ class MainActivity : ComponentActivity() {
             fun applyUserActionState(nextState: AppState) {
                 state = nextState
                 androidError = ""
+            }
+            if (sharedUris.isNotEmpty()) {
+                SharedFilesDialog(state, sharedUris, onDismiss = { sharedUris = emptyList() }) { action ->
+                    applyUserActionState(core.dispatch(action))
+                }
             }
             fun startVpnTunnel() {
                 val tunnelConfigJson = core.mobileTunnelConfigJson()
@@ -539,6 +546,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         writeAndroidBuildMetadata(appCoreDataDir(this))
         deepLink = intent.dataString
+        sharedUris = sharedFileUris(intent)
         debugRequest = AndroidDebugRequest.from(intent)
         releaseJoinImageImportEnabled =
             intent.getBooleanExtra(EXTRA_RELEASE_JOIN_IMAGE_IMPORT, false)

@@ -67,6 +67,7 @@ data class AppState(
     val magicDnsStatus: String = "",
     val autoconnect: Boolean = false,
     val networks: List<NetworkState> = emptyList(),
+    val fileTransfers: List<FileTransferState> = emptyList(),
     val health: List<HealthIssue> = emptyList(),
 )
 
@@ -442,6 +443,17 @@ fun parseAppState(jsonText: String): AppState {
         magicDnsStatus = json.optString("magicDnsStatus"),
         autoconnect = json.optBoolean("autoconnect"),
         networks = json.optJSONArray("networks").toNetworkList(),
+        fileTransfers = json.optJSONArray("fileTransfers").mapObjects { transfer ->
+            FileTransferState(
+                id = transfer.optString("id"), peerNpub = transfer.optString("peerNpub"),
+                peerName = transfer.optString("peerName"), isSender = transfer.optBoolean("isSender"),
+                files = transfer.optJSONArray("files").mapObjects { file ->
+                    TransferFileState(file.optString("name"), file.optLong("sizeBytes"), file.optString("localPath").takeUnless { it.isBlank() || it == "null" })
+                },
+                status = transfer.optString("status"), transferredBytes = transfer.optLong("transferredBytes"),
+                totalBytes = transfer.optLong("totalBytes"), error = transfer.optString("error").takeUnless { it.isBlank() || it == "null" },
+            )
+        },
         health = json.optJSONArray("health").toHealthList(),
     )
 }

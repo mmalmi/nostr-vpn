@@ -45,4 +45,6 @@ assets = [
     ["resources/nostr-vpn-256.png", "usr/share/icons/hicolor/256x256/apps/nostr-vpn.png", "644"],
     ["resources/nostr-vpn-512.png", "usr/share/icons/hicolor/512x512/apps/nostr-vpn.png", "644"],
     ["resources/nostr-vpn.desktop", "usr/share/applications/nostr-vpn.desktop", "644"],
+    ["resources/nvpn-sendto.desktop", "usr/share/Thunar/sendto/nvpn.desktop", "644"],
+    ["resources/nvpn-sendfiles.desktop", "usr/share/kio/servicemenus/nvpn-sendfiles.desktop", "644"],
 ]

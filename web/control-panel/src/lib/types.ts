@@ -90,6 +90,7 @@ export type NetworkView = {
 };
 
 export type UiState = {
+  fileTransfers?: FileTransfer[];
   platform: string;
   mobile: boolean;
   vpnControlSupported: boolean;
@@ -162,6 +163,18 @@ export type UiState = {
   network: NetworkSummary;
   portMapping: PortMappingStatus;
   networks: NetworkView[];
+};
+
+export type FileTransfer = {
+  id: string;
+  peerNpub: string;
+  peerName: string;
+  isSender: boolean;
+  files: { name: string; sizeBytes: number; localPath?: string | null }[];
+  status: string;
+  transferredBytes: number;
+  totalBytes: number;
+  error?: string | null;
 };
 
 export type RelayView = {

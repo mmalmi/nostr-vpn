@@ -39,6 +39,59 @@ public partial class MainWindow : Window
         base.OnClosing(e);
     }
 
+    public async Task ChooseFileRecipientAsync(string[] files)
+    {
+        await ViewModel.RefreshAsync();
+        var peers = ViewModel.State.Networks.Where(network => network.Enabled)
+            .SelectMany(network => network.Participants).Where(peer => !peer.IsSelf && peer.RosterAccepted && peer.Reachable)
+            .DistinctBy(peer => peer.Npub).ToArray();
+        if (!ViewModel.State.VpnActive || peers.Length == 0)
+        {
+            MessageBox.Show(this, "Connect VPN with an online device, then try Send To again.", "Send files");
+            return;
+        }
+        var dialog = new Window { Title = "Send files", Owner = this, Width = 360, SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ResizeMode = ResizeMode.NoResize };
+        var panel = new StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(new TextBlock { Text = $"Send {files.Length} files to", Margin = new Thickness(0, 0, 0, 12) });
+        var picker = new ComboBox { ItemsSource = peers, DisplayMemberPath = "DisplayName", SelectedIndex = 0, Margin = new Thickness(0, 0, 0, 16) };
+        panel.Children.Add(picker);
+        var send = new Button { Content = "Send", IsDefault = true, HorizontalAlignment = HorizontalAlignment.Right };
+        send.Click += (_, _) => dialog.DialogResult = true;
+        panel.Children.Add(send);
+        dialog.Content = panel;
+        if (dialog.ShowDialog() == true && picker.SelectedItem is NativeParticipantState peer)
+            await ViewModel.SendFilesToAsync(peer.Npub, files);
+    }
+
+    private async void SendFiles_Click(object sender, RoutedEventArgs e) => await ViewModel.ChooseFilesAsync();
+
+    private async void DeviceFiles_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData(DataFormats.FileDrop) is string[] files)
+            await ViewModel.SendFilesAsync(files);
+    }
+
+    private async void FileTransferAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: NativeFileTransferState transfer, CommandParameter: string action })
+            await ViewModel.FileTransferActionAsync(action, transfer.Id);
+    }
+
+    private void ShowTransferFiles_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: NativeFileTransferState transfer } && transfer.CanShowFiles)
+        {
+            var path = transfer.Files.First(file => file.LocalPath is not null).LocalPath!;
+            var folder = System.IO.Path.GetDirectoryName(path);
+            try
+            {
+                if (folder is not null) Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+            }
+            catch (Exception error) { MessageBox.Show(this, error.Message, "Could not open files"); }
+        }
+    }
+
     private void CopyPeer_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string npub })
