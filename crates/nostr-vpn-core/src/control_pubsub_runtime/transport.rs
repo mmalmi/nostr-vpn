@@ -1,12 +1,35 @@
-fn fips_pubsub_options(max_event_bytes: usize, max_hops: u8) -> FipsPubsubClientOptions {
+/// Pubsub bounds and advert scope derived from the owning FIPS endpoint.
+#[derive(Debug, Clone)]
+pub struct ControlPubsubEndpointConfig {
+    pub advert_app: String,
+    pub max_connected_peers: usize,
+}
+
+impl From<&fips_core::config::Config> for ControlPubsubEndpointConfig {
+    fn from(config: &fips_core::config::Config) -> Self {
+        Self {
+            advert_app: config.node.discovery.nostr.app.clone(),
+            max_connected_peers: config.node.limits.max_peers,
+        }
+    }
+}
+
+fn fips_pubsub_options(
+    config: &NostrPubsubConfig,
+    max_connected_peers: usize,
+) -> FipsPubsubClientOptions {
+    let mut config = config.clone();
+    config.normalize();
+    let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
     FipsPubsubClientOptions {
         max_frame_bytes: max_event_bytes
             .saturating_add(4 * 1_024)
             .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
-        max_connected_peers: MAX_PUBSUB_PEERS,
+        max_connected_peers,
+        fanout: config.fanout.min(max_connected_peers),
         max_replay_events: FIPS_REPLAY_LIMIT,
         receive_batch_size: 64,
-        max_hops,
+        max_hops: config.max_hops,
         ..FipsPubsubClientOptions::default()
     }
 }

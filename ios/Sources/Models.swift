@@ -20,8 +20,8 @@ struct AppState: Decodable {
     var listenPort: Int = 0
     var relays: [RelayState] = []
     var nostrPubsubMode = "relay"
-    var nostrPubsubFanout: UInt32 = 4
-    var nostrPubsubMaxHops: UInt8 = 2
+    var nostrPubsubFanout: UInt32 = 8
+    var nostrPubsubMaxHops: UInt8 = 4
     var nostrPubsubMaxEventBytes: UInt32 = 65_536
     var joinRequestQrCodeOrLink = ""
     var connectedPeerCount: UInt64 = 0
@@ -124,8 +124,8 @@ struct AppState: Decodable {
         listenPort = container.int(.listenPort)
         relays = container.array(.relays)
         nostrPubsubMode = container.string(.nostrPubsubMode, default: "relay")
-        nostrPubsubFanout = UInt32(container.int(.nostrPubsubFanout, default: 4))
-        nostrPubsubMaxHops = UInt8(container.int(.nostrPubsubMaxHops, default: 2))
+        nostrPubsubFanout = UInt32(container.int(.nostrPubsubFanout, default: 8))
+        nostrPubsubMaxHops = UInt8(container.int(.nostrPubsubMaxHops, default: 4))
         nostrPubsubMaxEventBytes = UInt32(container.int(.nostrPubsubMaxEventBytes, default: 65_536))
         joinRequestQrCodeOrLink = container.string(.joinRequestQrCodeOrLink)
         connectedPeerCount = container.uint64(.connectedPeerCount)

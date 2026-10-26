@@ -872,13 +872,13 @@ exit 0
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert_eq!(saved.nostr.pubsub.mode.as_str(), "relay");
-        assert_eq!(saved.nostr.pubsub.fanout, 3);
+        assert_eq!(saved.nostr.pubsub.fanout, 8);
         assert_eq!(saved.nostr.pubsub.max_hops, 2);
         assert_eq!(saved.nostr.pubsub.max_event_bytes, 32 * 1024);
 
         let state = runtime.state();
         assert_eq!(state.nostr_pubsub_mode, "relay");
-        assert_eq!(state.nostr_pubsub_fanout, 3);
+        assert_eq!(state.nostr_pubsub_fanout, 8);
         assert_eq!(state.nostr_pubsub_max_hops, 2);
         assert_eq!(state.nostr_pubsub_max_event_bytes, 32 * 1024);
 

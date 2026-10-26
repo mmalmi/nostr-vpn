@@ -29,7 +29,7 @@ use nostr_vpn_core::config::{
     split_peer_transport_addr,
 };
 use nostr_vpn_core::control_pubsub_runtime::{
-    ControlPubsubClient, ControlPubsubFipsRuntime, ControlRelayStatus,
+    ControlPubsubClient, ControlPubsubEndpointConfig, ControlPubsubFipsRuntime, ControlRelayStatus,
 };
 use nostr_vpn_core::fips_control::{
     FipsControlFrame, JoinRosterControl, NetworkRoster, PeerCapabilities, PeerEndpointHint,

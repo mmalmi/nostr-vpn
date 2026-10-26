@@ -13,7 +13,9 @@ impl FipsPrivateMeshRuntime {
             .filter(|s| !s.is_empty());
         // The FIPS builder applies discovery_scope to Nostr only for its
         // default empty connectivity config. Explicit configs keep their app.
-        let nostr_advert_app = match scope.as_ref() {
+        let mut pubsub_endpoint_config =
+            crate::control_pubsub_runtime::ControlPubsubEndpointConfig::from(&config);
+        pubsub_endpoint_config.advert_app = match scope.as_ref() {
             Some(scope) if !config.node.discovery.nostr.enabled && config.transports.is_empty() => {
                 scope.clone()
             }
@@ -57,7 +59,7 @@ impl FipsPrivateMeshRuntime {
 
         Ok(Self {
             endpoint,
-            nostr_advert_app,
+            pubsub_endpoint_config,
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             direct_endpoint_rx,
             #[cfg(any(target_os = "linux", target_os = "macos"))]

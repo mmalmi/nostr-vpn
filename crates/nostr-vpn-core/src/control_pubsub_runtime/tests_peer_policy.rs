@@ -1,20 +1,23 @@
-struct RejectAllPeers;
+struct MutablePeerPolicy(std::sync::atomic::AtomicBool);
 
-impl MeshPeerPolicy for RejectAllPeers {
-    fn select_mesh_peer(&self, _peer_id: &str) -> nostr_pubsub::Result<Option<MeshPeer>> {
-        Ok(None)
+impl MeshPeerPolicy for MutablePeerPolicy {
+    fn select_mesh_peer(&self, peer_id: &str) -> nostr_pubsub::Result<Option<MeshPeer>> {
+        Ok(self
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then(|| MeshPeer::new(peer_id)))
     }
 }
 
 #[test]
-fn peer_policy_rejects_events_from_authenticated_udp_fips_peer() {
+fn peer_policy_revokes_and_restores_pubsub_without_dropping_fips_link() {
     run_async_test(
         "policy-fips-pubsub",
-        peer_policy_rejects_events_from_authenticated_udp_fips_peer_run,
+        peer_policy_revokes_and_restores_pubsub_without_dropping_fips_link_run,
     );
 }
 
-async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
+async fn peer_policy_revokes_and_restores_pubsub_without_dropping_fips_link_run() {
     let alice = Keys::generate();
     let bob = Keys::generate();
     let publisher = Keys::generate();
@@ -37,6 +40,7 @@ async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
     let tree_name = "releases/policy-test";
     let update_events = update_events(&publisher, tree_name);
     let alice_pubsub = start_pubsub(Arc::clone(&alice_endpoint), update_events.clone()).await;
+    let peer_policy = Arc::new(MutablePeerPolicy(std::sync::atomic::AtomicBool::new(true)));
     let bob_pubsub = ControlPubsubFipsRuntime::start_inner(
         Arc::clone(&bob_endpoint),
         NostrPubsubConfig {
@@ -47,30 +51,55 @@ async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
         },
         Vec::new(),
         None,
-        Some(Arc::new(RejectAllPeers)),
+        Some(peer_policy.clone()),
         Some(update_events),
         relay_advert_filters(None, &[]),
+        MAX_PUBSUB_PEERS,
     )
     .await
     .expect("start policy-bound FIPS pubsub")
     .expect("FIPS pubsub enabled");
-    wait_pubsub_transport_connected(&alice_pubsub).await;
-    let root = signed_update_root(&publisher, tree_name, 1, "66");
+    wait_pubsub_connected(&alice_pubsub).await;
+    wait_pubsub_connected(&bob_pubsub).await;
+    let first = signed_update_root(&publisher, tree_name, 1, "11");
     assert!(
         alice_pubsub
-            .publish(root.clone())
+            .publish(first.clone())
             .await
-            .expect("publish policy test event")
+            .expect("publish before policy revocation")
     );
-    tokio::time::sleep(Duration::from_millis(750)).await;
+    wait_for_event(&bob_pubsub, first.id).await;
+
+    peer_policy
+        .0
+        .store(false, std::sync::atomic::Ordering::Relaxed);
+    tokio::time::timeout(FIPS_TEST_EVENTUAL_TIMEOUT, async {
+        loop {
+            if bob_pubsub.connected_peer_count().await.unwrap() == 0
+                && bob_pubsub.peer_subscription_count().await.unwrap() == 0
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("revoked peer releases its pubsub connection and subscriptions");
+    assert_udp_link(&bob_endpoint, &alice_npub).await;
+
+    peer_policy
+        .0
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    wait_pubsub_connected(&alice_pubsub).await;
+    wait_pubsub_connected(&bob_pubsub).await;
+    let resumed = signed_update_root(&publisher, tree_name, 2, "22");
     assert!(
-        !bob_pubsub
-            .events()
+        alice_pubsub
+            .publish(resumed.clone())
             .await
-            .iter()
-            .any(|event| event.id == root.id),
-        "peer policy must reject stream records after FIPS authentication"
+            .expect("publish after policy readmission")
     );
+    wait_for_event(&bob_pubsub, resumed.id).await;
 
     alice_pubsub.stop().await;
     bob_pubsub.stop().await;
@@ -193,6 +222,7 @@ fn peerfinding_without_paid_exit_never_subscribes_to_or_retains_paid_offers() {
         &peer_rating_filter(&publisher),
         &updates,
         relay_advert_filters(None, &[]),
+        MAX_PUBSUB_PEERS,
     )
     .into_iter()
     .chain(fips_subscription_filters(
@@ -229,6 +259,7 @@ fn subscriptions_do_not_request_untrusted_machine_ratings() {
             &peer_rating_filter(&owner),
             &updates,
             relay_advert_filters(None, &[]),
+            MAX_PUBSUB_PEERS,
         ),
         fips_subscription_filters(&peer_rating_filter(&owner), &updates),
     ] {
@@ -404,6 +435,7 @@ async fn legacy_foreign_ratings_do_not_crowd_out_owner_replay_run() {
         None,
         Some(updates),
         relay_advert_filters(None, &[]),
+        MAX_PUBSUB_PEERS,
     )
     .await
     .unwrap()

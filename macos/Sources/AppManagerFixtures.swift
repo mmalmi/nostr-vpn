@@ -310,8 +310,8 @@ extension AppManager {
                 NativeRelayState(url: "wss://relay.nostr.band", status: "unknown", enabled: true)
             ],
             nostrPubsubMode: "relay",
-            nostrPubsubFanout: 4,
-            nostrPubsubMaxHops: 2,
+            nostrPubsubFanout: 8,
+            nostrPubsubMaxHops: 4,
             nostrPubsubMaxEventBytes: 65_536,
             networkId: networkId,
             joinRequestQrCodeOrLink: "nvpn://join-request/demo",

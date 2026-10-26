@@ -18,6 +18,7 @@ async fn persistent_runtime(
         None,
         Some(updates),
         relay_advert_filters(None, &[]),
+        MAX_PUBSUB_PEERS,
     )
     .await
     .unwrap()

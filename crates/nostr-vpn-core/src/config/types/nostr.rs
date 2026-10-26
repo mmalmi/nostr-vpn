@@ -61,7 +61,12 @@ impl NostrPubsubConfig {
     }
 
     pub fn normalize(&mut self) {
-        self.fanout = self.fanout.clamp(1, 32);
+        // The old default fanout was not wired through: the transport used 8.
+        // Preserve that replication floor and upgrade the old default pair.
+        if self.fanout == 4 && self.max_hops == 2 {
+            self.max_hops = default_nostr_pubsub_max_hops();
+        }
+        self.fanout = self.fanout.clamp(default_nostr_pubsub_fanout(), 32);
         self.max_hops = self.max_hops.clamp(1, 10);
         self.max_event_bytes = self.max_event_bytes.clamp(1024, 56 * 1024);
     }
@@ -73,7 +78,6 @@ impl NostrPubsubConfig {
     pub fn forwarding(&self) -> bool {
         self.mode.forwarding()
     }
-
 }
 
 impl Default for NostrPubsubConfig {
@@ -88,11 +92,11 @@ impl Default for NostrPubsubConfig {
 }
 
 fn default_nostr_pubsub_fanout() -> usize {
-    4
+    8
 }
 
 fn default_nostr_pubsub_max_hops() -> u8 {
-    2
+    4
 }
 
 fn default_nostr_pubsub_max_event_bytes() -> usize {

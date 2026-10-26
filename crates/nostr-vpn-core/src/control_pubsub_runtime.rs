@@ -23,8 +23,8 @@ use nostr_pubsub::{
     PolicyDecision, QueryEvent, RouterPublishSource, SourceRoute, VerifiedEvent,
 };
 use nostr_pubsub_fips::{
-    FipsPubsubClient, FipsPubsubClientOptions, FipsPubsubPolicy, FipsPubsubPolicyOptions,
-    FipsPubsubSubscription,
+    FipsPubsubClient, FipsPubsubClientOptions, FipsPubsubClientPolicies, FipsPubsubPolicy,
+    FipsPubsubPolicyOptions, FipsPubsubSubscription,
 };
 use nostr_pubsub_relay::RelayEventBus;
 use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW};
@@ -106,6 +106,7 @@ impl ControlPubsubFipsRuntime {
             #[cfg(feature = "updater")]
             None,
             relay_advert_filters(None, target_peer_npubs),
+            MAX_PUBSUB_PEERS,
         )
         .await
     }
@@ -129,6 +130,31 @@ impl ControlPubsubFipsRuntime {
             #[cfg(feature = "updater")]
             None,
             relay_advert_filters(Some(nostr_advert_app), target_peer_npubs),
+            MAX_PUBSUB_PEERS,
+        )
+        .await
+    }
+
+    /// Use the endpoint's configured peer bound, including public bootstrap
+    /// listeners, instead of silently selecting only 64 of its admitted peers.
+    pub async fn start_for_peers_with_endpoint_config(
+        endpoint: Arc<FipsEndpoint>,
+        endpoint_config: &ControlPubsubEndpointConfig,
+        config: NostrPubsubConfig,
+        relays: Vec<String>,
+        store_path: Option<PathBuf>,
+        target_peer_npubs: &[String],
+    ) -> Result<Option<Self>> {
+        Self::start_inner(
+            endpoint,
+            config,
+            relays,
+            store_path,
+            None,
+            #[cfg(feature = "updater")]
+            None,
+            relay_advert_filters(Some(&endpoint_config.advert_app), target_peer_npubs),
+            endpoint_config.max_connected_peers,
         )
         .await
     }
@@ -149,6 +175,7 @@ impl ControlPubsubFipsRuntime {
             #[cfg(feature = "updater")]
             None,
             relay_advert_filters(None, &[]),
+            MAX_PUBSUB_PEERS,
         )
         .await
     }
@@ -171,6 +198,7 @@ impl ControlPubsubFipsRuntime {
             #[cfg(feature = "updater")]
             None,
             relay_advert_filters(Some(nostr_advert_app), &[]),
+            MAX_PUBSUB_PEERS,
         )
         .await
     }
@@ -183,6 +211,7 @@ impl ControlPubsubFipsRuntime {
         peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
         #[cfg(feature = "updater")] update_events_override: Option<UpdateEventCache>,
         advert_filters: Vec<Filter>,
+        max_connected_peers: usize,
     ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
@@ -218,12 +247,15 @@ impl ControlPubsubFipsRuntime {
         let peer_policy = peer_policy.unwrap_or_else(|| pubsub_policy.peer_policy());
         let pubsub_policy = Arc::new(Mutex::new(pubsub_policy));
 
-        let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
         let fips_pubsub = Arc::new(
-            FipsPubsubClient::start_with_policy(
+            FipsPubsubClient::start_with_policies(
                 Arc::clone(&endpoint),
-                fips_pubsub_options(max_event_bytes, config.max_hops),
-                Arc::clone(&event_policy),
+                fips_pubsub_options(&config, max_connected_peers),
+                FipsPubsubClientPolicies {
+                    peers: Some(Arc::clone(&peer_policy)),
+                    events: Some(Arc::clone(&event_policy)),
+                    ..FipsPubsubClientPolicies::default()
+                },
             )
             .await
             .context("failed to bind standard FIPS Nostr pubsub service")?,
