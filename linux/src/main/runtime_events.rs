@@ -21,8 +21,8 @@ fn state_needs_render(previous: &NativeAppState, next: &NativeAppState) -> bool 
     if previous == next {
         return false;
     }
-    // Telemetry has live bindings (or is not displayed). Everything else,
-    // including permissions, configuration and roster changes, still rebuilds
+    // Local status updates have live bindings (or are not displayed). Everything
+    // else, including permissions, configuration and roster changes, still rebuilds
     // the page so action callbacks cannot retain obsolete state.
     fn structure(mut state: NativeAppState) -> NativeAppState {
         state.rev = 0;

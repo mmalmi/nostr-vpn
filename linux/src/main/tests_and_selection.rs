@@ -216,7 +216,7 @@ mod tests {
                 "Routine polling replaced the Settings controls"
             );
             assert!(contains_label(content.upcast_ref(), &format!("Runtime refresh {refresh}")),
-                "Runtime telemetry did not update in place");
+                "Local runtime status did not update in place");
             assert!(contains_label(app.borrow().sidebar.upcast_ref(), &format!("Settings refresh {refresh}")),
                 "Sidebar status did not update in place");
             assert_eq!(
@@ -328,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn live_telemetry_does_not_rebuild_but_roster_and_permissions_do() {
+    fn local_status_updates_do_not_rebuild_but_roster_and_permissions_do() {
         let previous = NativeAppState {
             relays: vec![nostr_vpn_app_core::native_state::NativeRelayState {
                 url: "wss://relay.example.com".to_string(),
