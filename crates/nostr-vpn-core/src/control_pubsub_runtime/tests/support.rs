@@ -174,19 +174,6 @@ async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
     .expect("reliable TCP/FIPS pubsub stream connected");
 }
 
-async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
-    tokio::time::timeout(FIPS_TEST_EVENTUAL_TIMEOUT, async {
-        loop {
-            if runtime.connected_peer_count().await.unwrap_or_default() > 0 {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .expect("reliable TCP/FIPS pubsub transport connected");
-}
-
 fn run_async_test<F, Fut>(name: &str, run: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
