@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## 4.1.19 - 2026-10-26
 
+### Release notes
+
+This release improves network joining and reconnects, fixes desktop networking
+and controls, and strengthens connection security. Windows adds appearance
+choices and IPv6 exit routes. iPhone VPN idle CPU remains higher than intended;
+the latest release test measured about 5.4%, and further reduction is pending.
+
 ### Improved
 
 - Describe desktop and command-line source builds in a versioned Haps manifest.
@@ -46,7 +53,7 @@ All notable changes to this project are documented in this file.
 
 ### Known issues
 
-- iPhone VPN idle CPU measured about 2.7% in release testing; further reduction
+- iPhone VPN idle CPU measured about 5.4% in the latest release test; further reduction
   is pending.
 
 ## 4.1.18 - 2026-10-19
