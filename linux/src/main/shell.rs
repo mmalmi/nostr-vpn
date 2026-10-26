@@ -47,6 +47,25 @@ fn refresh_header(app: &AppRef, state: &NativeAppState) {
     }
 }
 
+fn render_background_change(app: &AppRef) {
+    let editing = gtk::prelude::GtkWindowExt::focus(&app.borrow().window).is_some_and(|focus| {
+        [
+            gtk::Entry::static_type(),
+            gtk::TextView::static_type(),
+            gtk::DropDown::static_type(),
+        ]
+        .into_iter()
+        .any(|kind| focus.type_().is_a(kind) || focus.ancestor(kind).is_some())
+    });
+    // GTK focuses the dropdown's button or popup row, not the DropDown itself.
+    // Replacing it during polling closes the popup and discards keyboard input.
+    if editing {
+        app.borrow_mut().render_pending = true;
+    } else {
+        render(app);
+    }
+}
+
 fn render(app: &AppRef) {
     app.borrow_mut().render_pending = false;
     app.borrow_mut().live_updates.clear();
