@@ -88,7 +88,10 @@ async fn capacity_round_trip() {
             }
         }
         let from_leaf = capacity_offer(&leaf_keys.last().expect("last key").1, "capacity-leaf");
-        anyhow::ensure!(leaf_pubsub.publish(from_leaf.clone()).await?, "leaf publish");
+        anyhow::ensure!(
+            leaf_pubsub.publish(from_leaf.clone()).await?,
+            "leaf publish"
+        );
         capacity_wait_for_event(&hub_pubsub, from_leaf.id).await;
 
         let from_hub = capacity_offer(&hub_key, "capacity-hub");
@@ -149,7 +152,12 @@ fn capacity_offer(keys: &Keys, name: &str) -> Event {
 }
 
 async fn capacity_wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
-    while !runtime.events().await.iter().any(|event| event.id == event_id) {
+    while !runtime
+        .events()
+        .await
+        .iter()
+        .any(|event| event.id == event_id)
+    {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
