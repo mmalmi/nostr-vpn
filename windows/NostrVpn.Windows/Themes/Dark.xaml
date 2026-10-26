@@ -1,0 +1,25 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <SolidColorBrush x:Key="WindowBg" Color="#1B1F27" />
+  <SolidColorBrush x:Key="PanelBg" Color="#232936" />
+  <SolidColorBrush x:Key="SidebarBg" Color="#161A21" />
+  <SolidColorBrush x:Key="TextPrimary" Color="#E8ECF2" />
+  <SolidColorBrush x:Key="TextSecondary" Color="#9AA4B2" />
+  <SolidColorBrush x:Key="Accent" Color="#9F7CFF" />
+  <SolidColorBrush x:Key="AccentSoft" Color="#2B2440" />
+  <SolidColorBrush x:Key="AccentText" Color="#1B1F27" />
+  <SolidColorBrush x:Key="Ok" Color="#2FBF71" />
+  <SolidColorBrush x:Key="Warn" Color="#D6A144" />
+  <SolidColorBrush x:Key="Danger" Color="#F26D6D" />
+  <SolidColorBrush x:Key="Line" Color="#333B49" />
+  <SolidColorBrush x:Key="UpdateBannerBg" Color="#1F242E" />
+  <SolidColorBrush x:Key="StatusDotIdle" Color="#6B7280" />
+  <SolidColorBrush x:Key="StatusDotOk" Color="#2FBF71" />
+  <SolidColorBrush x:Key="ButtonBorder" Color="#414B5C" />
+  <SolidColorBrush x:Key="ButtonBg" Color="#2A3342" />
+  <SolidColorBrush x:Key="InputBorder" Color="#414B5C" />
+  <SolidColorBrush x:Key="InputBg" Color="#1E242E" />
+  <SolidColorBrush x:Key="SwitchTrackOff" Color="#333B49" />
+  <SolidColorBrush x:Key="SwitchTrackBorder" Color="#414B5C" />
+  <SolidColorBrush x:Key="SwitchThumb" Color="#E8ECF2" />
+</ResourceDictionary>

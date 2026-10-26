@@ -94,10 +94,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private static readonly TimeSpan JoinCoordinationRefreshInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan JoinCoordinationRefreshWindow = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan UpdatePollInterval = LoadUpdatePollInterval();
-    private static readonly Brush HeaderDangerBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
-    private static readonly Brush TextSecondaryBrush = new SolidColorBrush(Color.FromRgb(104, 113, 124));
-    private static readonly Brush ActiveNetworkBrush = new SolidColorBrush(Color.FromRgb(22, 163, 74));
-    private static readonly Brush InactiveNetworkBrush = new SolidColorBrush(Color.FromRgb(156, 163, 175));
+    private readonly ThemeService _themeService;
 
     public AppViewModel()
     {
@@ -111,6 +108,8 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
         _core = new AppCoreClient(dataDir, version);
         _refreshTimer = new DispatcherTimer { Interval = IdleRefreshInterval };
+        _themeService = new ThemeService();
+        _themeService.Applied += OnThemeApplied;
         _autoInstallUpdates = LoadAutoInstallUpdates();
         ApplyState(_core.State(), syncDrafts: true);
         SyncLaunchOnStartupRegistration();
@@ -540,7 +539,9 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public string ActiveNetworkName => DisplayNetworkName(ActiveNetwork);
     public string PublicFipsAddress => string.IsNullOrWhiteSpace(State.OwnNpub) ? "" : $"{State.OwnNpub}.fips";
     public bool PublicFipsRoutingEnabled => State.FipsHostTunnelEnabled && !ActionInFlight;
-    public Brush ShownNetworkStatusBrush => ActiveNetwork?.Enabled == true ? ActiveNetworkBrush : InactiveNetworkBrush;
+    public Brush ShownNetworkStatusBrush => ActiveNetwork?.Enabled == true
+        ? ThemeService.Brush("StatusDotOk")
+        : ThemeService.Brush("StatusDotIdle");
     public bool ShowNetworkStatusDot => State.Networks.Count > 1;
     public bool ShowLinkDeviceCard => ActiveNetwork?.Enabled == true;
     public string ActiveNetworkDisplayNetworkId => DisplayNetworkId(ActiveNetwork?.NetworkId ?? "");
@@ -581,7 +582,9 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
             return "Off";
         }
     }
-    public Brush VpnStatusBrush => State.ExitNodeBlocked ? HeaderDangerBrush : TextSecondaryBrush;
+    public Brush VpnStatusBrush => State.ExitNodeBlocked
+        ? ThemeService.Brush("Danger")
+        : ThemeService.Brush("TextSecondary");
 
     private static bool DaemonStarting(NativeAppState state) =>
         string.IsNullOrWhiteSpace(state.Error)
@@ -902,6 +905,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     {
         _refreshTimer.Stop();
         _updateTimer.Stop();
+        _themeService.Dispose();
         _core.Dispose();
     }
 
