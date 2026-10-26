@@ -416,11 +416,7 @@ pub(crate) fn linux_service_status_from_show_output(show: &str) -> (bool, bool, 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_guard_service_unit_content(executable: &Path, config_path: &Path) -> Result<String> {
     for path in [executable, config_path] {
-        // systemd consumes POSIX paths; Path::is_absolute would also demand a
-        // Windows drive prefix when this runs on a non-Linux build host.
-        if !path.to_string_lossy().starts_with('/')
-            || path.to_string_lossy().chars().any(char::is_control)
-        {
+        if !path.is_absolute() || path.to_string_lossy().chars().any(char::is_control) {
             return Err(anyhow!("egress guard requires absolute paths without control characters"));
         }
     }

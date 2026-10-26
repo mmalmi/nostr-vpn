@@ -13,52 +13,6 @@ const TABLE: u32 = 20054;
 const NFT_TABLE: &str = "nvpn_egress";
 const ROUTE_PROTOCOL: u32 = 99;
 const FORWARDED_MARK: u32 = CARRIER_MARK + 1;
-// Local ranges that must keep resolving through the main table while the
-// customer tunnel owns the exit table's default route. Mirrors the
-// local-network accepts rendered into the egress firewall's output chain.
-const LOCAL_DESTINATION_TARGETS: &[&str] = &[
-    "10.0.0.0/8",
-    "100.64.0.0/10",
-    "169.254.0.0/16",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    "198.18.0.0/15",
-    "fe80::/10",
-    "fc00::/7",
-];
-
-fn local_destination_targets(family: &str) -> impl Iterator<Item = &'static str> {
-    let want_ipv6 = family == "-6";
-    LOCAL_DESTINATION_TARGETS
-        .iter()
-        .copied()
-        .filter(move |target| target.contains(':') == want_ipv6)
-}
-
-// One unused priority per local range, all below the vpn-source (102),
-// forwarded-source (104), and forwarded-kill-switch (105/106) rules so a
-// local destination can never be captured into the exit table.
-fn local_destination_rule_priority(family: &str, index: usize) -> u32 {
-    if family == "-4" {
-        90 + index as u32
-    } else {
-        96 + index as u32
-    }
-}
-
-// iproute2 reports the rule destination selector as dst/dstlen, so the
-// validation fields use those keys even though the add path says "to".
-fn local_destination_fields(target: &str) -> Vec<(&'static str, Value)> {
-    let (address, prefix) = target.split_once('/').expect("local target carries a prefix");
-    vec![
-        ("dst", Value::from(address)),
-        (
-            "dstlen",
-            Value::from(prefix.parse::<u64>().expect("local target prefix parses")),
-        ),
-        ("table", Value::from("254")),
-    ]
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct KernelPolicy {
@@ -107,41 +61,10 @@ impl LinuxExitGuard {
                 }
                 _ => false,
             };
-        // Retired mechanism: in-table throws for local ranges, superseded by
-        // the local-destination rule priorities. Remove leftovers from earlier
-        // releases before ownership validation, which rejects routes it cannot
-        // attribute to an interface.
-        for family in ["-4", "-6"] {
-            for target in local_destination_targets(family) {
-                let _ = ip(&[
-                    family,
-                    "route",
-                    "del",
-                    "throw",
-                    target,
-                    "table",
-                    &TABLE.to_string(),
-                ]);
-            }
-        }
         self.check_routes(known_routing)?;
         self.check_rules(known_routing)?;
         let old_sources = vpn_source_rules(known_routing)?;
-        let old_forwarded = match forwarded_source_rule_state(known_routing) {
-            Ok(state) => state,
-            Err(error)
-                if error.kind() == io::ErrorKind::AlreadyExists && known_routing =>
-            {
-                // A teardown that raced the mesh interface can leave the
-                // reserved forwarded-source priority detached with metadata
-                // the exact-match validator cannot attribute. The priority is
-                // reserved for this configuration and apply reinstates the
-                // rule below, so clear the leftover and re-validate.
-                let _ = ip(&["-4", "rule", "del", "pref", "104"]);
-                forwarded_source_rule_state(known_routing)?
-            }
-            Err(error) => return Err(error),
-        };
+        let old_forwarded = forwarded_source_rule_state(known_routing)?;
         // Block selected forwarding until both lookup and terminal rejection
         // rules exist. A first apply or interrupted repair must not briefly
         // send a buyer's packets through the host's physical default.
@@ -322,19 +245,14 @@ impl LinuxExitGuard {
         // periodic policy rewrites or disrupt forwarding.
         let mut table = json_command("nft", &["-s", "-j", "list", "table", "inet", NFT_TABLE])?;
         let expected = format!("owner_{}", self.owner);
-        let owned_tag = table["nftables"].as_array().is_some_and(|entries| {
+        if !table["nftables"].as_array().is_some_and(|entries| {
             entries
                 .iter()
                 .any(|entry| entry["chain"]["name"] == expected)
-        });
-        // Only this daemon creates the table, so a tagless table whose every
-        // chain matches our fingerprints belonged to an instance whose durable
-        // intent was lost, such as a recreated host-network container. Adopt
-        // it: the owned apply/release paths already delete and rebuild it.
-        if !owned_tag && !foreign_table_is_adoptable(&table) {
+        }) {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                "Linux egress firewall belongs to another configuration; remove it with: nft delete table inet nvpn_egress",
+                "Linux egress firewall belongs to another configuration",
             ));
         }
         if let Some(entries) = table["nftables"].as_array_mut() {
@@ -473,42 +391,13 @@ impl LinuxExitGuard {
             script.push_str("}\n");
             return nft(&script);
         }
-        script.push_str(&render_output_chain(&self.interfaces));
-        script.push_str("}\n");
+        script.push_str(&format!(" chain output {{\n type filter hook output priority 0; policy drop;\n oifname \"lo\" accept\n meta mark {CARRIER_MARK} accept\n"));
+        for interface in &self.interfaces {
+            script.push_str(&format!(" oifname \"{interface}\" accept\n"));
+        }
+        script.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n}\n");
         nft(&script)
     }
-}
-
-// The kill switch guards internet egress only. Host-originated traffic to
-// link-local and private destinations — docker bridges and published app
-// ports on a shared host, LAN peers, mDNS, DHCP broadcast — must survive a
-// fail-closed table, or the daemon jails the machine it runs on. Unmarked
-// internet-bound output still rejects below.
-fn render_output_chain(interfaces: &[String]) -> String {
-    let mut chain = format!(
-        " chain output {{\n type filter hook output priority 0; policy drop;\n oifname \"lo\" accept\n meta mark {CARRIER_MARK} accept\n"
-    );
-    for interface in interfaces {
-        chain.push_str(&format!(" oifname \"{interface}\" accept\n"));
-    }
-    chain.push_str(" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } accept\n");
-    chain.push_str(" ip6 daddr { fe80::/10, fc00::/7, ff00::/8 } accept\n");
-    chain.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n");
-    chain
-}
-
-// A table whose every chain matches our fingerprints can only have been
-// created by an instance of this daemon whose durable intent was lost. Its
-// structure alone authorizes adoption by the owned path; any other chain
-// keeps the table refused until it is removed explicitly. Entries without a
-// chain, such as metainfo, impose nothing.
-fn foreign_table_is_adoptable(table_json: &Value) -> bool {
-    table_json["nftables"].as_array().is_some_and(|entries| {
-        entries
-            .iter()
-            .filter_map(|entry| entry["chain"]["name"].as_str())
-            .all(|name| name.starts_with("owner_") || name == "forwarded" || name == "output")
-    })
 }
 
 // This reserved rule priority is owned only while our nft ownership tag is
@@ -752,18 +641,6 @@ fn rules(family: &'static str) -> Vec<Rule> {
         rule.args.extend(["iif".into(), "lo".into()]);
         rule.fields.push(("iif", Value::from("lo")));
     }
-    // Local-destination traffic must resolve in main before the exit table's
-    // default route or the forwarded kill switch can capture it. Docker
-    // published ports DNAT in prerouting after the forwarded mark, so these
-    // rules also carry mesh clients to services hosted on this machine.
-    for (index, target) in local_destination_targets(family).enumerate() {
-        rules.push(Rule {
-            family,
-            priority: local_destination_rule_priority(family, index),
-            args: vec!["to".into(), target.to_string(), "lookup".into(), "main".into()],
-            fields: local_destination_fields(target),
-        });
-    }
     // Only selected mesh ingress receives this mark. Paid forwarding must
     // never fall through to native egress, even if local apps allow fallback.
     rules.extend([
@@ -933,70 +810,4 @@ fn validate_network_prefix(target: &str) -> io::Result<std::net::IpAddr> {
         return Err(invalid("guard route must use a canonical network prefix"));
     }
     Ok(address)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn table(chains: &[&str]) -> Value {
-        serde_json::json!({
-            "nftables": chains
-                .iter()
-                .map(|name| {
-                    serde_json::json!({
-                        "chain": {"family": "inet", "table": NFT_TABLE, "name": name}
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-    }
-
-    #[test]
-    fn orphaned_tables_with_only_our_chain_fingerprints_are_adoptable() {
-        let mut owned = table(&["owner_deadbeef01", "forwarded", "output"]);
-        owned["nftables"].as_array_mut().unwrap().insert(
-            0,
-            serde_json::json!({"metainfo": {"version": "1.1.0", "release_name": "libnftables"}}),
-        );
-        assert!(foreign_table_is_adoptable(&owned));
-        // A tagless instance may already have torn its chains down.
-        assert!(foreign_table_is_adoptable(&table(&[])));
-    }
-
-    #[test]
-    fn a_foreign_chain_name_refuses_table_adoption() {
-        assert!(!foreign_table_is_adoptable(&table(&[
-            "owner_deadbeef01",
-            "docker-user-chain"
-        ])));
-        assert!(!foreign_table_is_adoptable(&Value::Null));
-        assert!(!foreign_table_is_adoptable(
-            &serde_json::json!({"nftables": {}})
-        ));
-    }
-
-    #[test]
-    fn output_chain_jails_only_internet_egress() {
-        let chain = render_output_chain(&["end0".to_owned()]);
-        assert!(
-            chain.contains(" type filter hook output priority 0; policy drop;\n"),
-            "the kill switch must stay fail closed"
-        );
-        assert!(chain.contains(" oifname \"end0\" accept\n"));
-        let local = chain
-            .find(" ip daddr { 0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4 } accept\n")
-            .expect("local-network accept");
-        assert!(
-            chain.contains(" ip6 daddr { fe80::/10, fc00::/7, ff00::/8 } accept\n"),
-            "local v6 destinations must stay reachable"
-        );
-        let reject = chain
-            .find("counter reject with icmpx type admin-prohibited")
-            .expect("catch-all reject");
-        assert!(
-            local < reject,
-            "local-network traffic must be accepted before the catch-all reject"
-        );
-    }
 }

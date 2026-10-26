@@ -26,9 +26,8 @@ services:
       RUST_LOG: info
     volumes:
       - ${APP_DATA_DIR}/data:/data
-      # The daemon's host-network nft table survives container recreation, so
-      # its owner tag must survive too or the restarted daemon refuses a table
-      # it no longer recognizes and fail-closed rules break host egress.
+      # Keep ownership and desired protection state with the app data when
+      # the container is recreated but its host-network firewall survives.
       - ${APP_DATA_DIR}/data/egress-state:/var/lib/nvpn/egress
 
   web:
