@@ -1,4 +1,4 @@
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::time::{Duration, Instant};
 
 const MAX_TRACKED_EXIT_FLOWS: usize = 16_384;
@@ -252,4 +252,29 @@ fn is_public_exit_source(address: IpAddressKey) -> bool {
                 && bytes[..12] != [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff]
         }
     }
+}
+
+pub(crate) fn is_public_exit_destination(address: IpAddr) -> bool {
+    if let IpAddr::V6(ip) = address {
+        let bytes = ip.octets();
+        // Do not let IPv4 translation/tunneling turn a public-looking IPv6
+        // destination into a private IPv4 destination at the seller's uplink.
+        if bytes[..12] == [0; 12] || bytes[..6] == [0, 0x64, 0xff, 0x9b, 0, 1] {
+            return false;
+        }
+        let embedded = if bytes[..12] == [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0] {
+            Some([bytes[12], bytes[13], bytes[14], bytes[15]])
+        } else if bytes[..2] == [0x20, 0x02] {
+            Some([bytes[2], bytes[3], bytes[4], bytes[5]])
+        } else {
+            None
+        };
+        if embedded.is_some_and(|ip| !is_public_exit_source(IpAddressKey::V4(ip))) {
+            return false;
+        }
+    }
+    is_public_exit_source(match address {
+        IpAddr::V4(ip) => IpAddressKey::V4(ip.octets()),
+        IpAddr::V6(ip) => IpAddressKey::V6(ip.octets()),
+    })
 }

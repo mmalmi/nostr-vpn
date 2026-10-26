@@ -127,7 +127,11 @@ a paid-route session-open frame over authenticated FIPS-TCP. The seller validate
 the authenticated buyer and terms before returning an admission. Default-route
 traffic is not enabled for that seller until the admission is current. The
 admission is scoped to the paid session and does not expose the seller's private
-network.
+network. Before host forwarding, seller packet admission rejects private,
+loopback, link-local, multicast, and private-mesh destinations, including
+configured local or mesh subnets that use public addresses. Default-route
+admission never overrides these exclusions. Private roster access remains
+separate from paid Internet access.
 
 Usage is byte-metered at the FIPS/nvpn boundary. Buyer-to-exit IP packets are
 billable immediately. Exit-to-buyer UDP is billable only for a recent
