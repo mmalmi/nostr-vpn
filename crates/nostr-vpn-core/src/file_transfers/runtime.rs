@@ -6,8 +6,8 @@ use nostr_sdk::prelude::{PublicKey, ToBech32};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 
 /// Lifetime is tied to the canonical VPN endpoint. Dropping it pauses transfers.
@@ -166,6 +166,7 @@ async fn run(
     let mut archived: HashMap<String, TransferState> = HashMap::new();
     let mut preparing: Option<Preparing> = None;
     let mut registering: HashMap<String, Registration> = HashMap::new();
+    let mut stopping: HashMap<PathBuf, PendingStop> = HashMap::new();
     let active = sender
         .snapshots()
         .into_iter()
@@ -262,36 +263,6 @@ async fn run(
         }
         if preparing
             .as_ref()
-            .is_some_and(|job| job.task.as_ref().is_some_and(JoinHandle::is_finished))
-        {
-            let mut job = preparing.take().expect("checked preparation");
-            let result = job
-                .task
-                .take()
-                .expect("preparation task")
-                .await
-                .map_err(anyhow::Error::from)
-                .and_then(|result| result)
-                .and_then(|files| finish_offer(&sender, &allowed, &job.state.id, &job.peer, files));
-            if let Err(error) = result {
-                job.state.status = "failed".into();
-                job.state.error = Some(error.to_string());
-                pending_cleanup.insert(job.state.id.clone());
-                failures.push(job.state.clone());
-                remove_owned(&job.command_path, false)?;
-            } else {
-                job.state.status = "connecting".into();
-                registering.insert(
-                    job.state.id.clone(),
-                    Registration {
-                        command_path: job.command_path.clone(),
-                        state: job.state.clone(),
-                    },
-                );
-            }
-        }
-        if preparing
-            .as_ref()
             .is_some_and(|job| !allowed.contains(&job.peer))
         {
             let mut job = preparing.take().expect("checked preparation");
@@ -302,18 +273,31 @@ async fn run(
             pending_cleanup.insert(job.state.id.clone());
             failures.push(job.state.clone());
         }
-        let directory = state_dir(&config).join("commands");
-        let mut commands = fs::read_dir(directory)?
-            .filter_map(std::result::Result::ok)
-            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
-            .take(MAX_PENDING_COMMANDS)
-            .map(|entry| entry.path())
+        let mut commands = command_paths(&config)?
+            .into_iter()
+            .map(|path| {
+                let record = read_command(&config, &path);
+                (path, record)
+            })
             .collect::<Vec<_>>();
-        commands.sort();
-        for path in commands {
-            let record = bounded_read(&config, &path, MAX_COMMAND_BYTES).and_then(|bytes| {
-                serde_json::from_slice::<QueuedCommand>(&bytes).map_err(Into::into)
-            });
+        // Offline cancellation must win over a queued send on reconnect,
+        // regardless of the random command IDs' lexical order.
+        commands.sort_by_key(|(_, record)| {
+            !record.as_ref().is_ok_and(|record| {
+                matches!(
+                    record.command,
+                    FileCommand::Cancel { .. } | FileCommand::Decline { .. }
+                )
+            })
+        });
+        let mut cancelled_queued = HashSet::new();
+        for (path, record) in commands {
+            if record
+                .as_ref()
+                .is_ok_and(|record| cancelled_queued.contains(&record.id))
+            {
+                continue;
+            }
             let result = match record {
                 Ok(record) if valid_id(&record.id) => {
                     let id = record.id.clone();
@@ -359,12 +343,74 @@ async fn run(
                             job.state.status = "cancelled".into();
                             remove_owned(&job.command_path, false)?;
                             pending_cleanup.insert(target.clone());
+                            cancelled_queued.insert(target.clone());
                             failures.push(job.state.clone());
                             remove_owned(&path, false)?;
                             continue;
                         }
                     }
+                    if let FileCommand::Cancel { id: target } = &record.command {
+                        if !registering.contains_key(target)
+                            && !sender
+                                .snapshots()
+                                .iter()
+                                .any(|snapshot| snapshot.id == *target)
+                        {
+                            if let Some(state) = cancel_queued_send(&config, target)? {
+                                cancelled_queued.insert(target.clone());
+                                pending_cleanup.insert(target.clone());
+                                failures.push(state);
+                                remove_owned(&path, false)?;
+                                continue;
+                            }
+                        }
+                    }
+                    let stop_target = match &record.command {
+                        FileCommand::Cancel { id } | FileCommand::Decline { id } => Some(id),
+                        _ => None,
+                    };
+                    if let Some(target) = stop_target {
+                        let snapshot = sender
+                            .snapshots()
+                            .into_iter()
+                            .find(|state| state.id == *target);
+                        if snapshot
+                            .as_ref()
+                            .is_some_and(|state| state.status.terminal())
+                            || (snapshot.is_none() && !registering.contains_key(target))
+                        {
+                            stopping.remove(&path);
+                            remove_owned(&path, false)?;
+                            continue;
+                        }
+                        if stopping
+                            .get(&path)
+                            .is_some_and(|attempt| Instant::now() < attempt.retry_at)
+                        {
+                            continue;
+                        }
+                    }
+                    let retain_until_stopped = stop_target.is_some();
                     let result = execute(&config, &sender, &allowed, record);
+                    if result.is_ok() && retain_until_stopped {
+                        // Enqueueing into the engine is not durable acknowledgement.
+                        // Keep this intent across VPN shutdown until a terminal
+                        // snapshot proves the transfer can no longer restart.
+                        // Async storage failures may leave no acknowledgement;
+                        // retry idempotently with bounded exponential backoff.
+                        let attempts = stopping
+                            .get(&path)
+                            .map_or(1, |attempt| (attempt.attempts + 1).min(6));
+                        stopping.insert(
+                            path.clone(),
+                            PendingStop {
+                                attempts,
+                                retry_at: Instant::now()
+                                    + Duration::from_secs((1_u64 << attempts).min(60)),
+                            },
+                        );
+                        continue;
+                    }
                     if let Err(error) = &result {
                         failures.retain(|state: &TransferState| state.id != id);
                         failures.push(TransferState {
@@ -391,6 +437,36 @@ async fn run(
             }
             // This exact queue entry is consumed once; transfer IDs are persistent.
             remove_owned(&path, false)?;
+        }
+        if preparing
+            .as_ref()
+            .is_some_and(|job| job.task.as_ref().is_some_and(JoinHandle::is_finished))
+        {
+            let mut job = preparing.take().expect("checked preparation");
+            let result = job
+                .task
+                .take()
+                .expect("preparation task")
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|result| result)
+                .and_then(|files| finish_offer(&sender, &allowed, &job.state.id, &job.peer, files));
+            if let Err(error) = result {
+                job.state.status = "failed".into();
+                job.state.error = Some(error.to_string());
+                pending_cleanup.insert(job.state.id.clone());
+                failures.push(job.state.clone());
+                remove_owned(&job.command_path, false)?;
+            } else {
+                job.state.status = "connecting".into();
+                registering.insert(
+                    job.state.id.clone(),
+                    Registration {
+                        command_path: job.command_path.clone(),
+                        state: job.state.clone(),
+                    },
+                );
+            }
         }
         let mut states = sender
             .snapshots()
@@ -485,27 +561,15 @@ async fn run(
                 .map(|registration| registration.state.clone()),
         );
         if let Some(job) = &preparing {
-            states.push(job.state.clone());
+            let mut state = job.state.clone();
+            state.transferred_bytes = job.progress.load(Ordering::Relaxed);
+            states.push(state);
         }
         if failures.len() > 32 {
             failures.drain(..failures.len() - 32);
         }
         pending_cleanup.retain(|id| !cleanup_sources(&config, id));
-        states.sort_by(|a, b| {
-            let a_complete = a.status == "completed";
-            let b_complete = b.status == "completed";
-            a_complete.cmp(&b_complete).then_with(|| b.id.cmp(&a.id))
-        });
-        let mut bytes = 2_usize;
-        states.retain(|state| {
-            let length =
-                serde_json::to_vec(state).map_or(usize::MAX, |value| value.len().saturating_add(1));
-            if bytes.saturating_add(length) > MAX_STATE_BYTES as usize {
-                return false;
-            }
-            bytes += length;
-            true
-        });
+        bound_states(&mut states);
         if states != last_state {
             write_atomic(
                 &config,
@@ -515,6 +579,33 @@ async fn run(
             last_state = states;
         }
     }
+}
+
+fn cancel_queued_send(config: &Path, id: &str) -> Result<Option<TransferState>> {
+    ensure!(valid_id(id), "Invalid transfer ID");
+    let path = state_dir(config)
+        .join("commands")
+        .join(format!("{id}.json"));
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    let command = read_command(config, &path)?;
+    let FileCommand::Send { npub, paths } = command.command else {
+        return Ok(None);
+    };
+    // Cancellation still works if the user removed a staged source while offline.
+    let mut state = queued_state(config, id, &npub, &paths)
+        .unwrap_or_else(|_| failed_state(id.into(), String::new()));
+    // Retain a cleanup receipt until all source handles close, including Windows.
+    write_atomic(
+        config,
+        &state_dir(config).join("sources").join(format!("{id}.json")),
+        &serde_json::to_vec(&paths)?,
+    )?;
+    remove_owned(&path, false)?;
+    state.status = "cancelled".into();
+    state.error = None;
+    Ok(Some(state))
 }
 
 fn execute(
@@ -558,9 +649,15 @@ struct Registration {
     state: TransferState,
 }
 
+struct PendingStop {
+    attempts: u32,
+    retry_at: Instant,
+}
+
 struct Preparing {
     task: Option<JoinHandle<Result<Vec<TransferFile>>>>,
     cancelled: Arc<AtomicBool>,
+    progress: Arc<AtomicU64>,
     command_path: PathBuf,
     peer: String,
     state: TransferState,
@@ -606,11 +703,15 @@ impl Preparing {
         )?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let cancellation = cancelled.clone();
+        let progress = Arc::new(AtomicU64::new(0));
+        let prepared = progress.clone();
         let config = config.to_owned();
-        let task = tokio::task::spawn_blocking(move || prepare(&config, paths, &cancellation));
+        let task =
+            tokio::task::spawn_blocking(move || prepare(&config, paths, &cancellation, &prepared));
         Ok(Self {
             task: Some(task),
             cancelled,
+            progress,
             command_path,
             peer: hex.clone(),
             state: TransferState {
@@ -668,7 +769,12 @@ fn failed_state(id: String, error: String) -> TransferState {
     }
 }
 
-fn prepare(config: &Path, paths: Vec<String>, cancelled: &AtomicBool) -> Result<Vec<TransferFile>> {
+fn prepare(
+    config: &Path,
+    paths: Vec<String>,
+    cancelled: &AtomicBool,
+    progress: &AtomicU64,
+) -> Result<Vec<TransferFile>> {
     ensure!(
         !paths.is_empty() && paths.len() <= 32,
         "Choose between 1 and 32 files"
@@ -694,6 +800,7 @@ fn prepare(config: &Path, paths: Vec<String>, cancelled: &AtomicBool) -> Result<
                 count += length as u64;
                 ensure!(count <= size_bytes, "Selected file changed");
                 hash.update(&buffer[..length]);
+                progress.fetch_add(length as u64, Ordering::Relaxed);
             }
             ensure!(count == size_bytes, "Selected file changed");
             Ok(TransferFile {

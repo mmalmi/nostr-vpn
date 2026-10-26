@@ -54,9 +54,14 @@ test('files can be offered, accepted, resumed and saved', async ({ page }) => {
   await expect(transfers.getByText('Wants to send you files')).toBeVisible();
   await transfers.getByRole('button', { name: 'Accept', exact: true }).click();
   await expect(transfers.getByRole('button', { name: 'Resume', exact: true })).toBeVisible();
+  await expect(transfers.getByRole('status')).toHaveText('Paused — ready to resume');
+  await expect(transfers.getByRole('progressbar')).toHaveAttribute('value', '512');
+  await mkdir('../../artifacts/file-transfers', { recursive: true });
+  await page.screenshot({ path: '../../artifacts/file-transfers/web-paused.png', fullPage: true });
   await transfers.getByRole('button', { name: 'Resume', exact: true }).click();
   const download = transfers.getByRole('link', { name: 'Save photo.jpg' });
   await expect(download).toHaveAttribute('href', '/api/files/incoming/0');
+  await expect(transfers.getByRole('status')).toHaveText('Received');
   expect(actions).toEqual(['accept', 'resume']);
   expect(errors).toEqual([]);
   await mkdir('../../artifacts/file-transfers', { recursive: true });
@@ -67,6 +72,47 @@ test('files can be offered, accepted, resumed and saved', async ({ page }) => {
   const transferBounds = await transfers.boundingBox();
   expect(transferBounds!.y - navigation!.y - navigation!.height).toBeLessThan(48);
   await page.screenshot({ path: '../../artifacts/file-transfers/web-mobile.png', fullPage: true });
+});
+
+test('cancelling preparation keeps later files from being queued', async ({ page }) => {
+  const current = state('Connected', true);
+  current.ownNpub = 'npub-self';
+  current.networks[0].participants = [{
+    npub: 'npub-peer', pubkeyHex: 'peer', alias: 'Laptop', magicDnsAlias: 'laptop',
+    magicDnsName: 'laptop.nvpn', tunnelIp: '', isAdmin: false, reachable: true,
+    offersExitNode: false, fipsEndpointHints: [], advertisedRoutes: [], txBytes: 0, rxBytes: 0,
+    fipsEndpointNpub: '', fipsTransportAddr: '', fipsTransportType: '',
+    fipsPacketsSent: 0, fipsPacketsRecv: 0, fipsBytesSent: 0, fipsBytesRecv: 0,
+    state: 'connected', meshState: '', statusText: 'Online', lastSeenText: '',
+  } as ParticipantView];
+  const uploads: string[] = [];
+  let releaseUpload!: () => void;
+  const blocked = new Promise<void>(resolve => { releaseUpload = resolve; });
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/files/send') {
+      uploads.push(url.searchParams.get('name')!);
+      await blocked;
+      await route.fulfill({ json: { id: 'outgoing' } }).catch(() => {});
+      return;
+    }
+    await route.fulfill({ json: current });
+  });
+  await page.goto('/');
+  await page.getByLabel('Files to send').setInputFiles([
+    { name: 'first.txt', mimeType: 'text/plain', buffer: Buffer.from('first file') },
+    { name: 'second.txt', mimeType: 'text/plain', buffer: Buffer.from('second file') },
+  ]);
+  await expect(page.getByRole('status')).toContainText('Preparing 1 of 2: first.txt');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'laptop.nvpn via mesh -' }).click();
+  await expect(page.getByRole('button', { name: 'Cancel preparation' })).toBeVisible();
+  await page.screenshot({ path: '../../artifacts/file-transfers/web-preparing-mobile.png', fullPage: true });
+  await page.getByRole('button', { name: 'Cancel preparation' }).click();
+  await expect(page.getByRole('button', { name: 'Send files', exact: true })).toBeEnabled();
+  releaseUpload();
+  expect(uploads).toEqual(['first.txt']);
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 test('offline transfers explain connection requirement and service errors', async ({ page }) => {
@@ -82,7 +128,32 @@ test('offline transfers explain connection requirement and service errors', asyn
   await expect(transfers.getByText('File storage is unavailable.')).toBeVisible();
   await expect(transfers.getByText('Connect VPN to continue transfers.')).toBeVisible();
   await expect(transfers.getByRole('button', { name: 'Accept', exact: true })).toBeDisabled();
+  await expect(transfers.getByRole('button', { name: 'Decline', exact: true })).toBeEnabled();
   await expect(transfers.getByText('From · 0 B', { exact: true })).toHaveCount(0);
+});
+
+test('offline queued files can be cancelled without connecting', async ({ page }) => {
+  const current = state('Disconnected', false);
+  current.fileTransfers = [{ id: 'queued', peerNpub: 'npub-peer', peerName: 'Laptop', isSender: true,
+    files: [{ name: 'notes.txt', sizeBytes: 10, localPath: null }], status: 'queued',
+    transferredBytes: 0, totalBytes: 10, error: null }];
+  const actions: string[] = [];
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/files/queued/cancel') {
+      actions.push(path);
+      current.fileTransfers![0].status = 'cancelling';
+      return route.fulfill({ json: { id: 'cancel-intent' } });
+    }
+    await route.fulfill({ json: current });
+  });
+  await page.goto('/');
+  const transfers = page.getByRole('region', { name: 'File transfers' });
+  await expect(transfers.getByRole('status')).toHaveText('Queued — connect VPN to send');
+  await transfers.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(transfers.getByRole('status')).toHaveText('Cancellation queued');
+  await expect(transfers.getByRole('button', { name: 'Cancel', exact: true })).toHaveCount(0);
+  expect(actions).toEqual(['/api/files/queued/cancel']);
 });
 
 test('earlier files page through the inbox without replacing live transfers', async ({ page }) => {

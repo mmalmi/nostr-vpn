@@ -52,10 +52,10 @@ export function qrMatrix(text: string): Promise<QrMatrix> {
   return postJson<QrMatrix>('/api/qr_matrix', { text });
 }
 
-export async function sendFile(npub: string, file: File): Promise<{ id: string }> {
+export async function sendFile(npub: string, file: File, signal?: AbortSignal): Promise<{ id: string }> {
   const query = new URLSearchParams({ npub, name: file.name });
   const response = await fetch(`${apiBase}/api/files/send?${query}`, {
-    method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file,
+    method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: file, signal,
   });
   if (!response.ok) throw new Error(await responseError(response));
   return response.json();

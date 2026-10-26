@@ -7,7 +7,8 @@ use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::file_transfers::{
     FileCommand, FileState, TransferState, completed_file, create_upload, discard_staged, enqueue,
-    outbox_dir, read_state, stage_source, state_dir, validate_recipient,
+    outbox_dir, read_state, stage_source, stage_source_with_progress, state_dir,
+    validate_recipient,
 };
 
 struct Fixture {
@@ -112,6 +113,89 @@ fn private_permissions(path: &Path, directory: bool) {
 }
 
 #[test]
+fn staging_reports_progress_and_cancellation_preserves_source_and_other_transfers() {
+    let fixture = Fixture::new();
+    let source = fixture.source();
+    let bytes = vec![0x53; 192 * 1024 + 7];
+    fs::write(&source, &bytes).unwrap();
+    let retained = stage_source(&fixture.config, &source).unwrap();
+    let mut progress = Vec::new();
+    let error = stage_source_with_progress(&fixture.config, &source, |copied| {
+        progress.push(copied);
+        copied < 128 * 1024
+    })
+    .unwrap_err();
+    assert!(error.to_string().contains("cancelled"));
+    assert_eq!(progress.first(), Some(&0));
+    assert!(progress.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(progress.last().unwrap() < &(bytes.len() as u64));
+    assert_eq!(fs::read(&source).unwrap(), bytes);
+    assert_eq!(fs::read(&retained).unwrap(), bytes);
+    assert_eq!(
+        fs::read_dir(outbox_dir(&fixture.config)).unwrap().count(),
+        1
+    );
+
+    progress.clear();
+    let copied = stage_source_with_progress(&fixture.config, &source, |count| {
+        progress.push(count);
+        true
+    })
+    .unwrap();
+    assert_eq!(progress.last(), Some(&(bytes.len() as u64)));
+    assert_eq!(fs::read(&copied).unwrap(), bytes);
+}
+
+#[test]
+fn offline_queue_is_visible_and_pending_actions_preserve_terminal_results() {
+    let fixture = Fixture::new();
+    let staged = stage_source(&fixture.config, &fixture.source()).unwrap();
+    let id = enqueue(&fixture.config, fixture.send(&staged)).unwrap();
+    let states = read_state(&fixture.config).unwrap();
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].id, id);
+    assert_eq!(states[0].status, "queued");
+    assert_eq!(states[0].total_bytes, 14);
+    assert_eq!(states[0].files[0].name, "selected.txt");
+    assert!(states[0].files[0].local_path.is_none());
+    enqueue(&fixture.config, FileCommand::Cancel { id: id.clone() }).unwrap();
+    assert_eq!(read_state(&fixture.config).unwrap()[0].status, "cancelling");
+
+    let saved = fixture.received();
+    enqueue(
+        &fixture.config,
+        FileCommand::Decline {
+            id: "received-file".into(),
+        },
+    )
+    .unwrap();
+    let states = read_state(&fixture.config).unwrap();
+    let completed = states
+        .iter()
+        .find(|state| state.id == "received-file")
+        .unwrap();
+    assert_eq!(completed.status, "completed");
+    assert_eq!(fs::read(saved).unwrap(), b"hello");
+}
+
+#[test]
+fn queued_preview_rejects_replaced_sources_and_mismatched_command_identity() {
+    let fixture = Fixture::new();
+    let staged = stage_source(&fixture.config, &fixture.source()).unwrap();
+    let id = enqueue(&fixture.config, fixture.send(&staged)).unwrap();
+    let command = state_dir(&fixture.config)
+        .join("commands")
+        .join(format!("{id}.json"));
+    let renamed = command.with_file_name("different-id.json");
+    fs::rename(&command, &renamed).unwrap();
+    assert!(read_state(&fixture.config).unwrap().is_empty());
+    fs::rename(&renamed, &command).unwrap();
+    fs::remove_file(&staged).unwrap();
+    fs::create_dir(&staged).unwrap();
+    assert!(read_state(&fixture.config).unwrap().is_empty());
+}
+
+#[test]
 fn staged_source_is_independent_and_queue_contains_only_owned_references() {
     let fixture = Fixture::new();
     assert!(read_state(&fixture.config).unwrap().is_empty());
@@ -200,16 +284,25 @@ fn queue_rejects_unstaged_paths_invalid_ids_and_excess_pending_operations() {
     for index in 1..64 {
         fs::write(queue.join(format!("pending-{index}.json")), b"{}").unwrap();
     }
+    assert!(enqueue(&fixture.config, fixture.send(&staged)).is_err());
+    let stop = FileCommand::Cancel {
+        id: "received-file".into(),
+    };
+    let cancellation = enqueue(&fixture.config, stop.clone()).unwrap();
+    assert_eq!(enqueue(&fixture.config, stop).unwrap(), cancellation);
+    assert_eq!(fs::read_dir(&queue).unwrap().count(), 65);
+    for index in 65..144 {
+        fs::write(queue.join(format!("pending-{index}.json")), b"{}").unwrap();
+    }
     assert!(
         enqueue(
             &fixture.config,
             FileCommand::Cancel {
-                id: "received-file".into()
+                id: "another-file".into()
             }
         )
         .is_err()
     );
-    assert_eq!(fs::read_dir(queue).unwrap().count(), 64);
 }
 
 #[test]
