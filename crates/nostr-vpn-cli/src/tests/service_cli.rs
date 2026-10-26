@@ -452,42 +452,44 @@ fn linux_service_unit_keeps_specifiers_and_environment_references_literal() {
 }
 
 #[test]
-fn windows_service_query_parser_extracts_running_state() {
-    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        STATE              : 4  RUNNING\n                                (STOPPABLE, NOT_PAUSABLE, ACCEPTS_SHUTDOWN)\n        WIN32_EXIT_CODE    : 0  (0x0)\n        SERVICE_EXIT_CODE  : 0  (0x0)\n        CHECKPOINT         : 0x0\n        WAIT_HINT          : 0x0\n        PID                : 1234\n        FLAGS              :\n";
-    let (running, pid) = windows_service_status_from_query_output(query);
-    assert!(running);
-    assert_eq!(pid, Some(1234));
+fn windows_service_command_line_argv_splits_quoted_paths() {
+    assert_eq!(
+        windows_command_line_argv(
+            r#""C:\Program Files\Nostr VPN\nvpn.exe" daemon --service --config "C:\my cfg.toml""#
+        ),
+        vec![
+            r"C:\Program Files\Nostr VPN\nvpn.exe".to_string(),
+            "daemon".to_string(),
+            "--service".to_string(),
+            "--config".to_string(),
+            r"C:\my cfg.toml".to_string(),
+        ]
+    );
+    assert_eq!(
+        windows_command_line_argv(r"C:\nvpn.exe daemon --service"),
+        vec![
+            r"C:\nvpn.exe".to_string(),
+            "daemon".to_string(),
+            "--service".to_string(),
+        ]
+    );
+    assert_eq!(windows_command_line_argv("   "), Vec::<String>::new());
+    assert_eq!(windows_command_line_argv(r#""""#), vec![String::new()]);
 }
 
 #[test]
-fn windows_service_query_parser_extracts_exact_lifecycle_state() {
-    for (raw_state, expected) in [
-        ("1  STOPPED", WindowsServiceState::Stopped),
-        ("2  START_PENDING", WindowsServiceState::StartPending),
-        ("3  STOP_PENDING", WindowsServiceState::StopPending),
-        ("4  RUNNING", WindowsServiceState::Running),
-        ("5  CONTINUE_PENDING", WindowsServiceState::ContinuePending),
-        ("6  PAUSE_PENDING", WindowsServiceState::PausePending),
-        ("7  PAUSED", WindowsServiceState::Paused),
-    ] {
-        let query =
-            format!("SERVICE_NAME: NvpnService\n        STATE              : {raw_state}\n");
-        assert_eq!(
-            windows_service_state_from_query_output(&query),
-            Some(expected)
-        );
-    }
-
+fn windows_service_command_line_parser_extracts_service_executable() {
     assert_eq!(
-        windows_service_state_from_query_output(
-            "SERVICE_NAME: NvpnService\n        STATE : 99 VENDOR_STATE\n"
+        windows_service_executable_from_command_line(
+            r#""C:\Program Files\Nostr VPN\nvpn.exe" daemon --service --config "C:\Users\Example\AppData\Roaming\nvpn\config.toml""#,
         ),
-        Some(WindowsServiceState::Unknown(99))
+        Some(Path::new(r"C:\Program Files\Nostr VPN\nvpn.exe").to_path_buf())
     );
     assert_eq!(
-        windows_service_state_from_query_output("SERVICE_NAME: NvpnService\n"),
-        None
+        windows_service_executable_from_command_line(r"C:\nvpn.exe daemon --service"),
+        Some(Path::new(r"C:\nvpn.exe").to_path_buf())
     );
+    assert_eq!(windows_service_executable_from_command_line("   "), None);
 }
 
 #[test]
@@ -537,24 +539,6 @@ fn windows_stop_failure_is_joined_only_after_observing_stop_completion() {
     assert!(!windows_service_stop_failure_is_joinable(Some(
         WindowsServiceState::StartPending
     )));
-}
-
-#[test]
-fn windows_service_config_parser_extracts_disabled_state() {
-    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 4   DISABLED\n        ERROR_CONTROL      : 1   NORMAL\n        BINARY_PATH_NAME   : \"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --service --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\"\n";
-    assert!(windows_service_disabled_from_qc_output(query));
-
-    let auto_start = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 2   AUTO_START\n";
-    assert!(!windows_service_disabled_from_qc_output(auto_start));
-}
-
-#[test]
-fn windows_service_config_parser_extracts_binary_path() {
-    let query = "SERVICE_NAME: NvpnService\n        TYPE               : 10  WIN32_OWN_PROCESS\n        START_TYPE         : 2   AUTO_START\n        BINARY_PATH_NAME   : \"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --service --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\"\n";
-    assert_eq!(
-        windows_service_binary_path_from_sc_qc_output(query),
-        Some(Path::new(r"C:\Program Files\Nostr VPN\nvpn.exe").to_path_buf())
-    );
 }
 
 #[test]

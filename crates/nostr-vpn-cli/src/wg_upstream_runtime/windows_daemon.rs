@@ -873,15 +873,6 @@ fn configure_and_start_windows_native_wireguard_service(tunnel_name: &str) -> Re
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    let output = ProcessCommand::new("sc.exe")
-        .args(["start", &service_name])
-        .bounded_output(&format!("start native WireGuard service {service_name}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "sc.exe start failed for {service_name}: stdout: {}; stderr: {}",
-        String::from_utf8_lossy(&output.stdout).trim(),
-        String::from_utf8_lossy(&output.stderr).trim()
-    ))
+    // The tunnel service may already be running from a previous start.
+    crate::service_management::windows_start_named_service(&service_name, true)
 }

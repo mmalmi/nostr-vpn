@@ -1,3 +1,18 @@
+#[cfg(target_os = "windows")]
+use std::os::windows::process::ExitStatusExt as _;
+
+#[cfg(target_os = "windows")]
+use windows_service::service::{
+    Service, ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType,
+};
+#[cfg(target_os = "windows")]
+use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+
+#[cfg(target_os = "windows")]
+const ERROR_SERVICE_ALREADY_RUNNING: i32 = 1056;
+#[cfg(target_os = "windows")]
+const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;
+
 #[cfg(any(target_os = "windows", test))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WindowsServiceState {
@@ -8,6 +23,9 @@ pub(crate) enum WindowsServiceState {
     ContinuePending,
     PausePending,
     Paused,
+    // Retained for the stop state machine contract; the typed SCM query
+    // reports vendor-specific raw states as query errors instead.
+    #[allow(dead_code)]
     Unknown(u32),
 }
 
@@ -38,41 +56,32 @@ fn windows_install_service(
         windows_stop_service(true)?;
         windows_delete_service(true)?;
         windows_wait_for_service_deleted(Duration::from_secs(10))?;
-    } else if windows_service_query()?.is_some() {
+    } else if windows_service_is_installed()? {
         return Err(anyhow!(
             "system service already installed (pass --force to reinstall)"
         ));
     }
 
-    let bin_path = windows_service_bin_path(
+    let command_line = windows_service_bin_path(
         executable,
         config_path,
         iface,
         mesh_refresh_interval_secs.max(1),
     );
-    run_sc_checked(
-        &[
-            "create",
-            WINDOWS_SERVICE_NAME,
-            "type=",
-            "own",
-            "start=",
-            "auto",
-            "binPath=",
-            &bin_path,
-            "DisplayName=",
-            WINDOWS_SERVICE_DISPLAY_NAME,
-        ],
-        "create service",
+    let service_info = windows_service_info_from_command_line(
+        &command_line,
+        WINDOWS_SERVICE_DISPLAY_NAME,
+        ServiceStartType::AutoStart,
     )?;
-    run_sc_checked(
-        &[
-            "description",
-            WINDOWS_SERVICE_NAME,
-            WINDOWS_SERVICE_DESCRIPTION,
-        ],
-        "set service description",
-    )?;
+    let manager =
+        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
+            .context("connect to the Windows service manager")?;
+    let service = manager
+        .create_service(&service_info, ServiceAccess::CHANGE_CONFIG)
+        .context("create system service")?;
+    service
+        .set_description(WINDOWS_SERVICE_DESCRIPTION)
+        .context("set service description")?;
     windows_start_service_and_wait(false, Duration::from_secs(10))?;
     println!("installed system service: {}", WINDOWS_SERVICE_NAME);
     Ok(())
@@ -89,15 +98,11 @@ fn windows_uninstall_service() -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn windows_enable_service() -> Result<()> {
-    let status = windows_query_service_status(true)?;
-    if !status.installed {
+    if !windows_service_is_installed()? {
         return Err(anyhow!("system service is not installed"));
     }
 
-    run_sc_checked(
-        &["config", WINDOWS_SERVICE_NAME, "start=", "auto"],
-        "configure service start type",
-    )?;
+    windows_change_service_start_type(ServiceStartType::AutoStart)?;
     windows_start_service_and_wait(true, Duration::from_secs(10))?;
     println!("enabled system service: {}", WINDOWS_SERVICE_NAME);
     Ok(())
@@ -105,16 +110,12 @@ fn windows_enable_service() -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn windows_disable_service() -> Result<()> {
-    let status = windows_query_service_status(true)?;
-    if !status.installed {
+    if !windows_service_is_installed()? {
         return Err(anyhow!("system service is not installed"));
     }
 
     windows_stop_service(true)?;
-    run_sc_checked(
-        &["config", WINDOWS_SERVICE_NAME, "start=", "disabled"],
-        "configure service start type",
-    )?;
+    windows_change_service_start_type(ServiceStartType::Disabled)?;
     println!("disabled system service: {}", WINDOWS_SERVICE_NAME);
     Ok(())
 }
@@ -128,8 +129,11 @@ pub(crate) fn windows_should_apply_config_via_service(status: &ServiceStatusView
 pub(crate) fn windows_query_service_status(
     include_binary_version: bool,
 ) -> Result<ServiceStatusView> {
-    let query = windows_service_query()?;
-    let Some(query) = query else {
+    let service = windows_open_named_service(
+        WINDOWS_SERVICE_NAME,
+        ServiceAccess::QUERY_STATUS | ServiceAccess::QUERY_CONFIG,
+    )?;
+    let Some(service) = service else {
         return Ok(ServiceStatusView {
             supported: true,
             installed: false,
@@ -144,13 +148,15 @@ pub(crate) fn windows_query_service_status(
         });
     };
 
-    let config = windows_service_config_query()?
-        .ok_or_else(|| anyhow!("service query succeeded but service config lookup failed"))?;
-    let query_text = String::from_utf8_lossy(&query.stdout);
-    let config_text = String::from_utf8_lossy(&config.stdout);
-    let (running, pid) = windows_service_status_from_query_output(&query_text);
-    let disabled = windows_service_disabled_from_qc_output(&config_text);
-    let service_binary = windows_service_binary_path_from_sc_qc_output(&config_text);
+    let status = service
+        .query_status()
+        .context("query system service status")?;
+    let config = service
+        .query_config()
+        .context("query system service config")?;
+    let disabled = config.start_type == ServiceStartType::Disabled;
+    let service_binary =
+        windows_service_executable_from_command_line(&config.executable_path.to_string_lossy());
     let binary_version = if include_binary_version {
         service_binary
             .as_ref()
@@ -164,8 +170,8 @@ pub(crate) fn windows_query_service_status(
         installed: true,
         disabled,
         loaded: !disabled,
-        running,
-        pid,
+        running: status.current_state == ServiceState::Running,
+        pid: status.process_id.filter(|pid| *pid > 0),
         label: WINDOWS_SERVICE_NAME.to_string(),
         plist_path: WINDOWS_SERVICE_NAME.to_string(),
         binary_path: service_binary
@@ -175,89 +181,49 @@ pub(crate) fn windows_query_service_status(
     })
 }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_service_binary_path_from_sc_qc_output(output: &str) -> Option<PathBuf> {
-    let line = output
-        .lines()
-        .find(|line| line.trim_start().starts_with("BINARY_PATH_NAME"))?;
-    let (_, command) = line.split_once(':')?;
-    let command = command.trim();
-    if let Some(quoted) = command.strip_prefix('"') {
-        let executable = quoted.split_once('"')?.0;
-        if executable.trim().is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(executable))
+#[cfg(target_os = "windows")]
+fn windows_service_is_installed() -> Result<bool> {
+    Ok(windows_open_named_service(WINDOWS_SERVICE_NAME, ServiceAccess::QUERY_STATUS)?.is_some())
+}
+
+#[cfg(target_os = "windows")]
+fn windows_open_named_service(
+    service_name: &str,
+    access: ServiceAccess,
+) -> Result<Option<Service>> {
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .context("connect to the Windows service manager")?;
+    match manager.open_service(service_name, access) {
+        Ok(service) => Ok(Some(service)),
+        Err(windows_service::Error::Winapi(os_error))
+            if os_error.raw_os_error() == Some(ERROR_SERVICE_DOES_NOT_EXIST) =>
+        {
+            Ok(None)
         }
-    } else {
-        let executable = command.split_whitespace().next()?.trim();
-        if executable.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(executable))
+        Err(error) => Err(error).with_context(|| format!("open service {service_name}")),
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn windows_start_named_service(
+    service_name: &str,
+    ignore_already_running: bool,
+) -> Result<()> {
+    let service = windows_open_named_service(
+        service_name,
+        ServiceAccess::QUERY_STATUS | ServiceAccess::START,
+    )?
+    .ok_or_else(|| anyhow!("service {service_name} is not installed"))?;
+    if let Err(error) = service.start(&[] as &[OsString]) {
+        if ignore_already_running
+            && let windows_service::Error::Winapi(os_error) = &error
+            && os_error.raw_os_error() == Some(ERROR_SERVICE_ALREADY_RUNNING)
+        {
+            return Ok(());
         }
+        return Err(error).with_context(|| format!("start service {service_name}"));
     }
-}
-
-#[cfg(target_os = "windows")]
-fn windows_service_query() -> Result<Option<std::process::Output>> {
-    let output = run_sc_raw(&["queryex", WINDOWS_SERVICE_NAME], "query service")?;
-    if output.status.success() {
-        return Ok(Some(output));
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
-    if windows_service_missing_message(&details) {
-        return Ok(None);
-    }
-
-    Err(anyhow!(
-        "sc query failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_service_config_query() -> Result<Option<std::process::Output>> {
-    let output = run_sc_raw(&["qc", WINDOWS_SERVICE_NAME], "query service config")?;
-    if output.status.success() {
-        return Ok(Some(output));
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
-    if windows_service_missing_message(&details) {
-        return Ok(None);
-    }
-
-    Err(anyhow!(
-        "sc qc failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
-}
-
-#[cfg(target_os = "windows")]
-fn windows_start_service(ignore_already_running: bool) -> Result<()> {
-    let output = run_sc_raw(&["start", WINDOWS_SERVICE_NAME], "start service")?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
-    if ignore_already_running && windows_service_already_running_message(&details) {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "sc start failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
@@ -265,7 +231,7 @@ pub(crate) fn windows_start_service_and_wait(
     ignore_already_running: bool,
     timeout: Duration,
 ) -> Result<()> {
-    windows_start_service(ignore_already_running)?;
+    windows_start_named_service(WINDOWS_SERVICE_NAME, ignore_already_running)?;
     windows_wait_for_service_running(timeout)
 }
 
@@ -273,7 +239,9 @@ pub(crate) fn windows_start_service_and_wait(
 fn windows_wait_for_service_running(timeout: Duration) -> Result<()> {
     let started = Instant::now();
     while started.elapsed() < timeout {
-        if windows_query_service_status(true)?.running {
+        if windows_query_service_lifecycle_state()?
+            .is_some_and(|state| state == WindowsServiceState::Running)
+        {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(200));
@@ -286,13 +254,45 @@ fn windows_wait_for_service_running(timeout: Duration) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
+pub(crate) fn windows_service_config_query() -> Result<Option<std::process::Output>> {
+    // Config bootstrap still consumes the legacy `sc qc` text contract to
+    // locate the installed service config; source it from the typed SCM API
+    // so localized `sc.exe` output and missing services cannot break it.
+    let service =
+        windows_open_named_service(WINDOWS_SERVICE_NAME, ServiceAccess::QUERY_CONFIG)?;
+    let Some(service) = service else {
+        return Ok(None);
+    };
+    let config = service
+        .query_config()
+        .context("query system service config")?;
+    Ok(Some(std::process::Output {
+        status: std::process::ExitStatus::from_raw(0),
+        stdout: format!("BINARY_PATH_NAME : {}\n", config.executable_path.display()).into_bytes(),
+        stderr: Vec::new(),
+    }))
+}
+
+#[cfg(target_os = "windows")]
 fn windows_stop_service(ignore_missing: bool) -> Result<()> {
     let started = Instant::now();
     let mut service_was_installed = false;
     let mut stop_requested = false;
 
     loop {
-        let state = windows_query_service_lifecycle_state()?;
+        let service = windows_open_named_service(
+            WINDOWS_SERVICE_NAME,
+            ServiceAccess::QUERY_STATUS | ServiceAccess::STOP,
+        )?;
+        let state = match &service {
+            Some(service) => Some(windows_service_state_from_status(
+                service
+                    .query_status()
+                    .context("query system service status")?
+                    .current_state,
+            )),
+            None => None,
+        };
         if state.is_some() {
             service_was_installed = true;
         }
@@ -307,26 +307,22 @@ fn windows_stop_service(ignore_missing: bool) -> Result<()> {
             WindowsServiceStopAction::Wait => {}
             WindowsServiceStopAction::RequestStop if stop_requested => {}
             WindowsServiceStopAction::RequestStop => {
-                let output = run_sc_raw(&["stop", WINDOWS_SERVICE_NAME], "stop service")?;
-                if output.status.success() {
-                    stop_requested = true;
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    let observed = windows_query_service_lifecycle_state()?;
-                    if !windows_service_stop_failure_is_joinable(observed) {
-                        return Err(anyhow!(
-                            "sc stop failed\nstdout: {}\nstderr: {}",
-                            stdout.trim(),
-                            stderr.trim()
-                        ));
+                if let Some(service) = &service {
+                    match service.stop() {
+                        Ok(_) => stop_requested = true,
+                        Err(error) => {
+                            let observed = windows_query_service_lifecycle_state()?;
+                            if !windows_service_stop_failure_is_joinable(observed) {
+                                return Err(error).with_context(|| "stop system service");
+                            }
+                            if windows_service_stop_action(observed)
+                                == WindowsServiceStopAction::Complete
+                            {
+                                return Ok(());
+                            }
+                            stop_requested = true;
+                        }
                     }
-                    if windows_service_stop_action(observed)
-                        == WindowsServiceStopAction::Complete
-                    {
-                        return Ok(());
-                    }
-                    stop_requested = true;
                 }
             }
             WindowsServiceStopAction::Unsupported => {
@@ -346,39 +342,50 @@ fn windows_stop_service(ignore_missing: bool) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 fn windows_query_service_lifecycle_state() -> Result<Option<WindowsServiceState>> {
-    let Some(output) = windows_service_query()? else {
+    let Some(service) =
+        windows_open_named_service(WINDOWS_SERVICE_NAME, ServiceAccess::QUERY_STATUS)?
+    else {
         return Ok(None);
     };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    windows_service_state_from_query_output(&stdout)
-        .map(Some)
-        .ok_or_else(|| anyhow!("sc query output did not contain a service state"))
+    let status = service
+        .query_status()
+        .context("query system service status")?;
+    Ok(Some(windows_service_state_from_status(
+        status.current_state,
+    )))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_service_state_from_status(state: ServiceState) -> WindowsServiceState {
+    match state {
+        ServiceState::Stopped => WindowsServiceState::Stopped,
+        ServiceState::StartPending => WindowsServiceState::StartPending,
+        ServiceState::StopPending => WindowsServiceState::StopPending,
+        ServiceState::Running => WindowsServiceState::Running,
+        ServiceState::ContinuePending => WindowsServiceState::ContinuePending,
+        ServiceState::PausePending => WindowsServiceState::PausePending,
+        ServiceState::Paused => WindowsServiceState::Paused,
+    }
 }
 
 #[cfg(target_os = "windows")]
 fn windows_delete_service(ignore_missing: bool) -> Result<()> {
-    let output = run_sc_raw(&["delete", WINDOWS_SERVICE_NAME], "delete service")?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let details = format!("{}\n{}", stdout.trim(), stderr.trim());
-    if ignore_missing && windows_service_missing_message(&details) {
-        return Ok(());
-    }
-    Err(anyhow!(
-        "sc delete failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
+    let Some(service) = windows_open_named_service(WINDOWS_SERVICE_NAME, ServiceAccess::DELETE)?
+    else {
+        if ignore_missing {
+            return Ok(());
+        }
+        return Err(anyhow!("system service is not installed"));
+    };
+    service.delete().context("delete system service")
 }
 
 #[cfg(target_os = "windows")]
 fn windows_wait_for_service_deleted(timeout: Duration) -> Result<()> {
     let started = Instant::now();
     while started.elapsed() < timeout {
-        if windows_service_query()?.is_none() {
+        if windows_open_named_service(WINDOWS_SERVICE_NAME, ServiceAccess::QUERY_STATUS)?.is_none()
+        {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(200));
@@ -391,61 +398,109 @@ fn windows_wait_for_service_deleted(timeout: Duration) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn run_sc_checked(args: &[&str], context: &str) -> Result<std::process::Output> {
-    let output = run_sc_raw(args, context)?;
-    if output.status.success() {
-        return Ok(output);
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Err(anyhow!(
-        "sc {context} failed\nstdout: {}\nstderr: {}",
-        stdout.trim(),
-        stderr.trim()
-    ))
+fn windows_change_service_start_type(start_type: ServiceStartType) -> Result<()> {
+    let service = windows_open_named_service(
+        WINDOWS_SERVICE_NAME,
+        ServiceAccess::QUERY_CONFIG | ServiceAccess::CHANGE_CONFIG,
+    )?
+    .ok_or_else(|| anyhow!("system service is not installed"))?;
+    let config = service
+        .query_config()
+        .context("query system service config")?;
+    let mut service_info = windows_service_info_from_command_line(
+        &config.executable_path.to_string_lossy(),
+        &config.display_name.to_string_lossy(),
+        start_type,
+    )?;
+    service_info.service_type = config.service_type;
+    service_info.error_control = config.error_control;
+    service_info.dependencies = config.dependencies;
+    service_info.account_name = config.account_name;
+    service
+        .change_config(&service_info)
+        .context("configure system service start type")
 }
 
 #[cfg(target_os = "windows")]
-fn run_sc_raw(args: &[&str], context: &str) -> Result<std::process::Output> {
-    ProcessCommand::new("sc.exe")
-        .args(args)
-        .output()
-        .with_context(|| format!("failed to sc.exe {context}"))
-}
-
-#[cfg(target_os = "windows")]
-fn windows_service_missing_message(details: &str) -> bool {
-    let lowered = details.to_ascii_lowercase();
-    lowered.contains("failed 1060") || lowered.contains("does not exist as an installed service")
-}
-
-#[cfg(target_os = "windows")]
-fn windows_service_already_running_message(details: &str) -> bool {
-    let lowered = details.to_ascii_lowercase();
-    lowered.contains("failed 1056")
-        || lowered.contains("instance of the service is already running")
+fn windows_service_info_from_command_line(
+    command_line: &str,
+    display_name: &str,
+    start_type: ServiceStartType,
+) -> Result<ServiceInfo> {
+    let mut arguments = windows_command_line_argv(command_line).into_iter();
+    let executable_path = arguments
+        .next()
+        .filter(|executable| !executable.trim().is_empty())
+        .ok_or_else(|| anyhow!("service command line has no executable path"))?;
+    Ok(ServiceInfo {
+        name: WINDOWS_SERVICE_NAME.into(),
+        display_name: display_name.into(),
+        service_type: ServiceType::OWN_PROCESS,
+        start_type,
+        error_control: ServiceErrorControl::Normal,
+        executable_path: executable_path.into(),
+        launch_arguments: arguments.map(Into::into).collect(),
+        dependencies: Vec::new(),
+        account_name: None,
+        account_password: None,
+    })
 }
 
 #[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_service_state_from_query_output(
-    output: &str,
-) -> Option<WindowsServiceState> {
-    let value = output.lines().map(str::trim).find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        key.trim().eq_ignore_ascii_case("STATE").then_some(value)
-    })?;
-    let code = value.split_whitespace().next()?.parse::<u32>().ok()?;
-    Some(match code {
-        1 => WindowsServiceState::Stopped,
-        2 => WindowsServiceState::StartPending,
-        3 => WindowsServiceState::StopPending,
-        4 => WindowsServiceState::Running,
-        5 => WindowsServiceState::ContinuePending,
-        6 => WindowsServiceState::PausePending,
-        7 => WindowsServiceState::Paused,
-        other => WindowsServiceState::Unknown(other),
-    })
+pub(crate) fn windows_service_executable_from_command_line(command: &str) -> Option<PathBuf> {
+    let executable = windows_command_line_argv(command).into_iter().next()?;
+    if executable.trim().is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(executable))
+    }
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(crate) fn windows_command_line_argv(command: &str) -> Vec<String> {
+    // Inverse of the Windows command line quoting rules used by
+    // `windows_command_line_quote` and the SCM ImagePath: backslash pairs are
+    // literal, a backslash before a quote escapes it, and unquoted whitespace
+    // separates arguments.
+    let mut argv = Vec::new();
+    let mut argument = String::new();
+    let mut argument_started = false;
+    let mut in_quotes = false;
+    let mut backslashes = 0_usize;
+    for ch in command.chars() {
+        match ch {
+            '\\' => backslashes += 1,
+            '"' => {
+                argument.extend(std::iter::repeat('\\').take(backslashes / 2));
+                if backslashes % 2 == 1 {
+                    argument.push('"');
+                } else {
+                    in_quotes = !in_quotes;
+                    argument_started = true;
+                }
+                backslashes = 0;
+            }
+            ' ' | '\t' if !in_quotes => {
+                argument.extend(std::iter::repeat('\\').take(backslashes));
+                backslashes = 0;
+                if argument_started || !argument.is_empty() {
+                    argv.push(std::mem::take(&mut argument));
+                    argument_started = false;
+                }
+            }
+            _ => {
+                argument.extend(std::iter::repeat('\\').take(backslashes));
+                backslashes = 0;
+                argument.push(ch);
+                argument_started = true;
+            }
+        }
+    }
+    argument.extend(std::iter::repeat('\\').take(backslashes));
+    if argument_started || !argument.is_empty() {
+        argv.push(argument);
+    }
+    argv
 }
 
 #[cfg(any(target_os = "windows", test))]
@@ -475,30 +530,6 @@ pub(crate) fn windows_service_stop_failure_is_joinable(
         observed,
         None | Some(WindowsServiceState::Stopped | WindowsServiceState::StopPending)
     )
-}
-
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_service_status_from_query_output(output: &str) -> (bool, Option<u32>) {
-    let running = windows_service_state_from_query_output(output) == Some(WindowsServiceState::Running);
-    let mut pid = None;
-
-    for line in output.lines().map(str::trim) {
-        if let Some((key, value)) = line.split_once(':')
-            && key.trim().eq_ignore_ascii_case("PID")
-        {
-            pid = parse_nonzero_pid(value);
-        }
-    }
-
-    (running, pid)
-}
-
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_service_disabled_from_qc_output(output: &str) -> bool {
-    output.lines().map(str::trim).any(|line| {
-        line.to_ascii_uppercase().contains("START_TYPE")
-            && line.to_ascii_uppercase().contains("DISABLED")
-    })
 }
 
 #[cfg(any(target_os = "windows", test))]
