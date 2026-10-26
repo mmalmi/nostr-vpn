@@ -81,7 +81,7 @@ const desktopDnsUiSettings = {
   'through-exit': ['through_exit', 'cloudflare'],
 }
 
-function sha256FileSync(path) {
+export function sha256FileSync(path) {
   const hash = createHash('sha256')
   const descriptor = openSync(path, 'r')
   const chunk = Buffer.allocUnsafe(1024 * 1024)

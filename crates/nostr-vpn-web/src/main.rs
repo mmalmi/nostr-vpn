@@ -495,61 +495,39 @@ fn state_response(state: NativeAppState) -> ApiResult<UiStateResponse> {
     Ok(Json(umbrel_state_value(state)?))
 }
 
-fn umbrel_state_value(state: NativeAppState) -> ApiResult<Value> {
-    let mut value = serde_json::to_value(state).map_err(internal_error)?;
-    let object = value
-        .as_object_mut()
-        .ok_or_else(|| ApiError::internal("failed to encode app state"))?;
-
-    let vpn_enabled = object
-        .get("vpnEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let vpn_active = object
-        .get("vpnActive")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let vpn_status = object
-        .get("vpnStatus")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !vpn_enabled
-        && !vpn_active
-        && (vpn_status.is_empty()
-            || vpn_status == "Disconnected"
-            || vpn_status == "Daemon running"
-            || vpn_status == "Daemon not running"
-            || vpn_status == "Listening for join requests"
-            || vpn_status == "Paused")
+fn umbrel_state_value(mut state: NativeAppState) -> ApiResult<Value> {
+    if !state.vpn_enabled
+        && !state.vpn_active
+        && matches!(
+            state.vpn_status.as_str(),
+            "" | "Disconnected"
+                | "Daemon running"
+                | "Daemon not running"
+                | "Listening for join requests"
+                | "Paused"
+        )
     {
-        object.insert("vpnStatus".to_string(), json!("VPN off"));
+        state.vpn_status = "VPN off".to_string();
     }
 
-    object.insert("platform".to_string(), json!("umbrel"));
-    object.insert("mobile".to_string(), json!(false));
-    object.insert("vpnControlSupported".to_string(), json!(true));
-    object.insert("cliInstallSupported".to_string(), json!(false));
-    object.insert("startupSettingsSupported".to_string(), json!(false));
-    object.insert("trayBehaviorSupported".to_string(), json!(false));
-    object.insert("runtimeStatusDetail".to_string(), json!(""));
-    object.insert("cliInstalled".to_string(), json!(false));
-    object.insert("serviceSupported".to_string(), json!(false));
-    object.insert("serviceEnablementSupported".to_string(), json!(false));
-    object.insert("serviceInstalled".to_string(), json!(false));
-    object.insert("serviceDisabled".to_string(), json!(false));
-    object.insert("serviceRunning".to_string(), json!(false));
-    object.insert(
-        "serviceStatusDetail".to_string(),
-        json!("Managed directly by the Umbrel app"),
-    );
-    for field in [
-        "wireguardExitPrivateKey",
-        "wireguardExitPeerPresharedKey",
-        "wireguardExitConfig",
-    ] {
-        object.insert(field.to_string(), json!(""));
-    }
-    Ok(value)
+    state.platform = "umbrel".to_string();
+    state.mobile = false;
+    state.vpn_control_supported = true;
+    state.cli_install_supported = false;
+    state.startup_settings_supported = false;
+    state.tray_behavior_supported = false;
+    state.runtime_status_detail.clear();
+    state.cli_installed = false;
+    state.service_supported = false;
+    state.service_enablement_supported = false;
+    state.service_installed = false;
+    state.service_disabled = false;
+    state.service_running = false;
+    state.service_status_detail = "Managed directly by the Umbrel app".to_string();
+    state.wireguard_exit_private_key.clear();
+    state.wireguard_exit_peer_preshared_key.clear();
+    state.wireguard_exit_config.clear();
+    serde_json::to_value(state).map_err(internal_error)
 }
 
 fn build_qr_matrix(text: &str) -> Result<QrMatrixResponse> {

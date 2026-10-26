@@ -60,12 +60,19 @@ function versionTag(version) {
 }
 
 function makeTarget(relPath, transform) {
-  return {
-    relPath,
-    apply(currentText, version) {
-      return transform(currentText, version)
-    },
-  }
+  return { relPath, apply: transform }
+}
+
+function bumpAppleProjectVersions(text, version, code) {
+  return text
+    .replace(
+      /(\bMARKETING_VERSION\s*=\s*)[^;]+(;)/g,
+      (_, prefix, suffix) => `${prefix}${version}${suffix}`,
+    )
+    .replace(
+      /(\bCURRENT_PROJECT_VERSION\s*=\s*)[^;]+(;)/g,
+      (_, prefix, suffix) => `${prefix}${code}${suffix}`,
+    )
 }
 
 function bumpCargoLockPackages(text, packageNames, version) {
@@ -129,33 +136,13 @@ const targets = [
   // immediately before xcodegen: macOS derives both from Cargo, while iOS uses
   // Cargo for marketing version and ios/app-store-build-number for
   // CFBundleVersion.
-  makeTarget('macos/NostrVpnMac.xcodeproj/project.pbxproj', (text, version) => {
-    const code = appleVersionCode(version)
-    return text
-      .replace(
-        /(\bMARKETING_VERSION\s*=\s*)[^;]+(;)/g,
-        (_, prefix, suffix) => `${prefix}${version}${suffix}`,
-      )
-      .replace(
-        /(\bCURRENT_PROJECT_VERSION\s*=\s*)[^;]+(;)/g,
-        (_, prefix, suffix) => `${prefix}${code}${suffix}`,
-      )
-  }),
-  makeTarget('ios/NostrVpnIos.xcodeproj/project.pbxproj', (text, version) => {
-    const code = readIosBuildNumber()
-    return text
-      .replace(
-        /(\bMARKETING_VERSION\s*=\s*)[^;]+(;)/g,
-        (_, prefix, suffix) => `${prefix}${version}${suffix}`,
-      )
-      .replace(
-        /(\bCURRENT_PROJECT_VERSION\s*=\s*)[^;]+(;)/g,
-        (_, prefix, suffix) => `${prefix}${code}${suffix}`,
-      )
-  }),
-  makeTarget('android/app/build.gradle.kts', (text, version) =>
-    bumpAndroidGradleVersion(text, version),
+  makeTarget('macos/NostrVpnMac.xcodeproj/project.pbxproj', (text, version) =>
+    bumpAppleProjectVersions(text, version, appleVersionCode(version)),
   ),
+  makeTarget('ios/NostrVpnIos.xcodeproj/project.pbxproj', (text, version) =>
+    bumpAppleProjectVersions(text, version, readIosBuildNumber()),
+  ),
+  makeTarget('android/app/build.gradle.kts', bumpAndroidGradleVersion),
   makeTarget('windows/NostrVpn.Windows/NostrVpn.Windows.csproj', (text, version) =>
     text.replace(
       /(<Version>)[^<]+(<\/Version>)/,
@@ -168,9 +155,7 @@ const targets = [
       (_, prefix, suffix) => `${prefix}${versionTag(version)}${suffix}`,
     ),
   ),
-  makeTarget('startos/versions/current.ts', (text, version) =>
-    bumpStartosSourceVersion(text, version),
-  ),
+  makeTarget('startos/versions/current.ts', bumpStartosSourceVersion),
 ]
 
 function main() {

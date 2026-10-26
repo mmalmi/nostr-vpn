@@ -36,6 +36,14 @@ test('version synchronization leaves the workspace usable by locked Cargo comman
     assert.match(readFileSync(join(root, 'Cargo.toml'), 'utf8'), /nostr-vpn-wintun = \{ version = "=4\.1\.11"/)
     const hapsVersions = [...readFileSync(join(root, 'haps.toml'), 'utf8').matchAll(/^version = "([^"]+)"/gm)]
     assert.deepEqual(hapsVersions.map(match => match[1]), ['4.1.11', '4.1.11'])
+    const iosBuild = readFileSync(join(root, 'ios/app-store-build-number'), 'utf8').trim()
+    for (const [project, build] of [['macos/NostrVpnMac', '4001011'], ['ios/NostrVpnIos', iosBuild]]) {
+      const text = readFileSync(join(root, `${project}.xcodeproj/project.pbxproj`), 'utf8')
+      for (const [setting, expected] of [['MARKETING_VERSION', '4.1.11'], ['CURRENT_PROJECT_VERSION', build]]) {
+        const values = [...text.matchAll(new RegExp(`\\b${setting}\\s*=\\s*([^;]+);`, 'g'))].map(match => match[1])
+        assert.ok(values.length > 0 && values.every(value => value === expected), `${project} ${setting}`)
+      }
+    }
     passed(run('cargo', ['metadata', '--offline', '--locked', '--format-version=1']))
   } finally {
     rmSync(root, { recursive: true, force: true })
