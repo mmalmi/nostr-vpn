@@ -16,6 +16,8 @@ extension RootView {
     var setupPane: some View {
         pageScroll {
             pageTitle("Add Network", "plus.circle")
+            Button("Received files") { manager.showReceivedFiles() }
+                .buttonStyle(.bordered)
             switch addNetworkMode {
             case nil:
                 addNetworkChoiceSection

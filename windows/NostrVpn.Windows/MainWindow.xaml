@@ -145,6 +145,10 @@
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=Devices}">
+            <DockPanel Margin="0,0,0,12" LastChildFill="True">
+              <Button DockPanel.Dock="Right" Content="Received files" Click="ShowReceivedFiles_Click" />
+              <TextBlock Text="Files" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </DockPanel>
             <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding State.FileTransfers}" Margin="0,0,0,12">
               <ItemsControl.ItemTemplate>

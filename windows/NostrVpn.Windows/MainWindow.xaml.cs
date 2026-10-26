@@ -92,6 +92,27 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ShowReceivedFiles_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var parent = System.IO.Path.GetDirectoryName(ViewModel.State.ConfigPath);
+            if (string.IsNullOrEmpty(parent))
+            {
+                MessageBox.Show(this, "Received files are not available yet.", "Received files");
+                return;
+            }
+            var folder = System.IO.Path.Combine(parent, "file-transfers", "inbox");
+            if (!System.IO.Directory.Exists(folder))
+            {
+                MessageBox.Show(this, "No received files yet.", "Received files");
+                return;
+            }
+            Process.Start(new ProcessStartInfo(folder) { UseShellExecute = true });
+        }
+        catch (Exception error) { MessageBox.Show(this, error.Message, "Could not open received files"); }
+    }
+
     private void CopyPeer_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string npub })

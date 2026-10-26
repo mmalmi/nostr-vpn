@@ -2,6 +2,18 @@ import AppKit
 import SwiftUI
 
 extension AppManager {
+    func showReceivedFiles() {
+        guard !state.configPath.isEmpty else { actionError = "Received files are not available yet."; return }
+        let folder = URL(fileURLWithPath: state.configPath).deletingLastPathComponent()
+            .appendingPathComponent("file-transfers/inbox", isDirectory: true)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            actionError = "No received files yet."
+            return
+        }
+        if !NSWorkspace.shared.open(folder) { actionError = "Could not open received files." }
+    }
+
     func chooseFileRecipient(for urls: [URL]) {
         guard state.vpnActive else { actionError = "Connect VPN to send files."; return }
         var seen = Set<String>()
@@ -55,9 +67,13 @@ extension AppManager {
 struct FileTransfersView: View {
     @ObservedObject var manager: AppManager
     var body: some View {
-        if !manager.state.fileTransfers.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Files").font(.headline)
+                HStack {
+                    Text("Files").font(.headline)
+                    Spacer()
+                    Button("Received files") { manager.showReceivedFiles() }
+                }
+                if !manager.state.fileTransfers.isEmpty {
                 if !manager.state.vpnActive { Text("Connect VPN to continue transfers.").font(.caption).foregroundStyle(.secondary) }
                 ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
@@ -97,7 +113,7 @@ struct FileTransfersView: View {
                 }
                 }
                 }.frame(height: min(300, CGFloat(manager.state.fileTransfers.count) * 170))
+                }
             }.padding(12)
-        }
     }
 }

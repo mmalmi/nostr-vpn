@@ -89,12 +89,50 @@ fn stage_transfer_files(app: &AppRef, npub: String, sources: Vec<PathBuf>) {
 }
 
 fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
-    if state.file_transfers.is_empty() {
-        return;
-    }
     let transfers = card();
     section_header(&transfers, "Files", "folder-download-symbolic");
-    if !state.vpn_active {
+    let received = gtk::Button::with_label("Received files");
+    received.set_halign(gtk::Align::Start);
+    let received_app = app.clone();
+    received.connect_clicked(move |_| {
+        let config = PathBuf::from(&received_app.borrow().state.config_path);
+        let Some(parent) = config.parent().filter(|path| !path.as_os_str().is_empty()) else {
+            set_notice(&received_app, "Received files are not available yet");
+            return;
+        };
+        let folder = parent.join("file-transfers").join("inbox");
+        match std::fs::metadata(&folder) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                set_notice(
+                    &received_app,
+                    "Could not open received files: the folder is unavailable",
+                );
+                return;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                set_notice(&received_app, "No received files yet");
+                return;
+            }
+            Err(error) => {
+                set_notice(
+                    &received_app,
+                    format!("Could not open received files: {error}"),
+                );
+                return;
+            }
+        }
+        let uri = gio::File::for_path(folder).uri();
+        if let Err(error) = gio::AppInfo::launch_default_for_uri(&uri, gio::AppLaunchContext::NONE)
+        {
+            set_notice(
+                &received_app,
+                format!("Could not open received files: {error}"),
+            );
+        }
+    });
+    transfers.append(&received);
+    if !state.vpn_active && !state.file_transfers.is_empty() {
         empty_row(&transfers, "Connect VPN to continue transfers");
     }
     for transfer in &state.file_transfers {
