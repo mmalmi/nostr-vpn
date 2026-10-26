@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::config::normalize_nostr_pubkey;
 use crate::data_plane::MeshPeerStatus;
-use crate::paid_route_accounting::ExitFlowFilter;
+use crate::paid_route_accounting::{ExitFlowFilter, is_public_exit_destination};
 #[cfg(feature = "paid-exit")]
 use crate::paid_route_store::PaidRouteSellerAdmission;
 use crate::paid_routes::PaidRouteAccessState;
@@ -477,6 +477,10 @@ impl FipsMeshRuntime {
     }
 
     fn select_peer_for_ip(&self, destination: IpAddr) -> Option<&FipsMeshPeerRuntime> {
+        self.select_route_for_ip(destination).peer()
+    }
+
+    fn select_route_for_ip(&self, destination: IpAddr) -> PeerRouteSelection<'_> {
         select_indexed_peer_for_ip(
             &self.peers,
             &self.exact_route_peer_index,
@@ -491,7 +495,6 @@ impl FipsMeshRuntime {
             &self.paid_prefix_v6_route_peer_index,
             destination,
         ))
-        .peer()
     }
 
     fn peer_allows_inbound_destination(
@@ -503,7 +506,18 @@ impl FipsMeshRuntime {
         let paid_admission =
             paid_participant.and_then(|participant| self.paid_route_admissions.get(participant));
         if let Some(admission) = paid_admission {
-            if !admission.allow_routing {
+            // Payment buys Internet egress, never private host/LAN or mesh
+            // routes (including configured publicly numbered subnets).
+            if !admission.allow_routing
+                || !is_public_exit_destination(destination)
+                || self
+                    .select_local_route_for_ip(destination)
+                    .is_some_and(|route| !route.is_default_route())
+                || self
+                    .select_route_for_ip(destination)
+                    .prefix_len()
+                    .is_some_and(|prefix| prefix != 0)
+            {
                 return false;
             }
             if let Some(destination_routes) = paid_participant
