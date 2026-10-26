@@ -80,6 +80,8 @@ enum Command {
     /// Connect for device approval and show this device's join-request link and QR.
     #[command(name = "join-request")]
     JoinRequest(JoinRequestArgs),
+    /// Inspect and explicitly approve device join requests as a network admin.
+    JoinRequests(join_approval::JoinRequestsArgs),
     /// Join with an admin Device ID and Network ID exchanged out of band.
     #[command(name = "join-manual", alias = "manual-join")]
     JoinManual(ManualJoinArgs),
@@ -140,6 +142,9 @@ struct JoinRequestArgs {
     /// nvpn configuration containing the device identity and approval state.
     #[arg(long)]
     config: Option<PathBuf>,
+    /// Print the link and reachability as JSON, without waiting for approval.
+    #[arg(long)]
+    json: bool,
     /// Print the request and reachability without connecting or waiting for approval.
     #[arg(long)]
     no_wait: bool,

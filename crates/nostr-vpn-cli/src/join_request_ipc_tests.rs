@@ -24,6 +24,7 @@ async fn join_request_preserves_a_running_daemons_rejection() {
     let (request_tx, mut request_rx) = tokio::sync::mpsc::unbounded_channel();
     let server = JoinRequestIpcServer::spawn(&config, request_tx).unwrap();
     let client = crate::pairing_qr::run_join_request(crate::JoinRequestArgs {
+        json: false,
         config: Some(config),
         no_wait: true,
         no_qr: true,

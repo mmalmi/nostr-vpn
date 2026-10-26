@@ -8,6 +8,10 @@
 
 Nostr identities and signed rosters control enrollment; peers connect directly when possible and route through FIPS neighbors when direct UDP is unavailable. MagicDNS, subnet routes, exit nodes, and WireGuard upstream egress are built in. The project includes the `nvpn` CLI and daemon plus native apps for macOS, Linux, Windows, Android, and iOS.
 
+Connect people, servers, and agent hosts without an email, phone number, or VPN
+provider account. See [agent onboarding and headless approval](docs/agents.md)
+and the [agent plugin](docs/agent-plugin.md).
+
 The fork is optimized for high-rate VPN traffic. In comparable direct-path benchmarks it delivers roughly three times the original implementation's throughput by keeping packet ownership, buffers, and session state together, batching I/O and cryptography, reusing packet storage, and avoiding packet-by-packet queue hops, allocations, copies, and repeated lookups. It preserves the FIPS protocol surface.
 
 <p align="center">
@@ -51,8 +55,8 @@ On the admin device, open **Devices → Add Join Request**, scan or paste the
 request, check the device details, and confirm **Add device**. Approval is not
 automatic. The admin app signs and distributes the updated roster; this flow
 does not need a separate `add-device --publish` command. Keep the joining
-daemon running until it receives approval. The CLI can generate requests, but
-listing and approving signed join requests currently requires an admin app.
+daemon running until it receives approval. For CLI inspection and approval,
+see the [headless enrollment guide](docs/agents.md#review-and-approve-on-the-admin-host).
 
 The daemon lifecycle is:
 

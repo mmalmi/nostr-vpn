@@ -104,6 +104,9 @@ async fn run_command(command: Command) -> Result<()> {
         Command::JoinRequest(args) => {
             pairing_qr::run_join_request(args).await?;
         }
+        Command::JoinRequests(args) => {
+            join_approval::run(args)?;
+        }
         Command::JoinManual(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let mut app = load_or_default_config(&config_path)?;

@@ -47,14 +47,24 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     let uri = app
         .pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
         .context("config has no valid pending device-approval request")?;
+    let state_path = daemon_state_file_path(&config_path)?;
+    let reachability = request_reachability(read_daemon_state(&state_path)?.as_ref());
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "join_request": uri,
+                "reachability": reachability.message(),
+            }))?
+        );
+        return Ok(());
+    }
     if args.no_qr {
         println!("{uri}");
     } else {
         print!("{}", render_pairing_output(&uri)?);
     }
 
-    let state_path = daemon_state_file_path(&config_path)?;
-    let reachability = request_reachability(read_daemon_state(&state_path)?.as_ref());
     println!("{}", reachability.message());
     if args.no_wait {
         return Ok(());
@@ -242,6 +252,7 @@ mod tests {
             .expect("start join request IPC server");
         let waiter = tokio::spawn(run_join_request(JoinRequestArgs {
             config: Some(config.clone()),
+            json: false,
             no_wait: false,
             no_qr: true,
             reset: false,

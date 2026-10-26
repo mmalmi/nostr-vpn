@@ -1,3 +1,6 @@
+mod approval;
+pub use approval::{PreparedJoinApproval, prepare_join_approval};
+
 use anyhow::{Context, Result, anyhow};
 use nostr_identity::{
     NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES, nostr_identity_device_approval_request_relays,

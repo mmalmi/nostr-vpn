@@ -7,6 +7,7 @@ mod diagnostics;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fips_host_tunnel;
 mod fips_private_mesh;
+mod join_approval;
 #[cfg(unix)]
 mod join_request_ipc;
 #[cfg(any(target_os = "linux", test))]
