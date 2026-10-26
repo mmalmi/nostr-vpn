@@ -61,6 +61,12 @@ struct RootView: View {
             }
         }
         .tint(.purple)
+        .onChange(of: model.fileTransfersRequested, initial: true) { _, requested in
+            if requested {
+                selectedTab = .devices
+                model.fileTransfersRequested = false
+            }
+        }
         .sheet(isPresented: $addNetworkPresented) {
             NavigationStack {
                 AddNetworkPage(

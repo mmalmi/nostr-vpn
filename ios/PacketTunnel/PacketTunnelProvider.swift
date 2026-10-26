@@ -43,6 +43,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var previousUnderlayPaths: [UnderlayPathSource: Network.NWPath] = [:]
     private var underlayRefreshWorkItem: DispatchWorkItem?
     private let bonjourDiscovery = FipsBonjourDiscovery()
+    private let fileNotifications = FileTransferNotifications()
+    private var fileObservation: FileTransferObservation?
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -225,6 +227,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
             }
             NSLog("nvpn-pkt: completionHandler(nil) — VPN should transition to connected")
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.tunnelIsActive(generation: startGeneration),
+                      let root = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else { return }
+                self.fileObservation?.stop()
+                self.fileObservation = FileTransferObservation { [weak self] rows in
+                    // DispatchSource serializes snapshots and only status transitions
+                    // produce alerts. No polling or packet-flow callback work.
+                    self?.fileNotifications.update(rows)
+                }
+                self.fileObservation?.start(in: root.appendingPathComponent("Nostr VPN", isDirectory: true))
+            }
             packetDebugLog("completionHandler nil totalMs=\(totalMs)")
             completionHandler(nil)
         }
@@ -459,7 +472,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             self.tunnelCondition.lock()
             let stillStopped = self.tunnelGeneration == stoppedGeneration && !self.tunnelRunning
             self.tunnelCondition.unlock()
-            if stillStopped { self.bonjourDiscovery.stop() }
+            if stillStopped {
+                self.bonjourDiscovery.stop()
+                self.fileObservation?.stop()
+                self.fileObservation = nil
+            }
         }
 
         if let handle {

@@ -39,6 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func configure(manager: AppManager) {
         self.manager = manager
+        manager.configureFileTransfers()
         NSApp.servicesProvider = self
         manager.publishFileSharePeers()
         manager.consumeFileShareRequests()
@@ -87,9 +88,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
         let files = urls.filter(\.isFileURL)
-        if !files.isEmpty { manager.chooseFileRecipient(for: files) }
+        if !files.isEmpty {
+            if activate { showMainWindow() }
+            manager.chooseFileRecipient(for: files)
+        }
         for url in urls where !url.isFileURL {
-            if url.host == "file-share" { manager.consumeFileShareRequests() }
+            if url.host == "file-share" {
+                manager.fileTransfersRequested = true
+                manager.consumeFileShareRequests()
+            }
             else { manager.handle(url: url) }
         }
         if activate {

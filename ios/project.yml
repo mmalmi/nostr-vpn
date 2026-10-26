@@ -111,6 +111,8 @@ targets:
     platform: iOS
     sources:
       - path: PacketTunnel
+      - path: Shared/FileTransferPresentation.swift
+      - path: Shared/FileTransferObservation.swift
       - path: Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
     settings:

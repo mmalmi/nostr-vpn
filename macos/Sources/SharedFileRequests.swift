@@ -1,25 +1,49 @@
 import Foundation
 
 extension AppManager {
+    func rememberFileRecipient(_ npub: String) {
+        let recent = UserDefaults.standard.stringArray(forKey: "file-recent-recipients") ?? []
+        UserDefaults.standard.set(Array(([npub] + recent.filter { $0 != npub }).prefix(8)), forKey: "file-recent-recipients")
+        publishFileSharePeers()
+    }
+
+    func fileSharePeers() -> [FileSharePeer] {
+        var seen = Set<String>()
+        let recent = UserDefaults.standard.stringArray(forKey: "file-recent-recipients") ?? []
+        return state.networks.filter(\.enabled).flatMap { network in
+            network.participants.filter { $0.npub != state.ownNpub && $0.rosterAccepted && seen.insert($0.npub).inserted }
+                .map { peer in
+                    FileSharePeer(npub: peer.npub,
+                        name: peer.alias.isEmpty ? (peer.magicDnsAlias.isEmpty ? "Device …\(peer.npub.suffix(6))" : peer.magicDnsAlias) : peer.alias,
+                        detail: "\(network.name) · …\(peer.npub.suffix(6))", reachable: state.vpnActive && peer.reachable)
+                }
+        }.sorted {
+            let a = recent.firstIndex(of: $0.npub) ?? Int.max
+            let b = recent.firstIndex(of: $1.npub) ?? Int.max
+            return a == b ? $0.name.localizedStandardCompare($1.name) == .orderedAscending : a < b
+        }
+    }
+
     func publishFileSharePeers() {
         guard !fixtureMode, let root = MacShareStorage.root else { return }
-        var seen = Set<String>()
-        let peers = state.networks.filter { state.vpnActive && $0.enabled }.flatMap(\.participants)
-            .filter { $0.npub != state.ownNpub && $0.rosterAccepted && $0.reachable && seen.insert($0.npub).inserted }
-            .map { FileSharePeer(npub: $0.npub, name: $0.alias.isEmpty ? ($0.magicDnsAlias.isEmpty ? $0.npub : $0.magicDnsAlias) : $0.alias) }
+        let peers = fileSharePeers()
         if let data = try? JSONEncoder().encode(peers) {
             try? data.write(to: root.appendingPathComponent("file-share-peers.json"), options: .atomic)
         }
     }
 
     func consumeFileShareRequests() {
-        guard !processingFileShare, !actionInFlight, !fixtureMode, !state.configPath.isEmpty,
+        guard !processingFileShare, filePreparation == nil, !actionInFlight, !fixtureMode, !state.configPath.isEmpty,
               let root = MacShareStorage.root else { return }
         let requests = root.appendingPathComponent("requests", isDirectory: true)
         guard let pending = try? FileManager.default.contentsOfDirectory(at: requests, includingPropertiesForKeys: nil)
             .filter({ $0.pathExtension == "json" }).sorted(by: { $0.lastPathComponent < $1.lastPathComponent }),
               !pending.isEmpty else { return }
-        guard state.vpnActive else { actionError = "Connect VPN to send shared files."; return }
+        guard state.vpnActive else {
+            filePreparationText = "Shared files are queued. Connect to send them."
+            fileTransfersRequested = true
+            return
+        }
         let parent = URL(fileURLWithPath: state.configPath).deletingLastPathComponent()
         for url in pending.prefix(32) {
         do {
@@ -36,19 +60,23 @@ extension AppManager {
             let sources = try validatedShareSources(request.paths, in: root)
             if let staged = request.stagedPaths { _ = try validatedShareSources(staged, in: parent) }
             processingFileShare = true
-            actionStatus = "Preparing files…"
+            let preparation = beginFilePreparation()
             Task {
                 do {
                     if request.stagedPaths == nil {
                         request.stagedPaths = try await Task.detached(priority: .userInitiated) {
-                            try FileTransferStorage.stage(sources, in: parent)
+                            try FileTransferStorage.stage(sources, in: parent, preparation: preparation)
                         }.value
                         try JSONEncoder().encode(request).write(to: url, options: .atomic)
                         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
                     }
-                    dispatch(.sendFiles(npub: request.npub, paths: request.stagedPaths!), status: "Offering files") { [weak self] succeeded in
+                    try preparation.checkCancellation()
+                    rememberFileRecipient(request.npub)
+                    dispatch(.sendFiles(npub: request.npub, paths: request.stagedPaths!), status: "Queued — waiting for the recipient") { [weak self] succeeded in
                         guard let self else { return }
                         self.processingFileShare = false
+                        self.filePreparation = nil
+                        self.filePreparationText = ""
                         if succeeded {
                             try? FileManager.default.removeItem(at: url)
                             for source in sources { try? FileManager.default.removeItem(at: source) }
@@ -57,6 +85,8 @@ extension AppManager {
                     }
                 } catch {
                     processingFileShare = false
+                    filePreparation = nil
+                    filePreparationText = ""
                     rejectFileShareRequest(url, error: error)
                     consumeFileShareRequests()
                 }

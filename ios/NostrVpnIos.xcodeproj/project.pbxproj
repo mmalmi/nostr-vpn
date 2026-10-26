@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		014C56E3EDDCB4C1B20FE959 /* PacketFlowBridgeLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106454A084D4E2BC7799376E /* PacketFlowBridgeLifecycle.swift */; };
 		050CC6FAA230A6EDA894CCF8 /* PacketTunnelController.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8ECBFB09C508ED9BE10C907 /* PacketTunnelController.swift */; };
+		082995C56C1AD18430DC6F4D /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB81B071741E9870536A022F /* ShareViewController.swift */; };
 		0A933AB006CCAF79C262D8CB /* NostrVpnAppCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1432941BCEFBEB848E748486 /* NostrVpnAppCore.xcframework */; };
 		0B63754773064DF6054A88A9 /* NostrVpnReleaseNetworkUnderlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7344CBAC1489810776297A1B /* NostrVpnReleaseNetworkUnderlay.swift */; };
 		0E755CFCED416AC1EBC0ACB0 /* SettingsViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91F3184D78E49CCA600A3218 /* SettingsViews.swift */; };
@@ -18,27 +19,36 @@
 		2CDAA4060234E6D83A9E2876 /* NostrVpnAppCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1432941BCEFBEB848E748486 /* NostrVpnAppCore.xcframework */; };
 		2E22BA531D53E86404F0D766 /* PacketFlowBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 431444D8F49363F9B144DBB0 /* PacketFlowBridge.swift */; };
 		2EEA35334ED681D30F23D58F /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BAA0EBA6F30832FC35B6E6 /* NetworkExtension.framework */; };
+		31E9AF492D29C760FE70357E /* FileTransferViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA4CE96BF44C1640EEC37CD3 /* FileTransferViews.swift */; };
 		37E58CD05130BE8377A9C9F8 /* DevicesViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75C3BB9F88382E42F86E9351 /* DevicesViews.swift */; };
+		39880D9C57C1D1B087003009 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B11B87B71A3CB9B7FFB57358 /* PrivacyInfo.xcprivacy */; };
 		3F51E24D847978B5D70822C0 /* AppModelSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 660636221EA934E461AE7CE9 /* AppModelSupport.swift */; };
 		4592C3B5D2F1634E39135C55 /* AppStorePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6649E7580058631D4F2F5932 /* AppStorePolicy.swift */; };
 		4680DA64259B1C447DD18C1A /* NostrVpnReleaseNetworkProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E29C5DFF800EDE78B1158E2 /* NostrVpnReleaseNetworkProbe.swift */; };
 		577F070C77BE39EC703FF5F0 /* NostrVpnReleaseNetworkUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 659C5F57E19788FD82B20E52 /* NostrVpnReleaseNetworkUITests.swift */; };
+		592B6E6A360E4347F4D36BDE /* FileTransferObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 481FA681A7F3662A0970575D /* FileTransferObservation.swift */; };
 		5B0E1575EB4F5058F05B1913 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E8D34EBC51BAFC05BF873C3 /* AppModel.swift */; };
+		61CFE38E5D780954781DFAF3 /* FileTransferStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6AE019808CB54954DAEB8D1 /* FileTransferStorage.swift */; };
 		66A6722FA93D1694FFBD2ED8 /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BD1EA5A948BC1EEB916CEC3D /* SystemConfiguration.framework */; };
 		67372B248F87FDC7705B1203 /* AppModelDebugAutomation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06BD4BC01B5E92B3771DC4E2 /* AppModelDebugAutomation.swift */; };
 		6A2222FDE7AC3BD2946DE2D9 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E68FA9898E0C487261BE03 /* Models.swift */; };
 		6CD25EAFAEB49BF8DD9DBCC2 /* NativeCoreClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3C4E67D5D36550552B70435 /* NativeCoreClient.swift */; };
 		707F2FEED2F09EA8C78EE85A /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1771345400E9569613808C0B /* DiagnosticsView.swift */; };
 		71E581C6F6310F9115EE989A /* AppIntents.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C026B0860BA3DC6889593E3F /* AppIntents.framework */; };
+		75EB3F15837F9C794B548687 /* FileTransferObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 481FA681A7F3662A0970575D /* FileTransferObservation.swift */; };
 		79E8116198C0F1544EEEB1D2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B11B87B71A3CB9B7FFB57358 /* PrivacyInfo.xcprivacy */; };
 		7F3B786208DD027EA35DEFC7 /* InternetViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BB3DAAE80542C5B7E70586E /* InternetViews.swift */; };
 		88ECE1412FD6F8F1E2003D7B /* AppModelDebugCPU.swift in Sources */ = {isa = PBXBuildFile; fileRef = D63BF8BBA597A1CCEF729C2E /* AppModelDebugCPU.swift */; };
+		960FB5AD98117CB806B37477 /* FileTransferPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 281075F70C142ABD9F7DA27A /* FileTransferPresentation.swift */; };
 		9655E8C2070C163CD6BB08D2 /* PacketTunnel.appex in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 21F75A016D5B4CB3DFBE0621 /* PacketTunnel.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		9D888B0890201C0F12D183CA /* PacketTunnelReplacementTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D11F4B362872D00F10CF7F /* PacketTunnelReplacementTransaction.swift */; };
 		9E4E18AFBA1E70116199E68D /* NostrVpnIosApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8C2C375478E216EE34D7E2A /* NostrVpnIosApp.swift */; };
 		A1618DBDFB947AB01162518D /* AppModelDebugTunProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C4F8D33CB171B580681282E /* AppModelDebugTunProbe.swift */; };
+		A1EB23D926FAA8754A47085E /* FileTransferObservation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 481FA681A7F3662A0970575D /* FileTransferObservation.swift */; };
+		A2372086A5002F3511E27D4E /* FileTransferPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 281075F70C142ABD9F7DA27A /* FileTransferPresentation.swift */; };
 		A2D4FF7B1D02640E8D08D6C7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B11B87B71A3CB9B7FFB57358 /* PrivacyInfo.xcprivacy */; };
 		A757DAFBD074C65BC43CAA42 /* NostrVpnIosUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3074311455F8AF2D83E9F5F /* NostrVpnIosUITests.swift */; };
+		AD6BBD29C48C15DB28FC5327 /* FileTransferStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6AE019808CB54954DAEB8D1 /* FileTransferStorage.swift */; };
 		B9900FE8565EC1E1E2F42891 /* NostrVpnPhysicalGateSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32C567B4190F53A52A6E419A /* NostrVpnPhysicalGateSupport.swift */; };
 		B9BD3A30C0A8D50809A96E69 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F7274F66C76E9FC38CB0DEDB /* Assets.xcassets */; };
 		BCC2E2F503096EA8DA202D4D /* AppModelDebugLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FB8499CE8F91D4A2BC4255 /* AppModelDebugLifecycle.swift */; };
@@ -50,8 +60,10 @@
 		E3D6550C3830BC6F6208A11F /* ExitDnsSettingsCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE10740C4592753D90C1ED9E /* ExitDnsSettingsCard.swift */; };
 		E3E54273AC9D7243E17F7CFD /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEC242766CE8040856CB2DC9 /* QRCodeScannerView.swift */; };
 		E5BDA219E4E57B6EEE6D73C1 /* NostrVpnReleaseJoinUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB24149C180173EC493FFAA7 /* NostrVpnReleaseJoinUITests.swift */; };
+		EA061F85ED79CB28E3F3156A /* FileTransferPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 281075F70C142ABD9F7DA27A /* FileTransferPresentation.swift */; };
 		F5B16700D01D8F8004402AF9 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C8BAA0EBA6F30832FC35B6E6 /* NetworkExtension.framework */; };
 		F8DFB5A9656D0D7F1BDFA099 /* AppModelTunnelLifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51DD5342E0ADF4BB17F33E8F /* AppModelTunnelLifecycle.swift */; };
+		FB6A44785E3E4EFE52D7A603 /* ShareFiles.appex in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 840AF766D6754072EC13F8C8 /* ShareFiles.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		FD6AFFF50E35477B86DBF788 /* ViewComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD3C4F5527757D58D8C6196A /* ViewComponents.swift */; };
 /* End PBXBuildFile section */
 
@@ -70,6 +82,13 @@
 			remoteGlobalIDString = 2DDBC3A91D35DF14C8FB244F;
 			remoteInfo = NostrVpnIos;
 		};
+		537D1BE1EA0B03098F5682A5 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B8EEE5A5A357A9BE2F27A2CA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 02056D427D1173A1EB4312CA;
+			remoteInfo = ShareFiles;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -80,6 +99,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				9655E8C2070C163CD6BB08D2 /* PacketTunnel.appex in Embed Dependencies */,
+				FB6A44785E3E4EFE52D7A603 /* ShareFiles.appex in Embed Dependencies */,
 			);
 			name = "Embed Dependencies";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -97,11 +117,13 @@
 		1BB3DAAE80542C5B7E70586E /* InternetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InternetViews.swift; sourceTree = "<group>"; };
 		21F75A016D5B4CB3DFBE0621 /* PacketTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = PacketTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		272C4FEFDAC8674186934379 /* NostrVpnIosUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = NostrVpnIosUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		281075F70C142ABD9F7DA27A /* FileTransferPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferPresentation.swift; sourceTree = "<group>"; };
 		29E68FA9898E0C487261BE03 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		32C567B4190F53A52A6E419A /* NostrVpnPhysicalGateSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnPhysicalGateSupport.swift; sourceTree = "<group>"; };
 		3DDFB58648107DDDBCC8DBE5 /* PacketTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PacketTunnel.entitlements; sourceTree = "<group>"; };
 		431444D8F49363F9B144DBB0 /* PacketFlowBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketFlowBridge.swift; sourceTree = "<group>"; };
 		47D10A3E63B2672F87095031 /* ScreenshotFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotFixtures.swift; sourceTree = "<group>"; };
+		481FA681A7F3662A0970575D /* FileTransferObservation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferObservation.swift; sourceTree = "<group>"; };
 		4E8D34EBC51BAFC05BF873C3 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		4F798B286AF9637B05F0D4BE /* VpnDesiredStateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VpnDesiredStateStore.swift; sourceTree = "<group>"; };
 		51DD5342E0ADF4BB17F33E8F /* AppModelTunnelLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelTunnelLifecycle.swift; sourceTree = "<group>"; };
@@ -115,15 +137,20 @@
 		7344CBAC1489810776297A1B /* NostrVpnReleaseNetworkUnderlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnReleaseNetworkUnderlay.swift; sourceTree = "<group>"; };
 		74FA92081064D235A10456E4 /* AppModelDebugURLAutomation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelDebugURLAutomation.swift; sourceTree = "<group>"; };
 		75C3BB9F88382E42F86E9351 /* DevicesViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DevicesViews.swift; sourceTree = "<group>"; };
+		840AF766D6754072EC13F8C8 /* ShareFiles.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShareFiles.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		91F3184D78E49CCA600A3218 /* SettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViews.swift; sourceTree = "<group>"; };
 		9C4F8D33CB171B580681282E /* AppModelDebugTunProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelDebugTunProbe.swift; sourceTree = "<group>"; };
+		9D4BF41618C60330736879FD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A3074311455F8AF2D83E9F5F /* NostrVpnIosUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnIosUITests.swift; sourceTree = "<group>"; };
+		AB81B071741E9870536A022F /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		B11B87B71A3CB9B7FFB57358 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		BCFEC5280549BB2A90F04234 /* ShareFiles.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareFiles.entitlements; sourceTree = "<group>"; };
 		BD1EA5A948BC1EEB916CEC3D /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
 		BD3C4F5527757D58D8C6196A /* ViewComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewComponents.swift; sourceTree = "<group>"; };
 		C026B0860BA3DC6889593E3F /* AppIntents.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppIntents.framework; path = System/Library/Frameworks/AppIntents.framework; sourceTree = SDKROOT; };
 		C8BAA0EBA6F30832FC35B6E6 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
 		D63BF8BBA597A1CCEF729C2E /* AppModelDebugCPU.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelDebugCPU.swift; sourceTree = "<group>"; };
+		D6AE019808CB54954DAEB8D1 /* FileTransferStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferStorage.swift; sourceTree = "<group>"; };
 		D8FB8499CE8F91D4A2BC4255 /* AppModelDebugLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModelDebugLifecycle.swift; sourceTree = "<group>"; };
 		E3C4E67D5D36550552B70435 /* NativeCoreClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCoreClient.swift; sourceTree = "<group>"; };
 		E8C2C375478E216EE34D7E2A /* NostrVpnIosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnIosApp.swift; sourceTree = "<group>"; };
@@ -131,6 +158,7 @@
 		EE10740C4592753D90C1ED9E /* ExitDnsSettingsCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitDnsSettingsCard.swift; sourceTree = "<group>"; };
 		F581F9BC69EA220D465E29EC /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F7274F66C76E9FC38CB0DEDB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		FA4CE96BF44C1640EEC37CD3 /* FileTransferViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransferViews.swift; sourceTree = "<group>"; };
 		FB24149C180173EC493FFAA7 /* NostrVpnReleaseJoinUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVpnReleaseJoinUITests.swift; sourceTree = "<group>"; };
 		FEC242766CE8040856CB2DC9 /* QRCodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -165,6 +193,8 @@
 			children = (
 				6EF67A9C6F0CFFD4E4F15136 /* PacketTunnel */,
 				FFB7F5B7C863D721E69404DD /* Resources */,
+				63C2FDD7FD87542921D1B448 /* Shared */,
+				35347471EF5B5E03DA7A0B5F /* ShareFiles */,
 				28B11EB5F22D50B40E07A4AF /* Sources */,
 				D8A8478D237D0BDCFDA26AD1 /* UITests */,
 				9BCB071BA1A1F1809C62BE43 /* Frameworks */,
@@ -187,6 +217,7 @@
 				75C3BB9F88382E42F86E9351 /* DevicesViews.swift */,
 				1771345400E9569613808C0B /* DiagnosticsView.swift */,
 				EE10740C4592753D90C1ED9E /* ExitDnsSettingsCard.swift */,
+				FA4CE96BF44C1640EEC37CD3 /* FileTransferViews.swift */,
 				1BB3DAAE80542C5B7E70586E /* InternetViews.swift */,
 				29E68FA9898E0C487261BE03 /* Models.swift */,
 				E3C4E67D5D36550552B70435 /* NativeCoreClient.swift */,
@@ -201,6 +232,26 @@
 				4F798B286AF9637B05F0D4BE /* VpnDesiredStateStore.swift */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		35347471EF5B5E03DA7A0B5F /* ShareFiles */ = {
+			isa = PBXGroup;
+			children = (
+				9D4BF41618C60330736879FD /* Info.plist */,
+				BCFEC5280549BB2A90F04234 /* ShareFiles.entitlements */,
+				AB81B071741E9870536A022F /* ShareViewController.swift */,
+			);
+			path = ShareFiles;
+			sourceTree = "<group>";
+		};
+		63C2FDD7FD87542921D1B448 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				481FA681A7F3662A0970575D /* FileTransferObservation.swift */,
+				281075F70C142ABD9F7DA27A /* FileTransferPresentation.swift */,
+				D6AE019808CB54954DAEB8D1 /* FileTransferStorage.swift */,
+			);
+			path = Shared;
 			sourceTree = "<group>";
 		};
 		6EF67A9C6F0CFFD4E4F15136 /* PacketTunnel */ = {
@@ -233,6 +284,7 @@
 				5EE69AF3C3AAAA49D523C344 /* NostrVpnIos.app */,
 				272C4FEFDAC8674186934379 /* NostrVpnIosUITests.xctest */,
 				21F75A016D5B4CB3DFBE0621 /* PacketTunnel.appex */,
+				840AF766D6754072EC13F8C8 /* ShareFiles.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -263,6 +315,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		02056D427D1173A1EB4312CA /* ShareFiles */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9B4AD4A2DD5B49041832ED1E /* Build configuration list for PBXNativeTarget "ShareFiles" */;
+			buildPhases = (
+				A97EA09BDA0B6B4911A808A8 /* Sources */,
+				BC04050EC58EE21208095EA4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ShareFiles;
+			packageProductDependencies = (
+			);
+			productName = ShareFiles;
+			productReference = 840AF766D6754072EC13F8C8 /* ShareFiles.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		2DDBC3A91D35DF14C8FB244F /* NostrVpnIos */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A5AA51A117A94E2C758CA5B3 /* Build configuration list for PBXNativeTarget "NostrVpnIos" */;
@@ -276,6 +346,7 @@
 			);
 			dependencies = (
 				0AA253FC1384CD2FB5AEB2AE /* PBXTargetDependency */,
+				C38231525B3E50C2FF157BD5 /* PBXTargetDependency */,
 			);
 			name = NostrVpnIos;
 			packageProductDependencies = (
@@ -351,8 +422,9 @@
 			projectRoot = "";
 			targets = (
 				2DDBC3A91D35DF14C8FB244F /* NostrVpnIos */,
-				A8A78E72E9E78A3018055001 /* NostrVpnIosUITests */,
+				02056D427D1173A1EB4312CA /* ShareFiles */,
 				AB61873F2829C99F6B9C990E /* PacketTunnel */,
+				A8A78E72E9E78A3018055001 /* NostrVpnIosUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -375,6 +447,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BC04050EC58EE21208095EA4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				39880D9C57C1D1B087003009 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -394,6 +474,10 @@
 				37E58CD05130BE8377A9C9F8 /* DevicesViews.swift in Sources */,
 				707F2FEED2F09EA8C78EE85A /* DiagnosticsView.swift in Sources */,
 				E3D6550C3830BC6F6208A11F /* ExitDnsSettingsCard.swift in Sources */,
+				A1EB23D926FAA8754A47085E /* FileTransferObservation.swift in Sources */,
+				960FB5AD98117CB806B37477 /* FileTransferPresentation.swift in Sources */,
+				61CFE38E5D780954781DFAF3 /* FileTransferStorage.swift in Sources */,
+				31E9AF492D29C760FE70357E /* FileTransferViews.swift in Sources */,
 				7F3B786208DD027EA35DEFC7 /* InternetViews.swift in Sources */,
 				6A2222FDE7AC3BD2946DE2D9 /* Models.swift in Sources */,
 				6CD25EAFAEB49BF8DD9DBCC2 /* NativeCoreClient.swift in Sources */,
@@ -413,10 +497,23 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				592B6E6A360E4347F4D36BDE /* FileTransferObservation.swift in Sources */,
+				A2372086A5002F3511E27D4E /* FileTransferPresentation.swift in Sources */,
 				BF4DBC7A12A8B064A6E3701E /* FipsBonjourDiscovery.swift in Sources */,
 				2E22BA531D53E86404F0D766 /* PacketFlowBridge.swift in Sources */,
 				014C56E3EDDCB4C1B20FE959 /* PacketFlowBridgeLifecycle.swift in Sources */,
 				DC1FC354C9FEA443CBCE3ABF /* PacketTunnelProvider.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A97EA09BDA0B6B4911A808A8 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				75EB3F15837F9C794B548687 /* FileTransferObservation.swift in Sources */,
+				EA061F85ED79CB28E3F3156A /* FileTransferPresentation.swift in Sources */,
+				AD6BBD29C48C15DB28FC5327 /* FileTransferStorage.swift in Sources */,
+				082995C56C1AD18430DC6F4D /* ShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -446,6 +543,11 @@
 			isa = PBXTargetDependency;
 			target = 2DDBC3A91D35DF14C8FB244F /* NostrVpnIos */;
 			targetProxy = 466A032411501401CE111A44 /* PBXContainerItemProxy */;
+		};
+		C38231525B3E50C2FF157BD5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 02056D427D1173A1EB4312CA /* ShareFiles */;
+			targetProxy = 537D1BE1EA0B03098F5682A5 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -528,6 +630,28 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = DeviceDebug;
+		};
+		0EBE2F88858202DD2CD2E82C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareFiles/ShareFiles.entitlements;
+				CODE_SIGN_IDENTITY = "$(NVPN_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_FILE = ShareFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fi.siriusbusiness.nvpn.ShareFiles;
+				PRODUCT_MODULE_NAME = ShareFiles;
+				PRODUCT_NAME = ShareFiles;
+				PROVISIONING_PROFILE = "$(NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
 		};
 		3E43FE312F2F8639EEDA505D /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -644,6 +768,25 @@
 			};
 			name = Debug;
 		};
+		4FA71E358AF74B551B86FBC7 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareFiles/ShareFiles.entitlements;
+				INFOPLIST_FILE = ShareFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fi.siriusbusiness.nvpn.ShareFiles;
+				PRODUCT_MODULE_NAME = ShareFiles;
+				PRODUCT_NAME = ShareFiles;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		4FD489AC9E188ED4F01A88AB /* DeviceDebug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -661,6 +804,28 @@
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = NostrVpnIos;
+			};
+			name = DeviceDebug;
+		};
+		5FA55D995A9F49039A1832C9 /* DeviceDebug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = ShareFiles/ShareFiles.entitlements;
+				CODE_SIGN_IDENTITY = "$(NVPN_IOS_CODE_SIGN_IDENTITY)";
+				CODE_SIGN_STYLE = Manual;
+				INFOPLIST_FILE = ShareFiles/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = fi.siriusbusiness.nvpn.ShareFiles;
+				PRODUCT_MODULE_NAME = ShareFiles;
+				PRODUCT_NAME = ShareFiles;
+				PROVISIONING_PROFILE = "$(NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID)";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = DeviceDebug;
 		};
@@ -892,6 +1057,16 @@
 				4558554D43E0EDA7E6BD772A /* Debug */,
 				0A3AE4BF9A6A75FA00BC95F1 /* DeviceDebug */,
 				AE2871D23DA57B84EE7500FC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9B4AD4A2DD5B49041832ED1E /* Build configuration list for PBXNativeTarget "ShareFiles" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4FA71E358AF74B551B86FBC7 /* Debug */,
+				5FA55D995A9F49039A1832C9 /* DeviceDebug */,
+				0EBE2F88858202DD2CD2E82C /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

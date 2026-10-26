@@ -123,7 +123,7 @@ struct DeviceDetailSheet: View {
             LazyVStack(spacing: 14) {
                 if !isMe {
                     if !model.state.vpnActive { Text("Connect VPN to send files.").font(.caption).foregroundStyle(.secondary) }
-                    FileSendButton(model: model, npub: participant.npub, enabled: network.enabled && participant.reachable)
+                    FileSendButton(model: model, npub: participant.npub, enabled: network.enabled && participant.rosterAccepted)
                 }
                 AppCard {
                     HStack(spacing: 8) {
