@@ -26,6 +26,9 @@ services:
       RUST_LOG: info
     volumes:
       - ${APP_DATA_DIR}/data:/data
+      # Keep ownership and desired protection state with the app data when
+      # the container is recreated but its host-network firewall survives.
+      - ${APP_DATA_DIR}/data/egress-state:/var/lib/nvpn/egress
 
   web:
     image: nostr-vpn-umbrel:local
