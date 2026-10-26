@@ -7,10 +7,14 @@ All notable changes to this project are documented in this file.
 ### Improved
 
 - Describe desktop and command-line source builds in a versioned Haps manifest.
+- Choose light, dark, or system appearance on Windows.
+- Preserve IPv6 addresses in imported WireGuard configurations and support
+  IPv6 exit routes on Windows.
 
 ### Fixed
 
 - Preserve Umbrel firewall protection state when its container is recreated.
+- Manage Windows services directly and handle installation paths with spaces.
 - Let Linux users select an available webcam for QR scanning, hide inaccessible
   and metadata-only camera devices, and stop scanning when the scanner closes.
 - Keep Linux device details and form controls open during background telemetry
