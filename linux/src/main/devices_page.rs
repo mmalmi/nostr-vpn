@@ -532,6 +532,24 @@ fn device_detail_card(
         ("Received", format_bytes(participant.rx_bytes)),
     ] {
         let item = metric(title, &value);
+        let network_id = network.id.clone();
+        let key = participant_key(&participant);
+        let label = item.last_child().unwrap().downcast::<gtk::Label>().unwrap();
+        bind_live_label(app, &label, move |state| {
+            let participant = state.networks.iter()
+                .find(|network| network.id == network_id)
+                .and_then(|network| network.participants.iter().find(|peer| participant_key(peer) == key));
+            participant.map(|participant| match title {
+                "Role" => device_role_text(participant, state),
+                "State" => device_status_text(participant),
+                "FIPS path" => fips_path_text(participant),
+                "Address hints" => non_empty_or(&participant.fips_endpoint_hints.join(", "), "-"),
+                "Last seen" => non_empty_or(&participant.last_seen_text, "-"),
+                "Sent" => format_bytes(participant.tx_bytes),
+                "Received" => format_bytes(participant.rx_bytes),
+                _ => unreachable!(),
+            }).unwrap_or_default()
+        });
         metrics.insert(&item, -1);
     }
     connectivity.append(&metrics);
@@ -549,7 +567,7 @@ fn device_detail_card(
     detail
 }
 
-fn build_network_hero(_app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
+fn build_network_hero(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     let hero = card();
     hero.add_css_class("nvpn-hero");
 
@@ -588,6 +606,7 @@ fn build_network_hero(_app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     text.append(&title_row);
 
     let subtitle = gtk::Label::new(Some(&hero_subtitle(state)));
+    bind_live_label(app, &subtitle, hero_subtitle);
     subtitle.add_css_class("dim-label");
     subtitle.set_xalign(0.0);
     subtitle.set_wrap(true);

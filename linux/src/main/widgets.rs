@@ -299,6 +299,57 @@ fn clear_box(parent: &gtk::Box) {
     }
 }
 
+// These callbacks only update presentation. They must not dispatch actions or
+// own the app model. Clear them when replacing the page, not on each poll.
+fn bind_live_label(
+    app: &AppRef,
+    label: &gtk::Label,
+    text: impl Fn(&NativeAppState) -> String + 'static,
+) {
+    let label = label.downgrade();
+    app.borrow_mut().live_updates.push(Rc::new(move |state| {
+        if let Some(label) = label.upgrade() {
+            let text = text(state);
+            if label.text().as_str() != text {
+                label.set_text(&text);
+            }
+        }
+    }));
+}
+
+fn refresh_live_widgets(app: &AppRef, state: &NativeAppState) {
+    refresh_header(app, state);
+    let updates = app.borrow().live_updates.clone();
+    for update in updates {
+        update(state);
+    }
+}
+
+fn live_metric(
+    app: &AppRef,
+    title: &str,
+    text: impl Fn(&NativeAppState) -> String + 'static,
+) -> gtk::Box {
+    let value = text(&app.borrow().state);
+    let item = metric(title, &value);
+    let label = item.last_child().unwrap().downcast::<gtk::Label>().unwrap();
+    bind_live_label(app, &label, text);
+    item
+}
+
+fn live_detail_row(
+    app: &AppRef,
+    parent: &gtk::Box,
+    title: &str,
+    text: impl Fn(&NativeAppState) -> String + 'static,
+) {
+    let value = non_empty_or(&text(&app.borrow().state), "-");
+    detail_row(parent, title, &value);
+    let label = parent.last_child().unwrap().last_child().unwrap()
+        .downcast::<gtk::Label>().unwrap();
+    bind_live_label(app, &label, move |state| non_empty_or(&text(state), "-"));
+}
+
 fn current_content_scroll_offset(content: &gtk::Box) -> f64 {
     content
         .first_child()

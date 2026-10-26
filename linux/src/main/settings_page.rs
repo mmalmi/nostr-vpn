@@ -260,6 +260,23 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         } else {
             "dim-label"
         });
+        {
+            let dot = dot.downgrade();
+            let url = relay.url.clone();
+            app.borrow_mut().live_updates.push(Rc::new(move |state| {
+                if let Some(dot) = dot.upgrade() {
+                    let connected = state.relays.iter().any(|relay|
+                        relay.url == url && relay.enabled && relay.status == "connected");
+                    if connected {
+                        dot.remove_css_class("dim-label");
+                        dot.add_css_class("success");
+                    } else {
+                        dot.remove_css_class("success");
+                        dot.add_css_class("dim-label");
+                    }
+                }
+            }));
+        }
         row.append(&dot);
         let url = gtk::Label::new(Some(&relay.url));
         url.set_xalign(0.0);
@@ -645,12 +662,12 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     }
     let advanced_body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     advanced_body.set_margin_top(10);
-    build_diagnostics(&advanced_body, state);
+    build_diagnostics(app, &advanced_body, state);
     advanced.set_child(Some(&advanced_body));
     page.append(&advanced);
 }
 
-fn build_diagnostics(parent: &gtk::Box, state: &NativeAppState) {
+fn build_diagnostics(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
     let diagnostics = card();
     section_header(&diagnostics, "Diagnostics", "dialog-information-symbolic");
 
@@ -659,54 +676,29 @@ fn build_diagnostics(parent: &gtk::Box, state: &NativeAppState) {
     metrics.set_column_spacing(10);
     metrics.set_row_spacing(10);
     metrics.set_max_children_per_line(3);
-    let peer_count = format!(
-        "{}/{}",
-        state.connected_peer_count, state.expected_peer_count
-    );
-    let fips_peer_count = format!(
-        "{}/{} direct",
-        state.fips_connected_peer_count, state.fips_roster_peer_count
-    );
-    let other_fips = state.non_fips_roster_peer_count.to_string();
-    metrics.append(&metric("Peers", &peer_count));
-    metrics.append(&metric("Roster FIPS", &fips_peer_count));
-    metrics.append(&metric("Other FIPS", &other_fips));
-    metrics.append(&metric(
-        "Interface",
-        &non_empty_or(&state.network.default_interface, "unknown"),
-    ));
-    metrics.append(&metric(
-        "IPv4",
-        &non_empty_or(&state.network.primary_ipv4, "-"),
-    ));
-    metrics.append(&metric(
-        "IPv6",
-        &non_empty_or(&state.network.primary_ipv6, "-"),
-    ));
-    metrics.append(&metric(
-        "Gateway",
-        &first_non_empty(&[
-            state.network.gateway_ipv4.as_str(),
-            state.network.gateway_ipv6.as_str(),
-        ])
-        .unwrap_or_else(|| "unknown".to_string()),
-    ));
-    metrics.append(&metric(
-        "Mapping",
-        &non_empty_or(&state.port_mapping.active_protocol, "none"),
-    ));
-    metrics.append(&metric(
-        "External",
-        &non_empty_or(&state.port_mapping.external_endpoint, "stun/direct"),
-    ));
+    metrics.append(&live_metric(app, "Peers", |state| format!(
+        "{}/{}", state.connected_peer_count, state.expected_peer_count
+    )));
+    metrics.append(&live_metric(app, "Roster FIPS", |state| format!(
+        "{}/{} direct", state.fips_connected_peer_count, state.fips_roster_peer_count
+    )));
+    metrics.append(&live_metric(app, "Other FIPS", |state| state.non_fips_roster_peer_count.to_string()));
+    metrics.append(&live_metric(app, "Interface", |state| non_empty_or(&state.network.default_interface, "unknown")));
+    metrics.append(&live_metric(app, "IPv4", |state| non_empty_or(&state.network.primary_ipv4, "-")));
+    metrics.append(&live_metric(app, "IPv6", |state| non_empty_or(&state.network.primary_ipv6, "-")));
+    metrics.append(&live_metric(app, "Gateway", |state| first_non_empty(&[
+        state.network.gateway_ipv4.as_str(), state.network.gateway_ipv6.as_str()
+    ]).unwrap_or_else(|| "unknown".to_string())));
+    metrics.append(&live_metric(app, "Mapping", |state| non_empty_or(&state.port_mapping.active_protocol, "none")));
+    metrics.append(&live_metric(app, "External", |state| non_empty_or(&state.port_mapping.external_endpoint, "stun/direct")));
     diagnostics.append(&metrics);
 
     detail_row(&diagnostics, "This device", &state.own_npub);
     detail_row(&diagnostics, "Tunnel IP", &clean_ip(&state.tunnel_ip));
     detail_row(&diagnostics, "Endpoint", &state.endpoint);
     detail_row(&diagnostics, "Config", &state.config_path);
-    detail_row(&diagnostics, "MagicDNS", &state.magic_dns_status);
-    detail_row(&diagnostics, "Runtime", &state.runtime_status_detail);
+    live_detail_row(app, &diagnostics, "MagicDNS", |state| state.magic_dns_status.clone());
+    live_detail_row(app, &diagnostics, "Runtime", |state| state.runtime_status_detail.clone());
 
     if state.health.is_empty() {
         empty_row(&diagnostics, "No health warnings");

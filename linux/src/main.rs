@@ -32,6 +32,7 @@ thread_local! {
 }
 
 type AppRef = Rc<RefCell<AppModel>>;
+type LiveUpdate = Rc<dyn Fn(&NativeAppState)>;
 
 #[derive(Clone, Default)]
 struct AppRuntime {
@@ -191,6 +192,7 @@ struct AppModel {
     allow_close: bool,
     service_settling: bool,
     render_pending: bool,
+    live_updates: Vec<LiveUpdate>,
     manual_join_expanded: bool,
     diagnostics_expanded: bool,
 }
@@ -258,6 +260,7 @@ impl AppModel {
             allow_close: false,
             service_settling: false,
             render_pending: false,
+            live_updates: Vec::new(),
             manual_join_expanded: false,
             diagnostics_expanded,
         }
