@@ -240,7 +240,10 @@ require_tokens "$WINDOWS_HOST_ENTRY" "exact Windows FIPS provenance" \
   '-ExpectedFipsRevision $(ps_quote "$EXPECTED_FIPS_REV")'
 require_tokens "$WINDOWS_GUEST_ENTRY" "exact Windows FIPS runtime identity" \
   '[string]$ExpectedFipsRevision' \
-  '[string]$Value -eq "$ExpectedFipsVersion (rev $ExpectedFipsRevision)"' \
+  '[string]$VerifiedFipsRuntimeVersion' \
+  '$VerifiedFipsRuntimeVersion -cin @(' \
+  '$ExpectedFipsVersion, "$ExpectedFipsVersion (rev $ExpectedFipsRevision)"' \
+  '[string]$Value -ceq $VerifiedFipsRuntimeVersion' \
   '!(Test-ExpectedFipsCoreVersion $status.daemon.state.fips_core_version)'
 require_tokens "$WINDOWS_GUEST_CRASH_LIB" "exact restarted Windows FIPS identity" \
   '!(Test-ExpectedFipsCoreVersion $status.daemon.state.fips_core_version)'
