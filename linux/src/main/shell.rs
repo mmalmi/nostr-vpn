@@ -49,6 +49,7 @@ fn refresh_header(app: &AppRef, state: &NativeAppState) {
 
 fn render(app: &AppRef) {
     app.borrow_mut().render_pending = false;
+    app.borrow_mut().live_updates.clear();
     sync_selected_device(app);
 
     let (sidebar, update_bar, content, state, page, rendered_page) = {
@@ -73,10 +74,19 @@ fn render(app: &AppRef) {
     };
 
     refresh_header(app, &state);
+    // Unset focus while the old controls are still alive. GTK can otherwise
+    // reassign focus to a selectable label after removing the old page, with
+    // its previous-focus pointer already pointing at a destroyed widget.
+    let window = app.borrow().window.clone();
+    if let Some(focus) = gtk::prelude::GtkWindowExt::focus(&window) {
+        if focus.is_ancestor(&sidebar) || focus.is_ancestor(&update_bar) || focus.is_ancestor(&content) {
+            gtk::prelude::GtkWindowExt::set_focus(&window, gtk::Widget::NONE);
+        }
+    }
     clear_box(&sidebar);
     clear_box(&update_bar);
-    clear_box(&content);
     if !app.borrow().core_ready {
+        clear_box(&content);
         let loading = gtk::Box::new(gtk::Orientation::Vertical, 12);
         loading.set_halign(gtk::Align::Center);
         loading.set_valign(gtk::Align::Center);
@@ -99,7 +109,18 @@ fn render(app: &AppRef) {
     build_sidebar(app, &sidebar, &state, page);
     build_update_stripe(app, &update_bar, &state);
 
-    let scroll = gtk::ScrolledWindow::new();
+    // Keep the live scroll adjustment and layout across background refreshes.
+    // Recreating the scroller starts it at zero before its new child is sized.
+    let existing_scroll = (page == rendered_page)
+        .then(|| content.first_child())
+        .flatten()
+        .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok());
+    let scroll = existing_scroll.unwrap_or_else(|| {
+        clear_box(&content);
+        let scroll = gtk::ScrolledWindow::new();
+        content.append(&scroll);
+        scroll
+    });
     scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
     scroll.set_vexpand(true);
     scroll.set_hexpand(true);
@@ -125,7 +146,6 @@ fn render(app: &AppRef) {
     }
 
     scroll.set_child(Some(&page_box));
-    content.append(&scroll);
     restore_scroll_offset(&scroll, scroll_offset);
 }
 
@@ -242,6 +262,9 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
             "{} of {} connected",
             state.connected_peer_count, state.expected_peer_count
         )));
+        bind_live_label(app, &count, |state| format!(
+            "{} of {} connected", state.connected_peer_count, state.expected_peer_count
+        ));
         count.add_css_class("caption");
         count.add_css_class("dim-label");
         count.set_xalign(0.0);
@@ -255,6 +278,7 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
     sidebar.append(&spacer);
 
     let status = gtk::Label::new(Some(&state.vpn_status));
+    bind_live_label(app, &status, |state| state.vpn_status.clone());
     status.add_css_class("caption");
     status.add_css_class("dim-label");
     status.set_xalign(0.0);

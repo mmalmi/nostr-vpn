@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.19 - 2026-10-23
+## 4.1.19 - 2026-10-26
 
 ### Improved
 
@@ -10,6 +10,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Preserve Umbrel firewall protection state when its container is recreated.
+- Let Linux users select an available webcam for QR scanning, hide inaccessible
+  and metadata-only camera devices, and stop scanning when the scanner closes.
+- Keep Linux device details and form controls open during background telemetry
+  updates, and preserve scroll position and safe focus when pages refresh.
 - Keep macOS peers on connected LANs and VM bridges reachable instead of
   routing them through the default Internet gateway.
 - Recover retained Nostr relay updates after incoming bursts fill the queue,
@@ -30,6 +35,11 @@ All notable changes to this project are documented in this file.
   directory owned by the user.
 - Update TLS certificate validation dependencies on desktop and mobile,
   including the separately resolved Linux desktop app.
+
+### Known issues
+
+- iPhone VPN idle CPU measured about 2.7% in release testing; further reduction
+  is pending.
 
 ## 4.1.18 - 2026-10-19
 

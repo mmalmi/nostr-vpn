@@ -249,6 +249,15 @@ fn saved_network_row(
         network.expected_count,
         short_text(&network.network_id, 12)
     )));
+    {
+        let network_id = network.id.clone();
+        bind_live_label(app, &subtitle, move |state| {
+            state.networks.iter().find(|network| network.id == network_id)
+                .map(|network| format!("{} of {} connected  {}",
+                    network.online_count, network.expected_count, short_text(&network.network_id, 12)))
+                .unwrap_or_default()
+        });
+    }
     subtitle.add_css_class("caption");
     subtitle.add_css_class("dim-label");
     subtitle.set_xalign(0.0);
