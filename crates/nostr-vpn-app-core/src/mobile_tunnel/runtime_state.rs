@@ -736,14 +736,11 @@ async fn refresh_mobile_endpoint_peers(
         .read()
         .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
         .clone();
-    let include_non_roster_transit = config.connect_to_non_roster_fips_peers
-        || config.join_requests_enabled
-        || mobile_join_request_pending(&config);
     let peers = fips_peer_configs_from_mesh(
         &config.peers,
         &config.peer_hints,
         &config.bootstrap_peers,
-        include_non_roster_transit,
+        mobile_includes_non_roster_transit(&config),
     );
     endpoint
         .update_peers(peers)

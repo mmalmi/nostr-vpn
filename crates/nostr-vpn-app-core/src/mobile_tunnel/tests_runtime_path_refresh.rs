@@ -531,3 +531,99 @@ fn mobile_path_refresh_leaves_pending_attempt_untouched() {
             }));
     });
 }
+
+#[test]
+fn mobile_peer_refresh_preserves_transit_retry_ownership() {
+    run_desktop_mobile_join_test("mobile-transit-refresh", || {
+        RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(Box::pin(async {
+                for reason in [
+                    "bootstrap",
+                    "websocket",
+                    "device-approval",
+                    "local-confirmation",
+                    "join-request",
+                    "join-listener",
+                    "open-transit",
+                ] {
+                    let peer = Keys::generate().public_key().to_hex();
+                    // A missing carrier creates a real pending FIPS retry,
+                    // independent of handshake timing or external services.
+                    let hints = vec![FipsPeerAddressHint {
+                        addr: "tcp://127.0.0.1:1".to_string(),
+                        seen_at_ms: None,
+                        priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+                    }];
+                    let mut config = MobileTunnelConfig {
+                        identity_nsec: Keys::generate()
+                            .secret_key()
+                            .to_bech32()
+                            .expect("local identity"),
+                        ..empty_config()
+                    };
+                    if reason == "bootstrap" {
+                        config.bootstrap_peers.insert(peer.clone(), hints.clone());
+                    } else {
+                        config.peer_hints.insert(peer.clone(), hints.clone());
+                    }
+                    match reason {
+                        "bootstrap" => {}
+                        "websocket" => {
+                            config.websocket_seed_urls = vec!["ws://127.0.0.1:1".to_string()];
+                        }
+                        "device-approval" => config.device_approval_pending = true,
+                        "local-confirmation" => config.local_identity_confirmation_pending = true,
+                        "join-request" => {
+                            config.pending_join_request_recipient = peer.clone();
+                            config.pending_join_requested_at = unix_timestamp();
+                        }
+                        "join-listener" => config.join_requests_enabled = true,
+                        "open-transit" => config.connect_to_non_roster_fips_peers = true,
+                        _ => unreachable!(),
+                    }
+                    let endpoint = bind_local_mobile_endpoint("mobile-transit-refresh", &config).await;
+                    let state = Arc::new(RwLock::new(config));
+                    assert!(
+                        mobile_path_peer(&endpoint, &peer)
+                            .await
+                            .is_some_and(|peer| peer.direct_probe_pending),
+                        "startup must own the {reason} retry"
+                    );
+                    refresh_mobile_endpoint_peers(&endpoint, &state)
+                        .await
+                        .expect("refresh endpoint peers");
+                    assert!(
+                        mobile_path_peer(&endpoint, &peer)
+                            .await
+                            .is_some_and(|peer| peer.direct_probe_pending),
+                        "peer refresh must retain the {reason} retry"
+                    );
+                    {
+                        let mut config = state.write().expect("config");
+                        config.peer_hints.insert(peer.clone(), hints);
+                        config.bootstrap_peers.clear();
+                        config.websocket_seed_urls.clear();
+                        config.device_approval_pending = false;
+                        config.local_identity_confirmation_pending = false;
+                        config.pending_join_request_recipient.clear();
+                        config.pending_join_requested_at = 0;
+                        config.join_requests_enabled = false;
+                        config.connect_to_non_roster_fips_peers = false;
+                    }
+                    refresh_mobile_endpoint_peers(&endpoint, &state)
+                        .await
+                        .expect("apply transit opt-out");
+                    assert!(
+                        !mobile_path_peer(&endpoint, &peer)
+                            .await
+                            .is_some_and(|peer| peer.direct_probe_pending),
+                        "a retained hint must not override transit opt-out"
+                    );
+                    endpoint.shutdown().await.expect("endpoint shutdown");
+                }
+            }));
+    });
+}
