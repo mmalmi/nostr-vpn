@@ -55,7 +55,7 @@ async fn mobile_path_listen_port(endpoint: &FipsEndpoint) -> u16 {
         .await
         .expect("bound UDP listeners")
         .into_iter()
-        .find(|addr| addr.is_ipv4())
+        .find(std::net::SocketAddr::is_ipv4)
         .expect("bound IPv4 listener")
         .port()
 }
