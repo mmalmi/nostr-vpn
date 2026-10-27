@@ -4,11 +4,11 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 REMOTE_ROOT APP_BUNDLE_SHA APP_SHA APP_TREE FIPS_BUNDLE_SHA FIPS_SHA FIPS_TREE RUST_TOOLCHAIN CACHE_ID TARGET_GENERATION TARGET_VOLUME CONTAINER_NAME ROOT_REALIZED_LOCK LINUX_REALIZED_LOCK SOURCE_DATE_EPOCH DOCKERFILE_SHA PAYLOAD_SHA BUILD_CPUS BUILD_MEMORY CARGO_JOBS TARGET_TMPFS_BYTES" >&2
+  echo "usage: $0 REMOTE_ROOT APP_BUNDLE_SHA APP_SHA APP_TREE FIPS_BUNDLE_SHA FIPS_SHA FIPS_TREE RUST_TOOLCHAIN CACHE_ID TARGET_GENERATION TARGET_VOLUME CONTAINER_NAME ROOT_REALIZED_LOCK LINUX_REALIZED_LOCK SOURCE_DATE_EPOCH DOCKERFILE_SHA PAYLOAD_SHA BUILD_CPUS BUILD_MEMORY CARGO_JOBS TARGET_TMPFS_BYTES RETAIN_TARGET TARGET_MAX_BYTES" >&2
   exit 2
 }
 
-[[ "$#" == 21 ]] || usage
+[[ "$#" == 23 ]] || usage
 REMOTE_ROOT="$1"
 APP_BUNDLE_SHA256="$2"
 APP_GIT_SHA="$3"
@@ -30,7 +30,9 @@ export NVPN_HOST_LINUX_VM_BUILD_CPUS="${18}"
 export NVPN_HOST_LINUX_VM_BUILD_MEMORY="${19}"
 export NVPN_HOST_LINUX_VM_CARGO_JOBS="${20}"
 export NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES="${21}"
-for resource in NVPN_HOST_LINUX_VM_BUILD_CPUS NVPN_HOST_LINUX_VM_BUILD_MEMORY NVPN_HOST_LINUX_VM_CARGO_JOBS NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES; do
+export NVPN_HOST_LINUX_VM_RETAIN_TARGET="${22}"
+export NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES="${23}"
+for resource in NVPN_HOST_LINUX_VM_BUILD_CPUS NVPN_HOST_LINUX_VM_BUILD_MEMORY NVPN_HOST_LINUX_VM_CARGO_JOBS NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES; do
   [[ "${!resource}" != - ]] || unset "$resource"
 done
 
@@ -101,6 +103,7 @@ exec 1>&2
 CONTAINER_OWNED=0
 OWNER_CONTAINER_OWNED=0
 TARGET_VOLUME_OWNED=0
+TARGET_VOLUME_RETAINED=0
 OWNER_CONTAINER_NAME="${CONTAINER_NAME}-owner"
 
 cleanup() {
@@ -117,7 +120,10 @@ cleanup() {
     fi
     host_linux_builder_stop_container \
       "$CONTAINER_NAME" "$BUILD_CACHE_ID" || cleanup_failed=1
-    if [[ "$TARGET_VOLUME_OWNED" == "1" ]]; then
+    # Retained targets survive success, cancellation and failed compilation.
+    # Cargo handles partial outputs on the next compatible serialized build;
+    # retaining them is never a release receipt or permission to prune them.
+    if [[ "$TARGET_VOLUME_OWNED" == "1" && "$TARGET_VOLUME_RETAINED" == 0 ]]; then
       host_linux_builder_remove_target_volume \
         "$TARGET_VOLUME_NAME" "$BUILD_CACHE_ID" \
         "$TARGET_CACHE_GENERATION" || cleanup_failed=1
@@ -133,7 +139,10 @@ cleanup() {
   fi
   exit "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] || {
   echo "remote native builder requires Linux x86_64" >&2
@@ -292,17 +301,30 @@ own_fresh_target_volume() {
     --label "to.nostrvpn.release-builder=host-linux-vm-bundle" \
     --label "to.nostrvpn.release-builder-cache=$BUILD_CACHE_ID" \
     --platform linux/amd64 \
+    --network none \
+    "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
     --volume "$TARGET_VOLUME_NAME:/target-root" \
     "$CONTAINER_IMAGE_ID" \
     sh -ceu '
-      [ -z "$(find /target-root -mindepth 1 -print -quit)" ]
-      chown "$1:$2" /target-root
+      if [ "$3" = 0 ]; then
+        [ -z "$(find /target-root -mindepth 1 -print -quit)" ]
+        chown "$1:$2" /target-root
+      else
+        [ "$(stat -c %u:%g /target-root)" = "$1:$2" ]
+      fi
     ' sh \
-    "$BUILDER_UID" "$BUILDER_GID"
+    "$BUILDER_UID" "$BUILDER_GID" "${HOST_LINUX_RETAINED_REUSED:-0}"
   host_linux_builder_stop_container "$OWNER_CONTAINER_NAME" "$BUILD_CACHE_ID"
   OWNER_CONTAINER_OWNED=0
 }
 own_fresh_target_volume
+
+check_retained_target_size() {
+  OWNER_CONTAINER_OWNED=1
+  host_linux_builder_check_retained_target_size "$TARGET_VOLUME_NAME" \
+    "$CONTAINER_IMAGE_ID" "$BUILD_CACHE_ID" "$OWNER_CONTAINER_NAME"
+  OWNER_CONTAINER_OWNED=0
+}
 
 run_builder_phase() {
   local phase="$1"
@@ -329,6 +351,7 @@ run_builder_phase() {
     "${package_mounts[@]}" \
     --env CARGO_HOME=/cargo-home \
     --env HOME=/cargo-home \
+    --env "NVPN_HOST_LINUX_VM_RETAIN_TARGET=$NVPN_HOST_LINUX_VM_RETAIN_TARGET" \
     "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
     --env CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
     --env "NVPN_BUILD_GIT_SHA=$APP_GIT_SHA" \
@@ -355,9 +378,26 @@ python3 "$CARGO_CACHE_VERIFIER" store \
   "$REMOTE_ROOT/build-app/linux/Cargo.lock"
 host_linux_builder_remove_target_volume \
   "$TARGET_VOLUME_NAME" "$BUILD_CACHE_ID" "$TARGET_CACHE_GENERATION"
-host_linux_builder_create_fresh_target_volume \
-  "$TARGET_VOLUME_NAME" "$BUILD_CACHE_ID" "$TARGET_CACHE_GENERATION"
+TARGET_VOLUME_OWNED=0
+if [[ "$NVPN_HOST_LINUX_VM_RETAIN_TARGET" == 1 ]]; then
+  OWNER_CONTAINER_OWNED=1
+  host_linux_builder_prepare_retained_target "$BUILD_CACHE_ID" \
+    "$CONTAINER_IMAGE_ID" "$RUST_TOOLCHAIN" \
+    "$ROOT_REALIZED_CARGO_LOCK_SHA256" "$LINUX_REALIZED_CARGO_LOCK_SHA256" \
+    "$EXPECTED_PAYLOAD_SHA256" "$OWNER_CONTAINER_NAME"
+  OWNER_CONTAINER_OWNED=0
+  TARGET_VOLUME_NAME="$HOST_LINUX_RETAINED_VOLUME"
+  TARGET_CACHE_GENERATION="$HOST_LINUX_RETAINED_GENERATION"
+  TARGET_VOLUME_RETAINED=1
+else
+  host_linux_builder_create_fresh_target_volume \
+    "$TARGET_VOLUME_NAME" "$BUILD_CACHE_ID" "$TARGET_CACHE_GENERATION"
+fi
+TARGET_VOLUME_OWNED=1
 own_fresh_target_volume
+if [[ "$TARGET_VOLUME_RETAINED" == 1 ]]; then
+  check_retained_target_size
+fi
 mkdir "$REMOTE_ROOT/build-app/target" "$REMOTE_ROOT/build-app/linux/target"
 run_builder_phase build
 rmdir "$REMOTE_ROOT/build-app/linux/target" "$REMOTE_ROOT/build-app/target"
@@ -368,8 +408,14 @@ python3 "$SOURCE_AUDITOR" \
   "$LINUX_REALIZED_CARGO_LOCK_SHA256"
 python3 "$SOURCE_AUDITOR" --exact \
   "$REMOTE_ROOT/fips" "$FIPS_GIT_SHA" "$FIPS_GIT_TREE" >/dev/null
-host_linux_builder_remove_target_volume \
-  "$TARGET_VOLUME_NAME" "$BUILD_CACHE_ID" "$TARGET_CACHE_GENERATION"
+if [[ "$TARGET_VOLUME_RETAINED" == 1 ]]; then
+  check_retained_target_size
+  printf 'Retaining compatible target %s (%s), reused=%s\n' \
+    "$TARGET_VOLUME_NAME" "$TARGET_CACHE_GENERATION" "$HOST_LINUX_RETAINED_REUSED" >&2
+else
+  host_linux_builder_remove_target_volume \
+    "$TARGET_VOLUME_NAME" "$BUILD_CACHE_ID" "$TARGET_CACHE_GENERATION"
+fi
 TARGET_VOLUME_OWNED=0
 CONTAINER_OWNED=0
 

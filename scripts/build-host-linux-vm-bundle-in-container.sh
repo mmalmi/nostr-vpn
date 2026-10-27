@@ -85,7 +85,9 @@ cd /workspace/app/linux
 CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
   cargo "${fips_config[@]}" check --frozen
 # The check is complete; release builds own the bounded target volume next.
-cargo "${fips_config[@]}" clean --profile dev
+if [[ "${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}" != 1 ]]; then
+  cargo "${fips_config[@]}" clean --profile dev
+fi
 
 cd /workspace/app
 cargo "${fips_config[@]}" build --frozen --release -p nvpn

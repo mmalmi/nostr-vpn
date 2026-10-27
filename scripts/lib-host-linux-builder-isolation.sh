@@ -50,6 +50,8 @@ host_linux_builder_resource_args() {
   local memory="${NVPN_HOST_LINUX_VM_BUILD_MEMORY:-}"
   local jobs="${NVPN_HOST_LINUX_VM_CARGO_JOBS:-}"
   local tmpfs="${NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES:-}"
+  local retain="${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}"
+  local target_bytes="${NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES:-}"
   [[ -z "$cpus" || "$cpus" =~ ^[1-9][0-9]*$ ]] \
     && [[ -z "$memory" || "$memory" =~ ^[1-9][0-9]*[kKmMgG]?$ ]] \
     && [[ -z "$jobs" || "$jobs" =~ ^[1-9][0-9]*$ ]] \
@@ -57,6 +59,14 @@ host_linux_builder_resource_args() {
     echo "Linux builder limits must be positive; tmpfs requires a memory limit" >&2
     return 2
   }
+  [[ "$retain" == 0 || "$retain" == 1 ]] || return 2
+  if [[ "$retain" == 1 ]]; then
+    [[ -z "$tmpfs" && -n "$cpus" && -n "$memory" && -n "$jobs" \
+      && "$target_bytes" =~ ^[1-9][0-9]{0,13}$ ]] || {
+      echo "Retained targets require CPU/memory/jobs/byte bounds and disk backing" >&2
+      return 2
+    }
+  fi
   HOST_LINUX_BUILDER_RESOURCE_ARGS=(--env CARGO_INCREMENTAL=0)
   if [[ -n "$cpus" ]]; then
     HOST_LINUX_BUILDER_RESOURCE_ARGS+=(--cpus "$cpus")
@@ -151,8 +161,103 @@ host_linux_builder_remove_target_volume() {
     echo "Refusing mismatched Linux builder target volume: $volume_name" >&2
     return 1
   fi
+  host_linux_builder_assert_target_unused "$volume_name" || return
   docker volume rm "$volume_name" >/dev/null
   ! docker volume inspect "$volume_name" >/dev/null 2>&1
+}
+
+# Call only under the established builder lock. Include stopped containers:
+# they may still belong to another validation lane and retain a mount claim.
+host_linux_builder_assert_target_unused() {
+  local users
+  users="$(docker ps --all --quiet --filter "volume=$1")" || return
+  [[ -z "$users" ]] || {
+    echo "Linux builder target still has a container owner: $1" >&2
+    return 2
+  }
+}
+
+# This is deliberately one stable slot per owner, not a new cache per retry.
+# A compatibility mismatch preserves the old target and fails closed. Retiring
+# it is a separate owner decision using remove_target_volume under this lock.
+host_linux_builder_prepare_retained_target() {
+  local cache_id="$1" image="$2" rust="$3" root_lock="$4" linux_lock="$5"
+  local payload="$6" probe_name="$7" toolchain compatibility options
+  host_linux_builder_resource_args || return
+  [[ "${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}" == 1 \
+    && "$cache_id" =~ ^[0-9a-f]{64}$ \
+    && "$image" =~ ^sha256:[0-9a-f]{64}$ \
+    && "$rust" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ \
+    && "$root_lock" =~ ^[0-9a-f]{64}$ \
+    && "$linux_lock" =~ ^[0-9a-f]{64}$ \
+    && "$payload" =~ ^[0-9a-f]{64}$ ]] || return 2
+  # Bind the actual tools, not just the requested Rust version. The immutable
+  # image and payload also bind linker, target set, Cargo profiles and flags.
+  toolchain="$(docker run --rm --network none --read-only --name "$probe_name" \
+    --label "to.nostrvpn.release-builder=host-linux-vm-bundle" \
+    --label "to.nostrvpn.release-builder-cache=$cache_id" \
+    --platform linux/amd64 "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
+    "$image" sh -ceu 'rustc -vV; cargo -V; musl-gcc -dumpmachine; musl-gcc -dumpversion')" || return
+  host_linux_builder_stop_container "$probe_name" "$cache_id" || return
+  [[ "$toolchain" == "rustc $rust "* ]] || {
+    echo "Retained target actual Rust toolchain differs" >&2
+    return 2
+  }
+  compatibility="$(python3 - "$image" "$toolchain" "$root_lock" \
+    "$linux_lock" "$payload" "$(id -u):$(id -g)" <<'PY'
+import hashlib, json, sys
+print(hashlib.sha256(json.dumps(
+    ['native-linux-target-v1', 'x86_64-unknown-linux-gnu',
+     'x86_64-unknown-linux-musl', 'CARGO_INCREMENTAL=0', *sys.argv[1:]],
+    separators=(',', ':')).encode()).hexdigest())
+PY
+  )" || return
+  HOST_LINUX_RETAINED_VOLUME="nvpn-linux-retained-${cache_id:0:24}"
+  HOST_LINUX_RETAINED_GENERATION="retained-v1-$compatibility"
+  HOST_LINUX_RETAINED_REUSED=0
+  if docker volume inspect "$HOST_LINUX_RETAINED_VOLUME" >/dev/null 2>&1; then
+    host_linux_builder_target_volume_matches "$HOST_LINUX_RETAINED_VOLUME" \
+      "$cache_id" "$HOST_LINUX_RETAINED_GENERATION" || {
+      echo "Retained target compatibility mismatch; preserve it for owner review" >&2
+      return 2
+    }
+    options="$(docker volume inspect --format '{{json .Options}}' \
+      "$HOST_LINUX_RETAINED_VOLUME")" || return
+    [[ "$options" == null || "$options" == '{}' ]] || return 2
+    host_linux_builder_assert_target_unused "$HOST_LINUX_RETAINED_VOLUME" || return
+    HOST_LINUX_RETAINED_REUSED=1
+  else
+    docker volume create --driver local \
+      --label "to.nostrvpn.release-builder=host-linux-vm-bundle-target" \
+      --label "to.nostrvpn.release-builder-cache=$cache_id" \
+      --label "to.nostrvpn.release-builder-generation=$HOST_LINUX_RETAINED_GENERATION" \
+      "$HOST_LINUX_RETAINED_VOLUME" >/dev/null || return
+    host_linux_builder_target_volume_matches "$HOST_LINUX_RETAINED_VOLUME" \
+      "$cache_id" "$HOST_LINUX_RETAINED_GENERATION" || return
+  fi
+}
+
+# Admission and completion bounds, not a filesystem quota. The execution owner
+# must still enforce its physical-host growth/floor guard during the build.
+# Exceeding the bound stops reuse/acceptance; it never triggers data deletion.
+host_linux_builder_check_retained_target_size() {
+  local volume="$1" image="$2" cache_id="$3" probe_name="$4" bytes
+  host_linux_builder_resource_args || return
+  host_linux_builder_assert_target_unused "$volume" || return
+  bytes="$(docker run --rm --network none --read-only --name "$probe_name" \
+    --label "to.nostrvpn.release-builder=host-linux-vm-bundle" \
+    --label "to.nostrvpn.release-builder-cache=$cache_id" \
+    --platform linux/amd64 "${HOST_LINUX_BUILDER_RESOURCE_ARGS[@]}" \
+    --mount "type=volume,src=$volume,dst=/target,readonly" \
+    "$image" sh -ceu 'du -s -B1 /target | cut -f1')" || return
+  host_linux_builder_stop_container "$probe_name" "$cache_id" || return
+  [[ "$bytes" =~ ^[0-9]{1,14}$ \
+    && "$bytes" -le "$NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES" ]] || {
+    echo "Retained target exceeds its byte bound; preserved for owner review" >&2
+    return 2
+  }
+  printf 'Retained target %s uses %s bytes (limit %s)\n' \
+    "$volume" "$bytes" "$NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES" >&2
 }
 
 host_linux_builder_create_fresh_target_volume() {

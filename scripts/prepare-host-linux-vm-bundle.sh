@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 # Build/cache exact Ubuntu 24.04 x86_64 artifacts under Mac orchestration.
+# Optional remote-native retention: NVPN_HOST_LINUX_VM_RETAIN_TARGET=1,
+# NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES=<admitted target budget>, explicit CPU,
+# memory and job bounds, and no TARGET_TMPFS_BYTES. Keep BUNDLE_CACHE_DIR stable
+# across the owner's validation/gate runs. The retained slot fails closed on
+# incompatible image/tools/locks/payload; it is not automatically replaced or
+# pruned on failure. Byte checks are admission/completion checks, not a quota;
+# keep the execution owner's physical-host growth/floor guard. This wrapper's
+# default full release scope and all artifact/source gates remain unchanged.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,6 +31,11 @@ host_linux_builder_resource_args
   exit 2
 }
 BUILDER_MODE="${NVPN_HOST_LINUX_VM_BUILDER_MODE:-}"
+if [[ "${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}" == 1 \
+  && "$BUILDER_MODE" != remote-native ]]; then
+  echo "Retained targets require the serialized native Linux builder" >&2
+  exit 2
+fi
 case "$BUILDER_MODE" in
   remote-native)
     host_linux_native_builder_configured || {
