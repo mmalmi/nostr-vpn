@@ -142,7 +142,7 @@ async fn overlapping_replay() {
     let now = now_ms() / 1_000;
     let burst = (0..count).map(|index| {
         EventBuilder::new(Kind::Custom(FIPS_PEER_ADVERT_KIND),
-            r#"{"identifier":"fips-overlay-v1","version":1,"endpoints":[{"transport":"udp","addr":"203.0.113.99:51821"}]}"#)
+            r#"{"identifier":"fips-overlay-v1","version":1,"endpoints":[{"transport":"udp","addr":"fixture.invalid:51821"}]}"#)
             .tags([
                 Tag::identifier(app.clone()),
                 Tag::custom(TagKind::custom("protocol"), [app.clone()]),
