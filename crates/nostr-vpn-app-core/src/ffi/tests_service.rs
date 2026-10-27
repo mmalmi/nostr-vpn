@@ -227,7 +227,12 @@ if [ "$1" = "reload" ]; then
     echo "simulated wireguard reload failure" >&2
     exit 7
   fi
-  grep -q 'internet_source = "direct"' "$3" || exit 92
+  # A restored direct config omits internet_source (serde skips the default)
+  # and every wireguard_exit field; either string present means the failed
+  # config leaked into the rollback.
+  if grep -q 'internet_source' "$3" || grep -q '\[Interface\]' "$3"; then
+    exit 92
+  fi
   exit 0
 fi
 exit 93
