@@ -83,6 +83,7 @@ pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) 
             "-Command",
             script.as_str(),
         ])
+        .hide_console_window()
         .output();
     let Ok(output) = output else {
         return false;
@@ -187,6 +188,7 @@ pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
             "-Command",
             "Get-CimInstance Win32_Process -Filter \"Name LIKE 'nvpn%.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
         ])
+        .hide_console_window()
         .output();
     let Ok(output) = output else {
         return Vec::new();
@@ -313,6 +315,7 @@ pub(crate) fn tasklist_pids_from_output(tasklist_output: &str) -> Vec<u32> {
 pub(crate) fn windows_nvpn_pids() -> Vec<u32> {
     let output = ProcessCommand::new("tasklist")
         .args(["/FI", "IMAGENAME eq nvpn.exe", "/FO", "CSV", "/NH"])
+        .hide_console_window()
         .output();
     let Ok(output) = output else {
         return Vec::new();

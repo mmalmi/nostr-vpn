@@ -140,6 +140,7 @@ pub(crate) fn send_signal(pid: u32, signal: &str) -> Result<()> {
 pub(crate) fn windows_taskkill_pid(pid: u32) -> Result<()> {
     let output = ProcessCommand::new("taskkill")
         .args(["/PID", &pid.to_string(), "/F"])
+        .hide_console_window()
         .output()
         .with_context(|| format!("failed to execute taskkill /PID {pid} /F"))?;
 
@@ -180,6 +181,7 @@ fn ping_wait_arg_from_secs(timeout_secs: u64) -> String {
 
 pub(crate) fn run_ping(target: &str, count: u32, timeout_secs: u64) -> Result<()> {
     let mut command = ProcessCommand::new("ping");
+    command.hide_console_window();
     if cfg!(target_os = "windows") {
         command
             .arg("-n")
