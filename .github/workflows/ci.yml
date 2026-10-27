@@ -83,8 +83,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      # deny.toml blocks jsonwebtoken < 10.3.0 (CVE-2026-25537), which
-      # cdk-common still requires as jsonwebtoken ^9.
+      # deny.toml gates the advisory DB: findings with no in-range fix are
+      # pinned to documented ignores, and jsonwebtoken < 10.3.0
+      # (CVE-2026-25537, not in the RustSec DB) is tracked in the header
+      # until the cdk stack can bump it.
       - name: Check dependency advisories and bans
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
