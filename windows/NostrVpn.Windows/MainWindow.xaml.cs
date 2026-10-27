@@ -37,6 +37,10 @@ public partial class MainWindow : Window
             return;
         }
         base.OnClosing(e);
+        if (!App.IsQuitting)
+        {
+            ((App)Application.Current).Quit();
+        }
     }
 
     private void CopyPeer_Click(object sender, RoutedEventArgs e)
