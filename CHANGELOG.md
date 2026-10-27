@@ -10,12 +10,14 @@ All notable changes to this project are documented in this file.
   announcements fairly among equally ranked peers.
 - Avoid unnecessary background peer discovery when a client has a usable uplink,
   while retaining discovery during startup and connection recovery.
+- Avoid allocating FIPS control handlers when network activity does not need them.
 
 ### Fixed
 
 - Preserve bootstrap and approval peer retries when mobile endpoints refresh.
 - Recover peer messaging promptly after restarting its service on a live endpoint.
 - Keep peer discovery and replay subject to the application's peer policy.
+- Update compression dependencies to fix reported stream and memory-safety issues.
 
 ## 4.1.19 - 2026-10-23
 
