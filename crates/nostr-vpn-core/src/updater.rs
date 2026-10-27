@@ -421,12 +421,29 @@ fn update_endpoint_config(app: &AppConfig) -> FipsConfig {
     config.node.discovery.lan.enabled = false;
     config.node.routing.mode = RoutingMode::ReplyLearned;
     config.dns.enabled = false;
-    config.transports.udp = TransportInstances::Single(UdpConfig {
-        bind_addr: Some("0.0.0.0:0".to_string()),
-        accept_connections: Some(false),
-        outbound_only: Some(true),
-        ..UdpConfig::default()
-    });
+    // Bootstrap peers resolve to both address families, so bind one outbound
+    // socket per family; a family that cannot bind is skipped by transport
+    // startup and the other still reaches the mesh.
+    config.transports.udp = TransportInstances::Named(std::collections::HashMap::from([
+        (
+            "ipv4".to_string(),
+            UdpConfig {
+                bind_addr: Some("0.0.0.0:0".to_string()),
+                accept_connections: Some(false),
+                outbound_only: Some(true),
+                ..UdpConfig::default()
+            },
+        ),
+        (
+            "ipv6".to_string(),
+            UdpConfig {
+                bind_addr: Some("[::]:0".to_string()),
+                accept_connections: Some(false),
+                outbound_only: Some(true),
+                ..UdpConfig::default()
+            },
+        ),
+    ]));
     config.transports.tcp = TransportInstances::Single(Default::default());
     config.transports.websocket = TransportInstances::Single(WebSocketConfig {
         seed_urls: if app.fips_bootstrap_enabled {
