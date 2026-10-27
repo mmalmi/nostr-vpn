@@ -5,6 +5,7 @@ public static class NativeActions
     public static string Tick() => AppCoreClient.Action(new { type = "tick" });
     public static string ConnectVpn() => AppCoreClient.Action(new { type = "connect_vpn" });
     public static string DisconnectVpn() => AppCoreClient.Action(new { type = "disconnect_vpn" });
+    public static string StopDaemon() => AppCoreClient.Action(new { type = "stop_daemon" });
     public static string InstallCli() => AppCoreClient.Action(new { type = "install_cli" });
     public static string InstallSystemService() => AppCoreClient.Action(new { type = "install_system_service" });
     public static string EnableSystemService() => AppCoreClient.Action(new { type = "enable_system_service" });

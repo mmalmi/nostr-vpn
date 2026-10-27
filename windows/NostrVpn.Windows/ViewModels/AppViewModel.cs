@@ -909,6 +909,26 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         _core.Dispose();
     }
 
+    /// <summary>
+    /// Quit-path teardown: stop the background nvpn daemon so nothing is left
+    /// running after the app exits. Best-effort and time-bounded — quitting
+    /// must succeed even when the native core is unresponsive.
+    /// </summary>
+    public void StopDaemonBeforeExit()
+    {
+        _refreshTimer.Stop();
+        _updateTimer.Stop();
+        try
+        {
+            Task.Run(() => _core.Dispatch(NativeActions.StopDaemon()))
+                .Wait(TimeSpan.FromSeconds(10));
+        }
+        catch
+        {
+            // Ignore: the daemon may already be gone or the core unavailable.
+        }
+    }
+
     private async Task<bool> DispatchAsync(string actionJson, string status)
     {
         if (ActionInFlight)

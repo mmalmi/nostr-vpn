@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 using NostrVpn.Windows.Core;
 using NostrVpn.Windows.ViewModels;
@@ -15,6 +16,8 @@ public sealed class TrayService : IDisposable
     private AppViewModel? _viewModel;
     private Action? _showWindow;
     private Action? _quit;
+    private string _menuSignature = string.Empty;
+    private bool _menuDirty;
 
     public TrayService()
     {
@@ -35,7 +38,8 @@ public sealed class TrayService : IDisposable
         _showWindow = showWindow;
         _quit = quit;
         viewModel.PropertyChanged += (_, _) => Update();
-        Update();
+        RebuildMenu();
+        UpdateIndicator();
     }
 
     public void Update()
@@ -45,18 +49,89 @@ public sealed class TrayService : IDisposable
             return;
         }
 
-        _notifyIcon.Text = TruncateTrayText(TrayText(_viewModel));
-        _notifyIcon.Icon = _viewModel.State.ExitNodeBlocked ? _blockedIcon : _normalIcon;
-        _notifyIcon.ContextMenuStrip?.Dispose();
-        _notifyIcon.ContextMenuStrip = BuildMenu(_viewModel);
+        UpdateIndicator();
+        var signature = MenuSignature(_viewModel);
+        if (signature == _menuSignature)
+        {
+            return;
+        }
+        if (_notifyIcon.ContextMenuStrip is { Visible: true })
+        {
+            // Rebuilding an open menu destroys it under the cursor and turns
+            // pending clicks into no-ops, so defer until it closes.
+            _menuDirty = true;
+            return;
+        }
+        RebuildMenu();
     }
 
     public void Dispose()
     {
         _notifyIcon.Visible = false;
+        _notifyIcon.ContextMenuStrip?.Dispose();
         _notifyIcon.Dispose();
         _normalIcon.Dispose();
         _blockedIcon.Dispose();
+    }
+
+    private void UpdateIndicator()
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+        _notifyIcon.Text = TruncateTrayText(TrayText(_viewModel));
+        _notifyIcon.Icon = _viewModel.State.ExitNodeBlocked ? _blockedIcon : _normalIcon;
+    }
+
+    private void RebuildMenu()
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+        _menuSignature = MenuSignature(_viewModel);
+        var oldMenu = _notifyIcon.ContextMenuStrip;
+        var menu = BuildMenu(_viewModel);
+        menu.Closed += (_, _) =>
+        {
+            if (_menuDirty)
+            {
+                _menuDirty = false;
+                Update();
+            }
+        };
+        _notifyIcon.ContextMenuStrip = menu;
+        oldMenu?.Dispose();
+    }
+
+    /// <summary>
+    /// Everything the context menu renders. Rebuild only when this changes so
+    /// the per-second state ticks don't churn (and never destroy) the menu.
+    /// </summary>
+    private static string MenuSignature(AppViewModel viewModel)
+    {
+        var state = viewModel.State;
+        var signature = new StringBuilder();
+        signature.Append(viewModel.VpnStatusText).Append('|')
+            .Append(state.VpnEnabled).Append(state.VpnControlSupported).Append(viewModel.ActionInFlight).Append('|')
+            .Append(state.SelfMagicDnsName).Append('|').Append(state.NodeName).Append('|')
+            .Append(state.TunnelIp).Append('|').Append(state.OwnNpub).Append('|')
+            .Append(state.ExitNodeStatusText).Append('|').Append(state.AdvertiseExitNode).Append('|')
+            .Append(state.InternetSource).Append('|').Append(state.ExitNode).Append('|')
+            .Append(viewModel.PaidRouteMarketVisible ? 1 : 0).Append('|').Append(state.WireguardExitConfigured).Append('|');
+        if (viewModel.ActiveNetwork is { } network)
+        {
+            signature.Append(network.Id).Append('|').Append(network.Name).Append('|')
+                .Append(network.Participants.Count).Append('|');
+            foreach (var participant in network.Participants)
+            {
+                signature.Append(participant.Npub).Append('~').Append(participant.TunnelIp).Append('~')
+                    .Append(participant.MagicDnsName).Append('~').Append(participant.Alias).Append('~')
+                    .Append(participant.OffersExitNode).Append('~').Append(participant.IsSelf).Append(';');
+            }
+        }
+        return signature.ToString();
     }
 
     private ContextMenuStrip BuildMenu(AppViewModel viewModel)

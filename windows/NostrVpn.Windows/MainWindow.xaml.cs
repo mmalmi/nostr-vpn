@@ -36,6 +36,14 @@ public partial class MainWindow : Window
             Hide();
             return;
         }
+        if (!App.IsQuitting)
+        {
+            // Closing with close-to-tray disabled means quit: run the same
+            // teardown as the tray Quit instead of leaving a headless app.
+            e.Cancel = true;
+            ((App)Application.Current).Quit();
+            return;
+        }
         base.OnClosing(e);
     }
 

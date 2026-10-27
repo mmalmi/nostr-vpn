@@ -493,7 +493,7 @@ fn windows_elevated_service_script(nvpn_bin: &Path, args: &[&str]) -> String {
             "$exe=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{executable}'));",
             "$argLine=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{argument_line}'));",
             "try {{",
-            "$process=Start-Process -FilePath $exe -ArgumentList $argLine -Verb RunAs -Wait -PassThru -ErrorAction Stop;",
+            "$process=Start-Process -FilePath $exe -ArgumentList $argLine -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop;",
             "exit $process.ExitCode",
             "}} catch {{",
             "$nativeCode=$_.Exception.NativeErrorCode;",
@@ -552,6 +552,7 @@ mod privileged_service_action_tests {
 
         assert!(script.contains("Start-Process"));
         assert!(script.contains("-Verb RunAs"));
+        assert!(script.contains("-WindowStyle Hidden"));
         assert!(script.contains("NVPN_ELEVATION_CANCELLED"));
         assert_eq!(
             windows_command_line_quote(r#"a b\"quoted""#),

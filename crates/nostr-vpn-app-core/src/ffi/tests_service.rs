@@ -227,7 +227,12 @@ if [ "$1" = "reload" ]; then
     echo "simulated wireguard reload failure" >&2
     exit 7
   fi
-  grep -q 'internet_source = "direct"' "$3" || exit 92
+  # A restored direct config omits internet_source (serde skips the default)
+  # and every wireguard_exit field; either string present means the failed
+  # config leaked into the rollback.
+  if grep -q 'internet_source' "$3" || grep -q '\[Interface\]' "$3"; then
+    exit 92
+  fi
   exit 0
 fi
 exit 93
@@ -257,7 +262,7 @@ exit 93
                 internet_source: Some("wireguard".to_string()),
                 wireguard_exit_enabled: Some(true),
                 wireguard_exit_config: Some(
-                    r#"
+                    r"
 [Interface]
 PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
 Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128
@@ -266,7 +271,7 @@ Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128
 PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
 AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = vpn.example.test:51820
-"#
+"
                     .to_string(),
                 ),
                 ..SettingsPatch::default()
