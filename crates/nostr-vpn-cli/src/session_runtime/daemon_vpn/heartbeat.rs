@@ -20,7 +20,7 @@ pub(super) struct FipsHeartbeatContext<'a> {
     pub(super) join_request_sends: &'a mut HashMap<String, u64>,
 }
 
-pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
+pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) -> Result<()> {
     let FipsHeartbeatContext {
         runtime,
         app,
@@ -89,11 +89,11 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
                             *roster_sync_state = FipsRosterSyncState::default();
                         }
                         Err(error) => {
-                            eprintln!("fips: endpoint control recovery failed: {error:#}");
+                            handle_fips_recovery_failure(runtime.is_some(), error)?;
                         }
                     }
                 }
-                return;
+                return Ok(());
             }
         }
     }
@@ -120,7 +120,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
     {
         Ok(true) => *roster_sync_state = FipsRosterSyncState::default(),
         Ok(false) => {}
-        Err(error) => eprintln!("fips: stale participant recovery failed: {error:#}"),
+        Err(error) => handle_fips_recovery_failure(runtime.is_some(), error)?,
     }
 
     match restart_fips_tunnel_runtime_after_pending_roster_links(
@@ -150,7 +150,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
     }
 
     let Some(runtime) = runtime.as_ref() else {
-        return;
+        return Ok(());
     };
     if let Err(error) =
         sync_fips_roster_with_connected_peers(runtime, app, config_path, roster_sync_state)
@@ -160,5 +160,40 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
     flush_pending_fips_roster_recipients(runtime, app, config_path, pending_roster_recipients);
     if let Err(error) = enqueue_pending_fips_join_requests(runtime, app, join_request_sends, now) {
         eprintln!("fips: join request queue failed: {error}");
+    }
+    Ok(())
+}
+
+fn handle_fips_recovery_failure(runtime_available: bool, error: anyhow::Error) -> Result<()> {
+    if !runtime_available {
+        return Err(
+            error.context("FIPS recovery left no runtime; stopping daemon for supervisor restart")
+        );
+    }
+    eprintln!("fips: endpoint control recovery failed: {error:#}");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_shutdown_timeout_without_runtime_requires_supervisor_restart() {
+        let failure = anyhow!("endpoint shutdown timed out")
+            .context("failed to stop FIPS endpoint")
+            .context("refusing to rebuild FIPS after incomplete prior cleanup");
+        let error = handle_fips_recovery_failure(false, failure)
+            .expect_err("an absent runtime must not leave the daemon running");
+        let message = format!("{error:#}");
+        assert!(message.contains("supervisor restart"));
+        assert!(message.contains("endpoint shutdown timed out"));
+        assert!(message.contains("incomplete prior cleanup"));
+    }
+
+    #[test]
+    fn recovery_error_preserving_existing_runtime_is_not_fatal() {
+        handle_fips_recovery_failure(true, anyhow!("failed to prepare replacement config"))
+            .expect("keep the existing runtime rather than restart for a preparation error");
     }
 }

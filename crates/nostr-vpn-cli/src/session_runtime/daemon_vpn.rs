@@ -862,6 +862,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
     }};
 }
+    let mut fatal_runtime_failure = None;
     include!("daemon_vpn/run_loop.rs");
     #[cfg(feature = "paid-exit")]
     daemon_cashu_wallet_worker.stop();
@@ -876,6 +877,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         network_snapshot: &network_snapshot,
         network_changed_at,
         captive_portal,
+        failure: fatal_runtime_failure,
     })
     .await
 }

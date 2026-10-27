@@ -25,6 +25,7 @@ pub(super) struct DaemonVpnShutdown<'a> {
     pub(super) network_snapshot: &'a crate::diagnostics::NetworkSnapshot,
     pub(super) network_changed_at: Option<u64>,
     pub(super) captive_portal: Option<bool>,
+    pub(super) failure: Option<anyhow::Error>,
 }
 
 trait DaemonShutdownOwnershipActions {
@@ -106,6 +107,11 @@ pub(super) async fn shutdown_daemon_vpn(shutdown: DaemonVpnShutdown<'_>) -> Resu
     } else {
         cleanup_failed_daemon_runtime_state(shutdown.expected_peers, &network, &failures)
     };
+    if let Some(error) = shutdown.failure {
+        failures.push(format!(
+            "daemon stopped after fatal runtime failure: {error:#}"
+        ));
+    }
     finalize_daemon_shutdown_ownership(
         &mut SystemDaemonShutdownOwnership {
             config_path: shutdown.config_path,
@@ -179,6 +185,91 @@ mod tests {
 
         let mut actions = FakeShutdownOwnership::default();
         finalize_daemon_shutdown_ownership(&mut actions, Vec::new()).expect("clean shutdown");
+        assert_eq!(
+            actions.events,
+            vec!["write-terminal", "clear-control", "remove-pid"]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn fatal_runtime_shutdown_clears_liveness_and_returns_error() {
+        // Isolate the process-wide pending-cleanup registry from other tests.
+        if std::env::var_os("NVPN_FATAL_SHUTDOWN_TEST_CHILD").is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "session_runtime::daemon_vpn_shutdown::tests::fatal_runtime_shutdown_clears_liveness_and_returns_error",
+                    "--nocapture",
+                ])
+                .env("NVPN_FATAL_SHUTDOWN_TEST_CHILD", "1")
+                .status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-fatal-shutdown-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let config_path = dir.join("config.toml");
+        let pid_file = dir.join("daemon.pid");
+        let state_file = dir.join("daemon.state.json");
+        write_daemon_pid_record(
+            &pid_file,
+            &DaemonPidRecord {
+                pid: std::process::id(),
+                config_path: config_path.to_string_lossy().into_owned(),
+                started_at: unix_timestamp(),
+            },
+        )
+        .unwrap();
+        write_daemon_control_ready(&config_path, std::process::id()).unwrap();
+
+        let mut port_mapping = PortMappingRuntime::default();
+        let mut tunnel = CliTunnelRuntime::new("unused-fatal-shutdown-test");
+        let error = shutdown_daemon_vpn(DaemonVpnShutdown {
+            port_mapping_runtime: &mut port_mapping,
+            fips_tunnel_runtime: None,
+            tunnel_runtime: &mut tunnel,
+            config_path: &config_path,
+            state_file: &state_file,
+            pid_file: &pid_file,
+            expected_peers: 1,
+            network_snapshot: &crate::diagnostics::NetworkSnapshot::default(),
+            network_changed_at: None,
+            captive_portal: None,
+            failure: Some(anyhow!("endpoint shutdown timed out")),
+        })
+        .await
+        .expect_err("successful cleanup must retain the fatal process result");
+
+        assert!(format!("{error:#}").contains("endpoint shutdown timed out"));
+        let state = read_daemon_state(&state_file).unwrap().unwrap();
+        assert!(!state.vpn_active);
+        assert!(!pid_file.exists());
+        assert!(!daemon_control_ready_file_path(&config_path).exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn fatal_runtime_and_shutdown_errors_are_both_reported() {
+        let mut actions = FakeShutdownOwnership {
+            fail_state_write: true,
+            ..Default::default()
+        };
+        let error = finalize_daemon_shutdown_ownership(
+            &mut actions,
+            vec!["endpoint shutdown timed out".into()],
+        )
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("endpoint shutdown timed out"));
+        assert!(error.contains("synthetic state write failure"));
         assert_eq!(
             actions.events,
             vec!["write-terminal", "clear-control", "remove-pid"]
