@@ -157,19 +157,21 @@ impl ExitDnsConfig {
                     if self.custom_doh_url.is_empty() {
                         return Err(anyhow!("custom encrypted DNS requires an HTTPS URL"));
                     }
-                    let resolver = ExitDnsResolverConfig::Doh {
+                    // Validate in the settings path itself so untrusted local
+                    // clients cannot persist a poisoned resolver even when the
+                    // secure-dns client code is not compiled in.
+                    validate_doh_url_shape(&self.custom_doh_url)
+                        .map_err(|error| anyhow!(error))?;
+                    let bootstrap_ips = parse_exit_dns_ips(
+                        &self.custom_doh_bootstrap_ips,
+                        "custom encrypted DNS bootstrap IPs",
+                    )?;
+                    validate_doh_bootstrap_ips(&bootstrap_ips)
+                        .map_err(|error| anyhow!(error))?;
+                    Ok(ExitDnsResolverConfig::Doh {
                         url: self.custom_doh_url.clone(),
-                        bootstrap_ips: parse_exit_dns_ips(
-                            &self.custom_doh_bootstrap_ips,
-                            "custom encrypted DNS bootstrap IPs",
-                        )?,
-                    };
-                    #[cfg(feature = "secure-dns")]
-                    if let ExitDnsResolverConfig::Doh { url, bootstrap_ips } = &resolver {
-                        crate::secure_dns::validate_doh_resolver(url, bootstrap_ips)
-                            .map_err(|error| anyhow!(error))?;
-                    }
-                    Ok(resolver)
+                        bootstrap_ips,
+                    })
                 }
             },
             ExitDnsMode::ThroughExit => Ok(ExitDnsResolverConfig::ThroughExit {
@@ -224,4 +226,103 @@ fn normalize_string_values(values: &mut Vec<String>) {
         .collect();
     values.sort();
     values.dedup();
+}
+
+/// Custom DoH endpoints must be canonical HTTPS URLs that name a real DNS
+/// hostname. Settings for the machine-wide resolver arrive from untrusted
+/// local clients, so IP literals, credentials, fragments, and malformed
+/// hostnames are rejected here rather than only when the resolver is built.
+pub fn validate_doh_url_shape(endpoint: &str) -> Result<(), String> {
+    let rest = endpoint
+        .strip_prefix("https://")
+        .ok_or_else(|| "DoH URL must use https".to_string())?;
+    if rest.contains('#') {
+        return Err("DoH URL must not contain a fragment".to_string());
+    }
+    let authority = rest.split(['/', '?']).next().unwrap_or_default();
+    if authority.is_empty() {
+        return Err("DoH URL has no host".to_string());
+    }
+    if authority.contains('@') {
+        return Err("DoH URL must not contain credentials".to_string());
+    }
+    if authority.starts_with('[') {
+        return Err("DoH URL must name a DNS hostname, not an IP address".to_string());
+    }
+    let host = match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            let port: u16 = port
+                .parse()
+                .map_err(|_| "DoH URL has no usable HTTPS port".to_string())?;
+            if port == 0 {
+                return Err("DoH URL has no usable HTTPS port".to_string());
+            }
+            host
+        }
+        None => authority,
+    };
+    if host.parse::<IpAddr>().is_ok() {
+        return Err("DoH URL must name a DNS hostname, not an IP address".to_string());
+    }
+    validate_doh_hostname(host)
+}
+
+fn validate_doh_hostname(host: &str) -> Result<(), String> {
+    let host = host.strip_suffix('.').unwrap_or(host);
+    if host.is_empty() || host.len() > 253 {
+        return Err("DoH URL hostname length is invalid".to_string());
+    }
+    let labels: Vec<&str> = host.split('.').collect();
+    // Single-label names cannot receive a publicly trusted TLS certificate
+    // and would resolve only through search-domain suffixes.
+    if labels.len() < 2 {
+        return Err("DoH URL must use a fully qualified DNS hostname".to_string());
+    }
+    for label in labels {
+        if label.is_empty() || label.len() > 63 {
+            return Err("DoH URL hostname label length is invalid".to_string());
+        }
+        let ascii_label = label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+        if !ascii_label || label.starts_with('-') || label.ends_with('-') {
+            return Err(format!("DoH URL hostname label '{label}' is invalid"));
+        }
+    }
+    Ok(())
+}
+
+/// Bootstrap IPs are contacted before DNS itself works, so they must be
+/// globally routable: loopback, link-local, private, and unspecified targets
+/// would let a settings writer pivot the encrypted DNS client at the local
+/// host or an internal network.
+pub fn validate_doh_bootstrap_ips(bootstrap_ips: &[IpAddr]) -> Result<(), String> {
+    if bootstrap_ips.is_empty() {
+        return Err("DoH requires at least one bootstrap IP".to_string());
+    }
+    for ip in bootstrap_ips {
+        if is_non_global_ip(*ip) {
+            return Err(format!("DoH bootstrap IP {ip} must be a public address"));
+        }
+    }
+    Ok(())
+}
+
+fn is_non_global_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_private()
+                || ip.is_broadcast()
+        }
+        IpAddr::V6(ip) => match ip.to_ipv4_mapped() {
+            Some(ip) => is_non_global_ip(IpAddr::V4(ip)),
+            None => {
+                ip.is_unspecified()
+                    || ip.is_loopback()
+                    || (ip.segments()[0] & 0xffc0) == 0xfe80 // link-local
+                    || (ip.segments()[0] & 0xfe00) == 0xfc00 // unique local
+            }
+        },
+    }
 }
