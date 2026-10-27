@@ -2740,6 +2740,18 @@ function main() {
         `${zapstore.published ? 'Published and verified' : 'Would publish'} ${tag} on Zapstore.`,
       )
     }
+    // Downstream maintainers update asynchronously. Report lag without turning
+    // their availability into a failure of an already-published release.
+    if (options.dryRun) {
+      console.log(`Would check AUR recipe versions for ${tag}.`)
+    } else {
+      const arch = spawnSync(process.execPath, [join(repoRoot, 'scripts/check-arch-distribution.mjs'), tag], {
+        stdio: 'inherit', timeout: 20000,
+      })
+      if (arch.status !== 0) {
+        console.warn(`Downstream Arch distribution needs follow-up; rerun node scripts/check-arch-distribution.mjs ${tag}.`)
+      }
+    }
     return
   }
 

@@ -180,3 +180,36 @@ checksums and package layout before upload, then requires Nostr acknowledgement.
 A Haps failure fails the final release; byte-identical retries reuse the signed
 package versions. Iris Git, native updaters and Haps consume the same release
 artifacts; Android/iOS and native installer channels retain their existing gates.
+
+### Arch and Omarchy distribution
+
+Haps publication also supplies the Haps package menu on Omarchy. Users enable
+that menu once with `haps omarchy`; there is no per-release menu update or
+separate Omarchy binary build.
+
+The native Omarchy recipes track the stable GitHub release assets and checksums,
+with a 24-hour minimum release age and downstream review. Their initial
+[desktop](https://github.com/omacom/omarchy-pkgs/pull/809) and
+[CLI](https://github.com/omacom/omarchy-pkgs/pull/1650) submissions still require
+upstream acceptance. Recipe submission is not repository availability.
+
+Final promotion checks the public AUR versions of `nostr-vpn-bin` and
+`nostr-vpn-cli-bin`. To repeat the read-only check:
+
+```sh
+node scripts/check-arch-distribution.mjs vX.Y.Z
+```
+
+Exit 0 means both recipes name that version, 1 means a mismatch/missing package,
+and 2 means the lookup could not be verified. This is metadata evidence, not a
+binary installation test. Downstream lag is reported without failing already
+completed upstream publication.
+
+AUR updates can be automated once the release publisher has an authenticated
+AUR SSH identity and maintainer/co-maintainer access to both existing packages.
+Until then, do not create duplicate packages or claim automatic AUR publishing.
+An authorized publisher should update version and exact released-asset checksums,
+regenerate `.SRCINFO` with `makepkg --printsrcinfo`, validate the package on Arch,
+then commit and push both files. Preserve maintainer changes and never force-push
+or rebuild accepted application binaries. AUR registration availability does not
+affect Haps publishing or the Omarchy upstream watches.
