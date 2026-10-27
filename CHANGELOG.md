@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file.
 - Avoid unnecessary background peer discovery when a client has a usable uplink,
   while retaining discovery during startup and connection recovery.
 - Avoid allocating FIPS control handlers when network activity does not need them.
+- Avoid rebuilding direct routes when their state has not changed.
+- Reuse otherwise unused TLS setup for plain Linux DNS queries.
 
 ### Fixed
 
