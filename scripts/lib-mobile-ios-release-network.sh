@@ -211,19 +211,26 @@ PY_DEVICE
 }
 
 ios_release_network_installed_identity() {
-  local bundle="$1" inventory="$2"
   # Installation Proxy uses the already-paired USB connection. CoreDevice can
   # spend minutes reacquiring a connection after each successful XCTest.
-  python3 - "$IOS_RELEASE_NETWORK_DEVICE" "$bundle" "$inventory" <<'PY_USB'
+  # Read one fresh inventory for all bundle/output pairs. Single-bundle callers
+  # retain the same receipt and version output contract.
+  python3 - "$IOS_RELEASE_NETWORK_DEVICE" "$@" <<'PY_USB'
 import hashlib
 import json
 from pathlib import Path
 import subprocess
 import sys
 
-device, bundle, output = sys.argv[1:]
+device, *arguments = sys.argv[1:]
+outputs = []
 try:
-    Path(output).unlink(missing_ok=True)
+    if not arguments or len(arguments) % 2:
+        raise ValueError("expected bundle/output pairs")
+    requests = list(zip(arguments[::2], arguments[1::2]))
+    outputs = [Path(output) for _, output in requests]
+    for output in outputs:
+        output.unlink(missing_ok=True)
     result = subprocess.run(
         ["ios-deploy", "--id", device, "--list_bundle_id", "--json",
          "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString,ApplicationType,ProfileValidated,SignerIdentity,NVPNBuildGitSha",
@@ -233,32 +240,40 @@ try:
     payload = json.loads(result.stdout)
     if not isinstance(payload, dict) or payload.get("Event") != "ListBundleId":
         raise ValueError("unexpected inventory event")
-    app = payload["Apps"][bundle]
-    if not isinstance(app, dict) or app.get("CFBundleIdentifier") != bundle:
-        raise ValueError("unexpected bundle identity")
-    values = [app[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")]
-    if not all(isinstance(value, str) and value and not any(c in value for c in "\t\r\n") for value in values):
-        raise ValueError("incomplete installed version")
-    receipt = {
-        "receiptSchema": 1,
-        "provider": "apple-installation-proxy-usb",
-        "selectedPhysicalDeviceIdentifierSha256": hashlib.sha256(device.encode()).hexdigest(),
-        "inventorySha256": hashlib.sha256(result.stdout.encode()).hexdigest(),
-        "bundleIdentifier": bundle,
-        "bundleVersion": values[0],
-        "version": values[1],
-        "applicationType": app.get("ApplicationType"),
-        "profileValidated": app.get("ProfileValidated"),
-        "appGitSha": app.get("NVPNBuildGitSha"),
-        "signerIdentitySha256": (
-            hashlib.sha256(app["SignerIdentity"].encode()).hexdigest()
-            if isinstance(app.get("SignerIdentity"), str) and app["SignerIdentity"] else None
-        ),
-    }
-    Path(output).write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    receipts = []
+    versions = []
+    for bundle, _ in requests:
+        app = payload["Apps"][bundle]
+        if not isinstance(app, dict) or app.get("CFBundleIdentifier") != bundle:
+            raise ValueError("unexpected bundle identity")
+        values = [app[key] for key in ("CFBundleVersion", "CFBundleShortVersionString")]
+        if not all(isinstance(value, str) and value and not any(c in value for c in "\t\r\n") for value in values):
+            raise ValueError("incomplete installed version")
+        receipts.append({
+            "receiptSchema": 1,
+            "provider": "apple-installation-proxy-usb",
+            "selectedPhysicalDeviceIdentifierSha256": hashlib.sha256(device.encode()).hexdigest(),
+            "inventorySha256": hashlib.sha256(result.stdout.encode()).hexdigest(),
+            "bundleIdentifier": bundle,
+            "bundleVersion": values[0],
+            "version": values[1],
+            "applicationType": app.get("ApplicationType"),
+            "profileValidated": app.get("ProfileValidated"),
+            "appGitSha": app.get("NVPNBuildGitSha"),
+            "signerIdentitySha256": (
+                hashlib.sha256(app["SignerIdentity"].encode()).hexdigest()
+                if isinstance(app.get("SignerIdentity"), str) and app["SignerIdentity"] else None
+            ),
+        })
+        versions.append("\t".join(values))
+    # Validate every requested bundle before writing any successful readback.
+    for output, receipt in zip(outputs, receipts):
+        output.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
+    for output in outputs:
+        output.unlink(missing_ok=True)
     raise SystemExit(f"iOS USB installed-artifact readback failed ({type(error).__name__})") from None
-print("\t".join(values))
+print("\n".join(versions))
 PY_USB
 }
 
@@ -266,12 +281,13 @@ ios_release_network_require_installed_reuse() {
   local app="$1" runner="$2" receipt="$3" runner_install_receipt="$4"
   local runner_tree="$5" device_sha="$6" xctestrun_sha="$7"
   local test_products_tree="$8" runner_bundle
-  local app_actual runner_actual app_expected runner_expected receipt_expected
+  local installed_actual app_actual runner_actual app_expected runner_expected receipt_expected
   runner_bundle="$IOS_BUNDLE_ID.UITests.xctrunner"
-  app_actual="$(ios_release_network_installed_identity "$IOS_BUNDLE_ID" \
-    "$IOS_RELEASE_NETWORK_SIGNING_DIR/installed-app.json")" || return 1
-  runner_actual="$(ios_release_network_installed_identity "$runner_bundle" \
+  installed_actual="$(ios_release_network_installed_identity "$IOS_BUNDLE_ID" \
+    "$IOS_RELEASE_NETWORK_SIGNING_DIR/installed-app.json" "$runner_bundle" \
     "$IOS_RELEASE_NETWORK_SIGNING_DIR/installed-runner.json")" || return 1
+  app_actual="${installed_actual%%$'\n'*}"
+  runner_actual="${installed_actual#*$'\n'}"
   [[ "$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")" \
       == "$IOS_BUNDLE_ID" \
     && "$(plutil -extract CFBundleIdentifier raw "$runner/Info.plist")" \

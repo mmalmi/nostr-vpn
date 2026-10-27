@@ -855,6 +855,8 @@ import os
 import sys
 assert sys.argv[1:3] == ["--id", "fixture-hardware-udid"]
 assert "--list_bundle_id" in sys.argv and "--json" in sys.argv
+with open(os.environ["NVPN_TEST_JOIN_INVENTORY_LOG"], "a") as log:
+    log.write("inventory\n")
 apps = {}
 for bundle, build, version in (
     ("fi.siriusbusiness.nvpn", "4001008", "4.1.5"),
@@ -866,6 +868,7 @@ USB_FIXTURE
   chmod +x "$tmp/bin/ios-deploy"
   export PATH="$tmp/bin:$PATH"
   export FAKE_IOS_RUNNER_VERSION=1.0
+  export NVPN_TEST_JOIN_INVENTORY_LOG="$tmp/usb-inventory.log"
   RESULT_DIR="$tmp/result"
   IOS_DEVICE=fixture-hardware-udid
   RELEASE_JOIN_ARTIFACTS_VALIDATED=1
@@ -911,6 +914,8 @@ PY
     echo "iOS exact-artifact reuse unexpectedly installed an app" >&2
     exit 1
   fi
+  [[ "$(wc -l <"$NVPN_TEST_JOIN_INVENTORY_LOG" | tr -d '[:space:]')" -eq 1 ]] \
+    || { echo "iOS join readback did not share one fresh USB inventory" >&2; exit 1; }
   python3 - "$RESULT_DIR/ios-release-install.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -992,10 +997,13 @@ PY
     "$(python3 "$ROOT/scripts/mobile_release_artifact_receipt.py" tree-sha "$tmp/derived/Build/Products")"
   ALLOW_APP_INSTALL=1
   : >"$tmp/devicectl.log"
+  : >"$NVPN_TEST_JOIN_INVENTORY_LOG"
   release_join_install_ios_release \
     "$app" "$(printf '1%.0s' {1..40})" "$(printf '2%.0s' {1..40})" \
     "$(printf 'a%.0s' {1..64})" "$(printf 'b%.0s' {1..64})" \
     "$(printf 'c%.0s' {1..64})" "$tmp/derived" fixture-hardware-udid
+  [[ "$(wc -l <"$NVPN_TEST_JOIN_INVENTORY_LOG" | tr -d '[:space:]')" -eq 2 ]] \
+    || { echo "iOS replacement must read fresh inventory before and after installation" >&2; exit 1; }
   [[ "$(grep -Fc 'device install app' "$tmp/devicectl.log")" == 1 ]] \
     || { echo "join variant replaced the verified installed runner" >&2; exit 1; }
   [[ "$IOS_BUNDLE_ID" == unrelated.native.app ]]

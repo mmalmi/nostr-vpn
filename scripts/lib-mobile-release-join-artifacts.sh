@@ -619,9 +619,8 @@ release_join_install_ios_release() {
     }
   fi
   if ! IOS_RELEASE_NETWORK_DEVICE="$udid" \
-      ios_release_network_installed_identity "$bundle" "$installed_json" >/dev/null \
-    || ! IOS_RELEASE_NETWORK_DEVICE="$udid" \
-      ios_release_network_installed_identity "$bundle.UITests.xctrunner" "$runner_inventory" >/dev/null
+      ios_release_network_installed_identity "$bundle" "$installed_json" \
+        "$bundle.UITests.xctrunner" "$runner_inventory" >/dev/null
   then
     echo "Installed iOS app/runner USB inventory failed" >&2
     return 1
