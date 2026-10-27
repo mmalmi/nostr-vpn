@@ -203,6 +203,8 @@ impl ControlPubsubFipsRuntime {
         .await
     }
 
+    // The optional updater cache adds the eighth input to this private startup path.
+    #[allow(clippy::too_many_arguments)]
     async fn start_inner(
         endpoint: Arc<FipsEndpoint>,
         config: NostrPubsubConfig,
