@@ -20,7 +20,11 @@ pub(crate) enum WindowsServiceState {
     StartPending,
     StopPending,
     Running,
+    // Retained for the stop state machine contract; the typed SCM query
+    // never reports transitional pending states.
+    #[allow(dead_code)]
     ContinuePending,
+    #[allow(dead_code)]
     PausePending,
     Paused,
     // Retained for the stop state machine contract; the typed SCM query
@@ -471,7 +475,7 @@ pub(crate) fn windows_command_line_argv(command: &str) -> Vec<String> {
         match ch {
             '\\' => backslashes += 1,
             '"' => {
-                argument.extend(std::iter::repeat('\\').take(backslashes / 2));
+                argument.extend(std::iter::repeat_n('\\', backslashes / 2));
                 if backslashes % 2 == 1 {
                     argument.push('"');
                 } else {
@@ -481,7 +485,7 @@ pub(crate) fn windows_command_line_argv(command: &str) -> Vec<String> {
                 backslashes = 0;
             }
             ' ' | '\t' if !in_quotes => {
-                argument.extend(std::iter::repeat('\\').take(backslashes));
+                argument.extend(std::iter::repeat_n('\\', backslashes));
                 backslashes = 0;
                 if argument_started || !argument.is_empty() {
                     argv.push(std::mem::take(&mut argument));
@@ -489,14 +493,14 @@ pub(crate) fn windows_command_line_argv(command: &str) -> Vec<String> {
                 }
             }
             _ => {
-                argument.extend(std::iter::repeat('\\').take(backslashes));
+                argument.extend(std::iter::repeat_n('\\', backslashes));
                 backslashes = 0;
                 argument.push(ch);
                 argument_started = true;
             }
         }
     }
-    argument.extend(std::iter::repeat('\\').take(backslashes));
+    argument.extend(std::iter::repeat_n('\\', backslashes));
     if argument_started || !argument.is_empty() {
         argv.push(argument);
     }
