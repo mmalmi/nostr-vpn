@@ -237,10 +237,16 @@ require_tokens "$PEER" "run-scoped daemon singleton" \
   'rmdir "/run/nvpn-$PEER_NETNS"'
 require_tokens "$WINDOWS_HOST_ENTRY" "exact Windows FIPS provenance" \
   'expected="fips_core_version: $EXPECTED_FIPS_VERSION (rev $EXPECTED_FIPS_REV)"' \
-  '-ExpectedFipsRevision $(ps_quote "$EXPECTED_FIPS_REV")'
+  '-ExpectedFipsRevision $(ps_quote "$EXPECTED_FIPS_REV")' \
+  'windows-runtime-provenance' \
+  'runtime-provenance-validation.json' \
+  '-VerifiedFipsRuntimeVersion $(ps_quote'
 require_tokens "$WINDOWS_GUEST_ENTRY" "exact Windows FIPS runtime identity" \
   '[string]$ExpectedFipsRevision' \
-  '[string]$Value -eq "$ExpectedFipsVersion (rev $ExpectedFipsRevision)"' \
+  '[string]$VerifiedFipsRuntimeVersion' \
+  '$VerifiedFipsRuntimeVersion -cin @(' \
+  '$ExpectedFipsVersion, "$ExpectedFipsVersion (rev $ExpectedFipsRevision)"' \
+  ') -and [string]$Value -ceq $VerifiedFipsRuntimeVersion' \
   '!(Test-ExpectedFipsCoreVersion $status.daemon.state.fips_core_version)'
 require_tokens "$WINDOWS_GUEST_CRASH_LIB" "exact restarted Windows FIPS identity" \
   '!(Test-ExpectedFipsCoreVersion $status.daemon.state.fips_core_version)'
