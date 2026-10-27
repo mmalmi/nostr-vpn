@@ -1,10 +1,10 @@
 #[cfg(unix)]
 use std::ffi::CString;
+use std::net::IpAddr;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -213,21 +213,17 @@ fn linux_resolv_conf_line_is_well_formed(line: &[u8]) -> bool {
         }
         "search" => {
             let mut domains = 0;
-            fields
-                .all(|domain| {
-                    domains += 1;
-                    domains <= 6 && linux_search_domain_is_valid(domain.as_bytes())
-                })
-                && domains > 0
+            fields.all(|domain| {
+                domains += 1;
+                domains <= 6 && linux_search_domain_is_valid(domain.as_bytes())
+            }) && domains > 0
         }
         "options" => {
             let mut options = 0;
-            fields
-                .all(|option| {
-                    options += 1;
-                    options <= 8 && linux_resolv_option_is_valid(option.as_bytes())
-                })
-                && options > 0
+            fields.all(|option| {
+                options += 1;
+                options <= 8 && linux_resolv_option_is_valid(option.as_bytes())
+            }) && options > 0
         }
         _ => false,
     }
@@ -238,23 +234,29 @@ fn linux_search_domain_is_valid(domain: &[u8]) -> bool {
         return false;
     }
     let domain = domain.strip_suffix(b".").unwrap_or(domain);
-    domain
-        .split(|byte| *byte == b'.')
-        .all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && label.first().is_some_and(|byte| byte.is_ascii_alphanumeric())
-                && label.last().is_some_and(|byte| byte.is_ascii_alphanumeric())
-                && label.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
-        })
+    domain.split(|byte| *byte == b'.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .last()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric())
+            && label
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+    })
 }
 
 fn linux_resolv_option_is_valid(option: &[u8]) -> bool {
     (1..=64).contains(&option.len())
-        && option.first().is_some_and(|byte| byte.is_ascii_alphanumeric())
         && option
-            .iter()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'='))
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && option.iter().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'=')
+        })
 }
 
 pub(super) fn linux_direct_resolv_conf_allowed(container: bool, openrc: bool) -> bool {
