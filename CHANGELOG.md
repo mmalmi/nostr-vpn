@@ -19,14 +19,32 @@ All notable changes to this project are documented in this file.
 - Keep peer discovery and replay subject to the application's peer policy.
 - Update compression dependencies to fix reported stream and memory-safety issues.
 
-## 4.1.19 - 2026-10-23
+## 4.1.19 - 2026-10-26
+
+### Release notes
+
+This release improves network joining and reconnects, fixes desktop networking
+and controls, and strengthens connection security. Windows adds appearance
+choices and IPv6 exit routes. iPhone VPN idle CPU remains higher than intended;
+the latest release test measured about 5.4%, and further reduction is pending.
 
 ### Improved
 
 - Describe desktop and command-line source builds in a versioned Haps manifest.
+- Choose light, dark, or system appearance on Windows.
+- Preserve IPv6 addresses in imported WireGuard configurations and support
+  IPv6 exit routes on Windows.
 
 ### Fixed
 
+- Prevent paid Internet buyers from accessing the seller's private host,
+  local network, or other mesh routes.
+- Preserve Umbrel firewall protection state when its container is recreated.
+- Manage Windows services directly and handle installation paths with spaces.
+- Let Linux users select an available webcam for QR scanning, hide inaccessible
+  and metadata-only camera devices, and stop scanning when the scanner closes.
+- Keep Linux device details and form controls open during background telemetry
+  updates, and preserve scroll position and safe focus when pages refresh.
 - Keep macOS peers on connected LANs and VM bridges reachable instead of
   routing them through the default Internet gateway.
 - Recover retained Nostr relay updates after incoming bursts fill the queue,
@@ -49,6 +67,11 @@ All notable changes to this project are documented in this file.
   including the separately resolved Linux desktop app.
 - Fix cryptographic timing vulnerabilities in WebRTC connections and update
   asynchronous I/O dependencies for the latest security fixes.
+
+### Known issues
+
+- iPhone VPN idle CPU measured about 5.4% in the latest release test; further reduction
+  is pending.
 
 ## 4.1.18 - 2026-10-19
 
