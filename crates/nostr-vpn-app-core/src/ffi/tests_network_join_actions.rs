@@ -566,6 +566,7 @@ exit 0
 
         let _ = fs::remove_dir_all(&dir);
     }
+    #[cfg(unix)]
     fn shell_literal(path: &Path) -> String {
         path.to_string_lossy()
             .replace('\\', "\\\\")

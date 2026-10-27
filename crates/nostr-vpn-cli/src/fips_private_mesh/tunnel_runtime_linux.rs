@@ -90,6 +90,7 @@ impl FipsPrivateTunnelRuntime {
                 target,
                 interface: self.iface.clone(),
                 gateway: None,
+                native: false,
             })
             .collect::<Vec<_>>();
         if let Some(wireguard) = self.exit_node_runtime.wireguard_exit.as_ref() {
@@ -97,13 +98,33 @@ impl FipsPrivateTunnelRuntime {
                 target: "0.0.0.0/0".into(),
                 interface: wireguard.interface.clone(),
                 gateway: None,
+                native: false,
             });
             if crate::linux_wireguard_exit_ipv6_default(&config.wireguard_exit) {
                 routes.push(GuardRoute {
                     target: "::/0".into(),
                     interface: wireguard.interface.clone(),
                     gateway: None,
+                    native: false,
                 });
+            }
+        }
+        // Local applications and mesh replies to local services must keep
+        // reaching the host's own subnets while an exit default is installed.
+        // Mirrored kernel-connected routes pin those lookups to their native
+        // interfaces instead of falling into the exit default.
+        let mut excluded = vec![self.iface.as_str()];
+        if let Some(wireguard) = self.exit_node_runtime.wireguard_exit.as_ref() {
+            excluded.push(wireguard.interface.as_str());
+        }
+        let mut known_targets = routes
+            .iter()
+            .map(|route| route.target.clone())
+            .collect::<Vec<_>>();
+        for route in crate::linux_exit_guard::host_connected_routes(&excluded)? {
+            if !known_targets.contains(&route.target) {
+                known_targets.push(route.target.clone());
+                routes.push(route);
             }
         }
         let forwarded = if matches!(
@@ -126,8 +147,6 @@ impl FipsPrivateTunnelRuntime {
         self.linux_network_state_initialized = true;
         Ok(())
     }
-
-
 }
 
 include!("tunnel_runtime_linux/exit_upstream.rs");
@@ -138,10 +157,14 @@ fn apply_linux_tun_tx_queue_len(iface: &str) -> Result<()> {
         return Ok(());
     };
     let queue_len = queue_len.to_string();
-    crate::run_checked(
-        ProcessCommand::new("ip")
-            .args(["link", "set", "dev", iface, "txqueuelen", &queue_len]),
-    )
+    crate::run_checked(ProcessCommand::new("ip").args([
+        "link",
+        "set",
+        "dev",
+        iface,
+        "txqueuelen",
+        &queue_len,
+    ]))
     .with_context(|| format!("failed to set Linux tunnel txqueuelen on {iface}"))?;
     eprintln!("fips: Linux tunnel txqueuelen set on {iface}; txqueuelen={queue_len}");
     Ok(())

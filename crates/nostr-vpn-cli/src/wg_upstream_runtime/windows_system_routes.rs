@@ -384,8 +384,10 @@ fn resolve_windows_interface_identity(interface_index: u32) -> Result<String> {
     use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::NetworkManagement::IpHelper::{GetIfEntry2, MIB_IF_ROW2};
 
-    let mut row = MIB_IF_ROW2::default();
-    row.InterfaceIndex = interface_index;
+    let mut row = MIB_IF_ROW2 {
+        InterfaceIndex: interface_index,
+        ..Default::default()
+    };
     let status = unsafe { GetIfEntry2(&mut row) };
     if status != ERROR_SUCCESS {
         return Err(std::io::Error::from_raw_os_error(status as i32)).with_context(|| {

@@ -690,7 +690,7 @@ exit 0
         runtime.config.pending_nostr_join_request.as_mut().unwrap().request_private_key =
             Keys::generate().secret_key().to_secret_hex();
         let invalid = runtime.state();
-        assert!(invalid.join_request_qr_code_or_link.is_empty());
+        assert_eq!(invalid.join_request_qr_code_or_link, "");
         assert!(invalid.networks.iter().all(|network| network.join_request_qr_code_or_link.is_empty()));
 
         let _ = fs::remove_dir_all(&dir);
