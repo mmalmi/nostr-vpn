@@ -31,6 +31,11 @@ pub(crate) struct GuardRoute {
     pub(crate) target: String,
     pub(crate) interface: String,
     pub(crate) gateway: Option<String>,
+    /// A kernel-connected host subnet mirrored into the guard table so local
+    /// destinations keep their native interface. Admission is by destination
+    /// prefix, never by interface, so the native default route stays blocked.
+    #[serde(default)]
+    pub(crate) native: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,7 +213,10 @@ impl LinuxExitGuard {
         let mut targets = std::collections::HashSet::new();
         for route in &self.routes {
             validate_interface(&route.interface)?;
-            if !self.interfaces.contains(&route.interface) {
+            // Native routes bind host-connected subnets to their own physical
+            // interfaces; only destination-scoped firewall admission is built
+            // for them, so they never join the tunnel interface accept list.
+            if !route.native && !self.interfaces.contains(&route.interface) {
                 return Err(invalid("guard route uses an unadmitted interface"));
             }
             let address = validate_network_prefix(&route.target)?;
@@ -348,6 +356,7 @@ impl LinuxExitGuard {
                         .ok_or_else(|| invalid("Linux egress route has no interface"))?
                         .to_owned(),
                     gateway: route["gateway"].as_str().map(str::to_owned),
+                    native: false,
                 });
             }
         }
@@ -391,13 +400,34 @@ impl LinuxExitGuard {
             script.push_str("}\n");
             return nft(&script);
         }
-        script.push_str(&format!(" chain output {{\n type filter hook output priority 0; policy drop;\n oifname \"lo\" accept\n meta mark {CARRIER_MARK} accept\n"));
-        for interface in &self.interfaces {
-            script.push_str(&format!(" oifname \"{interface}\" accept\n"));
-        }
-        script.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n}\n");
+        script.push_str(&fail_closed_output_chain(&self.interfaces, &self.routes));
         nft(&script)
     }
+}
+
+// The output chain admits tunnel interfaces by name, but native host subnets
+// only by destination prefix: fall-through lookups that resolve the physical
+// default route into a native interface must still be rejected.
+fn fail_closed_output_chain(interfaces: &[String], routes: &[GuardRoute]) -> String {
+    let mut chain = format!(
+        " chain output {{\n type filter hook output priority 0; policy drop;\n oifname \"lo\" accept\n meta mark {CARRIER_MARK} accept\n"
+    );
+    for interface in interfaces {
+        chain.push_str(&format!(" oifname \"{interface}\" accept\n"));
+    }
+    for route in routes.iter().filter(|route| route.native) {
+        let family = if route.target.contains(':') {
+            "ip6"
+        } else {
+            "ip"
+        };
+        chain.push_str(&format!(
+            " oifname \"{}\" {family} daddr {} accept\n",
+            route.interface, route.target
+        ));
+    }
+    chain.push_str(" ip6 hoplimit 255 icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-solicit, nd-router-advert } accept\n meta skuid 0 udp sport 68 udp dport 67 accept\n meta skuid 0 udp sport 546 udp dport 547 accept\n counter reject with icmpx type admin-prohibited\n }\n}\n");
+    chain
 }
 
 // This reserved rule priority is owned only while our nft ownership tag is
@@ -724,6 +754,64 @@ impl Rule {
     }
 }
 
+/// Mirror the host's kernel-connected subnets into the guard route list. An
+/// exit default would otherwise capture local-subnet lookups, blackholing
+/// the host's own LAN and container bridges, including replies from local
+/// services to mesh buyers. Defaults and manager-owned policy routes stay
+/// out: physical egress remains the network manager's to define.
+pub(crate) fn host_connected_routes(exclude_interfaces: &[&str]) -> io::Result<Vec<GuardRoute>> {
+    let mut routes = Vec::new();
+    for family in ["-4", "-6"] {
+        let table = json_command(
+            "ip",
+            &["-j", "-N", family, "route", "show", "table", "main"],
+        )?;
+        routes.extend(connected_routes_from_table(&table, exclude_interfaces));
+    }
+    Ok(routes)
+}
+
+fn connected_routes_from_table(table: &Value, exclude_interfaces: &[&str]) -> Vec<GuardRoute> {
+    let Some(entries) = table.as_array() else {
+        return Vec::new();
+    };
+    let mut routes = Vec::new();
+    for route in entries {
+        if route["type"].as_str().is_some_and(|kind| kind != "unicast") {
+            continue;
+        }
+        // Only kernel-maintained connected routes pin a local subnet. The
+        // comparison tolerates numeric and named protocol rendering.
+        let protocol = route["protocol"]
+            .as_u64()
+            .map(|protocol| protocol.to_string())
+            .or_else(|| route["protocol"].as_str().map(str::to_owned));
+        if protocol.as_deref() != Some("kernel") && protocol.as_deref() != Some("2") {
+            continue;
+        }
+        // A default route has no destination; multipath entries carry no
+        // single device. Both stay owned by the network manager.
+        let (Some(target), Some(interface)) = (route["dst"].as_str(), route["dev"].as_str()) else {
+            continue;
+        };
+        if validate_interface(interface).is_err()
+            || exclude_interfaces.contains(&interface)
+            || routes
+                .iter()
+                .any(|existing: &GuardRoute| existing.target == target)
+        {
+            continue;
+        }
+        routes.push(GuardRoute {
+            target: target.to_owned(),
+            interface: interface.to_owned(),
+            gateway: None,
+            native: true,
+        });
+    }
+    routes
+}
+
 fn validate_interface(interface: &str) -> io::Result<()> {
     if interface.is_empty()
         || interface.len() > 15
@@ -810,4 +898,101 @@ fn validate_network_prefix(target: &str) -> io::Result<std::net::IpAddr> {
         return Err(invalid("guard route must use a canonical network prefix"));
     }
     Ok(address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn connected_route_filter_keeps_only_kernel_unicast_subnets() {
+        let table = json!([
+            {"dst": "10.44.182.0/24", "dev": "eth0", "protocol": 2, "scope": 253, "type": "unicast"},
+            {"dst": "192.168.1.0/24", "dev": "br-abc123", "protocol": "kernel", "type": "unicast"},
+            {"dst": "fe80::/64", "dev": "eth0", "protocol": "kernel", "type": "unicast"},
+            {"dst": "fd00:b0::/64", "dev": "br-abc123", "protocol": 2, "type": "unicast"},
+            // Defaults and manager-owned policy routes stay native-table only.
+            {"dev": "eth0", "protocol": "dhcp", "type": "unicast"},
+            {"dst": "203.0.113.0/24", "dev": "eth0", "protocol": "dhcp", "type": "unicast"},
+            {"dst": "198.51.100.0/24", "dev": "eth0", "protocol": 9, "type": "unicast"},
+            {"dst": "172.17.0.0/16", "dev": "docker0", "protocol": 2, "type": "broadcast"},
+            // Mesh and exit interfaces are excluded.
+            {"dst": "10.44.55.0/24", "dev": "nvpn0", "protocol": 2, "type": "unicast"},
+            // Loopback never passes interface validation; multipath entries
+            // carry no single device.
+            {"dst": "127.0.0.0/8", "dev": "lo", "protocol": 2, "type": "unicast"},
+            {"dst": "10.9.0.0/16", "protocol": 2, "type": "unicast", "nexthops": []}
+        ]);
+        let routes = connected_routes_from_table(&table, &["nvpn0", "wgexit"]);
+        let targets: Vec<&str> = routes.iter().map(|route| route.target.as_str()).collect();
+        assert_eq!(
+            targets,
+            [
+                "10.44.182.0/24",
+                "192.168.1.0/24",
+                "fe80::/64",
+                "fd00:b0::/64"
+            ]
+        );
+        assert!(
+            routes
+                .iter()
+                .all(|route| route.native && route.gateway.is_none())
+        );
+    }
+
+    #[test]
+    fn fail_closed_chain_admits_native_subnets_only_by_destination() {
+        let interfaces = vec!["nvpn0".to_owned(), "wgexit".to_owned()];
+        let routes = vec![
+            GuardRoute {
+                target: "10.44.0.0/16".into(),
+                interface: "nvpn0".into(),
+                gateway: None,
+                native: false,
+            },
+            GuardRoute {
+                target: "10.44.182.0/24".into(),
+                interface: "eth0".into(),
+                gateway: None,
+                native: true,
+            },
+            GuardRoute {
+                target: "fe80::/64".into(),
+                interface: "eth0".into(),
+                gateway: None,
+                native: true,
+            },
+            GuardRoute {
+                target: "172.17.0.0/16".into(),
+                interface: "docker0".into(),
+                gateway: None,
+                native: true,
+            },
+        ];
+        let chain = fail_closed_output_chain(&interfaces, &routes);
+        assert!(chain.contains("oifname \"nvpn0\" accept"), "{chain}");
+        assert!(chain.contains("oifname \"wgexit\" accept"), "{chain}");
+        // Native interfaces must never join the by-name accept list: the
+        // physical default route resolves into them for fall-through flows.
+        assert!(!chain.contains("oifname \"eth0\" accept"), "{chain}");
+        assert!(!chain.contains("oifname \"docker0\" accept"), "{chain}");
+        assert!(
+            chain.contains("oifname \"eth0\" ip daddr 10.44.182.0/24 accept"),
+            "{chain}"
+        );
+        assert!(
+            chain.contains("oifname \"eth0\" ip6 daddr fe80::/64 accept"),
+            "{chain}"
+        );
+        assert!(
+            chain.contains("oifname \"docker0\" ip daddr 172.17.0.0/16 accept"),
+            "{chain}"
+        );
+        assert!(
+            chain.contains("counter reject with icmpx type admin-prohibited"),
+            "{chain}"
+        );
+    }
 }

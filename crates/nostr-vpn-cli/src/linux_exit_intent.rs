@@ -75,9 +75,12 @@ impl Policy {
     }
 
     fn guard(&self) -> LinuxExitGuard {
+        // Native routes admit their subnets by destination in the firewall;
+        // their physical interfaces must never join the tunnel accept list.
         let mut interfaces = self
             .routes
             .iter()
+            .filter(|route| !route.native)
             .map(|route| route.interface.clone())
             .collect::<Vec<_>>();
         interfaces.sort();
@@ -380,6 +383,7 @@ mod tests {
             target: "0.0.0.0/0".into(),
             interface: "mesh".into(),
             gateway: None,
+            native: false,
         }];
         policy.forwarded = Some(ForwardedExit {
             interface: "mesh".into(),
@@ -470,6 +474,7 @@ mod tests {
             target: "10.44.0.0/16".into(),
             interface: "nvpn0".into(),
             gateway: None,
+            native: false,
         });
         policy.reconcile(false).unwrap();
         policy.routes.clear();
