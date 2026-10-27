@@ -94,13 +94,31 @@ assert "--list_bundle_id" in sys.argv and "--json" in sys.argv
 assert "--key=CFBundleIdentifier,CFBundleVersion,CFBundleShortVersionString,ApplicationType,ProfileValidated,SignerIdentity,NVPNBuildGitSha" in sys.argv
 with open(os.environ["NVPN_TEST_USB_INVENTORY_LOG"], "a") as log:
     log.write(" ".join(sys.argv[1:]) + "\n")
+failure = os.environ.get("NVPN_TEST_USB_INVENTORY_ERROR", "")
+if failure == "command-failure":
+    raise SystemExit(1)
+if failure == "invalid-json":
+    print("invalid inventory")
+    raise SystemExit(0)
 apps = {}
 for bundle, build, version in (
     ("fi.siriusbusiness.nvpn", "4001008", "4.1.5"),
     ("fi.siriusbusiness.nvpn.UITests.xctrunner", "1", os.environ.get("NVPN_TEST_USB_RUNNER_VERSION", "1.0")),
 ):
-    apps[bundle] = {"CFBundleIdentifier": bundle, "CFBundleVersion": build, "CFBundleShortVersionString": version}
-print(json.dumps({"Event": "ListBundleId", "Apps": apps}))
+    apps[bundle] = {
+        "CFBundleIdentifier": bundle, "CFBundleVersion": build,
+        "CFBundleShortVersionString": version, "ApplicationType": "User",
+        "ProfileValidated": True, "SignerIdentity": "Fixture Distribution",
+        "NVPNBuildGitSha": "a" * 40,
+    }
+runner = "fi.siriusbusiness.nvpn.UITests.xctrunner"
+if failure == "missing-runner":
+    del apps[runner]
+elif failure == "wrong-runner":
+    apps[runner]["CFBundleIdentifier"] = "another.runner"
+elif failure == "invalid-runner-version":
+    apps[runner]["CFBundleVersion"] = "1\tunexpected"
+print(json.dumps({"Event": "Unexpected" if failure == "invalid-event" else "ListBundleId", "Apps": apps}))
 USB_FIXTURE
 chmod +x "$TEMP_ROOT/bin/ios-deploy"
 export PATH="$TEMP_ROOT/bin:$PATH"
@@ -257,6 +275,37 @@ run_installed_reuse_readback() (
 
 run_installed_reuse_readback 1.0 \
   || fail "exact installed iOS app and runner readback was rejected"
+[[ "$(wc -l <"$reuse_inventory_log" | tr -d '[:space:]')" -eq 1 ]] \
+  || fail "app and runner readback opened more than one USB inventory connection"
+python3 - "$TEMP_ROOT/reuse/installed-app.json" \
+  "$TEMP_ROOT/reuse/installed-runner.json" <<'PY'
+import hashlib, json, sys
+app, runner = [json.load(open(path)) for path in sys.argv[1:]]
+assert app["inventorySha256"] == runner["inventorySha256"]
+assert app["selectedPhysicalDeviceIdentifierSha256"] == runner["selectedPhysicalDeviceIdentifierSha256"]
+for item in (app, runner):
+    assert item["provider"] == "apple-installation-proxy-usb"
+    assert item["selectedPhysicalDeviceIdentifierSha256"] == hashlib.sha256(b"fixture-device").hexdigest()
+    assert item["signerIdentitySha256"] == hashlib.sha256(b"Fixture Distribution").hexdigest()
+    assert item["appGitSha"] == "a" * 40
+    assert item["profileValidated"] is True
+    assert item["applicationType"] == "User"
+PY
+for failure in command-failure invalid-json invalid-event missing-runner wrong-runner invalid-runner-version; do
+  printf 'stale app\n' >"$TEMP_ROOT/reuse/installed-app.json"
+  printf 'stale runner\n' >"$TEMP_ROOT/reuse/installed-runner.json"
+  inventory_calls="$(wc -l <"$reuse_inventory_log" | tr -d '[:space:]')"
+  if NVPN_TEST_USB_INVENTORY_ERROR="$failure" run_installed_reuse_readback 1.0 \
+      >"$TEMP_ROOT/reuse-$failure.log" 2>&1
+  then
+    fail "batch USB readback accepted $failure"
+  fi
+  [[ ! -e "$TEMP_ROOT/reuse/installed-app.json" \
+    && ! -e "$TEMP_ROOT/reuse/installed-runner.json" ]] \
+    || fail "failed batch USB readback retained partial or stale receipts"
+  [[ "$(wc -l <"$reuse_inventory_log" | tr -d '[:space:]')" -eq $((inventory_calls + 1)) ]] \
+    || fail "batch USB readback retried or reused stale inventory"
+done
 if run_installed_reuse_readback 2.0 \
     >"$TEMP_ROOT/reuse-mismatch.log" 2>&1
 then
