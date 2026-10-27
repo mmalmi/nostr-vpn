@@ -3,7 +3,7 @@
 # Published release payloads and their signing remain defined in haps-release.json.
 [package]
 name = "nostr-vpn"
-version = "4.1.19"
+version = "4.1.20"
 target = "host"
 description = "Private mesh networking and VPN bandwidth sharing."
 
@@ -56,7 +56,7 @@ unavailable = "The Windows desktop app uses the documented Windows installer wor
 
 [packages.nvpn.package]
 name = "nvpn"
-version = "4.1.19"
+version = "4.1.20"
 target = "host"
 description = "Nostr VPN command-line client"
 commands = { nvpn = "nvpn{exe}" }

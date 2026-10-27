@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.20 - 2026-10-27
+
+### Improved
+
+- Honor peer capacity and gossip settings across desktop and mobile, and spread
+  announcements fairly among equally ranked peers.
+- Avoid unnecessary background peer discovery when a client has a usable uplink,
+  while retaining discovery during startup and connection recovery.
+
+### Fixed
+
+- Preserve bootstrap and approval peer retries when mobile endpoints refresh.
+- Recover peer messaging promptly after restarting its service on a live endpoint.
+- Keep peer discovery and replay subject to the application's peer policy.
+
 ## 4.1.19 - 2026-10-23
 
 ### Improved
