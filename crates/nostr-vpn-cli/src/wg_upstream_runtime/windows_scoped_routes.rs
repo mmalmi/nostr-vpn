@@ -97,7 +97,7 @@ impl<P: WindowsManagedRouteSetPolicy> WindowsManagedRouteSet<P> {
                         error.context("bind Windows route to stable interface identity"),
                         rollback,
                     ),
-                    cleanup: manager,
+                    cleanup: Box::new(manager),
                 });
             }
             match ensure_windows_route(runner, &spec) {
@@ -109,7 +109,7 @@ impl<P: WindowsManagedRouteSetPolicy> WindowsManagedRouteSet<P> {
                             error.context(P::INSTALL_CONTEXT),
                             rollback,
                         ),
-                        cleanup: manager,
+                        cleanup: Box::new(manager),
                     });
                 }
             }
@@ -340,12 +340,12 @@ impl WindowsManagedEndpointRoutes {
         if let Err(error) = validate_windows_underlay(&underlay, excluded_tunnel_interfaces) {
             return Err(WindowsRouteApplyFailure {
                 error,
-                cleanup: Self {
+                cleanup: Box::new(Self {
                     underlay,
                     routes: WindowsManagedRouteSet::empty(),
                     #[cfg(target_os = "windows")]
                     cleanup_journal_config_path: None,
-                },
+                }),
             });
         }
         let specs = sorted_windows_endpoint_targets(targets)
@@ -361,12 +361,12 @@ impl WindowsManagedEndpointRoutes {
             }),
             Err(failure) => Err(WindowsRouteApplyFailure {
                 error: failure.error,
-                cleanup: Self {
+                cleanup: Box::new(Self {
                     underlay,
-                    routes: failure.cleanup,
+                    routes: *failure.cleanup,
                     #[cfg(target_os = "windows")]
                     cleanup_journal_config_path: None,
-                },
+                }),
             }),
         }
     }
@@ -417,12 +417,12 @@ impl WindowsManagedInterfaceRoutes {
             Err(error) => {
                 return Err(WindowsRouteApplyFailure {
                     error,
-                    cleanup: Self {
+                    cleanup: Box::new(Self {
                         interface_index,
                         routes: WindowsManagedRouteSet::empty(),
                         #[cfg(target_os = "windows")]
                         cleanup_journal_config_path: None,
-                    },
+                    }),
                 });
             }
         };
@@ -435,12 +435,12 @@ impl WindowsManagedInterfaceRoutes {
             }),
             Err(failure) => Err(WindowsRouteApplyFailure {
                 error: failure.error,
-                cleanup: Self {
+                cleanup: Box::new(Self {
                     interface_index,
-                    routes: failure.cleanup,
+                    routes: *failure.cleanup,
                     #[cfg(target_os = "windows")]
                     cleanup_journal_config_path: None,
-                },
+                }),
             }),
         }
     }
