@@ -4,6 +4,9 @@ use nostr_sdk::{ClientMessage, JsonUtil, RelayMessage};
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+#[path = "relay_ingress_overlap.rs"]
+mod overlap;
+
 #[test]
 fn relay_ingress_preserves_distinct_source_observations() {
     run_async_test("relay-ingress-sources", || async {
