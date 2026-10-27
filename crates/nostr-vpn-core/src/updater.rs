@@ -220,25 +220,12 @@ async fn select_update(
         return legacy_selection(current_version, source, mode).map(UpdateSelection::Legacy);
     }
 
-    let secure = secure_selection(current_version, mode, config_path).await;
-    let selection = match secure {
-        Ok(selection) => selection,
-        Err(error) if should_try_github_fallback(source, false) => {
-            return legacy_selection(current_version, ProductUpdateSource::Github, mode)
-                .map(UpdateSelection::Legacy)
-                .with_context(|| format!("secure hashtree update check failed: {error}"));
-        }
-        Err(error) => return Err(error),
-    };
-
-    if should_try_github_fallback(source, selection.update_available)
-        && let Ok(legacy) = legacy_selection(current_version, ProductUpdateSource::Github, mode)
-        && legacy.update_available
-    {
-        return Ok(UpdateSelection::Legacy(legacy));
-    }
-
-    Ok(UpdateSelection::Secure(Box::new(selection)))
+    // The signed hashtree path is canonical: a failure or an inconclusive
+    // check must surface as an error instead of degrading to an unverified
+    // manifest that no client is allowed to install.
+    secure_selection(current_version, mode, config_path)
+        .await
+        .map(|selection| UpdateSelection::Secure(Box::new(selection)))
 }
 
 fn result_from_selection(
@@ -434,12 +421,29 @@ fn update_endpoint_config(app: &AppConfig) -> FipsConfig {
     config.node.discovery.lan.enabled = false;
     config.node.routing.mode = RoutingMode::ReplyLearned;
     config.dns.enabled = false;
-    config.transports.udp = TransportInstances::Single(UdpConfig {
-        bind_addr: Some("0.0.0.0:0".to_string()),
-        accept_connections: Some(false),
-        outbound_only: Some(true),
-        ..UdpConfig::default()
-    });
+    // Bootstrap peers resolve to both address families, so bind one outbound
+    // socket per family; a family that cannot bind is skipped by transport
+    // startup and the other still reaches the mesh.
+    config.transports.udp = TransportInstances::Named(std::collections::HashMap::from([
+        (
+            "ipv4".to_string(),
+            UdpConfig {
+                bind_addr: Some("0.0.0.0:0".to_string()),
+                accept_connections: Some(false),
+                outbound_only: Some(true),
+                ..UdpConfig::default()
+            },
+        ),
+        (
+            "ipv6".to_string(),
+            UdpConfig {
+                bind_addr: Some("[::]:0".to_string()),
+                accept_connections: Some(false),
+                outbound_only: Some(true),
+                ..UdpConfig::default()
+            },
+        ),
+    ]));
     config.transports.tcp = TransportInstances::Single(Default::default());
     config.transports.websocket = TransportInstances::Single(WebSocketConfig {
         seed_urls: if app.fips_bootstrap_enabled {
@@ -533,11 +537,6 @@ fn should_use_secure_hashtree(source: ProductUpdateSource) -> bool {
         .filter(|value| !value.trim().is_empty())
         .is_none()
         && !matches!(source, ProductUpdateSource::Github)
-}
-
-#[must_use]
-pub fn should_try_github_fallback(source: ProductUpdateSource, secure_available: bool) -> bool {
-    matches!(source, ProductUpdateSource::Auto) && !secure_available
 }
 
 fn blossom_read_servers() -> Vec<String> {
@@ -651,12 +650,10 @@ fn manifest_urls_for(source: ProductUpdateSource, override_url: Option<String>) 
     }
 
     match source {
-        ProductUpdateSource::Auto => vec![
-            HTREE_MANIFEST_URL.to_string(),
-            GITHUB_LATEST_RELEASE_URL.to_string(),
-        ],
         ProductUpdateSource::Github => vec![GITHUB_LATEST_RELEASE_URL.to_string()],
-        ProductUpdateSource::Hashtree => vec![HTREE_MANIFEST_URL.to_string()],
+        ProductUpdateSource::Auto | ProductUpdateSource::Hashtree => {
+            vec![HTREE_MANIFEST_URL.to_string()]
+        }
     }
 }
 
@@ -762,28 +759,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auto_source_checks_htree_before_github() {
+    fn auto_source_resolves_to_hashtree_manifest_only() {
         assert_eq!(
             manifest_urls_for(ProductUpdateSource::Auto, None),
-            vec![
-                HTREE_MANIFEST_URL.to_string(),
-                GITHUB_LATEST_RELEASE_URL.to_string(),
-            ]
+            vec![HTREE_MANIFEST_URL.to_string()]
         );
-    }
-
-    #[test]
-    fn auto_source_can_cross_check_github_when_secure_hashtree_is_not_newer() {
-        assert!(should_try_github_fallback(ProductUpdateSource::Auto, false));
-        assert!(!should_try_github_fallback(ProductUpdateSource::Auto, true));
-        assert!(!should_try_github_fallback(
-            ProductUpdateSource::Hashtree,
-            false
-        ));
-        assert!(!should_try_github_fallback(
-            ProductUpdateSource::Github,
-            false
-        ));
+        assert_eq!(
+            manifest_urls_for(ProductUpdateSource::Hashtree, None),
+            vec![HTREE_MANIFEST_URL.to_string()]
+        );
+        assert_eq!(
+            manifest_urls_for(ProductUpdateSource::Github, None),
+            vec![GITHUB_LATEST_RELEASE_URL.to_string()]
+        );
     }
 
     #[test]

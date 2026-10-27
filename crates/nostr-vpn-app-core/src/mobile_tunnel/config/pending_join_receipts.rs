@@ -401,7 +401,9 @@ fn sync_pending_join_receipt_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// Signature mirrors the unix implementation at the shared call site.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn sync_pending_join_receipt_parent(_: &Path) -> Result<()> {
     Ok(())
 }
