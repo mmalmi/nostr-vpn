@@ -46,6 +46,16 @@ impl NativeAppRuntime {
             }
             NativeAppAction::ConnectVpn => self.connect_vpn(),
             NativeAppAction::DisconnectVpn => self.disconnect_vpn(),
+            NativeAppAction::StopDaemon => {
+                // Quit-path action: skip the post-command status refresh so
+                // shutdown never waits on another `nvpn status` subprocess fan-out.
+                let output = self.run_nvpn(["stop", "--config", self.config_path_str()?])?;
+                ensure_success("nvpn stop", &output)?;
+                self.vpn_enabled = false;
+                self.vpn_active = false;
+                self.daemon_running = false;
+                Ok(())
+            }
             NativeAppAction::InstallCli => {
                 let output = self.run_nvpn(["install-cli", "--force"])?;
                 ensure_success("nvpn install-cli", &output)

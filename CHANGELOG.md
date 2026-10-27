@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Improved
+
+- Stop the flashing console windows that nvpn's own Windows helper commands
+  (route, netsh, wg, PowerShell, tasklist) opened during status polling, route
+  changes, DNS updates, and elevated service actions.
+
+### Fixed
+
+- Quitting the Windows app now disconnects the VPN and stops the background
+  nvpn daemon instead of leaving it running, and closing the window with
+  close-to-tray disabled now quits instead of leaving a hidden app behind.
+- Keep the Windows tray menu usable while status refreshes run, make tray
+  "Open Nostr VPN" work again after the window has been closed, and clean up
+  the tray icon if the app crashes.
+- Keep close-to-tray behavior stable when the config file cannot be read
+  temporarily instead of silently switching close to exit.
+- Stop background nvpn processes and the NvpnService during Windows upgrades
+  so stale daemons no longer survive an update or keep the old binary locked.
+
 ## 4.1.19 - 2026-10-23
 
 ### Improved

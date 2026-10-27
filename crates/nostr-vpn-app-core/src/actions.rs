@@ -14,6 +14,7 @@ pub enum NativeAppAction {
     Tick,
     ConnectVpn,
     DisconnectVpn,
+    StopDaemon,
     InstallCli,
     UninstallCli,
     InstallSystemService,

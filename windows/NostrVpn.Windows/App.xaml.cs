@@ -17,6 +17,28 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        // A crashed app must not leave a ghost tray icon or an orphaned UI
+        // process behind; run the normal quit path instead.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            _tray?.Dispose();
+            _tray = null;
+            args.Handled = true;
+            Quit();
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, _) =>
+        {
+            try
+            {
+                _tray?.Dispose();
+            }
+            catch
+            {
+                // The process is dying; best-effort tray cleanup only.
+            }
+            _tray = null;
+        };
+
         TraceRosterE2E($"startup args: {string.Join(' ', e.Args)}");
         _singleInstance = SingleInstanceService.ClaimOrSignal(e.Args);
         if (_singleInstance is null)
@@ -153,7 +175,12 @@ public partial class App : System.Windows.Application
 
     private void ShowMainWindow()
     {
-        _window ??= new MainWindow(_viewModel ?? new AppViewModel());
+        if (_window is null || !_window.IsLoaded)
+        {
+            // A closed window cannot be shown again; rebuild it so the tray
+            // entry keeps working after a real close.
+            _window = new MainWindow(_viewModel ?? new AppViewModel());
+        }
         if (_window.WindowState == System.Windows.WindowState.Minimized)
         {
             _window.WindowState = System.Windows.WindowState.Normal;
@@ -162,9 +189,14 @@ public partial class App : System.Windows.Application
         _window.Activate();
     }
 
-    private void Quit()
+    public void Quit()
     {
+        if (IsQuitting)
+        {
+            return;
+        }
         IsQuitting = true;
+        _viewModel?.StopDaemonBeforeExit();
         Shutdown();
     }
 }

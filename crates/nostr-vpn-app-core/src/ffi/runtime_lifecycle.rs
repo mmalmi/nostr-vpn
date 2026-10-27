@@ -548,7 +548,10 @@ impl NativeAppRuntime {
             },
             autoconnect: !config_unavailable && self.config.autoconnect,
             launch_on_startup: !config_unavailable && self.config.launch_on_startup,
-            close_to_tray_on_close: !config_unavailable && self.config.close_to_tray_on_close,
+            // Unlike the settings above, this gates the window-close behavior
+            // itself: a transient config-read failure must not silently turn
+            // close-to-tray off for the session.
+            close_to_tray_on_close: self.config.close_to_tray_on_close,
             connected_peer_count: connected_peer_count as u64,
             expected_peer_count: expected_peer_count as u64,
             fips_connected_peer_count: fips_peer_stats.direct_roster_peer_count,
