@@ -548,11 +548,14 @@ pub(super) fn restore_linux_route_snapshot(
     let mut failures = Vec::new();
     for route in routes {
         let mut args = strings(&["-4", "route", "replace"]);
-        args.extend(
-            crate::linux_route_replay_args(route)
-                .into_iter()
-                .map(ToOwned::to_owned),
-        );
+        let replay_args = match crate::linux_route_replay_args(route) {
+            Ok(args) => args,
+            Err(error) => {
+                failures.push(format!("'{route}': {error:#}"));
+                continue;
+            }
+        };
+        args.extend(replay_args.into_iter().map(ToOwned::to_owned));
         if let Some(table) = table {
             args.extend(strings(&["table", &table.to_string()]));
         }
