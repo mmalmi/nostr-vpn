@@ -129,6 +129,57 @@ function Stop-NvpnGuiProcesses {
     }
 }
 
+function Stop-NvpnBackgroundProcesses {
+    # A surviving daemon would keep the old nvpn.exe running (and locked) after
+    # the upgrade, so stop it before any uninstaller runs. The CLI stop is a
+    # graceful control-file request the daemon honors without elevation, even
+    # while NvpnService hosts it.
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]] $InstallLocations,
+        [scriptblock] $StopDaemonViaCli = {
+            param($NvpnExe)
+            try {
+                $null = & $NvpnExe stop --timeout-secs 5 2>$null
+            } catch {
+                # Best effort; leftover processes are force-killed below.
+            }
+        },
+        [scriptblock] $StopService = {
+            param($ServiceName)
+            try {
+                $null = & sc.exe stop $ServiceName 2>$null
+            } catch {
+                # Needs elevation or the service is absent; neither blocks migration.
+            }
+        },
+        [scriptblock] $GetNvpnProcesses = {
+            return @(Get-Process -Name 'nvpn' -ErrorAction SilentlyContinue)
+        },
+        [scriptblock] $KillNvpnProcesses = {
+            param($Processes)
+            try {
+                $Processes | Stop-Process -Force -ErrorAction SilentlyContinue
+            } catch {
+                # A SYSTEM-hosted daemon we cannot kill is reported by the
+                # uninstaller if it keeps files locked.
+            }
+        }
+    )
+
+    foreach ($location in $InstallLocations) {
+        $nvpnExe = Join-Path $location 'nvpn.exe'
+        if (Test-Path -LiteralPath $nvpnExe -PathType Leaf) {
+            & $StopDaemonViaCli $nvpnExe
+        }
+    }
+    & $StopService 'NvpnService'
+    Start-Sleep -Milliseconds 500
+    $running = & $GetNvpnProcesses
+    if ($running.Count -gt 0) {
+        & $KillNvpnProcesses $running
+    }
+}
+
 function Invoke-NvpnOwnedUninstall {
     param(
         [Parameter(Mandatory)] $Registration,
@@ -172,6 +223,7 @@ function Invoke-NvpnInstallerMigration {
     # Neither supported installer removes roaming app/config data.
     $registrations = @(Get-NvpnOwnedRegistrations)
     Stop-NvpnGuiProcesses
+    Stop-NvpnBackgroundProcesses -InstallLocations @($registrations | ForEach-Object { $_.InstallLocation })
     foreach ($registration in $registrations | Sort-Object { $_.Kind -eq 'current' }) {
         Invoke-NvpnOwnedUninstall $registration
     }

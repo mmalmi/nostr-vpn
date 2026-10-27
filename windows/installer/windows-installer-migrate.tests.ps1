@@ -88,6 +88,19 @@ try {
         Invoke-NvpnOwnedUninstall $current -StartUninstaller { return 5 }
     } 'A failed current uninstaller did not abort migration.'
 
+    Set-Content -LiteralPath (Join-Path $legacyDir 'nvpn.exe') -Value daemon
+    $daemonCalls = @{ Stops = @(); Services = @(); Kills = @() }
+    Stop-NvpnBackgroundProcesses `
+        -InstallLocations @($legacyDir, $currentDir, (Join-Path $root 'absent-dir')) `
+        -StopDaemonViaCli { param($NvpnExe) $daemonCalls.Stops += $NvpnExe }.GetNewClosure() `
+        -StopService { param($ServiceName) $daemonCalls.Services += $ServiceName }.GetNewClosure() `
+        -GetNvpnProcesses { return @('nvpn-a', 'nvpn-b') }.GetNewClosure() `
+        -KillNvpnProcesses { param($Processes) $daemonCalls.Kills += @($Processes) }.GetNewClosure()
+    Assert-True ($daemonCalls.Stops.Count -eq 1 -and
+        $daemonCalls.Stops[0] -ieq (Join-Path $legacyDir 'nvpn.exe')) 'Daemon stop skipped the owned nvpn.exe or hit foreign locations.'
+    Assert-True ($daemonCalls.Services.Count -eq 1 -and $daemonCalls.Services[0] -ceq 'NvpnService') 'Migration did not stop NvpnService.'
+    Assert-True ($daemonCalls.Kills.Count -eq 2) 'Leftover nvpn processes were not force-killed.'
+
     Write-Output 'WINDOWS_INSTALLER_MIGRATION_UNIT_OK'
 } finally {
     Remove-Item -Recurse -Force -LiteralPath $root -ErrorAction SilentlyContinue
