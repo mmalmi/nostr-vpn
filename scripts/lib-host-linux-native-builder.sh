@@ -91,8 +91,8 @@ REMOTE
 }
 
 host_linux_native_builder_extract_output() {
-  local archive="$1" output="$2"
-  python3 - "$archive" "$output" <<'PY'
+  local archive="$1" output="$2" scope="${3:-full}"
+  python3 - "$archive" "$output" "$scope" <<'PY'
 import os
 import pathlib
 import sys
@@ -100,6 +100,9 @@ import tarfile
 
 archive = pathlib.Path(sys.argv[1])
 output = pathlib.Path(sys.argv[2])
+scope = sys.argv[3]
+if scope not in {'full', 'daemon'}:
+    raise SystemExit('invalid native output scope')
 expected = {
     "builder-provenance.json",
     "cargo-version.txt",
@@ -121,6 +124,9 @@ expected = {
     "root-realized-cargo-lock-sha256.txt",
     "rustc-version.txt",
 }
+if scope == 'daemon':
+    expected -= {'deb-version.txt', 'desktop_manual_join_e2e_fixture',
+                 'nostr-vpn', 'nostr-vpn.deb', 'nvpn-x86_64-unknown-linux-musl.tar.gz'}
 if not output.is_dir() or output.is_symlink():
     raise SystemExit("remote native output destination is unsafe")
 with tarfile.open(archive, "r:") as bundle:
@@ -171,6 +177,10 @@ host_linux_native_builder_run() {
   local output_tar="$temp_dir/remote-output.tar"
   local app_bundle_sha fips_bundle_sha driver_sha remote_dir
 
+  case "${NVPN_HOST_LINUX_VM_BUILD_SCOPE:-full}" in
+    full|daemon) ;;
+    *) echo "Invalid native Linux build scope" >&2; return 2 ;;
+  esac
   host_linux_builder_resource_args || return
   host_linux_native_builder_commands
   for command in git scp ssh; do
@@ -239,6 +249,7 @@ mktemp -d "$runs/nvpn-linux-native-builder.XXXXXX"'
     "${NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES:--}" \
     "${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}" \
     "${NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES:--}" \
+    "${NVPN_HOST_LINUX_VM_BUILD_SCOPE:-full}" \
     >"$output_tar" <<'REMOTE'
 set -euo pipefail
 root="$1"
@@ -267,17 +278,18 @@ REMOTE
   fi
   NVPN_HOST_LINUX_NATIVE_REMOTE_DIR=""
 
-  host_linux_native_builder_extract_output "$output_tar" "$temp_dir/output"
+  host_linux_native_builder_extract_output "$output_tar" "$temp_dir/output" \
+    "${NVPN_HOST_LINUX_VM_BUILD_SCOPE:-full}"
   python3 - \
     "$temp_dir/output/builder-provenance.json" \
-    "$dockerfile_sha" "$payload_sha" <<'PY'
+    "$dockerfile_sha" "$payload_sha" "${NVPN_HOST_LINUX_VM_BUILD_SCOPE:-full}" <<'PY'
 import json
 import pathlib
 import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
-dockerfile_sha, payload_sha = sys.argv[2:]
+dockerfile_sha, payload_sha, scope = sys.argv[2:]
 value = json.loads(path.read_text(encoding="utf-8"))
 expected = {
     "schema": 1,
@@ -287,6 +299,8 @@ expected = {
     "dockerfileSha256": dockerfile_sha,
     "containerPayloadSha256": payload_sha,
 }
+if scope == 'daemon':
+    expected.update(buildScope='daemon', partial=True)
 for key, expected_value in expected.items():
     if value.get(key) != expected_value:
         raise SystemExit(f"remote native builder provenance mismatch: {key}")

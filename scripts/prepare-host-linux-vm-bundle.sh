@@ -8,6 +8,8 @@
 # pruned on failure. Byte checks are admission/completion checks, not a quota;
 # keep the execution owner's physical-host growth/floor guard. This wrapper's
 # default full release scope and all artifact/source gates remain unchanged.
+# NVPN_HOST_LINUX_VM_BUILD_SCOPE=daemon selects daemon artifacts and a partial receipt;
+# the default full verifier rejects it. Scope does not change compiler settings.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,6 +33,13 @@ host_linux_builder_resource_args
   exit 2
 }
 BUILDER_MODE="${NVPN_HOST_LINUX_VM_BUILDER_MODE:-}"
+BUILD_SCOPE="${NVPN_HOST_LINUX_VM_BUILD_SCOPE:-full}"
+[[ "$BUILD_SCOPE" == full || "$BUILD_SCOPE" == daemon ]] || exit 2
+export NVPN_HOST_LINUX_VM_BUILD_SCOPE="$BUILD_SCOPE"
+if [[ "$BUILD_SCOPE" == daemon && "$BUILDER_MODE" != remote-native ]]; then
+  echo "Daemon-only validation requires the native Linux builder" >&2
+  exit 2
+fi
 if [[ "${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}" == 1 \
   && "$BUILDER_MODE" != remote-native ]]; then
   echo "Retained targets require the serialized native Linux builder" >&2
@@ -170,6 +179,7 @@ HOST_BUILD_LOCK="$CACHE_ROOT/.host-linux-vm-bundle.lock"
 CARGO_DEB_VERSION="3.7.0"
 MUSL_TARGET="x86_64-unknown-linux-musl"
 CACHE_KEY="$APP_GIT_SHA-$RELEASE_JOIN_FIPS_SHA-$TARGET-ubuntu24.04-rust$RUST_TOOLCHAIN-cargo-deb$CARGO_DEB_VERSION-package5-$BUILDER_MODE"
+[[ "$BUILD_SCOPE" == full ]] || CACHE_KEY="$CACHE_KEY-daemon"
 BUNDLE_DIR="$CACHE_ROOT/$CACHE_KEY"
 RECEIPT="$BUNDLE_DIR/receipt.json"
 BUILD_CACHE_ID="$(
@@ -286,7 +296,7 @@ trap 'terminate 143' TERM
 
 verify_bundle() {
   [[ -x "$VERIFIER" && -d "$BUNDLE_DIR" && -f "$RECEIPT" ]] || return 1
-  python3 "$VERIFIER" \
+  python3 "$VERIFIER" "--scope=$BUILD_SCOPE" \
     "$BUNDLE_DIR" \
     "$RECEIPT" \
     "$APP_GIT_SHA" \
@@ -310,6 +320,8 @@ verify_bundle() {
 
 cache_bundle_peer() {
   verify_bundle || return 1
+  # Partial validation cannot populate caches used by full release gates.
+  [[ "$BUILD_SCOPE" == full ]] || return 0
   python3 - "$ROOT" "$BUNDLE_DIR" \
     "${NVPN_MACOS_FIPS_PEER_CACHE_DIR:-${ARTIFACT_ROOT:-$ROOT/artifacts}/macos-release-fips-peer}" \
     "$APP_GIT_SHA" "$APP_GIT_TREE" \
@@ -620,17 +632,18 @@ python3 "$SOURCE_AUDITOR" --exact \
   == "$ROOT_REALIZED_CARGO_LOCK_SHA256" ]]
 [[ "$(<"$TEMP_DIR/output/linux-realized-cargo-lock-sha256.txt")" \
   == "$LINUX_REALIZED_CARGO_LOCK_SHA256" ]]
-for artifact in \
-  nvpn \
-  desktop_manual_join_e2e_fixture \
-  nostr-vpn \
-  nvpn-x86_64-unknown-linux-musl
-do
+final_binaries=(nvpn nvpn-x86_64-unknown-linux-musl)
+if [[ "$BUILD_SCOPE" == full ]]; then
+  final_binaries+=(desktop_manual_join_e2e_fixture nostr-vpn)
+fi
+for artifact in "${final_binaries[@]}"; do
   install -m 0555 "$TEMP_DIR/output/$artifact" "$TEMP_DIR/final/$artifact"
 done
-for artifact in nostr-vpn.deb nvpn-x86_64-unknown-linux-musl.tar.gz; do
-  install -m 0444 "$TEMP_DIR/output/$artifact" "$TEMP_DIR/final/$artifact"
-done
+if [[ "$BUILD_SCOPE" == full ]]; then
+  for artifact in nostr-vpn.deb nvpn-x86_64-unknown-linux-musl.tar.gz; do
+    install -m 0444 "$TEMP_DIR/output/$artifact" "$TEMP_DIR/final/$artifact"
+  done
+fi
 python3 - \
   "$PATCH_LOCK_VERIFIER" \
   "$TEMP_DIR/final/receipt.json" \
@@ -659,7 +672,7 @@ python3 - \
   "$TEMP_DIR/output/musl-cli-short-version.txt" \
   "$TEMP_DIR/output/musl-cli-verbose-version.txt" \
   "$TEMP_DIR/output/deb-version.txt" \
-  "$TEMP_DIR/output/builder-provenance.json" <<'PY'
+  "$TEMP_DIR/output/builder-provenance.json" "$BUILD_SCOPE" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -696,6 +709,7 @@ import sys
     musl_cli_verbose_arg,
     deb_version_arg,
     builder_provenance_arg,
+    build_scope,
 ) = sys.argv[1:]
 bundle = pathlib.Path(bundle_arg)
 builder = json.loads(
@@ -710,6 +724,10 @@ expected_builder_keys = {
     "dockerfileSha256",
     "containerPayloadSha256",
 }
+if build_scope == "daemon":
+    expected_builder_keys |= {"buildScope", "partial"}
+    if builder.get("buildScope") != "daemon" or builder.get("partial") is not True:
+        raise SystemExit("daemon build lacks partial provenance")
 if (
     set(builder) != expected_builder_keys
     or builder.get("schema") != 1
@@ -757,6 +775,8 @@ names = {
     "debianPackage": "nostr-vpn.deb",
     "muslCliArchive": "nvpn-x86_64-unknown-linux-musl.tar.gz",
 }
+if build_scope == "daemon":
+    names = {k: v for k, v in names.items() if k in {"cli", "muslCli"}}
 artifacts = {}
 for label, name in names.items():
     path = bundle / name
@@ -771,6 +791,7 @@ for label, name in names.items():
     }
 payload = {
     "schema": 2,
+    "buildScope": build_scope,
     "builderMode": builder_mode,
     "builtOnHostMac": built_on_host_mac,
     "builtOnRemoteVm": built_on_remote_vm,
@@ -804,7 +825,7 @@ payload = {
     "muslCliVerboseVersion": pathlib.Path(musl_cli_verbose_arg).read_text(
         encoding="utf-8"
     ).strip(),
-    "debianPackage": {
+    "debianPackage": ({
         "package": "nostr-vpn",
         "version": pathlib.Path(deb_version_arg).read_text(
             encoding="utf-8"
@@ -812,18 +833,20 @@ payload = {
         "architecture": "amd64",
         "appPath": "usr/bin/nostr-vpn",
         "cliPath": "usr/bin/nvpn",
-    },
+    } if build_scope == "full" else None),
     "muslTarget": "x86_64-unknown-linux-musl",
-    "cargoDebVersion": "3.7.0",
+    "cargoDebVersion": "3.7.0" if build_scope == "full" else None,
     "artifacts": artifacts,
 }
+if build_scope == "daemon":
+    payload.update(partial=True, candidateBuildOnly=True, releaseGatesPassed=False)
 pathlib.Path(receipt_arg).write_text(
     json.dumps(payload, indent=2, sort_keys=True) + "\n",
     encoding="utf-8",
 )
 PY
 
-python3 "$VERIFIER" \
+python3 "$VERIFIER" "--scope=$BUILD_SCOPE" \
   "$TEMP_DIR/final" \
   "$TEMP_DIR/final/receipt.json" \
   "$APP_GIT_SHA" \

@@ -110,8 +110,26 @@ with tarfile.open(sys.argv[2], "w:") as archive:
     info.size = len(raw)
     archive.addfile(info, io.BytesIO(raw))
 PY
+python3 - "$safe_tar" "$backup/native-output-daemon.tar" <<'PY_DAEMON'
+import sys,tarfile
+excluded={'deb-version.txt','desktop_manual_join_e2e_fixture','nostr-vpn',
+          'nostr-vpn.deb','nvpn-x86_64-unknown-linux-musl.tar.gz'}
+with tarfile.open(sys.argv[1]) as src, tarfile.open(sys.argv[2],'w:') as dst:
+    for member in src:
+        if member.name not in excluded:
+            dst.addfile(member,src.extractfile(member))
+PY_DAEMON
 # shellcheck disable=SC1090
 source "$NATIVE_BUILDER_LIB"
+mkdir "$backup/daemon-extract" "$backup/daemon-rejected" "$backup/full-rejected"
+host_linux_native_builder_extract_output "$backup/native-output-daemon.tar" "$backup/daemon-extract" daemon
+[[ "$(find "$backup/daemon-extract" -type f | wc -l | tr -d ' ')" == 14 ]] || fail "partial output set differs"
+if host_linux_native_builder_extract_output "$backup/native-output-daemon.tar" "$backup/daemon-rejected" >/dev/null 2>&1; then
+  fail "default full extractor accepted a partial archive"
+fi
+if host_linux_native_builder_extract_output "$safe_tar" "$backup/full-rejected" daemon >/dev/null 2>&1; then
+  fail "partial extractor accepted release/GUI outputs"
+fi
 NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST="release-builder"
 NVPN_HOST_LINUX_VM_NATIVE_BUILDER_JUMP=""
 NVPN_HOST_LINUX_VM_NATIVE_BUILDER_PROXY_COMMAND=""
@@ -679,7 +697,8 @@ receipt = {
 PY
 verify_fixture() {
   local mode="$1"
-  python3 "$VERIFIER" \
+  shift
+  python3 "$VERIFIER" "$@" \
     "$tmp" "$tmp/receipt.json" \
     "$app_sha" "$app_tree" "$app_version" \
     "$fips_sha" "$fips_tree" "$fips_version" \
@@ -691,6 +710,87 @@ verify_fixture() {
 
 verify_fixture remote-native \
   | grep -Fq HOST_LINUX_VM_BUNDLE_VERIFIED
+
+# Exercise the real receipt writer with fixture build outputs in both scopes.
+# The daemon writer must work without any GUI/package output or deb version.
+regenerate_fixture_receipt() {
+  python3 - "$ROOT" "$tmp" "$backup" "$1" <<'PY_WRITER'
+import json,pathlib,subprocess,sys
+root,bundle,backup=map(pathlib.Path,sys.argv[1:4]);scope=sys.argv[4]
+r=json.loads((bundle/'receipt.json').read_text())
+source=(root/'scripts/prepare-host-linux-vm-bundle.sh').read_text()
+writer=source.split('import hashlib\nimport json\nimport pathlib\nimport re\nimport runpy\nimport sys\n',1)[1].split('\nPY\n',1)[0]
+writer='import hashlib,json,pathlib,re,runpy,sys\n'+writer
+inputs=backup/('writer-inputs-'+scope);inputs.mkdir()
+paths=[]
+for key in ['cliShortVersion','cliVerboseVersion','rustcVersion','cargoVersion','muslCliShortVersion','muslCliVerboseVersion']:
+    path=inputs/key;path.write_text(r[key]);paths.append(str(path))
+deb=inputs/'deb-version.txt'
+if scope=='full': deb.write_text(r['debianPackage']['version'])
+provenance={k:r[k] for k in ['builderMode','builderHostOs','builderHostArchitecture','containerImageId','dockerfileSha256','containerPayloadSha256']}
+provenance['schema']=1
+if scope=='daemon': provenance.update(buildScope='daemon',partial=True)
+prov=inputs/'builder-provenance.json';prov.write_text(json.dumps(provenance))
+args=[str(root/'scripts/verify-cargo-path-patch-lock.py'),str(bundle/'receipt.json'),str(bundle)]
+args += [r[k] for k in ['appGitSha','appGitTree','appVersion','fipsGitSha','fipsGitTree','fipsVersion','rootCargoLockSha256','rootRealizedCargoLockSha256','linuxCargoLockSha256','linuxRealizedCargoLockSha256','target','builderMode']]
+args += ['1.95.0',r['dockerfileSha256'],r['containerPayloadSha256']]
+args += [k+'='+v for k,v in r['fipsPatchedLockPackages'].items()]
+args += [str(r['sourceDateEpoch']),*paths,str(deb),str(prov),scope]
+subprocess.run([sys.executable,'-c',writer,*args],check=True)
+PY_WRITER
+}
+regenerate_fixture_receipt full
+verify_fixture remote-native | grep -Fq HOST_LINUX_VM_BUNDLE_VERIFIED
+
+# Derive a daemon fixture from the exact full bundle. Only explicit daemon
+# validation may accept it; release consumers and forged gates must fail.
+(
+  full_bundle="$tmp"
+  tmp="$backup/daemon-bundle"
+  mkdir "$tmp"
+  python3 - "$full_bundle" "$tmp" <<'PY_DAEMON'
+import json, pathlib, shutil, sys
+source, target = map(pathlib.Path, sys.argv[1:])
+receipt = json.loads((source / 'receipt.json').read_text())
+receipt.update(buildScope='daemon', partial=True, candidateBuildOnly=True,
+               releaseGatesPassed=False, debianPackage=None, cargoDebVersion=None)
+receipt['artifacts'] = {k:v for k,v in receipt['artifacts'].items() if k in {'cli', 'muslCli'}}
+for entry in receipt['artifacts'].values():
+    shutil.copy2(source / entry['file'], target / entry['file'])
+(target / 'receipt.json').write_text(json.dumps(receipt))
+PY_DAEMON
+  regenerate_fixture_receipt daemon
+  verify_fixture remote-native --scope=daemon | grep -Fxq HOST_LINUX_DAEMON_BUILD_VERIFIED_PARTIAL
+  if NVPN_HOST_LINUX_VM_BUILD_SCOPE=daemon verify_fixture remote-native >/dev/null 2>&1; then
+    fail "ambient scope allowed a partial bundle through full release verification"
+  fi
+  cp "$tmp/receipt.json" "$backup/daemon-receipt.json"
+  for adversary in releaseGatesPassed partial candidateBuildOnly buildScope cargoDebVersion rootRealizedCargoLockSha256; do
+    python3 - "$backup/daemon-receipt.json" "$tmp/receipt.json" "$adversary" <<'PY_DAEMON'
+import json,pathlib,sys
+v=json.loads(pathlib.Path(sys.argv[1]).read_text())
+k=sys.argv[3]
+v[k]={'releaseGatesPassed':True,'partial':False,'candidateBuildOnly':False,
+      'buildScope':'full','cargoDebVersion':'3.7.0','rootRealizedCargoLockSha256':'0'*64}[k]
+pathlib.Path(sys.argv[2]).write_text(json.dumps(v))
+PY_DAEMON
+    if verify_fixture remote-native --scope=daemon >/dev/null 2>&1; then
+      fail "partial verifier accepted $adversary forgery"
+    fi
+  done
+  cp "$backup/daemon-receipt.json" "$tmp/receipt.json"
+  cp "$full_bundle/nostr-vpn" "$tmp/nostr-vpn"
+  if verify_fixture remote-native --scope=daemon >/dev/null 2>&1; then
+    fail "partial verifier accepted an extra GUI artifact"
+  fi
+  rm "$tmp/nostr-vpn"
+  chmod u+w "$tmp/nvpn"
+  printf mutation >>"$tmp/nvpn"
+  chmod 0555 "$tmp/nvpn"
+  if verify_fixture remote-native --scope=daemon >/dev/null 2>&1; then
+    fail "partial verifier accepted changed daemon bytes"
+  fi
+)
 
 # Bind the DTLS leaf in both the receipt and verifier arguments, then retain
 # the legacy fixture for the existing artifact and source adversaries below.
@@ -727,7 +827,7 @@ cp "$backup/receipt-legacy.json" "$tmp/receipt.json"
   sed -n '/^verify_bundle() {$/,/^}$/p' "$ROOT/scripts/prepare-host-linux-vm-bundle.sh" >"$backup/peer-functions.sh"
   sed -n '/^cache_bundle_peer() {$/,/^}$/p' "$ROOT/scripts/prepare-host-linux-vm-bundle.sh" >>"$backup/peer-functions.sh"
   source "$backup/peer-functions.sh"
-  BUNDLE_DIR="$tmp" RECEIPT="$tmp/receipt.json"
+  BUNDLE_DIR="$tmp" RECEIPT="$tmp/receipt.json" BUILD_SCOPE=full
   APP_GIT_SHA="$app_sha" APP_GIT_TREE="$app_tree" APP_VERSION="$app_version"
   RELEASE_JOIN_FIPS_SHA="$fips_sha" RELEASE_JOIN_FIPS_TREE="$fips_tree"
   RELEASE_JOIN_FIPS_VERSION="$fips_version"

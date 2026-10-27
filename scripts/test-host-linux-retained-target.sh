@@ -68,11 +68,11 @@ LOCK="$(printf lock | shasum -a256 | cut -d' ' -f1)"
 LINUX_LOCK="$(printf linux | shasum -a256 | cut -d' ' -f1)"
 PAYLOAD="$(printf payload | shasum -a256 | cut -d' ' -f1)"
 prepare() { host_linux_builder_prepare_retained_target "$CACHE" "$IMAGE" 1.95.0 "$LOCK" "$LINUX_LOCK" "$PAYLOAD" fixture-owner; }
-prepare
+NVPN_HOST_LINUX_VM_BUILD_SCOPE=daemon prepare
 [[ "$HOST_LINUX_RETAINED_REUSED" == 0 ]] || fail 'new target marked reused'
 VOLUME="$HOST_LINUX_RETAINED_VOLUME"; GENERATION="$HOST_LINUX_RETAINED_GENERATION"
-prepare
-[[ "$HOST_LINUX_RETAINED_REUSED" == 1 && "$HOST_LINUX_RETAINED_VOLUME" == "$VOLUME" ]] || fail 'compatible target not reused'
+NVPN_HOST_LINUX_VM_BUILD_SCOPE=full prepare
+[[ "$HOST_LINUX_RETAINED_REUSED" == 1 && "$HOST_LINUX_RETAINED_VOLUME" == "$VOLUME" && "$HOST_LINUX_RETAINED_GENERATION" == "$GENERATION" ]] || fail 'compatible target not reused across scopes'
 state "assert len(s['volumes'])==1; assert not any(x[:2]==['volume','rm'] for x in s['calls'])"
 host_linux_builder_check_retained_target_size "$VOLUME" "$IMAGE" "$CACHE" fixture-owner
 for field in IMAGE LOCK LINUX_LOCK PAYLOAD; do

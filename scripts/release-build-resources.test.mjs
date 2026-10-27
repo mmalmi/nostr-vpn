@@ -162,13 +162,13 @@ host_linux_native_builder_run "$fixture" a b c d 1.95.0 e f g h i j 1 k l
         NVPN_HOST_LINUX_VM_NATIVE_BUILDER_HOST: 'fixture', NVPN_HOST_LINUX_VM_BUILD_CPUS: cpus,
         NVPN_HOST_LINUX_VM_BUILD_MEMORY: cpus ? '6g' : '', NVPN_HOST_LINUX_VM_CARGO_JOBS: cpus ? '2' : '', NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES: cpus ? '4294967296' : '' } })
       assert.equal(r.status, cpus !== '0' ? 77 : 2, r.stdout + r.stderr)
-      if (cpus !== '0') assert.deepEqual(readFileSync(capture, 'utf8').trim().split('\n').slice(-4), cpus ? ['2', '6g', '2', '4294967296'] : ['-', '-', '-', '-'])
+      if (cpus !== '0') assert.deepEqual(readFileSync(capture, 'utf8').trim().split('\n').slice(-7), [...(cpus ? ['2', '6g', '2', '4294967296'] : ['-', '-', '-', '-']), '0', '-', 'full'])
       else assert.equal(existsSync(capture), false)
     }
   } finally { rmSync(root, { recursive: true, force: true }) }
 })
 
-test('the production remote argument parser applies limits to its build container', () => {
+for (const scopeArgs of [[], ['0', '-'], ['0', '-', 'daemon']]) test(`remote parser supports ${21 + scopeArgs.length} arguments and preserves container limits`, () => {
   const remote = readFileSync('scripts/host-linux-native-builder-remote.sh', 'utf8')
   const parser = remote.slice(0, remote.indexOf('\nEXPECTED_RUNS_ROOT='))
   const phase = remote.match(/^run_builder_phase\(\) \{[\s\S]*?^\}/m)?.[0]
@@ -182,7 +182,7 @@ host_linux_builder_stop_container() { :; }
 docker() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@"; }
 ${phase}
 run_builder_phase build
-`, '_', ...Array.from({ length: 17 }, () => 'fixture'), '2', '6g', '2', '4294967296'], {
+`, '_', ...Array.from({ length: 17 }, () => 'fixture'), '2', '6g', '2', '4294967296', ...scopeArgs], {
     encoding: 'utf8', env: { ...process.env, FIXTURE_HELPER: helper },
   })
   assert.equal(r.status, 0, r.stderr)
@@ -192,4 +192,18 @@ run_builder_phase build
   }
   assert.ok(argv.includes('CARGO_BUILD_JOBS=2'))
   assert.ok(argv.includes('CARGO_INCREMENTAL=0'))
+  assert.deepEqual(argv.slice(-2), ['build', scopeArgs[2] ?? 'full'])
+})
+
+
+test('invalid scope is rejected before any remote work', () => {
+  const r = spawnSync('/bin/bash', ['-c', `
+set -euo pipefail
+ROOT="$1"
+source "$ROOT/scripts/lib-host-linux-native-builder.sh"
+host_linux_builder_resource_args() { echo UNEXPECTED_RESOURCE_CHECK; exit 99; }
+host_linux_native_builder_run fixture a b c d 1.95.0 e f g h i j 1 k l
+`, '_', process.cwd()], { encoding: 'utf8', env: { ...process.env, NVPN_HOST_LINUX_VM_BUILD_SCOPE: 'invalid' } })
+  assert.equal(r.status, 2, r.stdout + r.stderr)
+  assert.equal(r.stdout, '')
 })

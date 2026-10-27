@@ -4,11 +4,11 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 REMOTE_ROOT APP_BUNDLE_SHA APP_SHA APP_TREE FIPS_BUNDLE_SHA FIPS_SHA FIPS_TREE RUST_TOOLCHAIN CACHE_ID TARGET_GENERATION TARGET_VOLUME CONTAINER_NAME ROOT_REALIZED_LOCK LINUX_REALIZED_LOCK SOURCE_DATE_EPOCH DOCKERFILE_SHA PAYLOAD_SHA BUILD_CPUS BUILD_MEMORY CARGO_JOBS TARGET_TMPFS_BYTES RETAIN_TARGET TARGET_MAX_BYTES" >&2
+  echo "usage: $0 REMOTE_ROOT APP_BUNDLE_SHA APP_SHA APP_TREE FIPS_BUNDLE_SHA FIPS_SHA FIPS_TREE RUST_TOOLCHAIN CACHE_ID TARGET_GENERATION TARGET_VOLUME CONTAINER_NAME ROOT_REALIZED_LOCK LINUX_REALIZED_LOCK SOURCE_DATE_EPOCH DOCKERFILE_SHA PAYLOAD_SHA BUILD_CPUS BUILD_MEMORY CARGO_JOBS TARGET_TMPFS_BYTES [RETAIN_TARGET TARGET_MAX_BYTES [full|daemon]]" >&2
   exit 2
 }
 
-[[ "$#" == 23 ]] || usage
+[[ "$#" == 21 || "$#" == 23 || "$#" == 24 ]] || usage
 REMOTE_ROOT="$1"
 APP_BUNDLE_SHA256="$2"
 APP_GIT_SHA="$3"
@@ -30,8 +30,10 @@ export NVPN_HOST_LINUX_VM_BUILD_CPUS="${18}"
 export NVPN_HOST_LINUX_VM_BUILD_MEMORY="${19}"
 export NVPN_HOST_LINUX_VM_CARGO_JOBS="${20}"
 export NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES="${21}"
-export NVPN_HOST_LINUX_VM_RETAIN_TARGET="${22}"
-export NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES="${23}"
+export NVPN_HOST_LINUX_VM_RETAIN_TARGET="${22:-0}"
+export NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES="${23:--}"
+BUILD_SCOPE="${24:-full}"
+[[ "$BUILD_SCOPE" == full || "$BUILD_SCOPE" == daemon ]] || usage
 for resource in NVPN_HOST_LINUX_VM_BUILD_CPUS NVPN_HOST_LINUX_VM_BUILD_MEMORY NVPN_HOST_LINUX_VM_CARGO_JOBS NVPN_HOST_LINUX_VM_TARGET_TMPFS_BYTES NVPN_HOST_LINUX_VM_TARGET_MAX_BYTES; do
   [[ "${!resource}" != - ]] || unset "$resource"
 done
@@ -362,7 +364,7 @@ run_builder_phase() {
     --env LC_ALL=C.UTF-8 \
     "$CONTAINER_IMAGE_ID" \
     /workspace/app/scripts/build-host-linux-vm-bundle-in-container.sh \
-    "$phase"
+    "$phase" "$BUILD_SCOPE"
   host_linux_builder_stop_container "$CONTAINER_NAME" "$BUILD_CACHE_ID"
 }
 
@@ -427,13 +429,13 @@ python3 - \
   "$REMOTE_ROOT/output/builder-provenance.json" \
   "$CONTAINER_IMAGE_ID" \
   "$EXPECTED_DOCKERFILE_SHA256" \
-  "$EXPECTED_PAYLOAD_SHA256" <<'PY'
+  "$EXPECTED_PAYLOAD_SHA256" "$BUILD_SCOPE" <<'PY'
 import json
 import os
 import pathlib
 import sys
 
-output, image_id, dockerfile_sha, payload_sha = sys.argv[1:]
+output, image_id, dockerfile_sha, payload_sha, scope = sys.argv[1:]
 path = pathlib.Path(output)
 descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
@@ -446,6 +448,7 @@ with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             "containerImageId": image_id,
             "dockerfileSha256": dockerfile_sha,
             "containerPayloadSha256": payload_sha,
+            **({"buildScope": "daemon", "partial": True} if scope == "daemon" else {}),
         },
         handle,
         indent=2,
@@ -477,6 +480,13 @@ output_files=(
   root-realized-cargo-lock-sha256.txt
   rustc-version.txt
 )
+if [[ "$BUILD_SCOPE" == daemon ]]; then
+  output_files=(builder-provenance.json cargo-version.txt cli-short-version.txt
+    cli-verbose-version.txt file.txt linux-Cargo.lock.committed
+    linux-realized-cargo-lock-sha256.txt musl-cli-short-version.txt
+    musl-cli-verbose-version.txt nvpn nvpn-x86_64-unknown-linux-musl
+    root-Cargo.lock.committed root-realized-cargo-lock-sha256.txt rustc-version.txt)
+fi
 [[ "$(find "$REMOTE_ROOT/output" -mindepth 1 -maxdepth 1 -print | wc -l)" \
   == "${#output_files[@]}" ]]
 for name in "${output_files[@]}"; do
