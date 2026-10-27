@@ -5,13 +5,13 @@
 use super::*;
 use hickory_proto::rr::{Name, RData};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 
 use hickory_resolver::{
-    Resolver,
+    Resolver, TlsConfig,
     config::{
         LookupIpStrategy, NameServerConfig, OpportunisticEncryption, OpportunisticEncryptionConfig,
-        ResolveHosts, ResolverConfig, ResolverOpts,
+        ProtocolConfig, ResolveHosts, ResolverConfig, ResolverOpts,
     },
 };
 
@@ -296,6 +296,17 @@ async fn lookup_link(
     ipv6: bool,
     protect: DnsSocketProtector,
 ) -> io::Result<Vec<SocketAddr>> {
+    let plaintext_only = !link.opportunistic
+        && link
+            .servers
+            .iter()
+            .flat_map(|server| &server.connections)
+            .all(|connection| {
+                matches!(
+                    connection.protocol,
+                    ProtocolConfig::Udp | ProtocolConfig::Tcp
+                )
+            });
     let mut options = link.options;
     options.ip_strategy = if ipv6 {
         LookupIpStrategy::Ipv4AndIpv6
@@ -317,6 +328,18 @@ async fn lookup_link(
         runtime::ProtectedRuntime::new(protect, link.interface),
     )
     .with_options(options);
+    if plaintext_only {
+        // Hickory eagerly loads native TLS roots even for plaintext DNS. Reuse
+        // that unused config; encrypted lookups still load fresh native roots.
+        static TLS: OnceLock<TlsConfig> = OnceLock::new();
+        if TLS.get().is_none() {
+            let config = TlsConfig::new().map_err(io::Error::other)?;
+            // Concurrent first lookups can initialize independently. Failed
+            // initialization is never cached, so later lookups can recover.
+            let _ = TLS.set(config);
+        }
+        builder = builder.with_tls_config(TLS.get().expect("TLS initialized").config.clone());
+    }
     if link.opportunistic {
         builder = builder.with_opportunistic_encryption(OpportunisticEncryption::Enabled {
             config: OpportunisticEncryptionConfig::default(),
