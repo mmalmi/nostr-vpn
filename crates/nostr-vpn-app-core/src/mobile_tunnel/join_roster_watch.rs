@@ -61,10 +61,14 @@ mod apple {
             if unsafe { libc::fcntl(descriptor.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
                 return Err(io::Error::last_os_error());
             }
+            // SAFETY: The owned kqueue descriptor stays open and unchanged
+            // for the lifetime of this AsyncFd.
+            let notifications =
+                unsafe { AsyncFd::register_with_interest(descriptor, Interest::READABLE)? };
             let mut watcher = Self {
                 path,
                 directory: None,
-                notifications: AsyncFd::with_interest(descriptor, Interest::READABLE)?,
+                notifications,
             };
             watcher.arm()?;
             Ok(watcher)
