@@ -511,6 +511,14 @@ fn windows_service_stop_state_machine_waits_for_pending_states() {
         WindowsServiceStopAction::Wait
     );
     assert_eq!(
+        windows_service_stop_action(Some(WindowsServiceState::ContinuePending)),
+        WindowsServiceStopAction::Wait
+    );
+    assert_eq!(
+        windows_service_stop_action(Some(WindowsServiceState::PausePending)),
+        WindowsServiceStopAction::Wait
+    );
+    assert_eq!(
         windows_service_stop_action(Some(WindowsServiceState::Running)),
         WindowsServiceStopAction::RequestStop
     );
