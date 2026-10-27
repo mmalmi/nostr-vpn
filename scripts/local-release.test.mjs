@@ -1170,6 +1170,10 @@ test('every publisher runs only after exact staged-source validation', () => {
   const promoteEnd = source.indexOf('\n  const steps = [', promoteStart)
   const promote = source.slice(promoteStart, promoteEnd)
   assert.ok(promoteStart >= 0 && promoteEnd > promoteStart)
+  const sourcePublication = promote.indexOf("'--publish-source'")
+  assert.ok(sourcePublication >= 0)
+  assert.ok(promote.indexOf('replayCanonicalMutationGate({') < sourcePublication)
+  assert.ok(sourcePublication < promote.indexOf('publishExactIosDistribution({'))
   assert.match(
     promote,
     /promoteStagedDraft\(\{[\s\S]*?beforeMutation:\s*\(\)\s*=>\s*\{[\s\S]*?preflightHtreeRelease\(\{[\s\S]*?replayCanonicalMutationGate\(\{[\s\S]*?requireTag:\s*true/,
@@ -1447,6 +1451,23 @@ esac
 `,
   )
   chmodSync(htree, 0o755)
+  const haps = join(bin, 'haps')
+  writeFileSync(
+    haps,
+    `#!/bin/sh
+set -eu
+printf 'haps %s\\n' "$*" >> "$FAKE_HTREE_LOG"
+if [ "\${FAKE_SOURCE_REJECT:-}" = 1 ]; then
+  echo 'source verification failed' >&2
+  exit 42
+fi
+if [ "\${FAKE_SOURCE_UNSUPPORTED:-}" = 1 ]; then
+  echo 'unexpected argument --publish-source' >&2
+  exit 2
+fi
+`,
+  )
+  chmodSync(haps, 0o755)
   writeFileSync(htreeLog, '')
   const startCli = join(bin, 'start-cli')
   writeFileSync(
@@ -1518,6 +1539,22 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
   assert.equal(readFileSync(htreeLog, 'utf8'), '')
   unlinkSync(unexpectedStagePath)
 
+  for (const failure of ['FAKE_SOURCE_REJECT', 'FAKE_SOURCE_UNSUPPORTED']) {
+    const sourceFailure = spawnSync(process.execPath, releaseArgs, {
+      ...releaseOptions,
+      env: { ...releaseOptions.env, [failure]: '1' },
+    })
+    assert.notEqual(sourceFailure.status, 0)
+    assert.match(sourceFailure.stderr, /source verification failed|unexpected argument --publish-source/)
+    const commands = readFileSync(htreeLog, 'utf8')
+    assert.match(commands, /haps import-release .* --publish-source/)
+    assert.doesNotMatch(commands, /^(add |push |release publish releases\/)/m)
+    for (const [path, before] of stagedBefore) {
+      assert.deepEqual(readFileSync(join(stage, path)), before)
+    }
+    writeFileSync(htreeLog, '')
+  }
+
   const result = spawnSync(
     process.execPath,
     releaseArgs,
@@ -1550,6 +1587,10 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
     'user',
     'status',
     'release publish --help',
+    'user',
+    'status',
+    'release publish --help',
+    `haps import-release ${stage} --config ${join(realpathSync(repo), 'haps-release.json')} --tag v4.1.5 --publish-source`,
     `add --no-ignore ${stage}`,
     'user',
     'status',

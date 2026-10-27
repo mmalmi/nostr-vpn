@@ -1992,6 +1992,9 @@ function publishRelease({
     validatePromotableReleaseManifest(manifest)
   }
   const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
+  // Publish and cold-verify the pinned source before uploading release assets.
+  beforeMutation()
+  run('haps', [...hapsArgs, '--publish-source'], { env, dryRun })
   // The validated stage is an exact allowlist; Git ignores must not omit assets.
   const addOutput = run('htree', ['add', '--no-ignore', stageDir], { capture: true, dryRun })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
@@ -2629,8 +2632,14 @@ function main() {
         stagedManifest,
       })
     }
-    // Validate the draft's exact package bytes and signer before any channel mutates.
-    run('haps', ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag, '--check'], {
+    // Validate packages and publish their pinned source before any artifact channel mutates.
+    replayCanonicalMutationGate({
+      stageDir,
+      tag,
+      env: mutationEnv,
+      requireTag: true,
+    })
+    run('haps', ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag, '--publish-source'], {
       env: mutationEnv, dryRun: options.dryRun,
     })
     const apple = publishExactIosDistribution({
