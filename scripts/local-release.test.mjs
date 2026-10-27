@@ -1196,13 +1196,13 @@ test('GitHub mutation uses the repository pinned by preflight', () => {
   assert.doesNotMatch(source, /arguments_\s*\[/)
   assert.match(
     source,
-    /beforeMutation\(\)[\s\S]*?const mutationRepository = exactGithubRepository\(\{[\s\S]*?const arguments_ = \[[\s\S]*?'create'[\s\S]*?'--repo',[\s\S]*?mutationRepository/,
+    /beforeMutation\(\)[\s\S]*?const mutationRepository = exactGithubReleaseSource\(\{[\s\S]*?const arguments_ = \[[\s\S]*?'create'[\s\S]*?'--repo',[\s\S]*?mutationRepository/,
   )
   for (const command of ['upload', 'edit']) {
     assert.match(
       source,
       new RegExp(
-        `beforeMutation\\(\\)[\\s\\S]*?const mutationRepository = exactGithubRepository\\(\\{[\\s\\S]*?'${command}',[\\s\\S]*?'--repo',[\\s\\S]*?mutationRepository`,
+        `beforeMutation\\(\\)[\\s\\S]*?const mutationRepository = exactGithubReleaseSource\\(\\{[\\s\\S]*?'${command}',[\\s\\S]*?'--repo',[\\s\\S]*?mutationRepository`,
       ),
       command,
     )
