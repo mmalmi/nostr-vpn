@@ -109,7 +109,9 @@ trait WindowsRouteCommandRunner {
 #[derive(Debug)]
 struct WindowsRouteApplyFailure<T> {
     error: anyhow::Error,
-    cleanup: T,
+    // Boxed so the Err variant stays below clippy's large-err threshold when
+    // T is a whole managed-route set.
+    cleanup: Box<T>,
 }
 
 #[cfg(any(test, target_os = "windows"))]
@@ -301,14 +303,14 @@ impl WindowsManagedDefaultRoutes {
         if let Err(error) = validate_windows_underlay(&routes.underlay, &[wg_iface_index]) {
             return Err(WindowsRouteApplyFailure {
                 error,
-                cleanup: routes,
+                cleanup: Box::new(routes),
             });
         }
         let mut bypass = WindowsRouteSpec::endpoint(upstream_ip, &routes.underlay);
         if let Err(error) = runner.bind_interface_identity(&mut bypass) {
             return Err(WindowsRouteApplyFailure {
                 error: error.context("bind WireGuard endpoint route to physical interface"),
-                cleanup: routes,
+                cleanup: Box::new(routes),
             });
         }
         routes.bypass_interface_identity = bypass
@@ -321,7 +323,7 @@ impl WindowsManagedDefaultRoutes {
             Err(error) => {
                 return Err(WindowsRouteApplyFailure {
                     error: error.context("install WireGuard endpoint bypass route"),
-                    cleanup: routes,
+                    cleanup: Box::new(routes),
                 });
             }
         }
@@ -334,7 +336,7 @@ impl WindowsManagedDefaultRoutes {
                         error.context("bind WireGuard default route to tunnel interface"),
                         rollback,
                     ),
-                    cleanup: routes,
+                    cleanup: Box::new(routes),
                 });
             }
             routes.default_interface_identity = default
@@ -351,7 +353,7 @@ impl WindowsManagedDefaultRoutes {
                             error.context("install WireGuard default route"),
                             rollback,
                         ),
-                        cleanup: routes,
+                        cleanup: Box::new(routes),
                     });
                 }
             }
@@ -365,7 +367,7 @@ impl WindowsManagedDefaultRoutes {
                         error.context("bind WireGuard IPv6 default route to tunnel interface"),
                         rollback,
                     ),
-                    cleanup: routes,
+                    cleanup: Box::new(routes),
                 });
             }
             routes.default_v6_interface_identity = default
@@ -382,7 +384,7 @@ impl WindowsManagedDefaultRoutes {
                             error.context("install WireGuard IPv6 default route"),
                             rollback,
                         ),
-                        cleanup: routes,
+                        cleanup: Box::new(routes),
                     });
                 }
             }
