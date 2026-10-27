@@ -227,7 +227,8 @@ if [ "$1" = "reload" ]; then
     echo "simulated wireguard reload failure" >&2
     exit 7
   fi
-  grep -q 'internet_source = "direct"' "$3" || exit 92
+  # Direct is the default, so the serializer omits internet_source.
+  ! grep -q '^internet_source = ' "$3" || exit 92
   exit 0
 fi
 exit 93
@@ -290,6 +291,8 @@ Endpoint = vpn.example.test:51820
         );
         let saved = AppConfig::load(&runtime.config_path).expect("load restored config");
         assert_eq!(saved.internet_source, InternetSource::Direct);
+        assert!(!saved.wireguard_exit.enabled);
+        assert!(saved.wireguard_exit.address.is_empty());
         let calls = fs::read_to_string(format!("{}.reloads", runtime.config_path.display()))
             .expect("read fake nvpn reloads");
         assert_eq!(
