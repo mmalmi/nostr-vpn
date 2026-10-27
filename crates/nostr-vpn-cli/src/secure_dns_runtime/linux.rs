@@ -4,6 +4,7 @@ use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt as _;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt as _;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -122,8 +123,17 @@ pub(super) fn restore(state: &LinuxSecureDnsCleanupState) -> Result<()> {
         ),
         LinuxSecureDnsCleanupState::DirectResolvConf { previous } => {
             let current = read_linux_resolv_conf(Path::new("/etc/resolv.conf"))?;
-            if linux_direct_resolv_conf_needs_restore(&current, previous) {
-                write_linux_resolv_conf(previous)
+            if current.is_empty() {
+                // A blanked resolver is exactly how a forged journal makes
+                // this restore fire; never write journal bytes over an
+                // empty file.
+                return Ok(());
+            }
+            let Some(previous) = linux_restorable_resolv_conf(previous) else {
+                return Ok(());
+            };
+            if linux_direct_resolv_conf_needs_restore(&current, &previous) {
+                write_linux_resolv_conf(&previous)
                     .context("failed to restore and sync /etc/resolv.conf")
             } else {
                 Ok(())
@@ -156,6 +166,95 @@ pub(super) fn linux_direct_resolv_conf_needs_restore(current: &[u8], previous: &
         && (current == LINUX_DIRECT_RESOLV_CONF
             || LINUX_DIRECT_RESOLV_CONF.starts_with(current)
             || previous.starts_with(current))
+}
+
+/// A journal replay writes /etc/resolv.conf with root privileges, so accept
+/// only well-formed resolver directives from the saved snapshot. `None` means
+/// nothing restorable remains. Well-formed snapshots are returned unchanged.
+pub(super) fn linux_restorable_resolv_conf(previous: &[u8]) -> Option<Vec<u8>> {
+    const LINUX_RESOLV_CONF_RESTORE_MAX_BYTES: usize = 4096;
+    if previous.len() > LINUX_RESOLV_CONF_RESTORE_MAX_BYTES {
+        return None;
+    }
+    let mut restored = Vec::with_capacity(previous.len());
+    let mut kept = 0usize;
+    for line in previous.split_inclusive(|byte| *byte == b'\n') {
+        if linux_resolv_conf_line_is_well_formed(line) {
+            restored.extend_from_slice(line);
+            kept += 1;
+        }
+    }
+    (kept > 0).then_some(restored)
+}
+
+fn linux_resolv_conf_line_is_well_formed(line: &[u8]) -> bool {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    if line.contains(&b'\r') {
+        return false;
+    }
+    let Ok(content) = std::str::from_utf8(line) else {
+        return false;
+    };
+    let content = content.trim_ascii();
+    if content.starts_with('#') || content.starts_with(';') {
+        // Blank and comment lines carry no resolver directives.
+        return true;
+    }
+    let mut fields = content.split_ascii_whitespace();
+    let Some(directive) = fields.next() else {
+        return true;
+    };
+    match directive {
+        "nameserver" => {
+            let Some(address) = fields.next() else {
+                return false;
+            };
+            fields.next().is_none() && address.parse::<IpAddr>().is_ok()
+        }
+        "search" => {
+            let mut domains = 0;
+            fields
+                .all(|domain| {
+                    domains += 1;
+                    domains <= 6 && linux_search_domain_is_valid(domain.as_bytes())
+                })
+                && domains > 0
+        }
+        "options" => {
+            let mut options = 0;
+            fields
+                .all(|option| {
+                    options += 1;
+                    options <= 8 && linux_resolv_option_is_valid(option.as_bytes())
+                })
+                && options > 0
+        }
+        _ => false,
+    }
+}
+
+fn linux_search_domain_is_valid(domain: &[u8]) -> bool {
+    if domain.is_empty() || domain.len() > 254 {
+        return false;
+    }
+    let domain = domain.strip_suffix(b".").unwrap_or(domain);
+    domain
+        .split(|byte| *byte == b'.')
+        .all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.first().is_some_and(|byte| byte.is_ascii_alphanumeric())
+                && label.last().is_some_and(|byte| byte.is_ascii_alphanumeric())
+                && label.iter().all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+        })
+}
+
+fn linux_resolv_option_is_valid(option: &[u8]) -> bool {
+    (1..=64).contains(&option.len())
+        && option.first().is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && option
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b':' | b'='))
 }
 
 pub(super) fn linux_direct_resolv_conf_allowed(container: bool, openrc: bool) -> bool {

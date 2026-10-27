@@ -328,18 +328,126 @@ pub(crate) fn restore_linux_default_ipv6_route(route: &str) -> Result<()> {
 fn restore_linux_default_route_for_family(family_flag: &str, route: &str) -> Result<()> {
     let mut command = ProcessCommand::new("ip");
     command.arg(family_flag).arg("route").arg("replace");
-    for token in linux_route_replay_args(route) {
+    for token in linux_route_replay_args(route)? {
         command.arg(token);
     }
     run_checked(&mut command)
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn linux_route_replay_args(route: &str) -> Vec<&str> {
-    route
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_route_replay_args(route: &str) -> Result<Vec<&str>> {
+    let mut tokens = route
         .split_whitespace()
-        .filter(|token| *token != "linkdown")
-        .collect()
+        .filter(|token| *token != "linkdown");
+    let mut args = Vec::new();
+    let Some(destination) = tokens.next() else {
+        return Err(anyhow!("refusing to replay an empty saved route"));
+    };
+    linux_route_replay_destination(destination)?;
+    args.push(destination);
+    while let Some(token) = tokens.next() {
+        if token.starts_with('-') {
+            return Err(anyhow!("refusing route replay flag {token:?}"));
+        }
+        match token {
+            "onlink" => args.push(token),
+            "via" | "src" => {
+                let value = tokens.next().ok_or_else(|| anyhow!("route replay {token} needs an address"))?;
+                value.parse::<IpAddr>()
+                    .map_err(|_| anyhow!("invalid route replay {token} address {value:?}"))?;
+                args.push(token);
+                args.push(value);
+            }
+            "dev" => {
+                let value = tokens.next().ok_or_else(|| anyhow!("route replay dev needs an interface"))?;
+                if value.starts_with('-') {
+                    return Err(anyhow!("refusing route replay flag {value:?}"));
+                }
+                crate::linux_exit_guard::validate_interface(value).map_err(|error| {
+                    anyhow!("invalid route replay interface {value:?}: {error}")
+                })?;
+                args.push(token);
+                args.push(value);
+            }
+            "metric" => {
+                let value = linux_route_replay_number(&mut tokens, token)?;
+                args.push(token);
+                args.push(value);
+            }
+            "mtu" => {
+                args.push(token);
+                let mut value = tokens.next().ok_or_else(|| anyhow!("route replay mtu needs a number"))?;
+                if value == "lock" {
+                    args.push(value);
+                    value = tokens.next().ok_or_else(|| anyhow!("route replay mtu lock needs a number"))?;
+                }
+                value.parse::<u32>()
+                    .map_err(|_| anyhow!("invalid route replay mtu {value:?}"))?;
+                args.push(value);
+            }
+            "scope" | "proto" => {
+                let value = tokens.next().ok_or_else(|| anyhow!("route replay {token} needs a value"))?;
+                if !linux_route_replay_identifier(value) {
+                    return Err(anyhow!("invalid route replay {token} {value:?}"));
+                }
+                args.push(token);
+                args.push(value);
+            }
+            "expires" => {
+                let value = tokens.next().ok_or_else(|| anyhow!("route replay expires needs a lifetime"))?;
+                value
+                    .strip_suffix("sec")
+                    .and_then(|seconds| seconds.parse::<u32>().ok())
+                    .ok_or_else(|| anyhow!("invalid route replay expires {value:?}"))?;
+                args.push(token);
+                args.push(value);
+            }
+            "pref" => {
+                let value = tokens.next().ok_or_else(|| anyhow!("route replay pref needs a preference"))?;
+                if !matches!(value, "low" | "medium" | "high") {
+                    return Err(anyhow!("invalid route replay pref {value:?}"));
+                }
+                args.push(token);
+                args.push(value);
+            }
+            unknown => return Err(anyhow!("refusing route replay token {unknown:?}")),
+        }
+    }
+    Ok(args)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_route_replay_destination(token: &str) -> Result<()> {
+    if token == "default" {
+        return Ok(());
+    }
+    if !token.starts_with('-')
+        && (token.parse::<IpAddr>().is_ok()
+            || crate::linux_exit_guard::validate_network_prefix(token).is_ok())
+    {
+        return Ok(());
+    }
+    Err(anyhow!("invalid route replay destination {token:?}"))
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_route_replay_number<'a>(
+    tokens: &mut impl Iterator<Item = &'a str>,
+    keyword: &str,
+) -> Result<&'a str> {
+    let value = tokens
+        .next()
+        .ok_or_else(|| anyhow!("route replay {keyword} needs a number"))?;
+    value
+        .parse::<u32>()
+        .map_err(|_| anyhow!("invalid route replay {keyword} {value:?}"))?;
+    Ok(value)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_route_replay_identifier(value: &str) -> bool {
+    (1..=16).contains(&value.len())
+        && value.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
 #[cfg(target_os = "linux")]
@@ -453,7 +561,7 @@ pub(crate) fn restore_linux_managed_endpoint_bypass_route(
     for route in &managed.previous_routes {
         let mut restore = ProcessCommand::new("ip");
         restore.arg("-4").arg("route").arg("replace");
-        restore.args(linux_route_replay_args(route));
+        restore.args(linux_route_replay_args(route)?);
         run_checked(&mut restore).with_context(|| {
             format!(
                 "restore preexisting endpoint bypass identity {}",
@@ -584,4 +692,56 @@ pub(crate) fn write_linux_ip_forward(family: LinuxExitNodeIpFamily, enabled: boo
     let path = linux_ip_forward_path(family);
     fs::write(path, if enabled { "1" } else { "0" })
         .with_context(|| format!("failed to write {path}"))
+}
+
+#[cfg(test)]
+mod linux_route_replay_tests {
+    use super::*;
+
+    #[test]
+    fn replay_args_preserve_the_captured_default_route() {
+        let args =
+            linux_route_replay_args("default via 192.0.2.1 dev eth0 metric 100").expect("replay");
+        assert_eq!(
+            args,
+            vec!["default", "via", "192.0.2.1", "dev", "eth0", "metric", "100"]
+        );
+    }
+
+    #[test]
+    fn replay_args_allow_the_route_show_vocabulary() {
+        for line in [
+            "default via 192.0.2.1 dev eth0 proto dhcp metric 600",
+            "default via 192.0.2.1 dev eth0 onlink",
+            "default dev eth0 proto static scope link src 192.0.2.5 metric 100",
+            "default via 192.0.2.1 dev eth0 mtu lock 1500",
+            "default via fe80::1 dev eth0 proto ra metric 1024 expires 25sec pref medium",
+            "203.0.113.0/24 dev eth0 proto kernel scope link src 203.0.113.5",
+            "203.0.113.7 via 203.0.113.1 dev eth0",
+            "198.51.100.1 dev eth0",
+        ] {
+            assert!(linux_route_replay_args(line).is_ok(), "{line:?} must replay");
+        }
+    }
+
+    #[test]
+    fn replay_args_reject_non_route_tokens() {
+        for line in [
+            "default via 192.0.2.1 dev eth0 table 42",
+            "default via 192.0.2.1 dev eth0 nexthop via 192.0.2.2",
+            "default via 192.0.2.1 dev eth0 encap mpls 20",
+            "default -batch route.file",
+            "default via 192.0.2.1 dev -badiface",
+            "default via not-an-address dev eth0",
+            "default via 192.0.2.1 dev eth0 metric -1",
+            "default via 192.0.2.1 dev eth0 proto 99999999999999999999",
+            "unreachable 198.51.100.0/24",
+            "",
+        ] {
+            assert!(
+                linux_route_replay_args(line).is_err(),
+                "{line:?} must be rejected"
+            );
+        }
+    }
 }

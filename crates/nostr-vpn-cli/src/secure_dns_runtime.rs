@@ -36,7 +36,8 @@ pub(crate) use linux::repair_linux_secure_dns_cleanup_state;
 #[cfg(test)]
 use linux::{
     LINUX_DIRECT_RESOLV_CONF, linux_direct_resolv_conf_allowed,
-    linux_direct_resolv_conf_needs_restore, restore_linux_resolved_components,
+    linux_direct_resolv_conf_needs_restore, linux_restorable_resolv_conf,
+    restore_linux_resolved_components,
 };
 #[cfg(all(test, unix))]
 use linux::{

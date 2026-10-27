@@ -9,9 +9,26 @@ pub(crate) fn read_daemon_network_cleanup_state(
     if let Some(parent) = path.parent() {
         set_daemon_cleanup_directory_permissions(parent)?;
     }
-    set_daemon_cleanup_file_permissions(path)?;
-    let raw = fs::read(path)
-        .with_context(|| format!("failed to read daemon cleanup file {}", path.display()))?;
+    #[cfg(target_os = "linux")]
+    let raw = match read_validated_daemon_cleanup_file(path)? {
+        Some(raw) => raw,
+        None => {
+            // The journal lives in the user-owned config directory, so a
+            // root daemon must never replay one an unprivileged writer could
+            // have forged. Leave the file in place for inspection.
+            eprintln!(
+                "daemon: ignoring untrusted network cleanup journal {}",
+                path.display()
+            );
+            return Ok(None);
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let raw = {
+        set_daemon_cleanup_file_permissions(path)?;
+        fs::read(path)
+            .with_context(|| format!("failed to read daemon cleanup file {}", path.display()))?
+    };
     match serde_json::from_slice::<DaemonNetworkCleanupState>(&raw) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(parse_error) => {
@@ -40,6 +57,73 @@ pub(crate) fn read_daemon_network_cleanup_state(
             })
         }
     }
+}
+
+/// Read the journal through a validated, no-follow handle. The journal lives
+/// in the user-owned config directory, so replaying it as root must mirror
+/// the daemon instance-lock discipline (protected parent directory, regular
+/// single-link file owned by the daemon user). Anything else is untrusted:
+/// return `None` so the caller ignores it instead of replaying it.
+#[cfg(target_os = "linux")]
+fn read_validated_daemon_cleanup_file(path: &Path) -> Result<Option<Vec<u8>>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    if unsafe { libc::geteuid() } == 0
+        && let Some(parent) = path.parent()
+        && validate_unix_daemon_cleanup_parent(parent).is_err()
+    {
+        return Ok(None);
+    }
+    let mut file = match runtime_open_options_no_follow()
+        .read(true)
+        .write(true)
+        .open(path)
+    {
+        // O_NOFOLLOW turns a symlinked journal into ELOOP: untrusted, ignore.
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to open daemon cleanup file {}", path.display()));
+        }
+        Ok(file) => file,
+    };
+    let metadata = validate_daemon_runtime_file(&file, path)?;
+    if metadata.uid() != unsafe { libc::geteuid() } {
+        return Ok(None);
+    }
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to protect runtime file {}", path.display()))?;
+    let mut raw = Vec::new();
+    file.read_to_end(&mut raw)
+        .with_context(|| format!("failed to read daemon cleanup file {}", path.display()))?;
+    Ok(Some(raw))
+}
+
+/// The cleanup journal directory must be as protected as the daemon instance
+/// lock directory before root trusts anything inside it.
+#[cfg(target_os = "linux")]
+fn validate_unix_daemon_cleanup_parent(parent: &Path) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+    let metadata = fs::symlink_metadata(parent)
+        .with_context(|| format!("failed to inspect {}", parent.display()))?;
+    let mode = metadata.permissions().mode() & 0o777;
+    if !metadata.file_type().is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != 0
+        || mode & 0o022 != 0
+    {
+        return Err(anyhow!(
+            "daemon cleanup journal directory {} is not protected \
+             (expected directory owner uid 0 without group/other write; \
+             found uid {} mode {:03o})",
+            parent.display(),
+            metadata.uid(),
+            mode
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

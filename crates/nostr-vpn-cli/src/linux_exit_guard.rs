@@ -724,7 +724,7 @@ impl Rule {
     }
 }
 
-fn validate_interface(interface: &str) -> io::Result<()> {
+pub(crate) fn validate_interface(interface: &str) -> io::Result<()> {
     if interface.is_empty()
         || interface.len() > 15
         || interface == "lo"
@@ -787,7 +787,7 @@ fn nft(script: &str) -> io::Result<()> {
     }
 }
 
-fn validate_network_prefix(target: &str) -> io::Result<std::net::IpAddr> {
+pub(crate) fn validate_network_prefix(target: &str) -> io::Result<std::net::IpAddr> {
     let Some((address, prefix)) = target.split_once('/') else {
         return Err(invalid("guard route must be an IP prefix"));
     };
