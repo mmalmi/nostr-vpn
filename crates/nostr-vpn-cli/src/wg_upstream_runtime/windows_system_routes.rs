@@ -5,7 +5,6 @@ pub(crate) const WINDOWS_CHILD_COMMAND_TIMEOUT: std::time::Duration =
 // Windows console-subsystem children (route, netsh, wg.exe, powershell) get a
 // fresh visible console whenever their parent has none, so every spawn here
 // must suppress the window, not just the GUI's direct nvpn.exe invocations.
-use nostr_vpn_core::process_ext::CommandWindowExt;
 
 #[cfg(any(test, target_os = "windows"))]
 pub(crate) fn run_windows_command_with_timeout(
@@ -13,6 +12,8 @@ pub(crate) fn run_windows_command_with_timeout(
     operation: &str,
     timeout: std::time::Duration,
 ) -> Result<std::process::Output> {
+    use nostr_vpn_core::process_ext::CommandWindowExt;
+
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
