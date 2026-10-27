@@ -1,0 +1,20 @@
+# Dependency policy enforced by `cargo deny check advisories bans` in CI
+# (.github/workflows/ci.yml).
+#
+# vuln-0001 from a recent security assessment: CVE-2026-25537
+# (GHSA-h395-gr6q-cpjc) — jsonwebtoken < 10.3.0 treats a malformed standard
+# time claim (nbf/exp with the wrong JSON type) as FailedToParse and skips
+# time-based validation unless the claim is required, allowing an
+# authorization bypass.
+#
+# jsonwebtoken is not imported by this repo; it enters the graph only through
+# cdk-common, and the latest cdk-common 0.18.x still requires jsonwebtoken ^9,
+# so the dependency cannot be updated past the advisory yet. Block the
+# vulnerable range until cdk-rs ships the jsonwebtoken 10 bump.
+[advisories]
+version = 2
+
+[bans]
+deny = [
+    { crate = "jsonwebtoken:<10.3.0", reason = "CVE-2026-25537: malformed time claims silently skip nbf/exp validation; fixed in 10.3.0" },
+]
