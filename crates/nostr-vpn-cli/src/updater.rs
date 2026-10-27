@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
+use nostr_vpn_core::process_ext::CommandWindowExt;
 use nostr_vpn_core::updater::{
     ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_with_config,
     download_product_update_with_config,
@@ -222,6 +223,7 @@ fn extract_archive(archive_path: &Path, destination: &Path) -> Result<()> {
         .arg(archive_path)
         .arg("-C")
         .arg(destination)
+        .hide_console_window()
         .output()
         .with_context(|| format!("failed to extract {}", archive_path.display()))?;
     if !output.status.success() {
