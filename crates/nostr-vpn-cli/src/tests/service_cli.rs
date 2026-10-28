@@ -170,6 +170,24 @@ fn macos_service_identity_scopes_non_default_configs() {
 }
 
 #[test]
+fn macos_service_config_suffix_is_stable_sha256_hex() {
+    let config = Path::new("/nvpn-service-suffix-stability/config.toml");
+    let suffix = crate::macos_service::macos_service_config_suffix(config);
+
+    assert_eq!(suffix, "98fad7f11f0c39f6");
+    assert_eq!(
+        suffix,
+        crate::macos_service::macos_service_config_suffix(config)
+    );
+    assert_eq!(suffix.len(), 16);
+    assert!(
+        suffix
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+    );
+}
+
+#[test]
 fn macos_service_uninstall_removes_only_selected_artifacts() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

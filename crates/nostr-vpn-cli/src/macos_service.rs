@@ -62,11 +62,14 @@ fn canonicalize_lossy(path: &Path) -> PathBuf {
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn macos_service_config_suffix(config_path: &Path) -> String {
+pub(super) fn macos_service_config_suffix(config_path: &Path) -> String {
+    use sha2::{Digest, Sha256};
     let canonical = canonicalize_lossy(config_path);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    canonical.as_os_str().hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+    let identity = format!(
+        "{:x}",
+        Sha256::digest(canonical.as_os_str().as_encoded_bytes())
+    );
+    identity[..16].to_string()
 }
 
 #[cfg(target_os = "macos")]
