@@ -48,6 +48,7 @@ nostr-pubsub-social-graph = { workspace = true, optional = true }
 nostr-identity.workspace = true
 nostr-social-graph = { workspace = true, optional = true }
 nostr-social-memory = { workspace = true, optional = true }
+rand.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2.workspace = true

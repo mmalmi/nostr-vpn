@@ -1,5 +1,5 @@
 use std::net::{IpAddr, Ipv6Addr};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -136,16 +136,9 @@ pub fn paid_route_stun_host_port(server: &str) -> Option<(String, u16)> {
     Some((authority.to_string(), 3478))
 }
 
+/// RFC 5389 requires 96 bits of randomness so an on-path peer cannot forge binding responses.
 pub fn paid_route_stun_transaction_id() -> [u8; 12] {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = u128::from(std::process::id());
-    let bytes = (nanos ^ (pid << 64) ^ pid).to_be_bytes();
-    let mut transaction_id = [0_u8; 12];
-    transaction_id.copy_from_slice(&bytes[4..16]);
-    transaction_id
+    rand::random()
 }
 
 pub fn paid_route_stun_binding_request(transaction_id: [u8; 12]) -> [u8; 20] {
@@ -521,6 +514,31 @@ mod tests {
                 .expect("parse STUN response"),
             "198.51.100.77"
         );
+    }
+
+    #[test]
+    fn paid_route_probe_requires_the_generated_transaction_id() {
+        let first = paid_route_stun_transaction_id();
+        let second = paid_route_stun_transaction_id();
+        assert_ne!(first, second);
+
+        let mut response = Vec::new();
+        response.extend_from_slice(&STUN_BINDING_SUCCESS_RESPONSE.to_be_bytes());
+        response.extend_from_slice(&12_u16.to_be_bytes());
+        response.extend_from_slice(&STUN_MAGIC_COOKIE.to_be_bytes());
+        response.extend_from_slice(&first);
+        response.extend_from_slice(&STUN_ATTR_MAPPED_ADDRESS.to_be_bytes());
+        response.extend_from_slice(&8_u16.to_be_bytes());
+        response.push(0);
+        response.push(0x01);
+        response.extend_from_slice(&34_789_u16.to_be_bytes());
+        response.extend_from_slice(&[192, 0, 2, 9]);
+
+        assert_eq!(
+            parse_paid_route_stun_binding_response(&response, first).expect("matching id parses"),
+            "192.0.2.9"
+        );
+        assert!(parse_paid_route_stun_binding_response(&response, second).is_err());
     }
 
     #[test]
