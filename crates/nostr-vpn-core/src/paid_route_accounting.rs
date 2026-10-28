@@ -873,4 +873,122 @@ mod tests {
         tcp[13] = flags;
         tcp[14..16].copy_from_slice(&65535u16.to_be_bytes());
     }
+
+    fn exit_flow_udp_packet(src_port: u16) -> Vec<u8> {
+        ipv4_udp_packet_with([10, 8, 0, 2], [198, 51, 100, 1], src_port, 443, 60)
+    }
+
+    fn exit_flow_udp_reply(src_port: u16) -> Vec<u8> {
+        ipv4_udp_packet_with([198, 51, 100, 1], [10, 8, 0, 2], 443, src_port, 60)
+    }
+
+    fn exit_flow_icmp_echo(token: u32) -> Vec<u8> {
+        let mut packet = vec![0u8; 28];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&28_u16.to_be_bytes());
+        packet[8] = 64;
+        packet[9] = IPPROTO_ICMP;
+        packet[12..16].copy_from_slice(&[10, 8, 0, 2]);
+        packet[16..20].copy_from_slice(&[198, 51, 100, 1]);
+        packet[20] = 8;
+        packet[24..28].copy_from_slice(&token.to_be_bytes());
+        packet
+    }
+
+    fn exit_flow_icmp_reply(token: u32) -> Vec<u8> {
+        let mut packet = exit_flow_icmp_echo(token);
+        packet[12..16].copy_from_slice(&[198, 51, 100, 1]);
+        packet[16..20].copy_from_slice(&[10, 8, 0, 2]);
+        packet[20] = 0;
+        packet
+    }
+
+    #[test]
+    fn exit_flow_refresh_survives_eviction_storm_of_newer_flows() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        let local_port = 40_000u16;
+        filter.note_outbound(peer, &exit_flow_udp_packet(local_port));
+        for port in 40_001..40_001 + MAX_TRACKED_EXIT_FLOWS as u16 - 1 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        filter.note_outbound(peer, &exit_flow_udp_packet(local_port));
+        for port in 20_000..20_064 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(local_port)));
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(40_001)));
+    }
+
+    #[test]
+    fn exit_flow_eviction_removes_idle_flow_before_active_ones() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        let survivor_token = 1u32;
+        let idle_token = 2u32;
+        filter.note_outbound(peer, &exit_flow_icmp_echo(survivor_token));
+        filter.note_outbound(peer, &exit_flow_icmp_echo(idle_token));
+        let idle_key = *filter.order.back().expect("idle flow is tracked");
+        *filter.flows.get_mut(&idle_key).expect("idle flow is mapped") = Instant::now()
+            .checked_sub(EXIT_ICMP_IDLE + Duration::from_secs(1))
+            .expect("monotonic clock older than the ICMP idle timeout");
+        for token in 100..100 + MAX_TRACKED_EXIT_FLOWS as u32 - 2 {
+            filter.note_outbound(peer, &exit_flow_icmp_echo(token));
+        }
+        let fresh_token = 100 + MAX_TRACKED_EXIT_FLOWS as u32 - 2;
+        filter.note_outbound(peer, &exit_flow_icmp_echo(fresh_token));
+
+        assert!(!filter.admits_inbound(peer, &exit_flow_icmp_reply(idle_token)));
+        assert!(filter.admits_inbound(peer, &exit_flow_icmp_reply(survivor_token)));
+        assert!(filter.admits_inbound(peer, &exit_flow_icmp_reply(fresh_token)));
+    }
+
+    #[test]
+    fn exit_flow_tcp_and_udp_round_trips_are_admitted() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        filter.note_outbound(peer, &exit_flow_udp_packet(40_000));
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(40_000)));
+
+        filter.note_outbound(
+            peer,
+            &ipv4_tcp_packet(TcpPacketSpec {
+                src: [10, 8, 0, 2],
+                dst: [198, 51, 100, 1],
+                src_port: 40_001,
+                dst_port: 443,
+                seq: 1,
+                ack: 0,
+                flags: 0x02,
+                payload_len: 0,
+            }),
+        );
+        assert!(filter.admits_inbound(
+            peer,
+            &ipv4_tcp_packet(TcpPacketSpec {
+                src: [198, 51, 100, 1],
+                dst: [10, 8, 0, 2],
+                src_port: 443,
+                dst_port: 40_001,
+                seq: 2,
+                ack: 2,
+                flags: 0x12,
+                payload_len: 0,
+            }),
+        ));
+        assert!(!filter.admits_inbound(
+            peer,
+            &ipv4_tcp_packet(TcpPacketSpec {
+                src: [198, 51, 100, 1],
+                dst: [10, 8, 0, 2],
+                src_port: 443,
+                dst_port: 40_002,
+                seq: 9,
+                ack: 0,
+                flags: 0x02,
+                payload_len: 0,
+            }),
+        ));
+    }
 }

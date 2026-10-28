@@ -23,13 +23,46 @@ impl ExitFlowFilter {
             return;
         }
         while self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
-            let Some(oldest) = self.order.pop_front() else {
+            if !self.evict_one_flow(now) {
                 break;
-            };
-            self.flows.remove(&oldest);
+            }
         }
         self.flows.insert(key, now);
         self.order.push_back(key);
+    }
+
+    // Evict the front entry once it is past its idle timeout, skipping live
+    // entries to the back, and fall back to the least recently refreshed one
+    // after a full pass so an active flow is never evicted while stale ones sit
+    // behind it.
+    fn evict_one_flow(&mut self, now: Instant) -> bool {
+        let mut pending = self.order.len();
+        let mut least_recent: Option<(ExitFlowKey, Instant)> = None;
+        while pending > 0 {
+            pending -= 1;
+            let Some(candidate) = self.order.pop_front() else {
+                break;
+            };
+            let Some(seen) = self.flows.get(&candidate).copied() else {
+                continue;
+            };
+            if now.saturating_duration_since(seen) > exit_flow_timeout(candidate.protocol) {
+                self.flows.remove(&candidate);
+                return true;
+            }
+            if least_recent.is_none_or(|(_, oldest)| seen < oldest) {
+                least_recent = Some((candidate, seen));
+            }
+            self.order.push_back(candidate);
+        }
+        match least_recent {
+            Some((key, _)) => {
+                self.flows.remove(&key);
+                self.order.retain(|candidate| candidate != &key);
+                true
+            }
+            None => false,
+        }
     }
 
     pub fn admits_inbound(&mut self, peer: [u8; 16], packet: &[u8]) -> bool {
