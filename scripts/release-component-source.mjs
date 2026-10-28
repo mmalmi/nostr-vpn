@@ -61,6 +61,8 @@ const harnessOnlyPaths = new Set([
   'scripts/ios-artifact-source.mjs',
   'scripts/lib-desktop-underlay-host-peer.sh',
   'scripts/lib-ubuntu-vm-imported-release.sh',
+  // Selects and verifies existing signed VM packages; never builds the app.
+  'scripts/lib-macos-vm-imported-release.sh',
   'scripts/linux-vm-desktop-underlay-change-e2e.sh',
   'scripts/lib-mobile-android-release-gate.sh',
   'scripts/lib-mobile-android-underlay.sh',

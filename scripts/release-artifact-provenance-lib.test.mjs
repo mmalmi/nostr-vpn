@@ -287,6 +287,7 @@ test('component proof retains only unchanged platform product inputs', () => {
 
 for (const [helper, nearbyHelper] of [
   ['native-lab.py', 'native-lab-helper.py'],
+  ['lib-macos-vm-imported-release.sh', 'lib-macos-vm-build.sh'],
   ['security-audit-rust.sh', 'security-build-rust.sh'],
   ['docker-replace-nvpn-binary', 'docker-replace-nvpn-image'],
   ['verify.sh', 'verify-build.sh'],
