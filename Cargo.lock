@@ -4115,6 +4115,7 @@ name = "nostr-vpn-wintun"
 version = "4.1.20"
 dependencies = [
  "anyhow",
+ "sha2 0.10.9",
  "wintun",
 ]
 

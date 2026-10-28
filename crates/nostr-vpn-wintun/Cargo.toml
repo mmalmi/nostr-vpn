@@ -10,7 +10,10 @@ readme = "README.md"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 anyhow.workspace = true
-wintun = "0.5.1"
+wintun = "=0.5.1"
+
+[build-dependencies]
+sha2.workspace = true
 
 [dev-dependencies]
 anyhow.workspace = true
