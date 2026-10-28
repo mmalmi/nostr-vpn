@@ -3886,9 +3886,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.45"
+version = "0.5.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a411e71bbf767e089bc0dd18828359ad587b2e4b2cdd10738fb4438487d4315c"
+checksum = "08cf630008abbc4b2d60e524e9165af4b2f79513fcb519eedac513f6863066d0"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3916,9 +3916,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-social-graph"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35325e59eea42ad99eb05fba75c85dd4882450c755d5b99be6582b45679e0a6f"
+checksum = "82f49b582d5b174358516a230372196691bd014ff997ff58bc039e554198f7fe"
 dependencies = [
  "async-trait",
  "nostr",
@@ -4229,9 +4229,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.114"
+version = "0.4.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7835927fc481eff0589d30a16f44f1437fa000bd2d8ff294e3d84b435c4d4f2f"
+checksum = "c6909318f877a31517d29d1ba923dab19a73abd6c7f8a0421f2b7f83492d0080"
 dependencies = [
  "async-wsocket",
  "base64 0.22.1",
@@ -4279,9 +4279,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.114"
+version = "0.4.115"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f0e98b6984b1361aa31c4ad689cdae5f2845a27a3b58bf0e28a1a34a73b0d96"
+checksum = "c667a0ab8bc373e581b59fc5688bfe1b2ca57ffdb419f8da1d0746834ce582f9"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4309,9 +4309,9 @@ checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.49"
+version = "0.2.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f71abb105acde27d31cadc44766e6d987154cebaf824c379b6c388050ddefdd"
+checksum = "0e4a40810bbc2f39388d68fdecde5f9d43c5ea98428a89928ac264bde552cb14"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
