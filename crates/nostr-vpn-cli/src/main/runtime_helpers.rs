@@ -474,7 +474,40 @@ fn fips_tunnel_config_from_app(
         ethernet_underlay,
     } = input;
 
-    let pending_control_recipients = load_pending_fips_control_recipients(config_path)?;
+    #[cfg(feature = "paid-exit")]
+    let paid_route_store = match load_paid_route_store(&paid_route_store_file_path(config_path)) {
+        Ok(store) => Some(store),
+        Err(error) => {
+            eprintln!(
+                "paid-exit: paid route store unreadable; disabling paid-exit for this run: {error:#}"
+            );
+            None
+        }
+    };
+    let mut pending_control_recipients = load_pending_fips_control_recipients(config_path)?;
+    #[cfg(feature = "paid-exit")]
+    if let Some(store) = paid_route_store.as_ref() {
+        pending_control_recipients.extend(
+            store
+                .channels
+                .values()
+                .filter(|channel| {
+                    channel.role == PaidRouteChannelRole::Seller
+                        && !matches!(
+                            channel.status,
+                            PaidRouteLifecycleStatus::Closed
+                                | PaidRouteLifecycleStatus::Expired
+                                | PaidRouteLifecycleStatus::Failed
+                        )
+                })
+                .map(|channel| {
+                    (
+                        "paid-exit seller settlement",
+                        channel.counterparty_npub.clone(),
+                    )
+                }),
+        );
+    }
     let control_recipient_pubkeys = pending_control_recipients
         .iter()
         .map(|(_, recipient)| recipient.as_str())
@@ -518,8 +551,12 @@ fn fips_tunnel_config_from_app(
             config.local_exit_forwarding_routes = runtime_local_exit_forwarding_routes(app);
         }
         config.paid_route_store_path = paid_route_store_file_path(config_path);
+        if paid_route_store.is_none() {
+            config.paid_exit.enabled = false;
+        }
         #[cfg(target_os = "macos")]
-        if (ethernet_underlay.is_none() || underlay_interface.is_some())
+        if let Some(store) = paid_route_store.as_ref()
+            && (ethernet_underlay.is_none() || underlay_interface.is_some())
             && matches!(
                 app.internet_source,
                 InternetSource::PaidAutomatic | InternetSource::PaidManual
@@ -528,7 +565,6 @@ fn fips_tunnel_config_from_app(
             // Payment must remain possible when the purchased route has no
             // credit or its provider cannot reach a mint. Only locally added
             // wallet mints qualify; public offers cannot add bypass routes.
-            let store = load_paid_route_store(&config.paid_route_store_path)?;
             for mint in &store.wallet.mints {
                 let url = reqwest::Url::parse(&mint.url)?;
                 let addresses = match url.socket_addrs(|| None) {
@@ -558,15 +594,19 @@ fn fips_tunnel_config_from_app(
             config.control_plane_bypass_hosts.sort_unstable();
             config.control_plane_bypass_hosts.dedup();
         }
-        if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
-            let store = load_paid_route_store(&config.paid_route_store_path)?;
+        if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex()
+            && let Some(store) = paid_route_store.as_ref()
+        {
             config.require_public_paid_exit_admission(
                 store.buyer_has_seller_admission(&seller_pubkey, unix_timestamp())?,
             );
         }
         config.paid_route_wallet_data_dir = paid_exit_wallet_data_dir(config_path);
         config.paid_route_payment_relays = paid_exit_relay_urls(app, &[]);
-        config.paid_route_admissions = fips_paid_route_admissions_from_store(app, config_path)?;
+        config.paid_route_admissions = paid_route_store
+            .as_ref()
+            .map(|store| fips_paid_route_admissions_from_store(app, store))
+            .unwrap_or_default();
         config.endpoint_peers =
             crate::fips_private_mesh::fips_endpoint_peers_with_paid_route_admissions(
                 config.endpoint_peers,
@@ -670,14 +710,12 @@ async fn fips_tunnel_config_from_app_async(
 #[cfg(feature = "paid-exit")]
 fn fips_paid_route_admissions_from_store(
     app: &AppConfig,
-    config_path: &Path,
-) -> Result<Vec<FipsPaidRouteAdmission>> {
+    store: &PaidRouteStore,
+) -> Vec<FipsPaidRouteAdmission> {
     if !app.paid_exit.enabled {
-        return Ok(Vec::new());
+        return Vec::new();
     }
-    let store_path = paid_route_store_file_path(config_path);
-    let store = load_paid_route_store(&store_path)?;
-    Ok(store
+    store
         .seller_admissions(&app.paid_exit, unix_timestamp())
         .into_iter()
         .filter_map(|admission| {
@@ -692,7 +730,7 @@ fn fips_paid_route_admissions_from_store(
                 admission,
             ))
         })
-        .collect())
+        .collect()
 }
 fn enqueue_pending_fips_join_requests(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,

@@ -74,8 +74,14 @@ impl PaidExitOfferPublisher {
         else {
             return Self::default();
         };
-        let Ok(store) = load_paid_route_store(&paid_route_store_file_path(config_path)) else {
-            return Self::default();
+        let store = match load_paid_route_store(&paid_route_store_file_path(config_path)) {
+            Ok(store) => store,
+            Err(error) => {
+                eprintln!(
+                    "paid-exit: paid route store unavailable; not advertising offers this run: {error:#}"
+                );
+                return Self::default();
+            }
         };
         let own_offers = store
             .offers
