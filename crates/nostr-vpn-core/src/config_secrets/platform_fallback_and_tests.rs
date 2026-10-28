@@ -61,6 +61,16 @@ mod tests {
     }
 
     #[test]
+    fn keychain_access_group_ignores_blank_values() {
+        assert_eq!(
+            super::normalize_keychain_access_group(Some(" team.bundle ")),
+            Some("team.bundle")
+        );
+        assert_eq!(super::normalize_keychain_access_group(Some("   ")), None);
+        assert_eq!(super::normalize_keychain_access_group(None), None);
+    }
+
+    #[test]
     fn selects_the_legacy_nostr_secret_matching_the_configured_identity() {
         let expected = Keys::generate();
         let unrelated = Keys::generate();
