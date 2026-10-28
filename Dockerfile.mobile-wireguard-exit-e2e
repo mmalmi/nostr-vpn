@@ -1,7 +1,7 @@
 FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
 # Bootstrap HTTPS without a compiler image or unverified package download.
-ADD --checksum=sha256:796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe https://curl.se/ca/cacert-2026-10-20.pem /etc/ssl/certs/ca-certificates.crt
+ADD --chmod=0644 --checksum=sha256:796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe https://curl.se/ca/cacert-2026-10-20.pem /etc/ssl/certs/ca-certificates.crt
 
 # APT verifies the complete package closure against these signed, hash-pinned
 # snapshot indexes on both amd64 and arm64. Do not refresh from mutable mirrors.
