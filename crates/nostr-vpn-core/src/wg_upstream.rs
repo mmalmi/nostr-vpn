@@ -32,6 +32,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use boringtun::noise::errors::WireGuardError;
 use boringtun::noise::{Packet, Tunn, TunnResult};
 use boringtun::x25519::{PublicKey, StaticSecret};
 use tokio::net::UdpSocket;
@@ -44,6 +45,8 @@ use crate::config::WireGuardExitConfig;
 
 pub const MAX_WG_PACKET: usize = 65_535;
 const TIMER_TICK: Duration = Duration::from_millis(250);
+/// Minimum spacing between forced re-handshakes so junk cannot churn initiations.
+const FORCED_HANDSHAKE_MIN_INTERVAL: Duration = Duration::from_secs(10);
 
 type TunPacket = Vec<u8>;
 type TunPacketBatch = Vec<TunPacket>;
@@ -515,6 +518,8 @@ async fn run_pump(
     // idle, no keepalive fires, eventually decap returns
     // NoCurrentSession), force a re-handshake ourselves.
     let mut consecutive_decap_errors: u32 = 0;
+    // The initial initiation above is not a forced one, so None until one fires.
+    let mut last_forced_handshake: Option<std::time::Instant> = None;
     let mut last_self_keepalive = std::time::Instant::now();
     let mut ticker = interval(TIMER_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -592,10 +597,13 @@ async fn run_pump(
                     if matches!(result, TunnResult::Done) {
                         consecutive_decap_errors = 0;
                     } else if let TunnResult::Err(error) = &result {
-                        consecutive_decap_errors = consecutive_decap_errors.saturating_add(1);
-                        log_android_warn(&format!(
-                            "wg-upstream: decap err {error:?} (run={consecutive_decap_errors})"
-                        ));
+                        // Only a missing session counts toward a re-handshake; junk stays neutral.
+                        if matches!(error, WireGuardError::NoCurrentSession) {
+                            consecutive_decap_errors = consecutive_decap_errors.saturating_add(1);
+                            log_android_warn(&format!(
+                                "wg-upstream: decap err {error:?} (run={consecutive_decap_errors})"
+                            ));
+                        }
                     } else {
                         consecutive_decap_errors = 0;
                     }
@@ -623,15 +631,16 @@ async fn run_pump(
                 }
                 refresh_handshake_state(&tunn, &handshake, false).await;
 
-                // 5+ consecutive decap errors means our session lost
-                // sync with the upstream. Force a fresh handshake init
-                // — boringtun will accept the next response and
-                // install new keys.
-                if consecutive_decap_errors >= 5 {
+                // Force a re-handshake when the session is gone, at most once per window.
+                if consecutive_decap_errors >= 5
+                    && last_forced_handshake
+                        .is_none_or(|at| at.elapsed() >= FORCED_HANDSHAKE_MIN_INTERVAL)
+                {
                     log_android_warn(
                         "wg-upstream: forcing re-handshake after persistent decap errors",
                     );
                     consecutive_decap_errors = 0;
+                    last_forced_handshake = Some(std::time::Instant::now());
                     if let TunnResult::WriteToNetwork(packet) =
                         tunn.format_handshake_initiation(&mut out, true)
                     {
