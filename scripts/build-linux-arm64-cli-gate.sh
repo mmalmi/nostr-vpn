@@ -228,12 +228,27 @@ fips_version="${fips_version_line%% *}"
 }
 
 build_image_id="$(docker image inspect --format '{{.Id}}' "$BUILDER_IMAGE")"
+build_image_platform="$(
+  docker image inspect --format '{{.Os}}/{{.Architecture}}' "$BUILDER_IMAGE"
+)"
+toolchain_versions="$(docker run --rm --platform "$build_image_platform" \
+  --entrypoint bash "$build_image_id" -c 'rustc --version && cargo --version')"
+rustc_version="${toolchain_versions%%$'\n'*}"
+cargo_version="${toolchain_versions##*$'\n'}"
+rustc_version_re='^rustc [0-9]+\.[0-9]+\.[0-9]+ '
+cargo_version_re='^cargo [0-9]+\.[0-9]+\.[0-9]+ '
+[[ "$rustc_version" =~ $rustc_version_re \
+  && "$cargo_version" =~ $cargo_version_re ]] || {
+  echo "Linux ARM64 CLI gate could not read the builder toolchain versions" >&2
+  exit 1
+}
 python3 - \
   "$RECEIPT" "$app_head" "$app_tree" "$archive_sha" "$cli_sha" \
   "$(wc -c <"$ARCHIVE" | tr -d '[:space:]')" \
   "$(wc -c <"$binary" | tr -d '[:space:]')" \
   "$short_version" "$verbose_version" "$fips_version" "$native_arch" \
-  "$(uname -s)" "$(uname -m)" "$build_image_id" <<'PY'
+  "$(uname -s)" "$(uname -m)" "$build_image_id" \
+  "$rustc_version" "$cargo_version" <<'PY'
 import json
 import pathlib
 import sys
@@ -241,7 +256,8 @@ import sys
 (
     receipt, app_head, app_tree, archive_sha, cli_sha, archive_size,
     cli_size, short_version, verbose_version, fips_version, native_arch,
-    build_host_os, build_host_arch, build_image_id,
+    build_host_os, build_host_arch, build_image_id, rustc_version,
+    cargo_version,
 ) = sys.argv[1:]
 payload = {
     "receiptSchema": 1,
@@ -256,6 +272,8 @@ payload = {
     "buildHostOs": build_host_os,
     "buildHostArchitecture": build_host_arch,
     "buildImageId": build_image_id,
+    "rustcVersion": rustc_version,
+    "cargoVersion": cargo_version,
     "archiveSha256": archive_sha,
     "archiveSize": int(archive_size),
     "cliSha256": cli_sha,
