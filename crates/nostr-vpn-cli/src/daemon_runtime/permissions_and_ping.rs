@@ -1,3 +1,4 @@
+#[cfg(any(not(target_os = "linux"), test))]
 pub(crate) fn set_daemon_cleanup_file_permissions(path: &Path) -> Result<()> {
     // Cleanup snapshots may contain WireGuard private and preshared keys.
     set_runtime_file_permissions(path, 0o600)
