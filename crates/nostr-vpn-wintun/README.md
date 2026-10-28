@@ -17,11 +17,12 @@ review and pin the new dependency, verify its archive against the reviewed lockf
 checksum, then derive all four DLL hashes from that archive.
 
 On the configured Windows development VM, run
-`cargo check --locked -p nostr-vpn-wintun --jobs 2`. Then use Python 3.11 or newer
-to exercise that candidate's compiled build script with isolated cache fixtures:
+`cargo check --locked -p nostr-vpn-wintun --jobs 2`. Then use the installed
+Windows PowerShell and `tar.exe` to exercise that candidate's compiled build
+script with isolated cache fixtures:
 
 ```text
-python scripts/test-wintun-build-inputs.py --build-script <target>/debug/build/nostr-vpn-wintun-<hash>/build-script-build.exe --crate-archive <cargo-home>/registry/cache/<registry>/wintun-0.5.1.crate
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-wintun-build-inputs.ps1 -BuildScript <target>/debug/build/nostr-vpn-wintun-<hash>/build-script-build.exe -CrateArchive <cargo-home>/registry/cache/<registry>/wintun-0.5.1.crate
 ```
 
 This checks all four DLL pins, wrong versions, unrelated packages, changed and
