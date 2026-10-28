@@ -28,6 +28,7 @@ fn paid_route_channel_open_frame(
                     "balance": 0,
                     "signature": "s".repeat(2_000),
                     "params": {
+                        "output_version": nostr_vpn_core::paid_routes::PAID_ROUTE_OUTPUT_VERSION,
                         "channel": "mobile-channel-1",
                         "mint": "https://mint.example",
                         "unit": "sat",

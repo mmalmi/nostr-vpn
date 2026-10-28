@@ -20,6 +20,8 @@ const harnessOnlyPaths = new Set([
   // Included only by ffi.rs's cfg(test) module; the parent remains a product input.
   'crates/nostr-vpn-app-core/src/ffi/tests_network/exit_state.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_core.rs',
+  // Included only by mobile_tunnel.rs's cfg(test) module.
+  'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_paid_route.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_runtime/websocket_join.rs',
   'crates/nostr-vpn-core/examples/desktop_manual_join_e2e_fixture.rs',
   'scripts/appstore-draft',
