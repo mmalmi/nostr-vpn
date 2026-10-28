@@ -375,7 +375,11 @@ mod tests {
 
         let mut queued = load_join_rosters(&config_path);
         assert!(queued.len() <= MAX_QUEUED_JOIN_ROSTERS);
-        assert_eq!(queued.len(), 7, "expired entries are deleted before capping");
+        assert_eq!(
+            queued.len(),
+            7,
+            "expired entries are deleted before capping"
+        );
         queued.sort_by(|a, b| a.1.recipient_npub.cmp(&b.1.recipient_npub));
         expected_recipients.sort();
         assert_eq!(

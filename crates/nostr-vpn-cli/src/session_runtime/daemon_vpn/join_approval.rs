@@ -212,7 +212,10 @@ pub(super) fn start_queued_join_roster_deliveries(
         if join_roster_delivery_expired(&queued, crate::unix_timestamp()) {
             release_join_roster_delivery(&path);
             if let Err(error) = nostr_vpn_core::join_delivery::expire_join_roster(&path, &queued) {
-                eprintln!("failed to expire queued join approval {}: {error:#}", path.display());
+                eprintln!(
+                    "failed to expire queued join approval {}: {error:#}",
+                    path.display()
+                );
             }
             eprintln!(
                 "expired queued join approval for {}; removed it from the outbox",
