@@ -200,6 +200,12 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
             failures.push(format!("remove secure DNS state: {error}"));
         }
 
+        if state.magic_dns_resolver_files
+            && let Err(error) = nostr_vpn_core::magic_dns::cleanup_owned_magic_dns_state()
+        {
+            failures.push(format!("remove MagicDNS resolver files: {error}"));
+        }
+
         if using_legacy_route_cleanup
             && let Err(error) = repair_legacy_macos_network_state(config_path)
         {

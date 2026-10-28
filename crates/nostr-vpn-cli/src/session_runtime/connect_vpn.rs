@@ -62,7 +62,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         println!("connect: FIPS private mesh on {}", runtime.iface());
         (Some(runtime), endpoint_peer_signature)
     };
-    let mut magic_dns_runtime = start_split_magic_dns(&app);
+    let mut magic_dns_runtime = start_split_magic_dns(&app, &config_path);
 
     println!(
         "connect: network {network_id} using FIPS private mesh; waiting for {expected_peers} configured peer(s)"
@@ -151,7 +151,11 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                                         "fips: capabilities broadcast failed after roster apply: {error}"
                                     );
                                 }
-                                refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
+                                refresh_or_start_split_magic_dns(
+                                    &mut magic_dns_runtime,
+                                    &app,
+                                    &config_path,
+                                );
                             }
                             if !drained.endpoint_hint_participants.is_empty()
                                 && let Err(error) =

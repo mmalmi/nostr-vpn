@@ -355,6 +355,64 @@ pub fn uninstall_system_resolver(suffix: &str) -> Result<()> {
     }
 }
 
+/// Remove every MagicDNS-owned system resolver artifact after a crash.
+/// Ownership is decided by the same markers the install path writes, so
+/// foreign resolver state is never touched.
+pub fn cleanup_owned_magic_dns_state() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        remove_owned_macos_resolvers(Path::new("/etc/resolver"))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        uninstall_linux_resolver("")
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        run_windows_powershell(&windows_repair_nrpt_script())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        Err(anyhow!("system magic dns is unsupported on this platform"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn remove_owned_macos_resolvers(resolver_dir: &Path) -> Result<()> {
+    let entries = match fs::read_dir(resolver_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(anyhow!(
+                "failed to read {}: {error}",
+                resolver_dir.display()
+            ));
+        }
+    };
+    let mut failures = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // The marker check here skips files whose bytes are not valid UTF-8
+        // before remove_macos_resolver would fail reading them as text.
+        if !fs::read(&path).is_ok_and(|contents| {
+            contents.starts_with(MACOS_MAGIC_DNS_MARKER.as_bytes())
+        }) {
+            continue;
+        }
+        if let Err(error) = remove_macos_resolver(&path) {
+            failures.push(format!("remove {}: {error}", path.display()));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
+    }
+}
+
 #[cfg(target_os = "macos")]
 const MACOS_MAGIC_DNS_MARKER: &str = "# Managed by nvpn MagicDNS\n";
 
@@ -743,6 +801,24 @@ fn windows_uninstall_nrpt_script(suffix: &str) -> String {
     )
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_repair_nrpt_script() -> String {
+    // Crash repair cannot know which suffix the killed daemon installed, so
+    // match the display-name and comment prefixes every MagicDNS rule carries.
+    concat!(
+        "$ErrorActionPreference = 'Stop'\n",
+        "Get-DnsClientNrptRule -ErrorAction Stop |\n",
+        "  Where-Object {\n",
+        "    $_.DisplayName -like 'nostr-vpn MagicDNS*' -or $_.Comment -like 'nostr-vpn split DNS for*'\n",
+        "  } |\n",
+        "  ForEach-Object {\n",
+        "    $_ | Remove-DnsClientNrptRule -Force -ErrorAction Stop | Out-Null\n",
+        "  }\n",
+        "Clear-DnsClientCache -ErrorAction SilentlyContinue\n",
+    )
+    .to_string()
+}
+
 #[cfg(target_os = "windows")]
 fn install_windows_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Result<()> {
     let script = windows_install_nrpt_script(suffix, nameserver, port)?;
@@ -793,6 +869,7 @@ fn strip_cidr(value: &str) -> &str {
 mod tests {
     use super::{
         build_magic_dns_response_if_handled, windows_install_nrpt_script, windows_nameserver,
+        windows_nrpt_comment, windows_nrpt_display_name, windows_repair_nrpt_script,
         windows_uninstall_nrpt_script,
     };
     use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
@@ -906,6 +983,43 @@ mod tests {
         assert!(script.contains("Get-DnsClientNrptRule"));
         assert!(script.contains("Remove-DnsClientNrptRule"));
         assert!(script.contains("mesh.example"));
+    }
+
+    #[test]
+    fn windows_nrpt_repair_script_matches_install_ownership_markers() {
+        let repair = windows_repair_nrpt_script();
+        assert!(repair.contains("-like 'nostr-vpn MagicDNS*'"));
+        assert!(repair.contains("-like 'nostr-vpn split DNS for*'"));
+        assert!(repair.contains("Remove-DnsClientNrptRule"));
+        assert!(windows_nrpt_display_name("mesh.example").starts_with("nostr-vpn MagicDNS"));
+        assert!(windows_nrpt_comment("mesh.example").starts_with("nostr-vpn split DNS for"));
+        let install = windows_install_nrpt_script("mesh.example", Ipv4Addr::LOCALHOST, 53)
+            .expect("build windows nrpt install script");
+        assert!(install.contains(&windows_nrpt_display_name("mesh.example")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn magic_dns_repair_removes_only_marker_owned_resolver_files() {
+        use std::fs;
+
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-magicdns-repair-{}", uuid::Uuid::new_v4()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).expect("temporary resolver directory");
+        let owned = directory.join("fips");
+        super::write_macos_resolver(&owned, Ipv4Addr::LOCALHOST, 1053).expect("owned resolver");
+        let foreign = directory.join("example.com");
+        fs::write(&foreign, "nameserver 192.0.2.53\n").expect("foreign resolver");
+
+        super::remove_owned_macos_resolvers(&directory).expect("crash repair");
+
+        assert!(!owned.exists(), "owned resolver file must be removed");
+        assert_eq!(
+            fs::read_to_string(&foreign).expect("foreign resolver preserved"),
+            "nameserver 192.0.2.53\n"
+        );
+        fs::remove_dir_all(&directory).expect("remove temporary resolver directory");
     }
 
     #[test]

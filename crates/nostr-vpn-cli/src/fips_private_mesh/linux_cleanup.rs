@@ -223,8 +223,8 @@ impl LinuxNetworkCleanupState {
         (!state.is_empty()).then_some(state)
     }
 
-    fn is_empty(&self) -> bool {
-        !self.has_network_ownership() && self.secure_dns.is_none()
+    pub(crate) fn is_empty(&self) -> bool {
+        !self.has_network_ownership() && self.secure_dns.is_none() && !self.magic_dns_split_dns
     }
 
     fn has_network_ownership(&self) -> bool {
@@ -621,19 +621,25 @@ impl LinuxNetworkCleanupActions for LinuxNetworkCleanupState {
 pub(crate) fn repair_linux_network_cleanup_state(
     state: &mut LinuxNetworkCleanupState,
 ) -> Result<()> {
-    let network_error = state
-        .has_network_ownership()
-        .then(|| cleanup_linux_network_state_with_actions(state).err())
-        .flatten();
-    let dns_error =
+    let mut failures = Vec::new();
+    if state.has_network_ownership()
+        && let Err(error) = cleanup_linux_network_state_with_actions(state)
+    {
+        failures.push(format!("network cleanup failed ({error:#})"));
+    }
+    if let Err(error) =
         crate::secure_dns_runtime::repair_linux_secure_dns_cleanup_state(&mut state.secure_dns)
-            .err();
-    match (network_error, dns_error) {
-        (None, None) => Ok(()),
-        (Some(network), None) => Err(network),
-        (None, Some(dns)) => Err(dns),
-        (Some(network), Some(dns)) => Err(anyhow!(
-            "Linux network cleanup failed ({network:#}); secure DNS cleanup failed ({dns:#})"
-        )),
+    {
+        failures.push(format!("secure DNS cleanup failed ({error:#})"));
+    }
+    if state.magic_dns_split_dns
+        && let Err(error) = nostr_vpn_core::magic_dns::cleanup_owned_magic_dns_state()
+    {
+        failures.push(format!("MagicDNS cleanup failed ({error:#})"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
     }
 }
