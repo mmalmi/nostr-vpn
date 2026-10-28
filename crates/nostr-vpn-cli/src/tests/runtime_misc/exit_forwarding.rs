@@ -178,7 +178,7 @@ fn macos_exit_claims_from_other_owners_keep_pf_enabled() {
     );
     assert!(
         !crate::macos_network::macos_other_exit_claims_remain(
-            &[format!("{other}"), format!("{owner}.cleanup.json")],
+            &[other.to_string(), format!("{owner}.cleanup.json")],
             &owner,
         ),
         "runtime directories and journals are not exit claims"
