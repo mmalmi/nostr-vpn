@@ -68,7 +68,7 @@ RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
     && echo 'a40a401a79fd1bd9d2cb41fd783d0c80f3504f657002bfae49dfd55049dce8f8  /tmp/cargo-deb.crate' | sha256sum --check --strict \
     && tar -xzf /tmp/cargo-deb.crate -C /tmp \
     && echo '0e0bddb0b561f0fb2f566d7fe5f5d5eda0a403cd3d185912c808a5eb8da2252d  /tmp/cargo-deb-3.7.0/Cargo.lock' | sha256sum --check --strict \
-    && cargo install --path /tmp/cargo-deb-3.7.0 --locked \
+    && cargo install --path /tmp/cargo-deb-3.7.0 --locked --jobs 2 \
     && test "$(cargo deb --version)" = 'cargo-deb 3.7.0' \
     && rm -rf /tmp/cargo-deb.crate /tmp/cargo-deb-3.7.0
 
