@@ -1,7 +1,23 @@
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 
-RUN apt-get update \
+# Bootstrap HTTPS without a compiler image or unverified package download.
+ADD --checksum=sha256:796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe https://curl.se/ca/cacert-2026-10-20.pem /etc/ssl/certs/ca-certificates.crt
+
+# APT verifies the complete package closure against these signed, hash-pinned
+# snapshot indexes on both amd64 and arm64. Do not refresh from mutable mirrors.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' \
+      'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] https://snapshot.debian.org/archive/debian/20261027T000000Z bookworm main' \
+      'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20261027T000000Z bookworm-security main' \
+      > /etc/apt/sources.list \
+    && apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
+    && printf '%s\n' \
+      '77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa  /var/lib/apt/lists/snapshot.debian.org_archive_debian_20261027T000000Z_dists_bookworm_InRelease' \
+      'c04f97133debb797fa029bbc8ffe42fd5c8c039bad32cbb1e69cdbebce349b76  /var/lib/apt/lists/snapshot.debian.org_archive_debian-security_20261027T000000Z_dists_bookworm-security_InRelease' \
+      | sha256sum --check --strict \
     && apt-get install -y --no-install-recommends \
+      ca-certificates \
       dnsmasq \
       iproute2 \
       iputils-ping \
