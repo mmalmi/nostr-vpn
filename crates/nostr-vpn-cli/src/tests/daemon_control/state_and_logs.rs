@@ -494,6 +494,9 @@ fn corrupt_network_cleanup_ownership_remains_fail_closed() {
     fs::create_dir_all(cleanup_path.parent().expect("cleanup parent"))
         .expect("create cleanup parent");
     fs::write(&cleanup_path, b"{not-valid-json").expect("write corrupt cleanup ownership");
+    #[cfg(target_os = "linux")]
+    fs::set_permissions(&cleanup_path, fs::Permissions::from_mode(0o600))
+        .expect("make the corrupt snapshot privately owned");
 
     let error = read_daemon_network_cleanup_state(&cleanup_path)
         .expect_err("unreadable cleanup ownership must block repair/startup");

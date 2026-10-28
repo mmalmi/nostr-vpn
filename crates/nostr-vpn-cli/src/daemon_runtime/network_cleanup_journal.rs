@@ -2,16 +2,33 @@
 pub(crate) fn read_daemon_network_cleanup_state(
     path: &Path,
 ) -> Result<Option<DaemonNetworkCleanupState>> {
-    if !path.exists() {
-        return Ok(None);
-    }
+    #[cfg(target_os = "linux")]
+    let raw = {
+        use std::io::Read as _;
 
-    if let Some(parent) = path.parent() {
-        set_daemon_cleanup_directory_permissions(parent)?;
-    }
-    set_daemon_cleanup_file_permissions(path)?;
-    let raw = fs::read(path)
-        .with_context(|| format!("failed to read daemon cleanup file {}", path.display()))?;
+        let Some(directory) = open_linux_daemon_cleanup_directory(path, false)? else {
+            return Ok(None);
+        };
+        let Some(mut file) = open_linux_daemon_cleanup_file(&directory, path)? else {
+            return Ok(None);
+        };
+        let mut raw = Vec::new();
+        file.read_to_end(&mut raw)
+            .with_context(|| format!("failed to read daemon cleanup file {}", path.display()))?;
+        raw
+    };
+    #[cfg(not(target_os = "linux"))]
+    let raw = {
+        if !path.exists() {
+            return Ok(None);
+        }
+        if let Some(parent) = path.parent() {
+            set_daemon_cleanup_directory_permissions(parent)?;
+        }
+        set_daemon_cleanup_file_permissions(path)?;
+        fs::read(path)
+            .with_context(|| format!("failed to read daemon cleanup file {}", path.display()))?
+    };
     match serde_json::from_slice::<DaemonNetworkCleanupState>(&raw) {
         Ok(parsed) => Ok(Some(parsed)),
         Err(parse_error) => {
@@ -20,6 +37,9 @@ pub(crate) fn read_daemon_network_cleanup_state(
                 && !trimmed.is_empty()
                 && let Ok(parsed) = serde_json::from_slice::<DaemonNetworkCleanupState>(trimmed)
             {
+                // Linux reads through a validated handle in a user-controlled
+                // parent. Do not reopen that pathname just to remove padding.
+                #[cfg(not(target_os = "linux"))]
                 if let Err(error) = write_private_runtime_file_atomically(path, trimmed) {
                     eprintln!(
                         "daemon: parsed padded cleanup file {} but failed to rewrite clean copy: {}",
@@ -42,11 +62,99 @@ pub(crate) fn read_daemon_network_cleanup_state(
     }
 }
 
+#[cfg(target_os = "linux")]
+fn open_linux_daemon_cleanup_directory(path: &Path, create: bool) -> Result<Option<fs::File>> {
+    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _};
+
+    let parent = path.parent().context("daemon cleanup file has no parent")?;
+    if create {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let directory = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(parent)
+    {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to open daemon cleanup directory {}",
+                    parent.display()
+                )
+            });
+        }
+    };
+    let metadata = directory.metadata()?;
+    if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o022 != 0 {
+        return Err(anyhow!(
+            "refusing untrusted daemon cleanup directory {}: expected daemon ownership without group/other write access",
+            parent.display()
+        ));
+    }
+    if create {
+        directory.set_permissions(fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(Some(directory))
+}
+
+#[cfg(target_os = "linux")]
+fn open_linux_daemon_cleanup_file(directory: &fs::File, path: &Path) -> Result<Option<fs::File>> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+    use std::os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _};
+
+    let name = std::ffi::CString::new(
+        path.file_name()
+            .context("daemon cleanup file has no name")?
+            .as_bytes(),
+    )?;
+    // Bind the leaf lookup to the directory we checked. The config owner can
+    // rename its parent while root is reading, but cannot replace this handle.
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::NotFound {
+            return Ok(None);
+        }
+        return Err(error)
+            .with_context(|| format!("failed to open daemon cleanup file {}", path.display()));
+    }
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    let metadata = validate_daemon_runtime_file(&file, path)?;
+    if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o077 != 0 {
+        return Err(anyhow!(
+            "refusing untrusted daemon cleanup file {}: expected private daemon-owned file",
+            path.display()
+        ));
+    }
+    Ok(Some(file))
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn write_daemon_network_cleanup_state(
     path: &Path,
     state: &DaemonNetworkCleanupState,
 ) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    let _directory = {
+        let directory = open_linux_daemon_cleanup_directory(path, true)?
+            .context("daemon cleanup directory disappeared")?;
+        // Reject an already untrusted journal before publishing new state.
+        open_linux_daemon_cleanup_file(&directory, path)?;
+        directory
+    };
+    #[cfg(not(target_os = "linux"))]
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
@@ -60,6 +168,9 @@ pub(crate) fn write_daemon_network_cleanup_state(
     {
         write_private_runtime_file_durably(path, raw.as_bytes())
             .with_context(|| format!("failed to write daemon cleanup file {}", path.display()))?;
+        // The atomic writer creates and protects its own inode. A Linux
+        // pathname chmod here could bless a substituted writable journal.
+        #[cfg(not(target_os = "linux"))]
         set_daemon_cleanup_file_permissions(path)?;
         Ok(())
     }
@@ -598,5 +709,157 @@ mod windows_network_cleanup_journal_tests {
         );
 
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_cleanup_journal_files {
+    use super::*;
+    use std::io::Read as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    use std::os::unix::fs::{MetadataExt as _, symlink};
+
+    fn fixture() -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("nvpn-cleanup-trust-{}", rand::random::<u128>()));
+        fs::create_dir(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn private_cleanup_journal_round_trip_preserves_padded_snapshot() {
+        let dir = fixture();
+        let path = dir.join("cleanup/daemon.cleanup.json");
+        assert!(read_daemon_network_cleanup_state(&path).unwrap().is_none());
+        let state = DaemonNetworkCleanupState::default();
+        write_daemon_network_cleanup_state(&path, &state).unwrap();
+        let mut padded = fs::read(&path).unwrap();
+        padded.extend_from_slice(b"\n\0\0");
+        fs::write(&path, &padded).unwrap();
+        let restored = read_daemon_network_cleanup_state(&path).unwrap().unwrap();
+        assert_eq!(
+            serde_json::to_value(restored).unwrap(),
+            serde_json::to_value(state).unwrap()
+        );
+        assert_eq!(fs::read(&path).unwrap(), padded);
+        fs::remove_file(&path).unwrap();
+        assert!(read_daemon_network_cleanup_state(&path).unwrap().is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unsafe_cleanup_journal_permissions_are_not_repaired_or_discarded() {
+        let dir = fixture();
+        let path = dir.join("cleanup/daemon.cleanup.json");
+        let state = DaemonNetworkCleanupState::default();
+        write_daemon_network_cleanup_state(&path, &state).unwrap();
+        let original = fs::read(&path).unwrap();
+        for mode in [0o640, 0o666] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+            assert!(read_daemon_network_cleanup_state(&path).is_err());
+            assert!(write_daemon_network_cleanup_state(&path, &state).is_err());
+            assert_eq!(fs::metadata(&path).unwrap().mode() & 0o777, mode);
+            assert_eq!(fs::read(&path).unwrap(), original);
+        }
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let parent = path.parent().unwrap();
+        fs::set_permissions(parent, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(read_daemon_network_cleanup_state(&path).is_err());
+        assert!(write_daemon_network_cleanup_state(&path, &state).is_err());
+        assert_eq!(fs::metadata(parent).unwrap().mode() & 0o777, 0o777);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cleanup_journal_links_and_fifo_are_rejected_without_mutation() {
+        let dir = fixture();
+        let path = dir.join("cleanup/daemon.cleanup.json");
+        let state = DaemonNetworkCleanupState::default();
+        write_daemon_network_cleanup_state(&path, &state).unwrap();
+        let target = dir.join("target");
+        fs::rename(&path, &target).unwrap();
+        let original = fs::read(&target).unwrap();
+        for hard_link in [false, true] {
+            if hard_link {
+                fs::hard_link(&target, &path).unwrap();
+            } else {
+                symlink(&target, &path).unwrap();
+            }
+            assert!(read_daemon_network_cleanup_state(&path).is_err());
+            assert!(write_daemon_network_cleanup_state(&path, &state).is_err());
+            assert_eq!(fs::read(&target).unwrap(), original);
+            assert_eq!(fs::metadata(&target).unwrap().mode() & 0o777, 0o600);
+            fs::remove_file(&path).unwrap();
+        }
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(read_daemon_network_cleanup_state(&path).is_err());
+        assert!(write_daemon_network_cleanup_state(&path, &state).is_err());
+        assert!(!fs::metadata(&path).unwrap().is_file());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cleanup_read_remains_bound_to_validated_directory_and_file() {
+        let dir = fixture();
+        let path = dir.join("cleanup/daemon.cleanup.json");
+        write_daemon_network_cleanup_state(&path, &DaemonNetworkCleanupState::default()).unwrap();
+        let original = fs::read(&path).unwrap();
+        let directory = open_linux_daemon_cleanup_directory(&path, false)
+            .unwrap()
+            .unwrap();
+        let retained = dir.join("retained");
+        fs::rename(path.parent().unwrap(), &retained).unwrap();
+        let replacement = dir.join("replacement");
+        fs::create_dir(&replacement).unwrap();
+        fs::write(
+            replacement.join("daemon.cleanup.json"),
+            b"untrusted replacement",
+        )
+        .unwrap();
+        symlink(&replacement, path.parent().unwrap()).unwrap();
+        assert!(read_daemon_network_cleanup_state(&path).is_err());
+        let mut file = open_linux_daemon_cleanup_file(&directory, &path)
+            .unwrap()
+            .unwrap();
+        let retained_file = retained.join("daemon.cleanup.json");
+        fs::rename(&retained_file, retained.join("opened.json")).unwrap();
+        fs::write(&retained_file, b"another replacement").unwrap();
+        let mut read = Vec::new();
+        file.read_to_end(&mut read).unwrap();
+        assert_eq!(read, original);
+        assert_eq!(
+            fs::read(replacement.join("daemon.cleanup.json")).unwrap(),
+            b"untrusted replacement"
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires root; isolated filesystem fixtures only"]
+    fn root_cleanup_journal_rejects_unprivileged_ownership() {
+        assert_eq!(
+            unsafe { libc::geteuid() },
+            0,
+            "run this ownership regression as root"
+        );
+        let dir = fixture();
+        let path = dir.join("cleanup/daemon.cleanup.json");
+        let state = DaemonNetworkCleanupState::default();
+        write_daemon_network_cleanup_state(&path, &state).unwrap();
+        let original = fs::read(&path).unwrap();
+        std::os::unix::fs::chown(&path, Some(1), None).unwrap();
+        assert!(read_daemon_network_cleanup_state(&path).is_err());
+        assert!(write_daemon_network_cleanup_state(&path, &state).is_err());
+        assert_eq!(fs::metadata(&path).unwrap().uid(), 1);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        std::os::unix::fs::chown(&path, Some(0), None).unwrap();
+        std::os::unix::fs::chown(path.parent().unwrap(), Some(1), None).unwrap();
+        assert!(read_daemon_network_cleanup_state(&path).is_err());
+        assert!(write_daemon_network_cleanup_state(&path, &state).is_err());
+        assert_eq!(fs::metadata(path.parent().unwrap()).unwrap().uid(), 1);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        fs::remove_dir_all(dir).unwrap();
     }
 }
