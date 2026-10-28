@@ -158,7 +158,7 @@ function isProductInput(path, platform) {
   if (path === 'umbrel/docker-compose.yml') return false
   // This recipe builds only the separately inspected container packages.
   // Shared Rust sources and lockfiles remain native product inputs below.
-  if (path === 'umbrel/Dockerfile') return false
+  if (path === 'umbrel/Dockerfile' || path === 's9pk.mk') return false
   if (
     path === 'crates/nostr-vpn-cli/src/wireguard_exit/linux_tests.rs'
     || path.startsWith('crates/nostr-vpn-cli/src/wireguard_exit/linux_tests/')

@@ -38,7 +38,8 @@ make
 ```
 
 The Makefile installs Node dependencies and runs the TypeScript check and build
-before packaging.
+before packaging. It uses `npm ci` and refuses a stale dependency lock; update
+and commit `package-lock.json` explicitly when changing package dependencies.
 
 Useful targeted builds:
 

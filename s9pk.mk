@@ -101,11 +101,8 @@ javascript/index.js: $(shell find startos -type f) tsconfig.json node_modules
 	npm run check
 	npm run build
 
-node_modules: package-lock.json
+node_modules: package-lock.json package.json
 	npm ci
-
-package-lock.json: package.json
-	npm i
 
 clean:
 	@echo "Cleaning StartOS build artifacts..."
