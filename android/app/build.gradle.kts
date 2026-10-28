@@ -164,6 +164,7 @@ tasks.register<Exec>("buildRustArm64") {
                 rustOutputDir.asFile.absolutePath,
                 "build",
                 "--quiet",
+                "--locked",
             ) + listOf(
                 "--package",
                 "nostr-vpn-app-core",
