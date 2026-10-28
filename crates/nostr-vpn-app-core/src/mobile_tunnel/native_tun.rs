@@ -64,10 +64,6 @@ impl NativeTunRuntime {
 
     fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if self.fd >= 0 {
-            close_mobile_tun_fd(self.fd);
-            self.fd = -1;
-        }
     }
 
     fn join(&mut self) {
@@ -82,6 +78,11 @@ impl NativeTunRuntime {
     fn shutdown(&mut self) {
         self.stop();
         self.join();
+        // The threads hold their own copies of the fd number, so it must stay open until both have exited.
+        if self.fd >= 0 {
+            close_mobile_tun_fd(self.fd);
+            self.fd = -1;
+        }
     }
 }
 
