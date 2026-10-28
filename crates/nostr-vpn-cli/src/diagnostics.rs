@@ -191,12 +191,6 @@ pub(crate) async fn write_doctor_bundle(
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    let daemon_state_raw = if daemon_status.state_file.exists() {
-        fs::read_to_string(&daemon_status.state_file).unwrap_or_default()
-    } else {
-        String::new()
-    };
-
     let bundle = serde_json::json!({
         "generatedAt": unix_timestamp(),
         "networkId": network_id,
@@ -207,7 +201,6 @@ pub(crate) async fn write_doctor_bundle(
             "stateFile": daemon_status.state_file,
             "logFile": daemon_status.log_file,
             "state": daemon_status.state,
-            "rawState": daemon_state_raw,
         },
         "network": network,
         "portMapping": port_mapping,
@@ -215,7 +208,8 @@ pub(crate) async fn write_doctor_bundle(
         "netcheck": netcheck,
         "logTail": log_tail,
     });
-    fs::write(&output_path, serde_json::to_vec_pretty(&bundle)?)
+    let bundle_bytes = serde_json::to_vec_pretty(&bundle)?;
+    crate::write_private_runtime_file_atomically(&output_path, &bundle_bytes)
         .with_context(|| format!("failed to write {}", output_path.display()))?;
 
     Ok(output_path)
@@ -254,8 +248,23 @@ fn sanitized_config_json(app: &AppConfig) -> serde_json::Value {
             "peerPresharedKeySet": !app.wireguard_exit.peer_preshared_key.trim().is_empty(),
             "peerPublicKeySet": !app.wireguard_exit.peer_public_key.trim().is_empty(),
         },
-        "networks": app.networks,
+        "networks": sanitized_networks_json(app),
     })
+}
+
+fn sanitized_networks_json(app: &AppConfig) -> Vec<serde_json::Value> {
+    app.networks
+        .iter()
+        .map(|network| {
+            serde_json::json!({
+                "id": network.id,
+                "name": network.name,
+                "networkId": network.network_id,
+                "enabled": network.enabled,
+                "joinSecretSet": !network.join_secret.trim().is_empty(),
+            })
+        })
+        .collect()
 }
 
 pub(crate) async fn detect_captive_portal(timeout: Duration) -> Option<bool> {
@@ -404,6 +413,7 @@ mod tests {
         CaptivePortalEndpoint, NetworkSnapshot, build_health_issues,
         captive_portal_interface_name_needs_detection, check_captive_portal_endpoint,
         local_identity_missing_from_active_roster, mapping_varies_by_dest_ip, parse_http_response,
+        sanitized_config_json,
     };
     use nostr_sdk::prelude::Keys;
     use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest};
@@ -593,6 +603,22 @@ mod tests {
             .expect("parse response");
         assert_eq!(status, 204);
         assert_eq!(body, "");
+    }
+
+    #[test]
+    fn sanitized_config_redacts_network_join_secrets() {
+        let mut app = AppConfig::generated();
+        app.networks[0].join_secret = "join-secret-redacted-test-value".to_string();
+        let rendered = serde_json::to_string(&sanitized_config_json(&app)).expect("config JSON");
+        assert!(
+            !rendered.contains("join-secret-redacted-test-value"),
+            "bundle config must not embed the join secret"
+        );
+        assert!(rendered.contains("\"joinSecretSet\":true"));
+
+        app.networks[0].join_secret.clear();
+        let rendered = serde_json::to_string(&sanitized_config_json(&app)).expect("config JSON");
+        assert!(rendered.contains("\"joinSecretSet\":false"));
     }
 
     #[test]
