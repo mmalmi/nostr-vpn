@@ -658,6 +658,8 @@ mod windows_endpoint_bypass_tests {
             endpoint: "vpn.example:51820".to_string(),
             ..WireGuardExitConfig::default()
         };
+        config.allowed_ips.push("::/0".to_string());
+        config.address_v6 = "fc00:bbbb:bbbb:bb01::1:46c2/128".to_string();
         let mut exit_dns = ExitDnsConfig {
             mode: nostr_vpn_core::config::ExitDnsMode::ThroughExit,
             ..ExitDnsConfig::default()
@@ -679,7 +681,7 @@ mod windows_endpoint_bypass_tests {
                 .contains("does not yet support an IPv6 endpoint")
         );
         config.endpoint = "198.51.100.20:51820".to_string();
-        config.allowed_ips.push("::/0".to_string());
+        config.address_v6.clear();
         assert!(
             validate_windows_wireguard_config(&config, &exit_dns)
                 .expect_err("IPv6 AllowedIPs without an IPv6 address jail IPv6 traffic")
@@ -708,7 +710,39 @@ mod windows_endpoint_bypass_tests {
         );
         config.allowed_ips.retain(|route| route != "fd00::/64");
         config.address_v6.clear();
-        validate_windows_wireguard_config(&config, &exit_dns).expect("literal IPv4-only config");
+        assert!(
+            validate_windows_wireguard_config(&config, &exit_dns)
+                .expect_err("a v4-only default leaves the IPv6 default on the physical adapter")
+                .to_string()
+                .contains("dual-stack")
+        );
+    }
+
+    #[test]
+    fn windows_wireguard_default_swap_requires_dual_stack_allowed_ips() {
+        let mut config = WireGuardExitConfig {
+            enabled: true,
+            address: "10.64.70.195/32".to_string(),
+            private_key: "private-key".to_string(),
+            peer_public_key: "peer-key".to_string(),
+            endpoint: "198.51.100.20:51820".to_string(),
+            ..WireGuardExitConfig::default()
+        };
+        let exit_dns = ExitDnsConfig::default();
+        assert!(
+            validate_windows_wireguard_config(&config, &exit_dns)
+                .expect_err("v4-only provider import would leave IPv6 outside the tunnel")
+                .to_string()
+                .contains("dual-stack")
+        );
+        config.allowed_ips.push("::/0".to_string());
+        config.address_v6 = "fc00:bbbb:bbbb:bb01::1:46c2/128".to_string();
+        validate_windows_wireguard_config(&config, &exit_dns)
+            .expect("dual-stack provider config routes both default families");
+        config.allowed_ips = vec!["10.0.0.0/8".to_string(), "203.0.113.0/24".to_string()];
+        config.address_v6.clear();
+        validate_windows_wireguard_config(&config, &exit_dns)
+            .expect("a split tunnel that claims no default is unaffected");
     }
 
     #[test]
