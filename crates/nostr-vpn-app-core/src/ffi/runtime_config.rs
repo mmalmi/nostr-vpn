@@ -486,6 +486,62 @@ impl NativeAppRuntime {
             .map(|parent| parent.join(MOBILE_RUNTIME_STATE_FILE))
     }
 
+    // The Windows/Linux daemon publishes its pid record and state file next
+    // to the config, so status is a direct file read; an `nvpn status` spawn
+    // costs about a second per tick there.
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn refresh_status(&mut self) -> Result<()> {
+        self.reload_config_from_disk()?;
+        self.refresh_service_status_if_due();
+        self.refresh_status_from_daemon_files();
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn refresh_status_from_daemon_files(&mut self) {
+        // Default `nvpn status` semantics: running means a live pid record; a
+        // fresh state file alone never counts as running.
+        let running = read_daemon_pid_record(&self.config_path).is_some_and(|record| {
+            daemon_pid_record_matches_config(&record, &self.config_path)
+                && daemon_pid_is_running(record.pid, &self.config_path)
+        });
+
+        if !running {
+            self.join_request_qr_code_or_link.clear();
+            self.daemon_state = None;
+            self.daemon_running = false;
+            self.vpn_active = false;
+            if self.daemon_status_failure_is_startup() {
+                self.vpn_status = "Background service starting".to_string();
+                return;
+            }
+            self.vpn_enabled = false;
+            self.vpn_status = "Disconnected".to_string();
+            return;
+        }
+
+        self.clear_daemon_status_grace();
+        self.daemon_state = read_daemon_runtime_state(&self.config_path);
+        self.daemon_running = true;
+        self.vpn_enabled = self
+            .daemon_state
+            .as_ref()
+            .is_none_or(|state| state.vpn_enabled);
+        self.vpn_active = self
+            .daemon_state
+            .as_ref()
+            .is_none_or(|state| state.vpn_active);
+        self.vpn_status = self.daemon_state.as_ref().map_or_else(
+            || "Daemon running".to_string(),
+            |state| state.vpn_status.clone(),
+        );
+        self.join_request_qr_code_or_link =
+            own_join_request_qr_code_or_link(&self.config).unwrap_or_default();
+    }
+
+    // macOS keeps the daemon pid/state files in its root-protected runtime
+    // directory, so status must still go through the CLI here.
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     fn refresh_status(&mut self) -> Result<()> {
         self.reload_config_from_disk()?;
         self.refresh_service_status_if_due();
@@ -884,4 +940,137 @@ impl NativeAppRuntime {
         self.refresh_expected_service_binary_version();
         Ok(())
     }
+}
+
+// Same sibling-of-config layout the CLI's daemon_runtime/control_files.rs
+// uses on non-macOS platforms.
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+const DAEMON_PID_FILE: &str = "daemon.pid";
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+const DAEMON_STATE_FILE: &str = "daemon.state.json";
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn daemon_runtime_file_path(config_path: &Path, file_name: &str) -> PathBuf {
+    config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(file_name)
+}
+
+/// Shape of the pid record the CLI daemon writes; only `pid` and
+/// `config_path` drive status.
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[derive(Debug, Deserialize)]
+struct DaemonPidRecord {
+    pid: u32,
+    config_path: String,
+    #[allow(dead_code)]
+    started_at: u64,
+}
+
+/// A missing, unreadable, or corrupt control file counts as absent, the way
+/// the CLI treats corrupt runtime files.
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn read_daemon_pid_record(config_path: &Path) -> Option<DaemonPidRecord> {
+    let raw = fs::read(daemon_runtime_file_path(config_path, DAEMON_PID_FILE)).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn read_daemon_runtime_state(config_path: &Path) -> Option<DaemonRuntimeState> {
+    let raw = fs::read(daemon_runtime_file_path(config_path, DAEMON_STATE_FILE)).ok()?;
+    serde_json::from_slice(&raw).ok()
+}
+
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn daemon_pid_record_matches_config(record: &DaemonPidRecord, config_path: &Path) -> bool {
+    record.config_path == config_path.display().to_string()
+        || fs::canonicalize(config_path).is_ok_and(|canonical| {
+            record.config_path == canonical.display().to_string()
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn daemon_pid_is_running(pid: u32, _config_path: &Path) -> bool {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt as _;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    const IMAGE_NAME_BUFFER_UTF16: u32 = 1024;
+
+    // SAFETY: the handle is null-checked and closed on every path; the name
+    // buffer is only written by QueryFullProcessImageNameW up to the length
+    // we pass in.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut image_name = [0u16; IMAGE_NAME_BUFFER_UTF16 as usize];
+        let mut image_name_len = IMAGE_NAME_BUFFER_UTF16;
+        let queried = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            image_name.as_mut_ptr(),
+            std::ptr::addr_of_mut!(image_name_len),
+        );
+        CloseHandle(handle);
+        if queried == 0 || image_name_len as usize > image_name.len() {
+            return false;
+        }
+        let image_path = OsString::from_wide(&image_name[..image_name_len as usize]);
+        Path::new(&image_path)
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("nvpn.exe"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn daemon_pid_is_running(pid: u32, config_path: &Path) -> bool {
+    // A dead or zombie pid yields an empty or absent cmdline and fails the
+    // match below, so the /proc read doubles as the liveness probe.
+    fs::read(format!("/proc/{pid}/cmdline"))
+        .is_ok_and(|cmdline| linux_proc_cmdline_matches_nvpn_daemon(&cmdline, config_path))
+}
+
+/// Mirrors the CLI's `linux_proc_daemon_matches_config`: the first argv entry
+/// must be an nvpn executable, followed by `daemon`, and the --config value
+/// must point at this config.
+#[cfg(any(target_os = "linux", test))]
+fn linux_proc_cmdline_matches_nvpn_daemon(cmdline: &[u8], config_path: &Path) -> bool {
+    let mut args = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty());
+    let Some(executable) = args.next() else {
+        return false;
+    };
+    if !linux_proc_executable_is_nvpn(executable) || args.next() != Some(b"daemon".as_slice()) {
+        return false;
+    }
+    while let Some(arg) = args.next() {
+        let configured = if arg == b"--config" {
+            args.next()
+        } else {
+            arg.strip_prefix(b"--config=")
+        };
+        if let Some(configured) = configured {
+            return configured == config_path.as_os_str().as_encoded_bytes()
+                || fs::canonicalize(config_path).is_ok_and(|canonical| {
+                    configured == canonical.as_os_str().as_encoded_bytes()
+                });
+        }
+    }
+    false
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_proc_executable_is_nvpn(executable: &[u8]) -> bool {
+    let path = String::from_utf8_lossy(executable).replace('\\', "/");
+    let name = path.rsplit('/').next().unwrap_or_default();
+    let name = name.to_ascii_lowercase();
+    name == "nvpn" || name == "nvpn.exe" || name.starts_with("nvpn-")
 }

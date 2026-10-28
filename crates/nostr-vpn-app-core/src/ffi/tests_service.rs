@@ -68,6 +68,190 @@ exit 0
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    fn desktop_daemon_status_runtime(dir: &Path) -> NativeAppRuntime {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
+        // Any CLI spawn would fail the tick, so an empty last_error proves the
+        // daemon-file path never needed one.
+        runtime.nvpn_bin = None;
+        runtime
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn desktop_status_without_daemon_files_reports_disconnected_without_the_cli() {
+        let dir = unique_service_test_dir("nvpn-app-core-daemon-files-missing");
+        let mut runtime = desktop_daemon_status_runtime(&dir);
+
+        runtime.dispatch(NativeAppAction::Tick);
+        let state = runtime.state();
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(state.error.is_empty(), "{}", state.error);
+        assert!(!state.daemon_running);
+        assert!(!state.vpn_enabled);
+        assert!(!state.vpn_active);
+        assert_eq!(state.vpn_status, "Disconnected");
+        assert_eq!(state.join_request_qr_code_or_link, "");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn fresh_daemon_state_file_alone_does_not_report_daemon_running() {
+        let dir = unique_service_test_dir("nvpn-app-core-daemon-state-only");
+        let mut runtime = desktop_daemon_status_runtime(&dir);
+        let state_file = dir.join("daemon.state.json");
+        let state_json = serde_json::json!({
+            "updated_at": unix_timestamp(),
+            "vpn_enabled": true,
+            "vpn_active": true,
+            "vpn_status": "VPN on",
+            "expected_peer_count": 1,
+            "connected_peer_count": 1,
+            "mesh_ready": true,
+            "peers": [],
+        });
+        fs::write(&state_file, state_json.to_string()).expect("write daemon state");
+
+        runtime.dispatch(NativeAppAction::Tick);
+        let state = runtime.state();
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(!state.daemon_running);
+        assert!(!state.vpn_enabled);
+        assert!(!state.vpn_active);
+        assert_eq!(state.vpn_status, "Disconnected");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[test]
+    fn desktop_daemon_status_reports_starting_service_during_grace() {
+        let dir = unique_service_test_dir("nvpn-app-core-daemon-files-starting");
+        let mut runtime = desktop_daemon_status_runtime(&dir);
+        runtime.service_running = true;
+        runtime.service_disabled = false;
+        runtime.last_service_status_refresh_at = Some(Instant::now());
+        runtime.daemon_status_grace_until = Some(Instant::now() + DAEMON_STARTUP_STATUS_GRACE);
+
+        runtime.dispatch(NativeAppAction::Tick);
+        let state = runtime.state();
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(state.error.is_empty(), "{}", state.error);
+        assert!(!state.daemon_running);
+        assert_eq!(state.vpn_status, "Background service starting");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn daemon_control_files_parse_cli_json_and_treat_corrupt_files_as_absent() {
+        let dir = unique_service_test_dir("nvpn-app-core-daemon-control-files");
+        let config_path = dir.join("config.toml");
+        fs::write(&config_path, "node_name = \"test\"\n").expect("write test config");
+
+        let pid_file = daemon_runtime_file_path(&config_path, DAEMON_PID_FILE);
+        // Field names exactly as the CLI daemon writes them.
+        let pid_json = serde_json::json!({
+            "pid": 4242,
+            "config_path": config_path.display().to_string(),
+            "started_at": 123,
+        });
+        fs::write(
+            &pid_file,
+            serde_json::to_string_pretty(&pid_json).expect("encode pid record"),
+        )
+        .expect("write pid record");
+        let parsed = read_daemon_pid_record(&config_path).expect("parse pid record");
+        assert_eq!(parsed.pid, 4242);
+        assert_eq!(parsed.started_at, 123);
+        assert!(daemon_pid_record_matches_config(&parsed, &config_path));
+
+        let other = DaemonPidRecord {
+            config_path: "other.toml".to_string(),
+            ..parsed
+        };
+        assert!(!daemon_pid_record_matches_config(&other, &config_path));
+
+        let canonical = fs::canonicalize(&config_path).expect("canonicalize config");
+        let mut canonical_cmdline = b"nvpn\0daemon\0--config\0".to_vec();
+        canonical_cmdline.extend_from_slice(canonical.as_os_str().as_encoded_bytes());
+        canonical_cmdline.push(0);
+        assert!(linux_proc_cmdline_matches_nvpn_daemon(&canonical_cmdline, &config_path));
+
+        fs::write(&pid_file, "not json").expect("corrupt pid record");
+        assert!(read_daemon_pid_record(&config_path).is_none());
+        assert!(read_daemon_pid_record(&dir.join("absent").join("config.toml")).is_none());
+
+        let state_file = daemon_runtime_file_path(&config_path, DAEMON_STATE_FILE);
+        let state_json = serde_json::json!({
+            "updated_at": 1778104080u64,
+            "vpn_enabled": true,
+            "vpn_active": true,
+            "vpn_status": "VPN on",
+            "expected_peer_count": 1,
+            "connected_peer_count": 0,
+            "mesh_ready": true,
+            "peers": [],
+        });
+        fs::write(&state_file, state_json.to_string()).expect("write daemon state");
+        let state = read_daemon_runtime_state(&config_path).expect("parse daemon state");
+        assert_eq!(state.vpn_status, "VPN on");
+        assert!(state.vpn_enabled);
+        assert!(state.vpn_active);
+
+        fs::write(&state_file, "{\"updated_at\":").expect("corrupt daemon state");
+        assert!(read_daemon_runtime_state(&config_path).is_none());
+        assert!(read_daemon_runtime_state(&dir.join("absent").join("config.toml")).is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn linux_proc_cmdline_requires_nvpn_daemon_and_matching_config() {
+        let config = Path::new("/etc/nvpn/config.toml");
+
+        assert!(linux_proc_cmdline_matches_nvpn_daemon(
+            b"/usr/local/bin/nvpn\0daemon\0--config\0/etc/nvpn/config.toml\0",
+            config
+        ));
+        assert!(linux_proc_cmdline_matches_nvpn_daemon(
+            b"nvpn\0daemon\0--config=/etc/nvpn/config.toml\0",
+            config
+        ));
+        assert!(!linux_proc_cmdline_matches_nvpn_daemon(b"", config));
+        assert!(!linux_proc_cmdline_matches_nvpn_daemon(
+            b"notnvpn\0daemon\0--config\0/etc/nvpn/config.toml\0",
+            config
+        ));
+        // Keep argv boundaries: a wrapper process must not look like the
+        // daemon child it launches.
+        assert!(!linux_proc_cmdline_matches_nvpn_daemon(
+            b"sudo\0/usr/local/bin/nvpn\0daemon\0--config\0/etc/nvpn/config.toml\0",
+            config
+        ));
+        assert!(!linux_proc_cmdline_matches_nvpn_daemon(
+            b"nvpn\0status\0--config\0/etc/nvpn/config.toml\0",
+            config
+        ));
+        assert!(!linux_proc_cmdline_matches_nvpn_daemon(
+            b"nvpn\0daemon\0--config\0/elsewhere/config.toml\0",
+            config
+        ));
+    }
+
     #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn direct_exit_change_rolls_back_while_service_status_is_unavailable() {

@@ -226,6 +226,7 @@ impl std::fmt::Debug for PrivilegedCommandRunnerHandle {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 struct CliStatusResponse {
     daemon: CliDaemonStatus,
     #[serde(default)]
@@ -233,6 +234,7 @@ struct CliStatusResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 struct CliDaemonStatus {
     running: bool,
     state: Option<DaemonRuntimeState>,
