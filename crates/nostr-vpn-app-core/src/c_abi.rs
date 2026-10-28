@@ -188,11 +188,9 @@ pub extern "C" fn nostr_vpn_decode_qr_image_json(path: *const c_char) -> *mut c_
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -> *mut c_char {
-    let config_json = catch_panic(
-        "mobile tunnel config json",
-        String::new(),
-        || tunnel_config_json(&c_string_lossy(data_dir)),
-    );
+    let config_json = catch_panic("mobile tunnel config json", String::new(), || {
+        tunnel_config_json(&c_string_lossy(data_dir))
+    });
     json_raw_string(&config_json)
 }
 
@@ -272,16 +270,12 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_ack_app_config_toml(
     }
     let tunnel = unsafe { &*handle };
     let expected_toml = c_string_lossy(expected_toml);
-    catch_panic(
-        "mobile tunnel ack app config toml",
-        false,
-        || {
-            tunnel
-                .tunnel
-                .acknowledge_app_config_toml(&expected_toml)
-                .unwrap_or(false)
-        },
-    )
+    catch_panic("mobile tunnel ack app config toml", false, || {
+        tunnel
+            .tunnel
+            .acknowledge_app_config_toml(&expected_toml)
+            .unwrap_or(false)
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -432,11 +426,12 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_wg_excluded_route(
         return json_raw_string("");
     }
     let tunnel = unsafe { &*handle };
-    let route = catch_panic(
-        "mobile tunnel wg excluded route",
-        String::new(),
-        || tunnel.tunnel.wg_upstream_excluded_route().unwrap_or_default(),
-    );
+    let route = catch_panic("mobile tunnel wg excluded route", String::new(), || {
+        tunnel
+            .tunnel
+            .wg_upstream_excluded_route()
+            .unwrap_or_default()
+    });
     json_raw_string(&route)
 }
 
@@ -619,11 +614,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelConfigJ
     data_dir: JString<'_>,
 ) -> jstring {
     let data_dir = jni_string_lossy(&mut env, &data_dir);
-    let config_json = catch_panic(
-        "jni mobileTunnelConfigJson",
-        String::new(),
-        || tunnel_config_json(&data_dir),
-    );
+    let config_json = catch_panic("jni mobileTunnelConfigJson", String::new(), || {
+        tunnel_config_json(&data_dir)
+    });
     jni_raw_string(env, config_json)
 }
 
@@ -748,16 +741,12 @@ fn jni_state_json(
     context: &str,
     state: impl FnOnce(&NvpnAppHandle) -> NativeAppState,
 ) -> jstring {
-    let state = catch_panic(
-        context,
-        error_state(format!("{context} panicked")),
-        || {
-            app_from_jlong(handle).map_or_else(
-                |error| error_state(error.to_string()),
-                |handle| state(handle),
-            )
-        },
-    );
+    let state = catch_panic(context, error_state(format!("{context} panicked")), || {
+        app_from_jlong(handle).map_or_else(
+            |error| error_state(error.to_string()),
+            |handle| state(handle),
+        )
+    });
     jni_json_string(env, &state)
 }
 
