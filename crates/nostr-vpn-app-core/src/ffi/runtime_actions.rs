@@ -473,6 +473,7 @@ impl NativeAppRuntime {
         let network_id = self.active_admin_network_id()?;
         let prepared =
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
+        ensure_roster_unchanged_since_snapshot(&self.config_path, &self.config, &network_id)?;
         self.config = prepared.updated_config;
         self.queue_join_roster_delivery(bootstrap, &prepared.join_roster)?;
         // Commit the durable outbox entry before asking the daemon to apply

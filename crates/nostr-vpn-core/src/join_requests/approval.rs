@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::config::{AppConfig, SharedNetworkRoster, normalize_nostr_pubkey};
 use crate::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use crate::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
@@ -77,4 +79,25 @@ fn stage_approved_config(
     }
     let shared = updated.shared_network_roster(network_entry_id)?;
     Ok((updated, shared))
+}
+
+/// Saving a stale snapshot would revert a concurrently approved device's roster entry and kick it on missing-self.
+pub fn ensure_roster_unchanged_since_snapshot(
+    config_path: &Path,
+    snapshot: &AppConfig,
+    network_entry_id: &str,
+) -> Result<()> {
+    let snapshot_at = snapshot
+        .network_by_id(network_entry_id)
+        .ok_or_else(|| anyhow!("network not found"))?
+        .shared_roster_updated_at;
+    let on_disk_at = AppConfig::load(config_path)?
+        .network_by_id(network_entry_id)
+        .map(|network| network.shared_roster_updated_at);
+    if on_disk_at != Some(snapshot_at) {
+        return Err(anyhow!(
+            "network roster changed on disk while this approval was prepared; reload the network and approve again"
+        ));
+    }
+    Ok(())
 }

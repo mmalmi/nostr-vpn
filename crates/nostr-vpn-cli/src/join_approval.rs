@@ -8,7 +8,9 @@ use nostr_vpn_core::identity_bridge::{
     NostrIdentityDeviceApprovalBootstrap, parse_nostr_identity_device_approval_bootstrap,
 };
 use nostr_vpn_core::join_delivery::queue_join_roster;
-use nostr_vpn_core::join_requests::{prepare_join_approval, prepare_manual_join_delivery};
+use nostr_vpn_core::join_requests::{
+    ensure_roster_unchanged_since_snapshot, prepare_join_approval, prepare_manual_join_delivery,
+};
 use serde_json::{Value, json};
 
 use crate::network_signaling::{reload_running_daemon_after_save, resume_running_daemon_for_join};
@@ -117,6 +119,7 @@ pub(crate) fn run(args: JoinRequestsArgs) -> Result<()> {
                     };
                     // Match native approval: the durable outbox must exist before
                     // reloading the daemon with the newly authorized roster.
+                    ensure_roster_unchanged_since_snapshot(&config_path, &app, &network_entry_id)?;
                     queue_join_roster(&config_path, &recipient, &roster)?;
                     updated.save(&config_path)?;
                     reload_running_daemon_after_save(&config_path)?;

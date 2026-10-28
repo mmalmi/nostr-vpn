@@ -26,7 +26,9 @@ use serde::Deserialize;
 
 use crate::actions::NativeAppAction;
 use crate::exchange_rate::{ExchangeRateService, apply_exchange_rate};
-use crate::join_approval::{prepare_join_approval, prepare_manual_join_delivery};
+use crate::join_approval::{
+    ensure_roster_unchanged_since_snapshot, prepare_join_approval, prepare_manual_join_delivery,
+};
 use crate::join_request_link::{
     own_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
 };
