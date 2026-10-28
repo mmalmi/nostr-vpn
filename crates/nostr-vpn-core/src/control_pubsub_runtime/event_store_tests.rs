@@ -539,6 +539,82 @@ mod tests {
         fs::remove_dir_all(directory).expect("remove event store directory");
     }
 
+    #[test]
+    fn full_store_of_pinned_events_rejects_new_events_instead_of_evicting_pins() {
+        let now = now_ms() / 1_000;
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
+        let mut pinned_ids = Vec::new();
+        for _ in 0..STORE_MAX_EVENTS / 2 {
+            let author = Keys::generate();
+            for kind in [Kind::ContactList, Kind::Custom(10_000)] {
+                let event = EventBuilder::new(kind, "")
+                    .sign_with_keys(&author)
+                    .expect("signed pinned event");
+                assert!(store.insert_memory(event.clone()), "store pinned event");
+                pinned_ids.push(event.id.to_hex());
+            }
+        }
+        assert_eq!(store.events.len(), STORE_MAX_EVENTS);
+
+        // Every stored entry is pinned, so a new event is rejected and the
+        // pinned roster entries survive instead of being evicted for it.
+        let rejected = rating_event(
+            &Keys::generate(),
+            &Keys::generate().public_key().to_hex(),
+            "fips.peer",
+            50,
+            now,
+        );
+        assert!(!store.insert_memory(rejected));
+        assert_eq!(store.events.len(), STORE_MAX_EVENTS);
+        assert!(pinned_ids.iter().all(|id| store.events.contains_key(id)));
+
+        // While an evictable entry sits at the cap, insertion still evicts it
+        // and leaves the pinned entries alone.
+        let mut mixed = ControlEventStore::load(None, test_update_events()).expect("event store");
+        for pin in 0..STORE_MAX_EVENTS - 1 {
+            let author = Keys::generate();
+            let kind = if pin % 2 == 0 {
+                Kind::ContactList
+            } else {
+                Kind::Custom(10_000)
+            };
+            let event = EventBuilder::new(kind, "")
+                .sign_with_keys(&author)
+                .expect("signed pinned event");
+            assert!(mixed.insert_memory(event), "store pinned event");
+        }
+        let oldest = rating_event(
+            &Keys::generate(),
+            &Keys::generate().public_key().to_hex(),
+            "fips.peer",
+            50,
+            now,
+        );
+        assert!(mixed.insert_memory(oldest.clone()));
+        assert_eq!(mixed.events.len(), STORE_MAX_EVENTS);
+        let newest = rating_event(
+            &Keys::generate(),
+            &Keys::generate().public_key().to_hex(),
+            "fips.peer",
+            80,
+            now,
+        );
+        assert!(mixed.insert_memory(newest.clone()));
+        assert_eq!(mixed.events.len(), STORE_MAX_EVENTS);
+        assert!(!mixed.events.contains_key(&oldest.id.to_hex()));
+        assert!(mixed.events.contains_key(&newest.id.to_hex()));
+        assert_eq!(
+            mixed
+                .events
+                .values()
+                .filter(|stored| matches!(u16::from(stored.kind), 3 | 10_000))
+                .count(),
+            STORE_MAX_EVENTS - 1,
+            "pinned entries must outlive both rating inserts"
+        );
+    }
+
     fn test_update_events() -> UpdateEventCache {
         let keys = Keys::generate();
         let reference = crate::updater::UpdateRef {
