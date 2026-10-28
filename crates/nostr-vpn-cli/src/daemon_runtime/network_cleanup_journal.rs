@@ -715,7 +715,6 @@ mod windows_network_cleanup_journal_tests {
 #[cfg(all(test, target_os = "linux"))]
 mod linux_cleanup_journal_files {
     use super::*;
-    use std::io::Read as _;
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::{MetadataExt as _, symlink};
 
