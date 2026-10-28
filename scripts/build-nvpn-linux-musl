@@ -122,6 +122,19 @@ if [[ -n "$FIPS_REPO_PATH" ]]; then
       s#(fips-endpoint = \{[^}\n]*path = ")[^"]*(")#$1$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}$2#;
       s#(fips-identity = \{[^}\n]*path = ")[^"]*(")#$1$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}$2#;
     ' "$WORK_DIR/Cargo.toml"
+
+  # Use the same exact lock transformation as the native Linux builder. Path
+  # patches only remove registry source/checksum fields for these pinned FIPS
+  # packages; dependency versions and every other lock byte stay committed.
+  lock_verifier="$WORK_DIR/scripts/verify-cargo-path-patch-lock.py"
+  fips_packages=()
+  fips_specs="$(python3 "$lock_verifier" --manifest-specs "$FIPS_PATCH_DIR")"
+  while IFS= read -r package; do
+    fips_packages+=("$package")
+  done <<<"$fips_specs"
+  python3 "$lock_verifier" --materialize "$WORK_DIR/Cargo.lock" \
+    "$WORK_DIR/Cargo.lock.local-fips" "${fips_packages[@]}" >/dev/null
+  mv "$WORK_DIR/Cargo.lock.local-fips" "$WORK_DIR/Cargo.lock"
 fi
 
 if [[ -n "$NOSTR_PUBSUB_REPO_PATH" ]]; then

@@ -54,6 +54,7 @@ fi
 [[ ${1:-} == run ]] || exit 97
 
 output_mount=""
+source_mount=""
 cache_volume=""
 bound_target=0
 image=""
@@ -65,6 +66,9 @@ for argument in "$@"; do
   fi
   if [[ "$previous" == -v && "$argument" == *:/home/rust/src/target ]]; then
     bound_target=1
+  fi
+  if [[ "$previous" == -v && "$argument" == *:/home/rust/src ]]; then
+    source_mount="${argument%:/home/rust/src}"
   fi
   if [[ "$previous" == -v && "$argument" == *:/home/rust/output ]]; then
     output_mount="${argument%:/home/rust/output}"
@@ -105,6 +109,15 @@ esac
 [[ -n "$output_mount" ]] || exit 0
 printf '%s\n' "$cache_volume" >>"$NVPN_TEST_STATE_DIR/cache-volumes"
 cat >"$NVPN_TEST_STATE_DIR/container-script"
+if [[ ${NVPN_TEST_LOCAL_FIPS:-0} == 1 ]]; then
+  test -d "$source_mount/.fips-patch"
+  specs="$(python3 "$source_mount/scripts/verify-cargo-path-patch-lock.py" \
+    --manifest-specs "$source_mount/.fips-patch")"
+  # Compare all lock bytes against the committed input, not just package names.
+  python3 "$source_mount/scripts/verify-cargo-path-patch-lock.py" \
+    --validate "$NVPN_TEST_COMMITTED_LOCK" "$source_mount/Cargo.lock" $specs \
+    >"$NVPN_TEST_STATE_DIR/local-fips-lock-sha256"
+fi
 grep -Fq 'export CARGO_TARGET_DIR=/tmp/nvpn-cache/target' \
   "$NVPN_TEST_STATE_DIR/container-script" || exit 95
 grep -Fq '"$CARGO_TARGET_DIR/$TARGET/release/nvpn"' \
@@ -194,4 +207,48 @@ while IFS= read -r line; do cache_volumes+=("$line"); done \
   && "${cache_volumes[2]}" == "${cache_volumes[3]}" ]] \
   || fail "cache must survive repeated workspaces and isolate builder images"
 
-echo "Linux musl Docker config, immutable inputs and cache harness passed (7 cases)"
+# A local FIPS checkout must use the exact published versions without asking
+# Cargo to resolve a new lock. Construct only the manifests this path reads.
+python3 - "$ROOT" "$TMP_ROOT/fips" <<'PY_FIXTURE'
+import importlib.util, pathlib, sys
+root, fixture = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location("patch_lock", root / "scripts/verify-cargo-path-patch-lock.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+versions = module.lock_specs((root / "Cargo.lock").read_bytes())
+for name, relative in module.patch_crates(versions["nvpn-webrtc"]).items():
+    path = fixture / relative / "Cargo.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = f'[package]\nname = "{name}"\nversion = "{versions[name]}"\n'
+    if name == "nvpn-webrtc" and "nvpn-dtls" in versions:
+        text += f'\n[dependencies.dtls]\npackage = "nvpn-dtls"\npath = "../dtls"\nversion = "={versions["nvpn-dtls"]}"\n'
+    path.write_text(text)
+PY_FIXTURE
+git -C "$TMP_ROOT/fips" init -q
+git -C "$TMP_ROOT/fips" add .
+git -C "$TMP_ROOT/fips" -c user.name=Test -c user.email=test@example.invalid \
+  commit -qm 'Exact local FIPS fixture'
+patched_binary="$(run_builder patched NVPN_FIPS_REPO_PATH="$TMP_ROOT/fips" \
+  NVPN_TEST_LOCAL_FIPS=1 NVPN_TEST_COMMITTED_LOCK="$ROOT/Cargo.lock")"
+[[ -x "$patched_binary" && -s "$TMP_ROOT/state/local-fips-lock-sha256" ]] \
+  || fail "local FIPS build did not preserve the exact dependency lock"
+
+python3 - "$TMP_ROOT/fips/crates/fips-core/Cargo.toml" <<'PY_MISMATCH'
+import pathlib, re, sys
+p = pathlib.Path(sys.argv[1])
+p.write_text(re.sub(r'^version = .*$', 'version = "99.0.0"', p.read_text(), flags=re.M))
+PY_MISMATCH
+git -C "$TMP_ROOT/fips" add .
+git -C "$TMP_ROOT/fips" -c user.name=Test -c user.email=test@example.invalid \
+  commit -qm 'Mismatching local FIPS fixture'
+calls_before="$(wc -l <"$TMP_ROOT/state/docker-calls")"
+if run_builder wrong-fips NVPN_FIPS_REPO_PATH="$TMP_ROOT/fips" \
+  >"$TMP_ROOT/wrong-fips.log" 2>&1; then
+  fail "local FIPS version mismatch was accepted"
+fi
+[[ "$(wc -l <"$TMP_ROOT/state/docker-calls")" == "$calls_before" ]] \
+  || fail "local FIPS version mismatch started Docker"
+grep -q 'expected 99.0.0' "$TMP_ROOT/wrong-fips.log" \
+  || fail "version mismatch did not fail at exact lock validation"
+
+echo "Linux musl Docker config, immutable inputs and cache harness passed (9 cases)"
