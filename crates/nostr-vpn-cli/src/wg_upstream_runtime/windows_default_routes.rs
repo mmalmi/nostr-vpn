@@ -285,7 +285,7 @@ impl WindowsManagedDefaultRoutes {
         underlay: WindowsDefaultRoute,
         manage_default: bool,
         manage_default_v6: bool,
-    ) -> std::result::Result<Self, WindowsRouteApplyFailure<Self>> {
+    ) -> std::result::Result<Self, Box<WindowsRouteApplyFailure<Self>>> {
         let mut routes = Self {
             wg_iface_index,
             bypass_target: upstream_ip,
@@ -301,17 +301,17 @@ impl WindowsManagedDefaultRoutes {
             default_v6_interface_identity: None,
         };
         if let Err(error) = validate_windows_underlay(&routes.underlay, &[wg_iface_index]) {
-            return Err(WindowsRouteApplyFailure {
+            return Err(Box::new(WindowsRouteApplyFailure {
                 error,
                 cleanup: routes,
-            });
+            }));
         }
         let mut bypass = WindowsRouteSpec::endpoint(upstream_ip, &routes.underlay);
         if let Err(error) = runner.bind_interface_identity(&mut bypass) {
-            return Err(WindowsRouteApplyFailure {
+            return Err(Box::new(WindowsRouteApplyFailure {
                 error: error.context("bind WireGuard endpoint route to physical interface"),
                 cleanup: routes,
-            });
+            }));
         }
         routes.bypass_interface_identity = bypass
             .interface_identity
@@ -321,23 +321,23 @@ impl WindowsManagedDefaultRoutes {
         match ensure_windows_route(runner, &bypass) {
             Ok(owned) => routes.bypass_owned = owned,
             Err(error) => {
-                return Err(WindowsRouteApplyFailure {
+                return Err(Box::new(WindowsRouteApplyFailure {
                     error: error.context("install WireGuard endpoint bypass route"),
                     cleanup: routes,
-                });
+                }));
             }
         }
         if manage_default {
             let mut default = WindowsRouteSpec::wireguard_default(wg_iface_index);
             if let Err(error) = runner.bind_interface_identity(&mut default) {
                 let rollback = routes.revert_with(runner);
-                return Err(WindowsRouteApplyFailure {
+                return Err(Box::new(WindowsRouteApplyFailure {
                     error: with_windows_route_rollback(
                         error.context("bind WireGuard default route to tunnel interface"),
                         rollback,
                     ),
                     cleanup: routes,
-                });
+                }));
             }
             routes.default_interface_identity = default
                 .interface_identity
@@ -348,13 +348,13 @@ impl WindowsManagedDefaultRoutes {
                 Ok(owned) => routes.default_owned = owned,
                 Err(error) => {
                     let rollback = routes.revert_with(runner);
-                    return Err(WindowsRouteApplyFailure {
+                    return Err(Box::new(WindowsRouteApplyFailure {
                         error: with_windows_route_rollback(
                             error.context("install WireGuard default route"),
                             rollback,
                         ),
                         cleanup: routes,
-                    });
+                    }));
                 }
             }
         }
@@ -362,13 +362,13 @@ impl WindowsManagedDefaultRoutes {
             let mut default = WindowsRouteSpec::wireguard_default_v6(wg_iface_index);
             if let Err(error) = runner.bind_interface_identity(&mut default) {
                 let rollback = routes.revert_with(runner);
-                return Err(WindowsRouteApplyFailure {
+                return Err(Box::new(WindowsRouteApplyFailure {
                     error: with_windows_route_rollback(
                         error.context("bind WireGuard IPv6 default route to tunnel interface"),
                         rollback,
                     ),
                     cleanup: routes,
-                });
+                }));
             }
             routes.default_v6_interface_identity = default
                 .interface_identity
@@ -379,13 +379,13 @@ impl WindowsManagedDefaultRoutes {
                 Ok(owned) => routes.default_v6_owned = owned,
                 Err(error) => {
                     let rollback = routes.revert_with(runner);
-                    return Err(WindowsRouteApplyFailure {
+                    return Err(Box::new(WindowsRouteApplyFailure {
                         error: with_windows_route_rollback(
                             error.context("install WireGuard IPv6 default route"),
                             rollback,
                         ),
                         cleanup: routes,
-                    });
+                    }));
                 }
             }
         }
