@@ -10,7 +10,7 @@ use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -798,7 +798,7 @@ fn uninstall_windows_resolver(suffix: &str) -> Result<()> {
     run_windows_powershell(&windows_uninstall_nrpt_script(suffix))
 }
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 pub fn run_windows_command_with_timeout(
     command: &mut Command,
     operation: &str,

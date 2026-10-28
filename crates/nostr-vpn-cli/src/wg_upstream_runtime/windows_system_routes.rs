@@ -2,7 +2,7 @@
 pub(crate) const WINDOWS_CHILD_COMMAND_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(3);
 
-#[cfg(any(test, target_os = "windows"))]
+#[cfg(target_os = "windows")]
 pub(crate) use nostr_vpn_core::magic_dns::run_windows_command_with_timeout;
 
 #[cfg(target_os = "windows")]
@@ -583,23 +583,16 @@ mod windows_command_timeout_tests {
         );
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn timed_out_child_is_terminated_and_reported() {
-        let mut command = ProcessCommand::new(if cfg!(target_os = "windows") {
-            "powershell"
-        } else {
-            "sleep"
-        });
-        if cfg!(target_os = "windows") {
-            command.args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Start-Sleep -Seconds 5",
-            ]);
-        } else {
-            command.arg("5");
-        }
+        let mut command = ProcessCommand::new("powershell");
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 5",
+        ]);
 
         let started = std::time::Instant::now();
         let error = run_windows_command_with_timeout(
