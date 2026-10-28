@@ -22,6 +22,48 @@ platform compatibility jobs. A local fast pass is not the whole CI matrix.
 
 For interrupted releases, see [release gate recovery](release-resume.md).
 
+## Independent Jobs And Shared Resources
+
+Ordinary independent work does not need a whole-machine slot. Check combined
+CPU, memory, disk and I/O capacity, and reserve only the writable caches,
+devices, UI sessions or services that the job actually shares.
+
+For a bounded job that writes one shared build target:
+
+```sh
+python3 scripts/native-lab.py run \
+  --resource core-compile-check \
+  --check local:macos \
+  --check command:cargo \
+  --reserve "cargo-target:${CARGO_TARGET_DIR:?set an absolute shared target path}" \
+  --timeout 600 --signal-grace 30 \
+  -- cargo check --locked -p nostr-vpn-core
+```
+
+Use the actual job and canonical shared target; `CARGO_TARGET_DIR` must be set to
+its absolute path.
+All writers to the same target must use the same key and existing lab state
+directory, even across worktrees. Add `--reserve` for each other shared writable
+resource. The primary `--resource` and additional reservations remain exclusive
+through child cleanup and retain the existing quarantine/recovery behavior.
+Different resource keys can run concurrently.
+
+`--check` performs host/tool readiness checks without reserving the machine.
+It refuses an existing legacy host reservation, including one requiring audited
+recovery; it never clears one. This is an admission snapshot, not an ongoing
+shared host lease or a CPU, memory or disk budget. Before introducing a later
+exclusive benchmark, native matrix or maintenance window, its owner must
+coordinate with running independent jobs. Inspect existing wrappers and actual
+resource owners when migrating; do not change active locks or the state directory.
+
+Existing `--health` behavior is unchanged: local and SSH hosts, selected devices
+and simulators are reserved. Device checks must use `--health`, not `--check`.
+Keep these reservations for jobs that need them, including the full native
+matrix below. Constrained VMs share their hypervisor's physical capacity. A
+guard measuring total filesystem free-space loss cannot attribute that loss to
+one concurrent job; account for combined allocations and retain the free-space
+floor instead of treating unrelated writes as that job's output.
+
 ## Health And Full Native Matrix
 
 Preflight the managed lab without running tests:
