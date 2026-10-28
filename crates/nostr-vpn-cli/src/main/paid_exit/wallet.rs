@@ -374,16 +374,53 @@ async fn inspect_paid_exit_wallet_token(token_text: &str) -> Result<PaidExitWall
 #[cfg(test)]
 mod wallet_token_preview_tests {
     use super::inspect_paid_exit_wallet_token;
+    use cashu::nuts::{CurrencyUnit, Id, Proof, PublicKey, Token};
+    use cashu::secret::Secret;
+    use cashu::{Amount, MintUrl};
+    use std::str::FromStr;
+
+    /// Synthetic fixture: the proofs are well-formed but were never signed by
+    /// any mint, so the token carries no value.
+    fn synthetic_test_token(mint_url: &MintUrl) -> String {
+        // Well-known secp256k1 generator point; not a signature from any mint.
+        let c = PublicKey::from_str(
+            "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+        )
+        .expect("valid generator point");
+        let keyset_id = Id::from_str("00aaaaaaaaaaaaaa").expect("valid keyset id");
+        let proofs = vec![
+            Proof::new(
+                Amount::from(2u64),
+                keyset_id,
+                Secret::new("synthetic-test-secret-a"),
+                c,
+            ),
+            Proof::new(
+                Amount::from(8u64),
+                keyset_id,
+                Secret::new("synthetic-test-secret-b"),
+                c,
+            ),
+        ];
+        Token::new(
+            mint_url.clone(),
+            proofs,
+            Some("synthetic test token".to_string()),
+            CurrencyUnit::Sat,
+        )
+        .to_string()
+    }
 
     #[tokio::test]
     async fn token_preview_parses_without_contacting_the_mint() {
-        let token = "cashuAeyJ0b2tlbiI6W3sibWludCI6Imh0dHBzOi8vODMzMy5zcGFjZTozMzM4IiwicHJvb2ZzIjpbeyJhbW91bnQiOjIsImlkIjoiMDA5YTFmMjkzMjUzZTQxZSIsInNlY3JldCI6IjQwNzkxNWJjMjEyYmU2MWE3N2UzZTZkMmFlYjRjNzI3OTgwYmRhNTFjZDA2YTZhZmMyOWUyODYxNzY4YTc4MzciLCJDIjoiMDJiYzkwOTc5OTdkODFhZmIyY2M3MzQ2YjVlNDM0NWE5MzQ2YmQyYTUwNmViNzk1ODU5OGE3MmYwY2Y4NTE2M2VhIn0seyJhbW91bnQiOjgsImlkIjoiMDA5YTFmMjkzMjUzZTQxZSIsInNlY3JldCI6ImZlMTUxMDkzMTRlNjFkNzc1NmIwZjhlZTBmMjNhNjI0YWNhYTNmNGUwNDJmNjE0MzNjNzI4YzcwNTdiOTMxYmUiLCJDIjoiMDI5ZThlNTA1MGI4OTBhN2Q2YzA5NjhkYjE2YmMxZDVkNWZhMDQwZWExZGUyODRmNmVjNjlkNjEyOTlmNjcxMDU5In1dfV0sInVuaXQiOiJzYXQiLCJtZW1vIjoiVGhhbmsgeW91IHZlcnkgbXVjaC4ifQ";
-        let preview = inspect_paid_exit_wallet_token(token)
+        let mint_url = MintUrl::from_str("https://example.invalid").expect("valid mint url");
+        let token = synthetic_test_token(&mint_url);
+        let preview = inspect_paid_exit_wallet_token(&token)
             .await
             .expect("parse token preview");
         assert_eq!(preview.amount_sat, 10);
-        assert_eq!(preview.mint_url, "https://8333.space:3338");
-        assert_eq!(preview.memo, "Thank you very much.");
+        assert_eq!(preview.mint_url, mint_url.to_string());
+        assert_eq!(preview.memo, "synthetic test token");
         assert_eq!(preview.state, "unchecked");
         assert!(preview.redeemable);
     }
