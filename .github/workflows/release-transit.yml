@@ -72,6 +72,11 @@ jobs:
           test "$(git rev-parse 'HEAD^{tree}')" = "$EXPECTED_APP_TREE"
           test -z "$(git status --porcelain)"
           { git rev-parse HEAD 'HEAD^{tree}'; rustc -Vv; cargo -V; node --version; docker version; df -h .; } > artifacts/hosted-4119/inputs.txt
+      - name: Prepare browser checks before expensive compilation
+        if: inputs.lane != 'package'
+        run: |
+          pnpm --dir web/control-panel install --frozen-lockfile
+          pnpm --dir web/control-panel exec playwright install --with-deps chromium
       - name: Record reviewed binding-generator maintenance advisory
         shell: bash
         run: |

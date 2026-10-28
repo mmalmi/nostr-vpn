@@ -2411,7 +2411,6 @@ run_web_startos_manual_join_docker_gate() {
 
 run_umbrel_release_gate() {
   local image="${NVPN_RELEASE_GATE_UMBREL_IMAGE:-${NVPN_RELEASE_GATE_WEB_IMAGE:-nostr-vpn-release-gate-web}}"
-  pnpm --dir "$ROOT_DIR/web/control-panel" install --frozen-lockfile
   env \
     NOSTR_VPN_IMAGE="$image" \
     NVPN_UMBREL_WEB_E2E_SKIP_BUILD="${NVPN_UMBREL_WEB_E2E_SKIP_BUILD:-1}" \
@@ -2430,6 +2429,11 @@ run_umbrel_release_gate() {
 
 run_docker_isolated_functional_gates() {
   docker_release_gates_enabled || return 0
+
+  # Both browser lanes share these dependencies. Complete installation before
+  # starting either reader so a fresh runner cannot race the Umbrel setup.
+  pnpm --dir "$ROOT_DIR/web/control-panel" install --frozen-lockfile
+  pnpm --dir "$ROOT_DIR/web/control-panel" exec playwright install chromium
 
   local lanes=()
   release_gate_parallel_start "Docker NAT-safe MTU" \
