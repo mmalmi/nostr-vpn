@@ -382,6 +382,18 @@ test('component proof separates Umbrel deployment and web inputs from native pla
         candidateCommit: deployment.commit, candidateTree: deployment.tree,
       }))
     }
+    const containerRecipe = commit(
+      'umbrel/Dockerfile',
+      `FROM debian:bookworm-slim@sha256:${'a'.repeat(64)}\n`,
+      'Pin the independently rebuilt container recipe',
+    )
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({
+        candidateRoot: root, platform,
+        receiptCommit: receipt.commit, receiptTree: receipt.tree,
+        candidateCommit: containerRecipe.commit, candidateTree: containerRecipe.tree,
+      }))
+    }
     const publisher = commit(
       'scripts/umbrel-release.mjs',
       'console.log("publish Umbrel image")\n',

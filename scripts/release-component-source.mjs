@@ -156,6 +156,9 @@ function isProductInput(path, platform) {
   // Runtime mounts belong to the separately rendered Umbrel deployment;
   // this file is not compiled or copied into native platform binaries.
   if (path === 'umbrel/docker-compose.yml') return false
+  // This recipe builds only the separately inspected container packages.
+  // Shared Rust sources and lockfiles remain native product inputs below.
+  if (path === 'umbrel/Dockerfile') return false
   if (
     path === 'crates/nostr-vpn-cli/src/wireguard_exit/linux_tests.rs'
     || path.startsWith('crates/nostr-vpn-cli/src/wireguard_exit/linux_tests/')

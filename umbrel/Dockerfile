@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM node:24-bookworm AS web-builder
+FROM node:24-bookworm@sha256:d862bb5d082c5ae0210ac07e8c0344cb8cf7bef6d78e9b8c50c179da923108ea AS web-builder
 WORKDIR /work/web/control-panel
 
 COPY web/control-panel/package.json web/control-panel/pnpm-lock.yaml ./
@@ -12,7 +12,7 @@ RUN --mount=type=cache,id=nostr-vpn-umbrel-pnpm-store,target=/pnpm/store \
 COPY web/control-panel ./
 RUN pnpm run build
 
-FROM rust:1.94-bookworm AS rust-builder
+FROM rust:1.94-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS rust-builder
 ARG TARGETPLATFORM
 WORKDIR /work
 
@@ -31,12 +31,12 @@ COPY vendor ./vendor
 RUN --mount=type=cache,id=nostr-vpn-umbrel-cargo-registry-${TARGETPLATFORM},target=/usr/local/cargo/registry \
     --mount=type=cache,id=nostr-vpn-umbrel-cargo-git-${TARGETPLATFORM},target=/usr/local/cargo/git \
     --mount=type=cache,id=nostr-vpn-umbrel-cargo-target-${TARGETPLATFORM},target=/work/target \
-    cargo build --release -p nvpn -p nostr-vpn-web \
+    cargo build --release --locked -p nvpn -p nostr-vpn-web \
     && mkdir -p /out \
     && cp /work/target/release/nvpn /out/nvpn \
     && cp /work/target/release/nostr-vpn-web /out/nvpn-web
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
 LABEL org.opencontainers.image.source="https://github.com/mmalmi/nostr-vpn" \
       org.opencontainers.image.description="Nostr VPN Umbrel app image" \
       org.opencontainers.image.licenses="MIT"

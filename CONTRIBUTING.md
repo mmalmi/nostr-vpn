@@ -16,6 +16,21 @@ key in that workspace's `.startos/build.key.pem`; do not generate a replacement
 key for an existing package. The setup guide explains how to retain older keys.
 These prerequisites can be checked before building any release artifacts.
 
+The StartOS CLI 1.1.0 download must match the reviewed SHA-256 before use:
+
+| Asset | SHA-256 |
+| --- | --- |
+| `start-cli_aarch64-macos` | `668acc728e173b6d36bddc26936d546d049a0fc26c5dc2cd6c5ef98f71a33ec1` |
+| `start-cli_x86_64-linux` | `70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a` |
+
+The shared StartOS/Umbrel container recipe pins its multi-architecture base
+images and Dockerfile frontend by digest, and uses the committed Cargo and
+pnpm locks. It builds on Debian Bookworm with Rust 1.94 and Node 24 for Linux
+AMD64 and ARM64. Its system dependencies include Clang/libclang, D-Bus,
+WireGuard tools, nftables, iptables and iproute2. Debian package repositories
+remain external build inputs; these pins alone do not establish a byte-for-byte
+binary reproduction. Keep the resolved image and package evidence with a build.
+
 Then build both package architectures:
 
 ```bash
