@@ -192,8 +192,9 @@ grep -Fq 'pubsub = { mode = "client" }' "$ROOT_DIR/scripts/e2e-macos-service.sh"
 grep -Fq 'ps -ww -p "$daemon_pid"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check may truncate the launchd command"
 macos_process_scan="$ROOT_DIR/crates/nostr-vpn-cli/src/daemon_runtime/process_scan.rs"
-if [[ "$(grep -Fc '.arg("-ww")' "$macos_process_scan")" -lt 2 ]]; then
-  fail "macOS daemon discovery may truncate launchd commands before the config path"
+if [[ "$(grep -Fc 'proc_pidpath' "$macos_process_scan")" -lt 2 ]] \
+  || grep -Fq 'Command::new("ps")' "$macos_process_scan"; then
+  fail "macOS daemon discovery must read full process paths, not truncated command lines"
 fi
 grep -Fq 'os.path.realpath(sys.argv[1])' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check does not account for launchd path canonicalization"

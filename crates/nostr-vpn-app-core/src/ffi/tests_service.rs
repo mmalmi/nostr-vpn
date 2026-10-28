@@ -197,7 +197,7 @@ exit 0
 
         let state_file = daemon_runtime_file_path(&config_path, DAEMON_STATE_FILE);
         let state_json = serde_json::json!({
-            "updated_at": 1778104080u64,
+            "updated_at": 1_778_104_080u64,
             "vpn_enabled": true,
             "vpn_active": true,
             "vpn_status": "VPN on",
