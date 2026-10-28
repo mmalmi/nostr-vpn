@@ -58,15 +58,17 @@ x86 x86_64: arch/x86_64
 arm arm64 aarch64: arch/aarch64
 riscv riscv64: arch/riscv64
 
-$(BASE_NAME).s9pk: $(PACKAGE_DEPS) $(GIT_DEPS)
+$(BASE_NAME).s9pk: $(PACKAGE_DEPS) $(GIT_DEPS) | startos-utils
 	@$(MAKE) --no-print-directory ingredients
 	@echo "   Packing '$@'..."
 	start-cli s9pk pack -o $@
+	@$(MAKE) --no-print-directory startos-utils-check
 
-$(BASE_NAME)_%.s9pk: $(PACKAGE_DEPS) $(GIT_DEPS)
+$(BASE_NAME)_%.s9pk: $(PACKAGE_DEPS) $(GIT_DEPS) | startos-utils
 	@$(MAKE) --no-print-directory ingredients
 	@echo "   Packing '$@'..."
 	start-cli s9pk pack --arch=$* -o $@
+	@$(MAKE) --no-print-directory startos-utils-check
 
 ingredients: $(INGREDIENTS)
 	@echo "   Re-evaluating ingredients..."

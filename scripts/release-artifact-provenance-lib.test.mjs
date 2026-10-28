@@ -382,7 +382,7 @@ test('component proof separates Umbrel deployment and web inputs from native pla
         candidateCommit: deployment.commit, candidateTree: deployment.tree,
       }))
     }
-    for (const path of ['umbrel/Dockerfile', 's9pk.mk']) {
+    for (const path of ['umbrel/Dockerfile', 's9pk.mk', 'Makefile']) {
       const containerRecipe = commit(path, 'pinned package recipe\n', 'Package-only input')
       for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
         assert.doesNotThrow(() => proveUnchangedPlatformInputs({

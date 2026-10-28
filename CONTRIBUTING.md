@@ -31,6 +31,14 @@ WireGuard tools, nftables, iptables and iproute2. Debian package repositories
 remain external build inputs; these pins alone do not establish a byte-for-byte
 binary reproduction. Keep the resolved image and package evidence with a build.
 
+The pinned StartOS CLI internally invokes `ghcr.io/start9labs/sdk/utils:latest`.
+The Makefile pulls that helper by a committed multi-architecture digest, binds
+the CLI's required local tag to it, and checks the image identity before and
+after packing. A changed helper causes the package build to fail and deletes
+the output. Serialize StartOS packaging that uses this tag on one Docker daemon.
+Keep that daemon local to the packaging workspace so the CLI's temporary bind
+mounts resolve; a separate native Buildx builder may perform compilation.
+
 Then build both package architectures:
 
 ```bash
