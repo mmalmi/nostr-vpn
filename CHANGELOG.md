@@ -10,9 +10,11 @@ All notable changes to this project are documented in this file.
   announcements fairly among equally ranked peers.
 - Avoid unnecessary background peer discovery when a client has a usable uplink,
   while retaining discovery during startup and connection recovery.
-- Avoid allocating FIPS control handlers when network activity does not need them.
+- Reduce allocations for idle and receipt-only network activity, and reuse
+  transport batching buffers.
 - Avoid rebuilding direct routes when their state has not changed.
 - Reuse otherwise unused TLS setup for plain Linux DNS queries.
+- Avoid repeating parsing and verification within peer reputation updates.
 
 ### Fixed
 
@@ -25,6 +27,8 @@ All notable changes to this project are documented in this file.
   endpoint, allowing the service manager to restart it.
 - Update the control panel's serialization dependency to address security issues.
 - Pin and verify the Windows tunnel driver's build input.
+- Reject untrusted Linux network cleanup files instead of changing their
+  permissions before reading them.
 
 ## 4.1.19 - 2026-10-26
 
