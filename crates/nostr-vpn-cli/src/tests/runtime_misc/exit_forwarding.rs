@@ -135,8 +135,56 @@ fn macos_pf_state_parser_accepts_pfctl_status_details() {
 }
 
 #[test]
-fn macos_exit_node_cleanup_flushes_only_nvpn_anchor() {
-    let args = crate::macos_network::macos_pf_anchor_flush_args();
-    assert_eq!(args, vec!["-a", "com.apple/nostrvpn-exit", "-F", "all"]);
+fn macos_exit_node_pf_anchor_is_scoped_per_config_owner() {
+    let first = crate::macos_network::macos_exit_pf_anchor(Path::new("/etc/nvpn/one.toml"));
+    let second = crate::macos_network::macos_exit_pf_anchor(Path::new("/etc/nvpn/two.toml"));
+    let again = crate::macos_network::macos_exit_pf_anchor(Path::new("/etc/nvpn/one.toml"));
+
+    assert!(first.starts_with("com.apple/nostrvpn-exit-"));
+    assert_eq!(first.matches('/').count(), 1);
+    assert_ne!(
+        first, second,
+        "two per-config daemons must flush their own anchors only"
+    );
+    assert_eq!(first, again, "one config keeps one anchor across restarts");
+}
+
+#[test]
+fn macos_exit_node_cleanup_flushes_only_the_owner_anchor() {
+    let anchor = crate::macos_network::macos_exit_pf_anchor(Path::new("/etc/nvpn/one.toml"));
+    let args = crate::macos_network::macos_pf_anchor_flush_args(&anchor);
+    assert_eq!(args, vec!["-a", anchor.as_str(), "-F", "all"]);
     assert_eq!(args[1].matches('/').count(), 1);
+}
+
+#[test]
+fn macos_exit_claims_from_other_owners_keep_pf_enabled() {
+    let owner = crate::macos_network::macos_config_identity(Path::new("/etc/nvpn/one.toml"));
+    let other = crate::macos_network::macos_config_identity(Path::new("/etc/nvpn/two.toml"));
+
+    assert!(
+        crate::macos_network::macos_other_exit_claims_remain(
+            &[format!("{other}.exit-claims")],
+            &owner,
+        ),
+        "a foreign exit claim must keep the global knobs enabled"
+    );
+    assert!(
+        !crate::macos_network::macos_other_exit_claims_remain(
+            &[format!("{owner}.exit-claims")],
+            &owner,
+        ),
+        "the owner's own claim never blocks its cleanup"
+    );
+    assert!(
+        !crate::macos_network::macos_other_exit_claims_remain(
+            &[format!("{other}"), format!("{owner}.cleanup.json")],
+            &owner,
+        ),
+        "runtime directories and journals are not exit claims"
+    );
+    assert!(
+        !crate::macos_network::macos_other_exit_claims_remain(&[], &owner),
+        "with no claims left the last owner disables the global knobs"
+    );
 }

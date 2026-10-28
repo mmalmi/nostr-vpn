@@ -118,7 +118,9 @@ pub(crate) fn repair_legacy_macos_network_state(config_path: &Path) -> Result<bo
 
     let cleanup_plan = legacy_macos_exit_cleanup_plan(&runtime_effective_advertised_routes(&app));
     if cleanup_plan.cleanup_pf_nat {
-        if let Err(error) = cleanup_macos_pf_nat() {
+        // Journals are absent for this legacy path, so the shared anchor is
+        // the only place an old install could have left exit NAT rules.
+        if let Err(error) = cleanup_macos_pf_nat(crate::macos_network::MACOS_PF_EXIT_ANCHOR) {
             eprintln!("repair-network: failed to clear legacy macOS PF NAT rules: {error}");
         } else {
             repaired = true;
@@ -160,6 +162,19 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
         let using_legacy_route_cleanup = state.managed_routes.is_empty();
 
         let mut failures = Vec::new();
+        let mut other_exit_claims = false;
+        if state.pf_was_enabled.is_some() || state.ipv4_forward_was_enabled == Some(false) {
+            other_exit_claims = match crate::macos_privileged_files::other_exit_claims_remain(
+                config_path,
+            ) {
+                Ok(remain) => remain,
+                Err(error) => {
+                    failures.push(format!("inspect macOS exit claims: {error:#}"));
+                    true
+                }
+            };
+        }
+
         for route in &managed_routes {
             if let Err(error) = delete_macos_managed_route(
                 &route.target,
@@ -178,17 +193,28 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
         }
 
         if state.pf_was_enabled.is_some() {
-            if let Err(error) = cleanup_macos_pf_nat() {
+            // Journals written before per-config anchors name the shared one.
+            let anchor = state
+                .pf_exit_anchor
+                .as_deref()
+                .unwrap_or(crate::macos_network::MACOS_PF_EXIT_ANCHOR);
+            if let Err(error) = cleanup_macos_pf_nat(anchor) {
                 failures.push(format!("remove PF NAT rules: {error}"));
             }
             if state.pf_was_enabled == Some(false)
+                && !other_exit_claims
                 && let Err(error) = run_checked(ProcessCommand::new("pfctl").arg("-d"))
             {
                 failures.push(format!("restore PF enabled state: {error}"));
             }
         }
 
+        if let Err(error) = crate::macos_privileged_files::remove_exit_claim(config_path) {
+            failures.push(format!("remove macOS exit forwarding claim: {error:#}"));
+        }
+
         if state.ipv4_forward_was_enabled == Some(false)
+            && !other_exit_claims
             && let Err(error) = write_macos_ipv4_forwarding(false)
         {
             failures.push(format!("restore IPv4 forwarding state: {error}"));
