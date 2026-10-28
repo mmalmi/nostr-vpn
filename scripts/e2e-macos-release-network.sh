@@ -37,7 +37,8 @@ RECOVERY_DEADLINE_MS="${NVPN_MACOS_UNDERLAY_RECOVERY_DEADLINE_MS:-4000}"
 ACTIVATION_DEADLINE_MS="${NVPN_MACOS_UNDERLAY_ACTIVATION_DEADLINE_MS:-10000}"
 FIPS_NETWORK_ID="${NVPN_MACOS_FIPS_NETWORK_ID:-}"
 FIPS_CLIENT_LISTEN_PORT="${NVPN_MACOS_FIPS_CLIENT_LISTEN_PORT:-}"
-EXPECTED_FIPS_REV="${NVPN_MACOS_FIPS_EXPECTED_REV:-}"
+EXPECTED_FIPS_VERSION="${NVPN_MACOS_FIPS_RUNTIME_VERSION:-}"
+EXPECTED_CLI_SHA256="${NVPN_MACOS_NETWORK_CLI_SHA256:-}"
 SECURE_RESOLVER="/etc/resolver/nvpn-secure-dns"
 MAGIC_RESOLVER="/etc/resolver/nvpn"
 SECURE_DNS_STORE_KEY="State:/Network/Service/to.nostrvpn.nvpn-secure-dns/DNS"
@@ -96,10 +97,12 @@ validate_inputs() {
   [[ "$FIPS_CLIENT_LISTEN_PORT" =~ ^[1-9][0-9]{0,4}$ \
     && "$FIPS_CLIENT_LISTEN_PORT" -le 65535 ]] \
     || fail "local FIPS client UDP port is invalid"
-  [[ "$EXPECTED_FIPS_REV" =~ ^[0-9a-f]{10}$ ]] \
-    || fail "expected FIPS revision must be exactly ten hex characters"
-  nvpn version --verbose | grep -Fq "(rev $EXPECTED_FIPS_REV)" \
-    || fail "imported macOS nvpn does not contain the exact FIPS revision"
+  [[ "$EXPECTED_CLI_SHA256" =~ ^[0-9a-f]{64}$ \
+    && "$(shasum -a 256 "$NVPN_BIN" | awk '{print $1}')" == "$EXPECTED_CLI_SHA256" ]] \
+    || fail "imported macOS nvpn differs from the verified runtime payload"
+  [[ -n "$EXPECTED_FIPS_VERSION" \
+    && "$(nvpn version --verbose | sed -n 's/^fips_core_version: //p')" == "$EXPECTED_FIPS_VERSION" ]] \
+    || fail "imported macOS nvpn differs from the verified FIPS runtime version"
 }
 
 nvpn() {
@@ -706,14 +709,14 @@ runtime_has_no_fips_peers() {
   /usr/bin/python3 - \
     "$status_file" \
     "$FIPS_CLIENT_LISTEN_PORT" \
-    "$EXPECTED_FIPS_REV" <<'PY'
+    "$EXPECTED_FIPS_VERSION" <<'PY'
 import json
 import sys
 
 (
     path,
     expected_listen_port,
-    expected_revision,
+    expected_version,
 ) = sys.argv[1:]
 with open(path, encoding="utf-8") as handle:
     status = json.load(handle)
@@ -731,9 +734,7 @@ if (
     and state.get("vpn_status") == "Waiting for participants"
     and state.get("listen_port") == int(expected_listen_port)
     and peers == []
-    and state.get("fips_core_version", "").endswith(
-        f"(rev {expected_revision})"
-    )
+    and state.get("fips_core_version") == expected_version
 ):
     raise SystemExit(0)
 raise SystemExit(1)

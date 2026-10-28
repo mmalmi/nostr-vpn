@@ -50,6 +50,43 @@ print(h, t)
     <<<"$identity"
 }
 
+android_release_load_unbuilt_source() {
+  # A harness-only fix must not force a new signed APK. The sealed AAB/APK
+  # relationship and canonical component proof keep the product identity exact.
+  local source
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  source="$(node --input-type=module - "$ROOT" "$APK_PATH" \
+    "$ANDROID_RELEASE_HARNESS_GIT_HEAD" "$ANDROID_RELEASE_HARNESS_GIT_TREE" \
+    "$RUNTIME_STATE_RESULT_DIR/android-component-proof.json" <<'JS'
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+const [root, apk, candidateCommit, candidateTree, output] = process.argv.slice(2);
+const { proveUnchangedPlatformInputs } = await import(pathToFileURL(`${root}/scripts/release-component-source.mjs`));
+const bundle = `${root}/android/app/build/outputs/bundle/release`;
+const receipt = JSON.parse(readFileSync(`${bundle}/physical-gate-artifact.json`, 'utf8'));
+const digest = value => createHash('sha256').update(value).digest('hex');
+for (const [name, path] of [['aab', `${bundle}/app-release.aab`], ['apk', apk]]) {
+  if (receipt[`${name}Sha256`] !== digest(readFileSync(path))
+    || receipt[`${name}PathSha256`] !== digest(realpathSync(path))) {
+    throw new Error(`Sealed Android ${name} bytes/path changed`);
+  }
+}
+if (receipt.schema !== 1 || receipt.relationship !== 'universal-apk-derived-from-exact-aab'
+  || receipt.bundletoolVersion !== '1.18.3'
+  || receipt.bundletoolSha256 !== 'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29') {
+  throw new Error('Android source requires the pinned AAB-derived APK receipt');
+}
+const proof = proveUnchangedPlatformInputs({ candidateRoot: root, platform: 'android',
+  receiptCommit: receipt.appGitSha, receiptTree: receipt.appGitTree, candidateCommit, candidateTree });
+writeFileSync(output, JSON.stringify(proof, null, 2) + '\n');
+console.log(receipt.appGitSha, receipt.appGitTree);
+JS
+  )" || return 1
+  read -r EXPECTED_ANDROID_APP_GIT_HEAD EXPECTED_ANDROID_APP_GIT_TREE <<<"$source"
+  export NVPN_BUILD_GIT_SHA="$EXPECTED_ANDROID_APP_GIT_HEAD"
+}
+
 android_release_require_inputs() {
   [[ "$PACKAGE_NAME" == "$CANONICAL_PACKAGE_NAME" ]] || {
     echo "Android Release black-box gate requires canonical package $CANONICAL_PACKAGE_NAME" >&2
@@ -58,15 +95,21 @@ android_release_require_inputs() {
   if android_release_reuse_verified_artifact; then
     android_release_require_reuse_inputs || return 1
   else
-    EXPECTED_ANDROID_APP_GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
-    EXPECTED_ANDROID_APP_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+    ANDROID_RELEASE_HARNESS_GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD)"
+    ANDROID_RELEASE_HARNESS_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
     assert_release_checkout_state \
-      "$ROOT" "$EXPECTED_ANDROID_APP_GIT_HEAD" \
-      "$EXPECTED_ANDROID_APP_GIT_TREE" "Android Release black-box gate" \
+      "$ROOT" "$ANDROID_RELEASE_HARNESS_GIT_HEAD" \
+      "$ANDROID_RELEASE_HARNESS_GIT_TREE" "Android Release black-box gate" \
       || return 1
-    pin_exact_release_build_git_sha \
-      "$ROOT" "$EXPECTED_ANDROID_APP_GIT_HEAD" "Android Release" \
-      || return 1
+    EXPECTED_ANDROID_APP_GIT_HEAD="$ANDROID_RELEASE_HARNESS_GIT_HEAD"
+    EXPECTED_ANDROID_APP_GIT_TREE="$ANDROID_RELEASE_HARNESS_GIT_TREE"
+    if [[ "${build:-1}" -eq 0 ]]; then
+      android_release_load_unbuilt_source || return 1
+    else
+      pin_exact_release_build_git_sha \
+        "$ROOT" "$EXPECTED_ANDROID_APP_GIT_HEAD" "Android Release" \
+        || return 1
+    fi
   fi
   local name
   for name in \
@@ -371,8 +414,8 @@ PY
     return 1
   fi
   if ! assert_release_checkout_state \
-    "$ROOT" "$EXPECTED_ANDROID_APP_GIT_HEAD" \
-    "$EXPECTED_ANDROID_APP_GIT_TREE" "Android Release artifact build"
+    "$ROOT" "$ANDROID_RELEASE_HARNESS_GIT_HEAD" \
+    "$ANDROID_RELEASE_HARNESS_GIT_TREE" "Android Release artifact build"
   then
     rm -f "$native_lib"
     return 1

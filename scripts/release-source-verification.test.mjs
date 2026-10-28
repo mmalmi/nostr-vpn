@@ -22,6 +22,7 @@ import {
   withExactGitArchive,
   validateWindowsCratesIoReceipts,
   validateWindowsRuntimeFipsVersion,
+  validateMacosRuntimeFipsVersion,
   validateWindowsPublicationFipsReceipts,
 } from './release-source-verification.mjs'
 import { readWorkspaceVersionTag } from './local-release-lib.mjs'
@@ -877,5 +878,40 @@ for (const [label, mutate] of [
   test(`registry runtime rejects ${label}`, () => {
     const fixture = runtimeFixture(); mutate(fixture)
     assert.throws(() => validateWindowsRuntimeFipsVersion(fixture))
+  })
+}
+
+function macosRuntimeFixture() {
+  const fixture = runtimeFixture()
+  fixture.artifactReceipt = {
+    receiptSchema: 1, artifactType: 'macOS company Developer ID Release gate package',
+    configuration: 'Release', companySigningVerified: true,
+    builtOnHost: true, builtOnTestVm: false,
+    fipsGitSha: fixture.expectedFipsGitSha, fipsGitTree: fixture.expectedFipsGitTree,
+    fipsCoreVersion: fixture.expectedFipsVersion, cliExecutableSha256: fixture.cliSha256,
+  }
+  return fixture
+}
+
+test('macOS registry runtime keeps exact signed payload and package provenance', () => {
+  const fixture = macosRuntimeFixture()
+  assert.equal(validateMacosRuntimeFipsVersion(fixture).revisionFromRegistry, true)
+  fixture.runtimeVersion = `fips_core_version: ${fixture.expectedFipsVersion} (rev ${fixture.expectedFipsGitSha.slice(0, 10)})`
+  assert.equal(validateMacosRuntimeFipsVersion(fixture).revisionFromRegistry, false)
+})
+for (const [label, mutate] of [
+  ['wrong binary', f => { f.cliSha256 = '0'.repeat(64) }],
+  ['wrong source', f => { f.artifactReceipt.fipsGitSha = '0'.repeat(40) }],
+  ['wrong registry VCS', f => { f.exactPackages['nvpn-fips-core'].packageVcsSha = '0'.repeat(40) }],
+  ['missing checksum', f => { delete f.exactPackages['nvpn-fips-endpoint'].cargoLockChecksum }],
+  ['path replacement', f => { f.exactPackages['nvpn-fips-core'].source = null }],
+  ['unsigned payload', f => { f.artifactReceipt.companySigningVerified = false }],
+  ['wrong runtime version', f => { f.runtimeVersion = 'fips_core_version: 0.4.1' }],
+  ['wrong runtime revision', f => { f.runtimeVersion = f.runtimeVersion.trimEnd() + ' (rev aaaaaaaaaa)' }],
+  ['duplicate runtime rows', f => { f.runtimeVersion += f.runtimeVersion }],
+]) {
+  test(`macOS registry runtime rejects ${label}`, () => {
+    const fixture = macosRuntimeFixture(); mutate(fixture)
+    assert.throws(() => validateMacosRuntimeFipsVersion(fixture))
   })
 }

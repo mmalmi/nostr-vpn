@@ -292,6 +292,58 @@ export function validateWindowsRuntimeFipsVersion(options) {
   return { ...proof, runtimeFipsVersion: lines[0], revisionFromRegistry: lines[0] === plain }
 }
 
+export function validateMacosRuntimeFipsVersion(options) {
+  const { artifactReceipt: receipt, exactPackages, expectedFipsGitSha,
+    expectedFipsGitTree, expectedFipsVersion, cliSha256, runtimeVersion } = options
+  requireExactFields(receipt, {
+    receiptSchema: 1,
+    artifactType: 'macOS company Developer ID Release gate package',
+    configuration: 'Release', companySigningVerified: true,
+    builtOnHost: true, builtOnTestVm: false,
+    fipsGitSha: expectedFipsGitSha, fipsGitTree: expectedFipsGitTree,
+    fipsCoreVersion: expectedFipsVersion,
+  }, 'macOS imported Release artifact')
+  if (!/^[0-9a-f]{64}$/.test(cliSha256) || receipt.cliExecutableSha256 !== cliSha256) {
+    throw new Error('macOS runtime CLI differs from the signed imported payload.')
+  }
+  for (const name of ['nvpn-fips-core', 'nvpn-fips-endpoint']) {
+    const pkg = exactPackages[name]
+    if (pkg?.version !== expectedFipsVersion || pkg?.packageVcsSha !== expectedFipsGitSha
+      || pkg?.source !== cratesIoSource || !/^[0-9a-f]{64}$/.test(pkg?.cargoLockChecksum ?? '')) {
+      throw new Error('macOS runtime lacks exact locked registry checksum/VCS provenance.')
+    }
+  }
+  const lines = runtimeVersion.replaceAll('\r', '').trim().split('\n')
+    .filter(line => line.startsWith('fips_core_version:'))
+  const plain = `fips_core_version: ${expectedFipsVersion}`
+  const revised = `${plain} (rev ${expectedFipsGitSha.slice(0, 10)})`
+  if (lines.length !== 1 || ![plain, revised].includes(lines[0])) {
+    throw new Error('macOS runtime FIPS version/revision differs from verified provenance.')
+  }
+  return { cliSha256, exactPackages, runtimeFipsVersion: lines[0],
+    revisionFromRegistry: lines[0] === plain }
+}
+
+export function validateMacosRuntimeFipsProvenance({
+  artifactReceipt, candidateRoot = defaultCandidateRoot, fipsRoot,
+  expectedFipsGitSha, expectedFipsGitTree, expectedFipsVersion, runtimeVersion, cliSha256,
+}) {
+  exactCleanGitCheckout({ root: fipsRoot, env: process.env, label: 'macOS runtime FIPS',
+    expectedCommit: expectedFipsGitSha, expectedTree: expectedFipsGitTree })
+  const candidate = exactCleanGitCheckout({ root: candidateRoot, env: process.env,
+    label: 'macOS runtime harness' })
+  const componentProof = proveUnchangedPlatformInputs({ candidateRoot, platform: 'macos',
+    receiptCommit: artifactReceipt.appGitSha, receiptTree: artifactReceipt.appGitTree,
+    candidateCommit: candidate.commit, candidateTree: candidate.tree })
+  // The shared registry resolver reads Cargo.lock from the artifact commit,
+  // checks Cargo's package checksums and VCS metadata, and disables path patches.
+  const exactPackages = resolveWindowsCratesIoFipsPackagesFromCommit({ candidateRoot,
+    expectedAppGitSha: artifactReceipt.appGitSha, expectedFipsGitSha, expectedFipsVersion })
+  return { ...validateMacosRuntimeFipsVersion({ artifactReceipt, exactPackages,
+    expectedFipsGitSha, expectedFipsGitTree, expectedFipsVersion, runtimeVersion, cliSha256 }),
+    componentProof }
+}
+
 function resolveWindowsCratesIoFipsPackages({
   exactCandidateRoot,
   expectedFipsGitSha,
@@ -972,6 +1024,21 @@ if (
       expectedFipsVersion,
     })
     process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`)
+    process.exit(0)
+  }
+  if (process.argv[2] === 'macos-runtime-provenance') {
+    const [artifact, fipsRoot, expectedFipsGitSha, expectedFipsGitTree,
+      expectedFipsVersion, versionPath, cliSha256] = process.argv.slice(3)
+    if (process.argv.length !== 10 || !cliSha256) {
+      throw new Error('Usage: release-source-verification.mjs macos-runtime-provenance ' +
+        '<artifact-receipt> <fips-root> <fips-sha> <fips-tree> <fips-version> <version-file> <cli-sha>')
+    }
+    const proof = validateMacosRuntimeFipsProvenance({
+      artifactReceipt: JSON.parse(readFileSync(artifact, 'utf8')), fipsRoot,
+      expectedFipsGitSha, expectedFipsGitTree, expectedFipsVersion,
+      runtimeVersion: readFileSync(versionPath, 'utf8'), cliSha256,
+    })
+    process.stdout.write(`${JSON.stringify(proof, null, 2)}\n`)
     process.exit(0)
   }
   const [
