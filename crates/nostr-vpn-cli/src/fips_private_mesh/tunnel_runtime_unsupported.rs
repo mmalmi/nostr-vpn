@@ -58,6 +58,13 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
+    pub(crate) fn configured_public_seed_link_statuses(
+        &self,
+        _npubs: &[&str],
+    ) -> HashMap<String, FipsPublicSeedLinkStatus> {
+        HashMap::new()
+    }
+
     #[cfg(feature = "paid-exit")]
     pub(crate) fn drain_paid_route_usage(&self, _participant: &str) -> Result<PaidRouteUsage> {
         Ok(PaidRouteUsage::default())

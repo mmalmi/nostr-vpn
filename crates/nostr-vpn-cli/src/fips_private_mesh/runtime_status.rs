@@ -1,3 +1,58 @@
+#[derive(Default)]
+struct FipsLinkSnapshot {
+    observed_at: Option<u64>,
+    roster: HashMap<String, FipsEndpointPeer>,
+    other: HashMap<String, FipsEndpointPeer>,
+}
+
+/// A configured public seed observation from one successful endpoint snapshot.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub(crate) struct FipsPublicSeedLinkStatus {
+    /// Unix seconds at the start of the successful endpoint snapshot request.
+    pub(crate) observed_at: u64,
+    pub(crate) connected: bool,
+    pub(crate) transport_addr: Option<String>,
+    pub(crate) transport_type: Option<String>,
+    pub(crate) link_id: u64,
+    /// Peer-wide authenticated FMP receive bookkeeping, not UDP-only/socket counters.
+    pub(crate) packets_recv: u64,
+    pub(crate) bytes_recv: u64,
+}
+
+impl FipsLinkSnapshot {
+    fn configured_public_seed_statuses(
+        &self,
+        npubs: &[&str],
+    ) -> HashMap<String, FipsPublicSeedLinkStatus> {
+        let Some(observed_at) = self.observed_at else {
+            return HashMap::new();
+        };
+        // A configured endpoint can also be a private/customer peer. Only
+        // established public seed identities may expose these observations.
+        self.roster
+            .values()
+            .chain(self.other.values())
+            .filter(|peer| {
+                npubs.contains(&peer.npub.as_str()) && is_public_native_bootstrap_peer(&peer.npub)
+            })
+            .map(|peer| {
+                (
+                    peer.npub.clone(),
+                    FipsPublicSeedLinkStatus {
+                        observed_at,
+                        connected: peer.connected,
+                        transport_addr: peer.transport_addr.clone(),
+                        transport_type: peer.transport_type.clone(),
+                        link_id: peer.link_id,
+                        packets_recv: peer.packets_recv,
+                        bytes_recv: peer.bytes_recv,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
 fn endpoint_link_refreshable_after_stale_participant(peer_link: &FipsEndpointPeer) -> bool {
     peer_link.direct_probe_pending
 }
@@ -31,8 +86,9 @@ impl FipsPrivateMeshRuntime {
         let now = unix_timestamp();
         let presence = self.presence.read().ok();
         let peer_activity = self.peer_activity.load();
-        let link_status = self.link_status.read().ok();
-        let other_link_status = self.other_link_status.read().ok();
+        let snapshot = self.link_status.read().ok();
+        let link_status = snapshot.as_ref().map(|snapshot| &snapshot.roster);
+        let other_link_status = snapshot.as_ref().map(|snapshot| &snapshot.other);
         let mut statuses = self.mesh.load().peer_statuses();
         for status in &mut statuses {
             let participant_key = participant_pubkey_bytes(&status.pubkey);
@@ -104,7 +160,7 @@ impl FipsPrivateMeshRuntime {
             status.error = error;
         }
         if let Some(other_link_status) = other_link_status {
-            statuses.extend(other_endpoint_peer_statuses(&other_link_status, now));
+            statuses.extend(other_endpoint_peer_statuses(other_link_status, now));
         }
         statuses.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
         statuses.dedup_by(|left, right| left.pubkey == right.pubkey);
@@ -116,9 +172,10 @@ impl FipsPrivateMeshRuntime {
             return Vec::new();
         };
         let peer_activity = self.peer_activity.load();
-        let Some(link_status) = self.link_status.read().ok() else {
+        let Some(snapshot) = self.link_status.read().ok() else {
             return Vec::new();
         };
+        let link_status = &snapshot.roster;
         let mut participants = self
             .mesh
             .load()
@@ -150,6 +207,9 @@ impl FipsPrivateMeshRuntime {
     }
 
     pub(crate) async fn refresh_link_statuses(&self) -> Result<()> {
+        // Keep the capture time with the maps. Failed refreshes must not make
+        // an old snapshot appear fresh when daemon state is written again.
+        let observed_at = unix_timestamp();
         let endpoint_peers = self
             .endpoint
             .peers()
@@ -170,12 +230,22 @@ impl FipsPrivateMeshRuntime {
         *self
             .link_status
             .write()
-            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))? = link_status;
-        *self
-            .other_link_status
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))? = other_link_status;
+            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))? = FipsLinkSnapshot {
+                observed_at: Some(observed_at),
+                roster: link_status,
+                other: other_link_status,
+            };
         Ok(())
+    }
+
+    pub(crate) fn configured_public_seed_link_statuses(
+        &self,
+        npubs: &[&str],
+    ) -> HashMap<String, FipsPublicSeedLinkStatus> {
+        self.link_status
+            .read()
+            .map(|snapshot| snapshot.configured_public_seed_statuses(npubs))
+            .unwrap_or_default()
     }
 
     pub(crate) async fn local_advertised_endpoints(&self) -> Result<Vec<OverlayEndpointAdvert>> {
@@ -214,15 +284,13 @@ impl FipsPrivateMeshRuntime {
             .presence
             .read()
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
-        let link_status = self
+        let snapshot = self
             .link_status
             .read()
             .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?;
-        let other_link_status = self
-            .other_link_status
-            .read()
-            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))?;
-        let participants = fips_ping_participants(participants, &other_link_status);
+        let link_status = &snapshot.roster;
+        let other_link_status = &snapshot.other;
+        let participants = fips_ping_participants(participants, other_link_status);
         let mut due = participants
             .into_iter()
             .filter_map(|participant| {
@@ -328,14 +396,17 @@ impl FipsPrivateMeshRuntime {
             .write()
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?
             .retain(|participant, _| configured.iter().any(|value| value == participant));
-        self.link_status
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?
-            .retain(|participant, _| configured.iter().any(|value| value == participant));
-        self.other_link_status
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))?
-            .clear();
+        {
+            let mut snapshot = self
+                .link_status
+                .write()
+                .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?;
+            snapshot
+                .roster
+                .retain(|participant, _| configured.iter().any(|value| value == participant));
+            snapshot.other.clear();
+            snapshot.observed_at = None;
+        }
         self.peer_capabilities
             .write()
             .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?

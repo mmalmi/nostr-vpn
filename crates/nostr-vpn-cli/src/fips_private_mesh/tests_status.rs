@@ -69,6 +69,68 @@
         assert_eq!(statuses[0].current_k_bit, Some(true));
         assert_eq!(statuses[0].last_seen_at, Some(123));
         assert_eq!(statuses[0].error, None);
+
+        // Live public-seed state retains the actual snapshot capture
+        // time, including on repeated reads. It must not become `now` like the
+        // presentation-only MeshPeerStatus.last_seen_at above.
+        let mut snapshot = super::FipsLinkSnapshot {
+            observed_at: Some(100),
+            roster: HashMap::new(),
+            other: peers,
+        };
+        let seed_npub = super::DEFAULT_FIPS_BOOTSTRAP_PEERS[0].0;
+        let other_seed_npub = super::DEFAULT_FIPS_BOOTSTRAP_PEERS[1].0;
+        let mut seed = snapshot.other[&pubkey].clone();
+        seed.npub = seed_npub.to_string();
+        snapshot.other.insert(seed_npub.to_string(), seed.clone());
+        seed.npub = other_seed_npub.to_string();
+        snapshot.roster.insert(other_seed_npub.to_string(), seed);
+        snapshot.roster.insert(pubkey.clone(), snapshot.other[&pubkey].clone());
+
+        // Both caches may include customer peers. Even explicitly requested
+        // customer identities must never receive the new live observation.
+        assert!(snapshot.configured_public_seed_statuses(&[&npub, "npub1unknown"]).is_empty());
+        assert!(snapshot.configured_public_seed_statuses(&[]).is_empty());
+        let live = snapshot.configured_public_seed_statuses(&[seed_npub, &npub]);
+        assert_eq!(live.len(), 1);
+        let first = &live[seed_npub];
+        assert_eq!(first.observed_at, 100);
+        assert_eq!(first.link_id, 42);
+        assert_eq!(first.packets_recv, 12);
+        assert_eq!(first.bytes_recv, 1400);
+        assert_eq!(first.transport_addr.as_deref(), Some("203.0.113.9:9000"));
+        assert_eq!(first.transport_type.as_deref(), Some("udp"));
+        assert_eq!(snapshot.configured_public_seed_statuses(&[seed_npub])[seed_npub], *first);
+        let both = snapshot.configured_public_seed_statuses(&[seed_npub, other_seed_npub, &npub]);
+        assert_eq!(both.len(), 2);
+        assert_eq!(both[other_seed_npub].observed_at, first.observed_at);
+
+        // Reconnect/reset and transport changes are reported verbatim, never
+        // smoothed into apparent monotonically increasing UDP evidence.
+        let peer = snapshot.other.get_mut(seed_npub).expect("cached seed");
+        peer.link_id = 43;
+        peer.packets_recv = 0;
+        peer.bytes_recv = 0;
+        peer.connected = false;
+        peer.transport_type = Some("websocket".into());
+        peer.transport_addr = Some("wss://seed.example/fips".into());
+        snapshot.observed_at = Some(160);
+        let reset = snapshot.configured_public_seed_statuses(&[seed_npub]);
+        assert_eq!(reset[seed_npub].observed_at, 160);
+        assert_eq!(reset[seed_npub].link_id, 43);
+        assert_eq!(reset[seed_npub].packets_recv, 0);
+        assert_eq!(reset[seed_npub].bytes_recv, 0);
+        assert!(!reset[seed_npub].connected);
+        assert_eq!(reset[seed_npub].transport_type.as_deref(), Some("websocket"));
+        assert_eq!(reset[seed_npub].transport_addr.as_deref(), Some("wss://seed.example/fips"));
+        let peer = snapshot.other.get_mut(seed_npub).expect("cached seed");
+        peer.transport_addr = None;
+        peer.transport_type = None;
+        let no_path = snapshot.configured_public_seed_statuses(&[seed_npub]);
+        assert!(no_path[seed_npub].transport_addr.is_none());
+        assert!(no_path[seed_npub].transport_type.is_none());
+        snapshot.observed_at = None;
+        assert!(snapshot.configured_public_seed_statuses(&[seed_npub, other_seed_npub]).is_empty());
     }
 
     #[test]

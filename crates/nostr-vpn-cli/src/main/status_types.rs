@@ -103,6 +103,8 @@ struct DaemonRuntimeState {
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 struct DaemonFipsEndpointPeerState {
     npub: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    live: Option<crate::fips_private_mesh::FipsPublicSeedLinkStatus>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     addresses: Vec<DaemonFipsEndpointPeerAddressState>,
     #[serde(default)]

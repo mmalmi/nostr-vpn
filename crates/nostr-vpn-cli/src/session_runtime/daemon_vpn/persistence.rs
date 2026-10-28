@@ -25,8 +25,18 @@ pub(super) async fn persist_current_daemon_state(context: DaemonStatePersistCont
     }
     let fips_peer_statuses = current_fips_peer_statuses!(context.fips_tunnel_runtime);
     let fips_relay_statuses = current_fips_relay_statuses!(context.fips_tunnel_runtime).await;
-    let fips_endpoint_peer_states =
+    let mut fips_endpoint_peer_states =
         current_fips_endpoint_peer_states!(context.endpoint_peer_signature);
+    if let Some(runtime) = context.fips_tunnel_runtime.as_ref() {
+        let npubs = fips_endpoint_peer_states
+            .iter()
+            .map(|peer| peer.npub.as_str())
+            .collect::<Vec<_>>();
+        let mut live = runtime.configured_public_seed_link_statuses(&npubs);
+        for peer in &mut fips_endpoint_peer_states {
+            peer.live = live.remove(&peer.npub);
+        }
+    }
     let fips_advertised_routes =
         current_fips_advertised_routes!(context.fips_tunnel_runtime, context.app);
     let network = context

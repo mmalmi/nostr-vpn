@@ -26,6 +26,74 @@
     }
 
     #[tokio::test]
+    async fn failed_endpoint_refresh_preserves_live_snapshot_time() {
+        let keys = Keys::generate();
+        let runtime = bind_endpoint_data_test_runtime(
+            keys.secret_key().to_bech32().expect("nsec"),
+            "live-snapshot-test",
+            Vec::new(),
+        )
+        .await;
+        assert!(
+            runtime
+                .link_status
+                .read()
+                .expect("snapshot")
+                .observed_at
+                .is_none()
+        );
+        let requested_at = super::unix_timestamp();
+        runtime.refresh_link_statuses().await.expect("live refresh");
+        let captured = runtime.link_status.read().expect("snapshot").observed_at;
+        assert!(
+            captured.is_some_and(|value| value >= requested_at && value <= super::unix_timestamp())
+        );
+        runtime
+            .replace_peers(Vec::new(), Vec::new(), Vec::new())
+            .expect("clear peers");
+        assert!(
+            runtime
+                .link_status
+                .read()
+                .expect("snapshot")
+                .observed_at
+                .is_none()
+        );
+        runtime
+            .refresh_link_statuses()
+            .await
+            .expect("refill after clear");
+        assert!(
+            runtime
+                .link_status
+                .read()
+                .expect("snapshot")
+                .observed_at
+                .is_some()
+        );
+        // A deliberately old value makes accidental restamping observable
+        // even when shutdown and the failed refresh finish in one second.
+        runtime.link_status.write().expect("snapshot").observed_at = Some(17);
+        runtime.endpoint().shutdown().await.expect("shutdown");
+        assert!(runtime.refresh_link_statuses().await.is_err());
+        assert_eq!(
+            runtime.link_status.read().expect("snapshot").observed_at,
+            Some(17)
+        );
+        runtime
+            .replace_peers(Vec::new(), Vec::new(), Vec::new())
+            .expect("replace peers");
+        assert!(
+            runtime
+                .link_status
+                .read()
+                .expect("snapshot")
+                .observed_at
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn first_roster_member_advert_requests_one_immediate_capabilities_reply() {
         use super::{PeerCapabilities, ReceivedFipsControlFrame, control_frame_participant_identity};
 

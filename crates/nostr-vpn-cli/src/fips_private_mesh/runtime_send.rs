@@ -69,8 +69,7 @@ impl FipsPrivateMeshRuntime {
             peer_activity: ArcSwap::from_pointee(peer_activity),
             peer_identities: ArcSwap::from_pointee(peer_identities),
             presence: RwLock::new(HashMap::new()),
-            link_status: RwLock::new(HashMap::new()),
-            other_link_status: RwLock::new(HashMap::new()),
+            link_status: RwLock::new(FipsLinkSnapshot::default()),
             peer_capabilities: RwLock::new(HashMap::new()),
             #[cfg(feature = "paid-exit")]
             paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),

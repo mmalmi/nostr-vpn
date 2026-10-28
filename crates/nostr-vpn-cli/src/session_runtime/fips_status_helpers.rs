@@ -400,6 +400,7 @@ pub(crate) fn daemon_endpoint_peer_states_from_signature(
             |(npub, auto_reconnect, discovery_fallback_transit, addresses)| {
                 DaemonFipsEndpointPeerState {
                     npub: npub.clone(),
+                    live: None,
                     addresses: addresses
                         .iter()
                         .map(|(addr, seen_at_ms, priority)| DaemonFipsEndpointPeerAddressState {

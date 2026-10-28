@@ -618,6 +618,7 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     }];
     let fips_endpoint_peers = [crate::DaemonFipsEndpointPeerState {
         npub: "npub1configured".to_string(),
+        live: None,
         addresses: vec![crate::DaemonFipsEndpointPeerAddressState {
             addr: "192.0.2.10:51820".to_string(),
             seen_at_ms: None,
@@ -676,6 +677,66 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     assert_eq!(state.fips_endpoint_peers[0].addresses[0].addr, "192.0.2.10:51820");
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn public_seed_live_state_preserves_legacy_readers() {
+    let legacy = serde_json::json!({
+        "npub": nostr_vpn_core::config::DEFAULT_FIPS_BOOTSTRAP_PEERS[0].0, "addresses": [],
+        "auto_reconnect": true, "discovery_fallback_transit": false
+    });
+    let mut peer: crate::DaemonFipsEndpointPeerState =
+        serde_json::from_value(legacy.clone()).expect("legacy neighbor state");
+    assert!(peer.live.is_none());
+    assert!(
+        serde_json::to_value(&peer)
+            .expect("serialize")
+            .get("live")
+            .is_none()
+    );
+    peer.live = Some(crate::fips_private_mesh::FipsPublicSeedLinkStatus {
+        observed_at: 100,
+        connected: true,
+        transport_addr: Some("192.0.2.10:51820".into()),
+        transport_type: Some("udp".into()),
+        link_id: 7,
+        packets_recv: 9,
+        bytes_recv: 90,
+    });
+    let encoded = serde_json::to_value(&peer).expect("serialize live");
+    assert!(encoded["live"].get("packets_sent").is_none());
+    assert!(encoded["live"].get("bytes_sent").is_none());
+    let decoded: crate::DaemonFipsEndpointPeerState =
+        serde_json::from_value(encoded.clone()).expect("live round trip");
+    assert_eq!(decoded, peer);
+
+    // Same fields/serde defaults as the pre-live-state row reader, which
+    // deliberately accepts unknown fields.
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct LegacyPeer {
+        npub: String,
+        #[serde(default)]
+        addresses: Vec<crate::DaemonFipsEndpointPeerAddressState>,
+        #[serde(default)]
+        auto_reconnect: bool,
+        #[serde(default)]
+        discovery_fallback_transit: bool,
+    }
+    let old: LegacyPeer = serde_json::from_value(encoded).expect("old reader accepts new state");
+    assert_eq!(serde_json::to_value(old).expect("legacy serialize"), legacy);
+    let state = crate::DaemonRuntimeState {
+        vpn_active: false,
+        fips_endpoint_peers: vec![peer],
+        ..Default::default()
+    };
+    let roundtrip: crate::DaemonRuntimeState =
+        serde_json::from_slice(&serde_json::to_vec(&state).expect("state serialize"))
+            .expect("non-VPN seed state");
+    assert!(roundtrip.peers.is_empty());
+    assert_eq!(
+        roundtrip.fips_endpoint_peers[0].live,
+        state.fips_endpoint_peers[0].live
+    );
 }
 
 #[test]

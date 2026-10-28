@@ -244,8 +244,7 @@ pub(crate) struct FipsPrivateMeshRuntime {
     peer_activity: ArcSwap<FipsPeerActivityMap>,
     peer_identities: ArcSwap<FipsPeerIdentityMap>,
     presence: RwLock<HashMap<String, FipsPeerPresence>>,
-    link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
-    other_link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
+    link_status: RwLock<FipsLinkSnapshot>,
     peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
     #[cfg(feature = "paid-exit")]
     paid_route_accounting: Mutex<FipsPaidRouteAccounting>,

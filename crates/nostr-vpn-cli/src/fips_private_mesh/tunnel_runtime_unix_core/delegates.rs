@@ -65,6 +65,7 @@ impl FipsPrivateTunnelRuntime {
         self.config.ethernet_underlay.as_ref()
     }
     mesh_delegate!(fn peer_statuses() -> Vec<MeshPeerStatus>);
+    mesh_delegate!(fn configured_public_seed_link_statuses(npubs: &[&str]) -> HashMap<String, FipsPublicSeedLinkStatus>);
     mesh_delegate!(
         #[cfg(feature = "paid-exit")]
         fn drain_paid_route_usage(participant: &str) -> Result<PaidRouteUsage>
