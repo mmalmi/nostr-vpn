@@ -37,7 +37,13 @@ impl SignedRosterStore {
             Some(existing) if existing.verify().is_err() => true,
             Some(existing) if existing.signed_at() < signed_roster.signed_at() => true,
             Some(existing) if existing.artifact_hash() == incoming_hash => return Ok(false),
-            Some(_) => false,
+            // Timestamps have second resolution, so two admins can sign valid
+            // rosters in the same second. Break the tie on the artifact hash so
+            // every replica converges on the same roster.
+            Some(existing) => {
+                existing.signed_at() == signed_roster.signed_at()
+                    && existing.artifact_hash() < incoming_hash
+            }
         };
         if !replace {
             return Ok(false);
@@ -240,6 +246,27 @@ mod tests {
             store.latest_for("mesh").unwrap().signed_at(),
             newer.signed_at()
         );
+    }
+
+    #[test]
+    fn upsert_breaks_equal_timestamp_ties_by_artifact_hash() {
+        let mut store = SignedRosterStore::default();
+        let mut reversed = SignedRosterStore::default();
+        let first = signed_roster(10);
+        let second = signed_roster(10);
+        let (winner, loser) = if first.artifact_hash() > second.artifact_hash() {
+            (first, second)
+        } else {
+            (second, first)
+        };
+
+        assert!(store.upsert(loser.clone()).unwrap());
+        assert!(store.upsert(winner.clone()).unwrap());
+        assert_eq!(store.latest_for("mesh").unwrap(), &winner);
+
+        assert!(reversed.upsert(winner.clone()).unwrap());
+        assert!(!reversed.upsert(loser).unwrap());
+        assert_eq!(reversed.latest_for("mesh").unwrap(), &winner);
     }
 
     #[test]
