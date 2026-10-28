@@ -70,6 +70,10 @@ load_env_file_defaults() {
 
 load_env_file_defaults "${NVPN_RELEASE_ENV_FILE:-$ROOT/release.env}"
 load_env_file_defaults "$ROOT/.env.release.local"
+# Rust 1.95's debug-info stripping can misalign Mach-O LINKEDIT entries,
+# preventing macOS 27 from loading proc macros and the UniFFI host library.
+# Keep the linker's output intact: https://github.com/rust-lang/rust/issues/157750
+export CARGO_PROFILE_RELEASE_STRIP=none
 if declare -F load_appstoreconnect_defaults >/dev/null 2>&1; then
   load_appstoreconnect_defaults
 fi
