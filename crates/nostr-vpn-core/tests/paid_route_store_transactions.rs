@@ -1,7 +1,9 @@
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use nostr_vpn_core::paid_route_store::PaidRouteLifecycleStatus;
 use nostr_vpn_core::paid_route_store::{load_paid_route_store, update_paid_route_store};
+use nostr_vpn_core::paid_routes::PaidRouteLease;
 
 const ROLE_ENV: &str = "NVPN_PAID_ROUTE_TRANSACTION_TEST_ROLE";
 const STORE_ENV: &str = "NVPN_PAID_ROUTE_TRANSACTION_TEST_STORE";
@@ -144,6 +146,20 @@ fn run_worker(role: &str) {
         })
         .expect("first transaction"),
         "second" => update_paid_route_store(&store_path, |store| {
+            // Admissions are keyed by an existing lease so the reload keeps
+            // them; pruning drops admissions whose lease is gone.
+            store.upsert_lease(
+                PaidRouteLease {
+                    lease_id: "seller".to_string(),
+                    offer_id: "offer".to_string(),
+                    quote_id: "quote".to_string(),
+                    buyer_npub: String::new(),
+                    starts_at_unix: 1,
+                    expires_at_unix: u64::MAX,
+                },
+                PaidRouteLifecycleStatus::Active,
+                1,
+            );
             store
                 .buyer_session_admissions
                 .insert("seller".to_string(), 123);

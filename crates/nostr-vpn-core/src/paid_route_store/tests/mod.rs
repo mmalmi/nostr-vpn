@@ -47,6 +47,7 @@ mod buyer;
 mod buyer_funding;
 mod closing_store;
 mod credit_window;
+mod pruning;
 mod renewal;
 mod returning_and_trial_limits;
 mod seller_open;
