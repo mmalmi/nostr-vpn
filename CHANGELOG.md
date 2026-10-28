@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.20 - 2026-10-27
+## 4.1.20 - 2026-10-28
 
 ### Improved
 
@@ -20,6 +20,11 @@ All notable changes to this project are documented in this file.
 - Recover peer messaging promptly after restarting its service on a live endpoint.
 - Keep peer discovery and replay subject to the application's peer policy.
 - Update compression dependencies to fix reported stream and memory-safety issues.
+- Redact network join secrets from diagnostic bundles.
+- Exit the background service when failed connection recovery leaves no running
+  endpoint, allowing the service manager to restart it.
+- Update the control panel's serialization dependency to address security issues.
+- Pin and verify the Windows tunnel driver's build input.
 
 ## 4.1.19 - 2026-10-26
 
