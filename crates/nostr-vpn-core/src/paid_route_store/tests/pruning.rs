@@ -51,10 +51,10 @@ fn aged_closed_channel_is_pruned_with_proofs_and_dependents() {
 
     store.prune_terminal_records(now);
 
-    assert!(store.channels.get("channel-1").is_none());
-    assert!(store.sessions.get("seller-session-lease-1").is_none());
-    assert!(store.leases.get("lease-1").is_none());
-    assert!(store.quotes.get("seller-quote-lease-1").is_none());
+    assert!(!store.channels.contains_key("channel-1"));
+    assert!(!store.sessions.contains_key("seller-session-lease-1"));
+    assert!(!store.leases.contains_key("lease-1"));
+    assert!(!store.quotes.contains_key("seller-quote-lease-1"));
     assert!(
         !store
             .seller_session_tunnel_ips
@@ -187,10 +187,10 @@ fn aged_terminal_buyer_records_go_while_live_flows_stay() {
 
     store.prune_terminal_records(now);
 
-    assert!(store.channels.get("old-channel").is_none());
-    assert!(store.sessions.get("old-session").is_none());
-    assert!(store.leases.get("old-lease").is_none());
-    assert!(store.quotes.get("old-quote").is_none());
+    assert!(!store.channels.contains_key("old-channel"));
+    assert!(!store.sessions.contains_key("old-session"));
+    assert!(!store.leases.contains_key("old-lease"));
+    assert!(!store.quotes.contains_key("old-quote"));
     assert!(!store.buyer_session_admissions.contains_key("old-lease"));
     assert!(!store.buyer_session_renewals.contains_key("old-session"));
     assert!(
@@ -238,25 +238,20 @@ fn store_reload_prunes_only_records_past_retention() {
     .unwrap();
 
     let aged_loaded = load_paid_route_store(&aged_path).unwrap();
-    assert!(aged_loaded.channels.get("channel-1").is_none());
-    assert!(aged_loaded.sessions.get("seller-session-lease-1").is_none());
-    assert!(aged_loaded.leases.get("lease-1").is_none());
-    assert!(aged_loaded.quotes.get("seller-quote-lease-1").is_none());
+    assert!(!aged_loaded.channels.contains_key("channel-1"));
+    assert!(!aged_loaded.sessions.contains_key("seller-session-lease-1"));
+    assert!(!aged_loaded.leases.contains_key("lease-1"));
+    assert!(!aged_loaded.quotes.contains_key("seller-quote-lease-1"));
 
     let fresh_loaded = load_paid_route_store(&fresh_path).unwrap();
-    assert!(fresh_loaded.channels.get("channel-1").is_some());
+    assert!(fresh_loaded.channels.contains_key("channel-1"));
     assert!(
         fresh_loaded.channels["channel-1"]
             .payment
             .cashu_spilman_payment
             .is_some()
     );
-    assert!(
-        fresh_loaded
-            .sessions
-            .get("seller-session-lease-1")
-            .is_some()
-    );
-    assert!(fresh_loaded.leases.get("lease-1").is_some());
-    assert!(fresh_loaded.quotes.get("seller-quote-lease-1").is_some());
+    assert!(fresh_loaded.sessions.contains_key("seller-session-lease-1"));
+    assert!(fresh_loaded.leases.contains_key("lease-1"));
+    assert!(fresh_loaded.quotes.contains_key("seller-quote-lease-1"));
 }
