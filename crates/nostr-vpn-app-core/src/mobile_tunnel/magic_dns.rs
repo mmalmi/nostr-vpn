@@ -42,12 +42,12 @@ impl MobileExitDnsFlowTable {
         }
     }
 
-    fn remove(&mut self, flow: &MobileWireGuardDnsFlow) -> bool {
-        self.set.remove(flow)
+    fn remove(&mut self, flow: MobileWireGuardDnsFlow) -> bool {
+        self.set.remove(&flow)
     }
 
-    fn contains(&self, flow: &MobileWireGuardDnsFlow) -> bool {
-        self.set.contains(flow)
+    fn contains(&self, flow: MobileWireGuardDnsFlow) -> bool {
+        self.set.contains(&flow)
     }
 }
 
@@ -103,9 +103,9 @@ impl MobileExitDnsNat {
         };
         let matched = self.flows.lock().is_ok_and(|mut flows| {
             if protocol == 17 {
-                flows.remove(&flow)
+                flows.remove(flow)
             } else {
-                flows.contains(&flow)
+                flows.contains(flow)
             }
         });
         if !matched {

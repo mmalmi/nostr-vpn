@@ -401,7 +401,9 @@ fn sync_pending_join_receipt_parent(path: &Path) -> Result<()> {
     Ok(())
 }
 
+// Keeps the fallible unix signature so the cfg-independent callers can use `?`.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn sync_pending_join_receipt_parent(_: &Path) -> Result<()> {
     Ok(())
 }
