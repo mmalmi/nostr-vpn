@@ -18,6 +18,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Make new paid Internet refunds and seller payouts spendable by mints that
+  enforce the Cashu secret format, with agreement before funding and preserved
+  recovery data for existing channels.
 - Preserve bootstrap and approval peer retries when mobile endpoints refresh.
 - Recover peer messaging promptly after restarting its service on a live endpoint.
 - Keep peer discovery and replay subject to the application's peer policy.
