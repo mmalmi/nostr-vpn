@@ -5,7 +5,6 @@ TARGET=${1:-${NVPN_LINUX_MUSL_TARGET:-x86_64-unknown-linux-musl}}
 WORKSPACE=$(git rev-parse --show-toplevel)
 BUILD_ROOT=${NVPN_LINUX_MUSL_BUILD_ROOT:-${TMPDIR:-/tmp}}
 TARGET_DIR=${NVPN_LINUX_MUSL_TARGET_DIR:-$WORKSPACE/target}
-WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-linux-musl.XXXXXX")
 FIPS_REPO_PATH=${NVPN_FIPS_REPO_PATH:-}
 NOSTR_PUBSUB_REPO_PATH=${NVPN_NOSTR_PUBSUB_REPO_PATH:-}
 CASHU_SERVICE_REPO_PATH=${NVPN_CASHU_SERVICE_REPO_PATH:-}
@@ -21,26 +20,34 @@ if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
 fi
 
 source "$WORKSPACE/scripts/release_common.sh"
+source "$WORKSPACE/scripts/lib-linux-musl-image.sh"
 enable_deterministic_build_env "$WORKSPACE"
+DEFAULT_IMAGE=$(linux_musl_default_image "$TARGET")
+IMAGE=${NVPN_LINUX_MUSL_IMAGE:-$DEFAULT_IMAGE}
+linux_require_immutable_image "$IMAGE"
+WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-linux-musl.XXXXXX")
+
+cleanup() {
+  if [[ ${NVPN_LINUX_MUSL_KEEP_WORK:-0} != 1 ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+trap cleanup EXIT
 
 case "$TARGET" in
   i686-unknown-linux-musl)
-    DEFAULT_IMAGE=messense/rust-musl-cross:i686-musl
     BINDGEN_INCLUDE=/usr/local/musl/i686-unknown-linux-musl/include
     TARGET_LINKER=i686-unknown-linux-musl-gcc
     ;;
   x86_64-unknown-linux-musl)
-    DEFAULT_IMAGE=messense/rust-musl-cross:x86_64-musl
     BINDGEN_INCLUDE=/usr/local/musl/x86_64-unknown-linux-musl/include
     TARGET_LINKER=x86_64-unknown-linux-musl-gcc
     ;;
   aarch64-unknown-linux-musl)
-    DEFAULT_IMAGE=messense/rust-musl-cross:aarch64-musl
     BINDGEN_INCLUDE=/usr/local/musl/aarch64-unknown-linux-musl/include
     TARGET_LINKER=aarch64-unknown-linux-musl-gcc
     ;;
   arm-unknown-linux-musleabihf)
-    DEFAULT_IMAGE=messense/rust-musl-cross:arm-musleabihf
     BINDGEN_INCLUDE=/usr/local/musl/arm-unknown-linux-musleabihf/include
     TARGET_LINKER=arm-unknown-linux-musleabihf-gcc
     ;;
@@ -50,14 +57,12 @@ case "$TARGET" in
     ;;
 esac
 
-IMAGE=${NVPN_LINUX_MUSL_IMAGE:-$DEFAULT_IMAGE}
 PUBLIC_DOCKER_CONFIG=""
 if [[ "$IMAGE" == "$DEFAULT_IMAGE" ]]; then
   PUBLIC_DOCKER_CONFIG="$WORK_DIR/.docker-public"
   mkdir -p "$PUBLIC_DOCKER_CONFIG"
-  # The public cross-builder's arm64 manifest currently contains x86_64
-  # executables. Pin its known-good amd64 variant so Apple Silicon does not
-  # select that mislabeled image and fail with an exec-format error.
+  # Preserve the established amd64 cross-build path, including on Apple Silicon.
+  # The immutable per-platform digest prevents automatic architecture selection.
   DOCKER_PLATFORM=linux/amd64
 fi
 
@@ -71,9 +76,9 @@ run_builder_docker() {
 
 run_builder_container() {
   if [[ -n "$DOCKER_PLATFORM" ]]; then
-    run_builder_docker run --rm -i --platform "$DOCKER_PLATFORM" "$@"
+    run_builder_docker run --rm -i --pull never --platform "$DOCKER_PLATFORM" "$@"
   else
-    run_builder_docker run --rm -i "$@"
+    run_builder_docker run --rm -i --pull never "$@"
   fi
 }
 
@@ -83,13 +88,6 @@ DOCKER_ENV+=(-e "$BINDGEN_ENV_NAME=-I$BINDGEN_INCLUDE")
 if [[ -n "$TARGET_LINKER" ]]; then
   DOCKER_ENV+=(-e "$LINKER_ENV_NAME=$TARGET_LINKER")
 fi
-
-cleanup() {
-  if [[ ${NVPN_LINUX_MUSL_KEEP_WORK:-0} != 1 ]]; then
-    rm -rf "$WORK_DIR"
-  fi
-}
-trap cleanup EXIT
 
 git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"
 mkdir -p "$TARGET_DIR"
@@ -174,12 +172,22 @@ perl -0pi -e 's#exclude = \["linux"\]#exclude = ["linux", ".fips-patch", ".nostr
 # containers. An immutable builder image and target own one serialized cache.
 builder_info="$(run_builder_docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$IMAGE" 2>/dev/null)" || builder_info=""
 if [[ -z "$builder_info" || ( -n "$DOCKER_PLATFORM" && "${builder_info#* }" != "$DOCKER_PLATFORM" ) ]]; then
+  if [[ "$IMAGE" == sha256:* ]]; then
+    echo 'The exact local builder image is unavailable; no registry fallback is permitted' >&2
+    exit 2
+  fi
   pull_args=()
   [[ -z "$DOCKER_PLATFORM" ]] || pull_args+=(--platform "$DOCKER_PLATFORM")
   run_builder_docker pull "${pull_args[@]}" "$IMAGE" >&2
   builder_info="$(run_builder_docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$IMAGE")"
 fi
 builder_id="${builder_info%% *}"
+[[ "$builder_id" =~ ^sha256:[0-9a-f]{64}$ \
+  && ( "$IMAGE" != sha256:* || "$builder_id" == "$IMAGE" ) \
+  && ( -z "$DOCKER_PLATFORM" || "${builder_info#* }" == "$DOCKER_PLATFORM" ) ]] || {
+  echo 'Linux builder image identity or platform differs from the selected input' >&2
+  exit 2
+}
 cache_volume="nvpn-musl-${TARGET}-$(id -u)-$(id -g)-${builder_id#sha256:}"
 run_builder_container -u 0 -v "$cache_volume:/tmp/nvpn-cache" \
   --entrypoint chown "$builder_id" "$(id -u):$(id -g)" /tmp/nvpn-cache
@@ -222,58 +230,35 @@ flock 9
 OUTPUT_ROOT=/home/rust/output
 
 cargo_config_args=()
-cargo_lock_args=(--locked)
 if [[ -n ${NVPN_NOSTR_PUBSUB_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.nostr-pubsub.path=\"${NVPN_NOSTR_PUBSUB_PATCH_PATH}\"")
-  cargo_lock_args=()
 fi
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.nvpn-fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
-  cargo_lock_args=()
 fi
 if [[ -n ${NVPN_FIPS_CORE_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.nvpn-fips-core.path=\"${NVPN_FIPS_CORE_PATCH_PATH}\"")
-  cargo_lock_args=()
 fi
 if [[ -n ${NVPN_FIPS_IDENTITY_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.nvpn-fips-identity.path=\"${NVPN_FIPS_IDENTITY_PATCH_PATH}\"")
-  cargo_lock_args=()
 fi
 if [[ -n ${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.nostr-pubsub-fips.path=\"${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH}\"")
-  cargo_lock_args=()
 fi
 if [[ -n ${NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.nostr-pubsub-social-graph.path=\"${NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH}\"")
-  cargo_lock_args=()
 fi
 
-if [[ -n ${NVPN_NOSTR_PUBSUB_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p nostr-pubsub
-fi
-if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p nvpn-fips-endpoint
-fi
-if [[ -n ${NVPN_FIPS_CORE_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p nvpn-fips-core
-fi
-if [[ -n ${NVPN_FIPS_IDENTITY_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p nvpn-fips-identity
-fi
-if [[ -n ${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p nostr-pubsub-fips
-fi
-if [[ -n ${NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH:-} ]]; then
-  cargo "${cargo_config_args[@]}" update -p nostr-pubsub-social-graph
-fi
-
-cargo "${cargo_config_args[@]}" fetch "${cargo_lock_args[@]}" --target "$TARGET"
+# Local patches must already agree with the committed lock. Never resolve new
+# dependencies during a build; the native release path has a separately verified
+# FIPS lock-materialization step when that workflow is required.
+cargo "${cargo_config_args[@]}" fetch --locked --target "$TARGET"
 
 cargo_feature_args=()
 if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
   cargo_feature_args+=(--no-default-features)
 fi
-cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" \
+cargo "${cargo_config_args[@]}" build --frozen \
   "${cargo_feature_args[@]}" -p nvpn --bin nvpn --release --target "$TARGET"
 install -D -m 0755 \
   "$CARGO_TARGET_DIR/$TARGET/release/nvpn" \

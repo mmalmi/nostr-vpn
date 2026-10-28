@@ -1,35 +1,57 @@
-FROM rust:1-trixie
+# Generic Debian 13 builder, distinct from the Ubuntu native release gate.
+FROM rust:1.95.0-trixie@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3
 
-# musl-tools lets the CLI be built as a static musl tarball for the
-# container architecture.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      curl \
-      file \
-      dpkg-dev \
-      fakeroot \
-      libclang-dev \
-      libadwaita-1-dev \
-      libdbus-1-dev \
-      libgtk-4-dev \
-      libssl-dev \
-      librsvg2-bin \
-      musl-tools \
-      pkg-config \
-      rsync \
-      zbar-tools \
+RUN case "$(dpkg --print-architecture)" in amd64|arm64) ;; *) exit 2 ;; esac
+
+# Immutable signed repository metadata pins the complete dependency closure.
+# APT verifies index and .deb hashes through these pinned InRelease files.
+# Check-Valid-Until is disabled only for these historical build snapshots.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' \
+      'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] https://snapshot.debian.org/archive/debian/20261027T000000Z trixie main' \
+      'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] https://snapshot.debian.org/archive/debian/20261027T000000Z trixie-updates main' \
+      'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20261027T000000Z trixie-security main' \
+      > /etc/apt/sources.list \
+    && apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
+    && printf '%s\n' \
+      '0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675  /var/lib/apt/lists/snapshot.debian.org_archive_debian_20261027T000000Z_dists_trixie_InRelease' \
+      '3b036a4df7cfa529e65f718aaec07c6d126ccdfe6782db0df815d5d06ec7ea76  /var/lib/apt/lists/snapshot.debian.org_archive_debian_20261027T000000Z_dists_trixie-updates_InRelease' \
+      'dfab8e28ea58bbf3bc3840bbd099d3e52ed44f72e447220e0b1b7c12ab0c0baf  /var/lib/apt/lists/snapshot.debian.org_archive_debian-security_20261027T000000Z_dists_trixie-security_InRelease' \
+      | sha256sum --check --strict \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates=20250419+deb13u1 \
+      curl=8.14.1-2+deb13u7 \
+      file=1:5.46-5 \
+      dpkg-dev=1.22.22 \
+      fakeroot=1.37.1.1-1 \
+      libclang-dev=1:19.0-63 \
+      libadwaita-1-dev=1.7.6-1~deb13u1 \
+      libdbus-1-dev=1.16.2-2 \
+      libgtk-4-dev=4.18.6+ds-2 \
+      libssl-dev=3.5.7-1~deb13u3 \
+      librsvg2-bin=2.60.0+dfsg-1+deb13u1 \
+      musl-tools=1.2.5-3.1~deb13u1 \
+      pkg-config=1.8.1-4 \
+      rsync=3.5.0+ds1-0+deb13u1 \
+      zbar-tools=0.23.93-8 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN cargo install cargo-deb --locked
+# The source archive pins Cargo.lock and all helper dependency checksums.
+RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+      https://static.crates.io/crates/cargo-deb/cargo-deb-3.7.0.crate \
+      --output /tmp/cargo-deb.crate \
+    && echo 'a40a401a79fd1bd9d2cb41fd783d0c80f3504f657002bfae49dfd55049dce8f8  /tmp/cargo-deb.crate' | sha256sum --check --strict \
+    && tar -xzf /tmp/cargo-deb.crate -C /tmp \
+    && echo '0e0bddb0b561f0fb2f566d7fe5f5d5eda0a403cd3d185912c808a5eb8da2252d  /tmp/cargo-deb-3.7.0/Cargo.lock' | sha256sum --check --strict \
+    && cargo install --path /tmp/cargo-deb-3.7.0 --locked \
+    && test "$(cargo deb --version)" = 'cargo-deb 3.7.0' \
+    && rm -rf /tmp/cargo-deb.crate /tmp/cargo-deb-3.7.0
 
 RUN mkdir -p /build
 
-# musl-gcc is the only musl linker apt provides; it works for both
-# x86_64-unknown-linux-musl and aarch64-unknown-linux-musl when the
-# container's host arch matches the cargo --target.
+# musl-gcc requires the target architecture to match the container architecture.
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
 ENV PATH="/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
 WORKDIR /work

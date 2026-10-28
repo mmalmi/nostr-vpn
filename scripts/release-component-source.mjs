@@ -123,7 +123,7 @@ const buildScripts = {
     /scripts\/ios-profiles$/,
     /scripts\/ios_profile_certificate\.py$/,
   ],
-  linux: [/build-host-linux-/, /build-nvpn-linux-musl$/, /host-linux-native-builder-/, /host_linux_package_content/, /lib-host-linux-/],
+  linux: [/build-host-linux-/, /build-nvpn-linux-musl$/, /host-linux-native-builder-/, /host_linux_package_content/, /lib-host-linux-/, /lib-linux-musl-image/],
   macos: [/build-.*macos/, /scripts\/macos-build$/, /lib-macos-release-app-ownership/, /verify-macos-release-publication-artifacts/],
   windows: [/windows-build\.ps1$/, /^scripts\/windows-vm-app-launch-smoke\.sh$/],
 }

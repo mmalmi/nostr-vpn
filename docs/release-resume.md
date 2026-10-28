@@ -45,6 +45,72 @@ still use the existing `--complete-gate-from-receipts` and
 `--reuse-gate-receipts` paths. An incomplete platform set is not accepted by those
 commands.
 
+## Linux builder inputs
+
+`Dockerfile.linux-vm-gate` is the established **native Linux amd64, Ubuntu
+24.04** package builder. It keeps Rust/cargo **1.95.0**, cargo-deb **3.7.0**,
+the `x86_64-unknown-linux-gnu` desktop/daemon target and the static
+`x86_64-unknown-linux-musl` daemon target. GTK 4, libadwaita, OpenSSL, DBus,
+Clang/bindgen, GCC and musl headers/linker come from its explicitly versioned
+Ubuntu packages. The existing native-host admission, resource limits, source
+checks, FIPS lock materialization, `--locked` fetch, `--frozen` build and
+serialized retained-cache rules still apply. Do not substitute an emulated
+builder or a Debian-built glibc artifact for this Ubuntu release gate.
+
+Both Linux Dockerfiles pin their base images by SHA-256. The native builder
+copies the Rust toolchain and proxies from the pinned official Rust image into
+the established `/opt/rustup` and `/opt/cargo` locations; it does not run the
+mutable rustup installation script. Its additional musl standard-library
+archive is verified before extraction or execution. cargo-deb's source archive
+and included Cargo.lock are verified before its locked installation.
+
+APT uses only the **2026-10-27 00:00 UTC** repository snapshots listed in each
+Dockerfile. After a successful signed index update, the exact InRelease SHA-256
+checks must pass **before package installation**. Those committed hashes pin
+the complete index-to-package SHA-256 chain, including transitive package
+versions and checksums; direct package versions are also written explicitly.
+APT's normal signature and package-hash checks remain enabled. The historical
+snapshot alone is allowed to outlive its metadata expiry. There is no fallback
+to a live mirror, a newer version, or an unchecked download. Updating these
+pins is a reviewed source change, including when incorporating security fixes.
+
+`Dockerfile.linux-release` is the separate Debian 13/trixie builder, now pinned
+to Rust **1.95.0** and cargo-deb **3.7.0**. Its amd64/arm64 musl target must
+match the container architecture. This recipe does not establish Ubuntu gate
+compatibility or acceptance.
+
+`scripts/build-nvpn-linux-musl` selects the immutable amd64 cross-builder for
+each i686, x86_64, aarch64 or ARMv6 hard-float target from
+`scripts/lib-linux-musl-image.sh`. It keeps the existing linker/include paths
+and one serialized cache per image ID, target and user. The image contains its
+own compiler/toolchain; record `rustc -vV`, Cargo, C compiler and OS versions
+when qualifying that exact image. A verified registry manifest identifies
+bytes, not a completed toolchain execution test. The ARM64 gate separately
+uses a pinned native arm64 Ubuntu smoke image; the ARMv6 wrapper inherits the
+canonical ARMv6 image, never an ARMv7 substitute.
+
+The musl wrapper archives committed HEAD and builds the release `nvpn` binary
+with default features, or the explicitly requested existing
+`NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES=1` selection. It fetches with `--locked`
+and builds with `--frozen`. Local patches that require a lockfile change now
+fail rather than resolving new dependencies during the build; prepare a
+reviewed compatible lock first, or use the canonical native gate's validated
+FIPS lock-materialization workflow. Dependency versions are not updated here.
+
+Image overrides must use a registry digest or a full local image ID. A local
+image ID is only an exact reuse reference: retain its source recipe, input
+pins, build log and tool inventory in the release receipt. It does not prove
+that an older, mutable recipe can recreate those bytes. Missing local images
+fail without pulling a replacement. Preserve the previous image and retained
+cache until the owner accepts and retires them; this source change does not
+upgrade them in place.
+
+Changing a Dockerfile changes the existing builder-environment cache key. The
+next image build needs the normal native resource reservation, space budget,
+tool-startup and package-build checks, followed by artifact/network acceptance.
+Source/manifest verification alone is not that acceptance, an audit of every
+dependency, or proof that a newly built package matches published bytes.
+
 ## Resource-constrained release hosts
 
 Set `NVPN_RELEASE_GATE_SERIAL=1` when the allocated hosts cannot safely overlap

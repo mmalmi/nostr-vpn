@@ -1,41 +1,76 @@
-FROM ubuntu:24.04
+# Ubuntu 24.04 native amd64 release builder; see docs/release-resume.md.
+FROM rust:1.95.0-trixie@sha256:f49565f188ee00bc2a18dd418183f2c5f23ef7d6e691890517ed341a598f67c3 AS rust-toolchain
+FROM ubuntu:24.04@sha256:78d4744ead1f5b19b04d0df558ab182a5300903900755e515b2ca4d10eb2044d
 
 ARG RUST_TOOLCHAIN=1.95.0
+RUN test "$RUST_TOOLCHAIN" = 1.95.0 && test "$(dpkg --print-architecture)" = amd64
 
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      build-essential \
-      ca-certificates \
-      curl \
-      dpkg-dev \
-      fakeroot \
-      file \
-      git \
-      libadwaita-1-dev \
-      libclang-dev \
-      libdbus-1-dev \
-      libgtk-4-dev \
-      libssl-dev \
-      musl-tools \
-      pkg-config \
-      python3 \
-      xz-utils \
-    && rm -rf /var/lib/apt/lists/*
-
+# Preserve the established toolchain locations without executing a mutable
+# rustup bootstrap script. The complete compiler/proxy bytes are digest-pinned.
+COPY --from=rust-toolchain /usr/local/rustup /opt/rustup
+COPY --from=rust-toolchain /usr/local/cargo /opt/cargo
+# Bootstrap HTTPS with the pinned image's CA bundle, before Ubuntu installs its own.
+COPY --from=rust-toolchain /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 ENV RUSTUP_HOME=/opt/rustup
 ENV CARGO_HOME=/opt/cargo
 ENV PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
-      https://sh.rustup.rs \
-      | sh -s -- -y --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
-    && rustc --version \
-    && cargo --version
+# Immutable signed repository metadata pins the complete dependency closure.
+# APT verifies index and .deb hashes through these pinned InRelease files.
+# Check-Valid-Until is disabled only for these historical build snapshots.
+RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf '%s\n' \
+      'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/20261027T000000Z noble main universe' \
+      'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/20261027T000000Z noble-updates main universe' \
+      'deb [arch=amd64 signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg check-valid-until=no] https://snapshot.ubuntu.com/ubuntu/20261027T000000Z noble-security main universe' \
+      > /etc/apt/sources.list \
+    && apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=2 -o Acquire::https::Timeout=30 update \
+    && printf '%s\n' \
+      'cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0  /var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261027T000000Z_dists_noble_InRelease' \
+      'c607e7ab2685b82c6d37a57261f8413d68c82b01a6a4225e1c6292fcb95691b4  /var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261027T000000Z_dists_noble-updates_InRelease' \
+      '25fe752bf07eb17eb5db1fd5a1fe4e40c0382dc2308a602ee9da1abb9d49bac7  /var/lib/apt/lists/snapshot.ubuntu.com_ubuntu_20261027T000000Z_dists_noble-security_InRelease' \
+      | sha256sum --check --strict \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential=12.10ubuntu1 \
+      ca-certificates=20260816ubuntu0.24.04.1 \
+      curl=8.5.0-2ubuntu10.16 \
+      dpkg-dev=1.22.6ubuntu6.6 \
+      fakeroot=1.33-1 \
+      file=1:5.45-3build1 \
+      git=1:2.43.0-1ubuntu7.4 \
+      libadwaita-1-dev=1.5.0-1ubuntu2 \
+      libclang-dev=1:18.0-59~exp2 \
+      libdbus-1-dev=1.14.10-4ubuntu4.1 \
+      libgtk-4-dev=4.14.5+ds-0ubuntu0.10 \
+      libssl-dev=3.0.13-0ubuntu3.16 \
+      musl-tools=1.2.4-2 \
+      pkg-config=1.8.1-2build1 \
+      python3=3.12.3-0ubuntu2.1 \
+      xz-utils=5.6.1+really5.4.5-1ubuntu0.4 \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN rustup target add x86_64-unknown-linux-musl \
-    && cargo install cargo-deb --version 3.7.0 --locked \
-    && cargo deb --version
+# Install only the pinned musl standard library into the existing Rust sysroot.
+RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+      https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-x86_64-unknown-linux-musl.tar.xz \
+      --output /tmp/rust-std.tar.xz \
+    && echo 'aee540abf132920f791ef781489851a078d69dff493fb628d49c1d573f92bb3a  /tmp/rust-std.tar.xz' | sha256sum --check --strict \
+    && tar -xJf /tmp/rust-std.tar.xz -C /tmp \
+    && /tmp/rust-std-1.95.0-x86_64-unknown-linux-musl/install.sh \
+      --prefix="$(rustc --print sysroot)" --disable-ldconfig \
+    && rustc --version && cargo --version \
+    && rm -rf /tmp/rust-std.tar.xz /tmp/rust-std-1.95.0-x86_64-unknown-linux-musl
+
+# The source archive pins Cargo.lock and all helper dependency checksums.
+RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+      https://static.crates.io/crates/cargo-deb/cargo-deb-3.7.0.crate \
+      --output /tmp/cargo-deb.crate \
+    && echo 'a40a401a79fd1bd9d2cb41fd783d0c80f3504f657002bfae49dfd55049dce8f8  /tmp/cargo-deb.crate' | sha256sum --check --strict \
+    && tar -xzf /tmp/cargo-deb.crate -C /tmp \
+    && echo '0e0bddb0b561f0fb2f566d7fe5f5d5eda0a403cd3d185912c808a5eb8da2252d  /tmp/cargo-deb-3.7.0/Cargo.lock' | sha256sum --check --strict \
+    && cargo install --path /tmp/cargo-deb-3.7.0 --locked \
+    && test "$(cargo deb --version)" = 'cargo-deb 3.7.0' \
+    && rm -rf /tmp/cargo-deb.crate /tmp/cargo-deb-3.7.0
 
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-
 WORKDIR /workspace/app

@@ -31,19 +31,21 @@ cat >"$TMP_ROOT/bin/docker" <<'SH'
 set -euo pipefail
 
 config_dir=""
+printf '%s\n' "$*" >>"$NVPN_TEST_STATE_DIR/docker-calls"
 if [[ ${1:-} == --config ]]; then
   config_dir="${2:-}"
   shift 2
 fi
 if [[ ${1:-} == image && ${2:-} == inspect ]]; then
+  [[ ${NVPN_TEST_IMAGE_MISSING:-0} != 1 ]] || exit 1
   case "${!#}" in
-    messense/rust-musl-cross:*)
+    messense/rust-musl-cross:*@sha256:*)
       [[ -n "$config_dir" ]] || exit 89
       printf 'sha256:1111111111111111111111111111111111111111111111111111111111111111 linux/amd64\n'
       ;;
-    registry.invalid/*)
+    registry.invalid/*@sha256:*|sha256:2222*)
       [[ -z "$config_dir" ]] || exit 91
-      printf 'sha256:2222222222222222222222222222222222222222222222222222222222222222 linux/arm64\n'
+      printf '%s linux/arm64\n' "${NVPN_TEST_IMAGE_ID:-sha256:2222222222222222222222222222222222222222222222222222222222222222}"
       ;;
     *) exit 92 ;;
   esac
@@ -112,6 +114,9 @@ grep -Fq '"$OUTPUT_ROOT/$TARGET/release/nvpn"' \
 grep -Fq 'exec 9>/tmp/nvpn-cache/build.lock' \
   "$NVPN_TEST_STATE_DIR/container-script" || exit 98
 grep -Fxq 'flock 9' "$NVPN_TEST_STATE_DIR/container-script" || exit 99
+grep -Fq 'fetch --locked --target' "$NVPN_TEST_STATE_DIR/container-script" || exit 100
+grep -Fq 'build --frozen' "$NVPN_TEST_STATE_DIR/container-script" || exit 101
+! grep -Fq ' update -p ' "$NVPN_TEST_STATE_DIR/container-script" || exit 102
 mkdir -p "$output_mount/$NVPN_TEST_TARGET/release"
 printf '#!/bin/sh\nexit 0\n' >"$output_mount/$NVPN_TEST_TARGET/release/nvpn"
 chmod +x "$output_mount/$NVPN_TEST_TARGET/release/nvpn"
@@ -148,18 +153,45 @@ repeat_binary="$(run_builder repeat)"
 [[ -x "$repeat_binary" ]] || fail "repeated build did not emit its binary"
 
 custom_binary="$(
-  run_builder custom NVPN_LINUX_MUSL_IMAGE=registry.invalid/private-musl:test
+  run_builder custom NVPN_LINUX_MUSL_IMAGE=registry.invalid/private-musl:test@sha256:3333333333333333333333333333333333333333333333333333333333333333
 )"
 [[ -x "$custom_binary" ]] || fail "custom-image build did not emit its binary"
 [[ -e "$TMP_ROOT/state/custom-used-normal-config" ]] \
   || fail "custom image did not preserve the caller's Docker configuration"
 
+local_binary="$(
+  run_builder local NVPN_LINUX_MUSL_IMAGE=sha256:2222222222222222222222222222222222222222222222222222222222222222
+)"
+[[ -x "$local_binary" ]] || fail "exact local builder did not emit its binary"
+
+calls_before="$(wc -l <"$TMP_ROOT/state/docker-calls")"
+if run_builder mutable NVPN_LINUX_MUSL_IMAGE=registry.invalid/private-musl:test \
+  >"$TMP_ROOT/mutable.log" 2>&1; then
+  fail "mutable custom image was accepted"
+fi
+[[ "$(wc -l <"$TMP_ROOT/state/docker-calls")" == "$calls_before" ]] \
+  || fail "mutable image rejection contacted Docker"
+if run_builder mismatch \
+  NVPN_LINUX_MUSL_IMAGE=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+  NVPN_TEST_IMAGE_ID=sha256:4444444444444444444444444444444444444444444444444444444444444444 \
+  >"$TMP_ROOT/mismatch.log" 2>&1; then
+  fail "different local builder image was accepted"
+fi
+if run_builder missing \
+  NVPN_LINUX_MUSL_IMAGE=sha256:2222222222222222222222222222222222222222222222222222222222222222 \
+  NVPN_TEST_IMAGE_MISSING=1 >"$TMP_ROOT/missing.log" 2>&1; then
+  fail "missing local builder was accepted"
+fi
+! grep -E '^pull | pull ' "$TMP_ROOT/state/docker-calls" >/dev/null \
+  || fail "missing local image caused a pull fallback"
+
 cache_volumes=()
 while IFS= read -r line; do cache_volumes+=("$line"); done \
   <"$TMP_ROOT/state/cache-volumes"
-[[ "${#cache_volumes[@]}" == 3 \
+[[ "${#cache_volumes[@]}" == 4 \
   && "${cache_volumes[0]}" == "${cache_volumes[1]}" \
-  && "${cache_volumes[0]}" != "${cache_volumes[2]}" ]] \
+  && "${cache_volumes[0]}" != "${cache_volumes[2]}" \
+  && "${cache_volumes[2]}" == "${cache_volumes[3]}" ]] \
   || fail "cache must survive repeated workspaces and isolate builder images"
 
-echo "Linux musl Docker config and cache harness passed"
+echo "Linux musl Docker config, immutable inputs and cache harness passed (7 cases)"
