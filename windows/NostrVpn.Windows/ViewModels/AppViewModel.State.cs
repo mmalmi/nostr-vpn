@@ -24,14 +24,15 @@ public sealed partial class AppViewModel
     {
         TagSelfParticipants(state);
         NormalizeSelectedParticipant(state);
+        var core = _core;
         State = state;
-        JoinRequestQr = string.IsNullOrWhiteSpace(state.JoinRequestQrCodeOrLink)
+        JoinRequestQr = string.IsNullOrWhiteSpace(state.JoinRequestQrCodeOrLink) || core is null
             ? new QrMatrix()
-            : _core.QrMatrix(state.JoinRequestQrCodeOrLink);
+            : core.QrMatrix(state.JoinRequestQrCodeOrLink);
         var invoice = state.PaidRouteMarket.Wallet.LastAction.PaymentRequest;
-        PaidRouteWalletInvoiceQr = string.IsNullOrWhiteSpace(invoice)
+        PaidRouteWalletInvoiceQr = string.IsNullOrWhiteSpace(invoice) || core is null
             ? new QrMatrix()
-            : _core.QrMatrix(invoice);
+            : core.QrMatrix(invoice);
         _refreshTimer.Interval = RefreshIntervalForState(
             state,
             DateTimeOffset.UtcNow < _joinCoordinationRefreshUntil);

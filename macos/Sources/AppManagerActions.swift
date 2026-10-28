@@ -33,6 +33,11 @@ extension AppManager {
     }
 
     func handle(url: URL) {
+        guard app != nil || fixtureMode else {
+            // The core is still initializing; replay the link once it exists.
+            pendingStartupUrls.append(url)
+            return
+        }
         let raw = url.absoluteString
         if url.scheme?.lowercased() == "nvpn", url.host?.lowercased() == "paid-exit" {
             paidExitChooserRequested = true

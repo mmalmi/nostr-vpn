@@ -43,6 +43,21 @@ internal static class Program
         Preserve("network selection during dispatch", model => Set(model, "_shownNetworkId", "other-network"));
         Preserve("participant edit during dispatch", model => model.ParticipantInput = "different-participant");
         Preserve("alias edit during dispatch", model => model.ParticipantAliasInput = "different-alias");
+
+        var cold = (AppViewModel)RuntimeHelpers.GetUninitializedObject(typeof(AppViewModel));
+        Set(cold, "_state", new NativeAppState());
+        Set(cold, "_refreshTimer", new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) });
+        Require(cold.VpnStatusText == "Off", "default state renders Off before the core answers");
+        Require(cold.HeroSubtitle == "0 of 0 connected", "default state renders empty peer counts");
+        Pass("default state renders before core init");
+
+        var preCore = Create(accepted: false);
+        typeof(AppViewModel).GetMethod("ApplyState", Private)!
+            .Invoke(preCore, [State(accepted: false), true]);
+        Require(preCore.State.Networks.Count == 2, "state applies while the core is still initializing");
+        Require(preCore.JoinRequestQr.Width == 0 && preCore.JoinRequestQr.Error == "",
+            "missing core skips QR decoding instead of throwing");
+        Pass("state applies before core init");
         Console.WriteLine($"WINDOWS_JOIN_NAVIGATION_OK: {_passed} cases");
     }
 

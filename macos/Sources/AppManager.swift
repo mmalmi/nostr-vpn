@@ -44,7 +44,7 @@ final class AppManager: ObservableObject {
             UserDefaults.standard.set(autoInstallUpdates, forKey: "updates.autoInstall")
         }
     }
-    let app: FfiApp?
+    var app: FfiApp?
     let fixtureMode: Bool
     var refreshTask: Task<Void, Never>?
     var copyClearTask: Task<Void, Never>?
@@ -56,6 +56,8 @@ final class AppManager: ObservableObject {
     var refreshInFlight = false
     var refreshPending = false
     var startupUrlsDrained = false
+    var startupSetupDone = false
+    var pendingStartupUrls: [URL] = []
     @Published var pendingPaidExitLink: String?
     @Published var openingPaidExitLink: String?
     var startupUpdateCheckDone = false
@@ -89,13 +91,31 @@ final class AppManager: ObservableObject {
         }
 
         let dataDir = Self.appDataDir()
-        // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
-        // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
-        // xcodeproj and the bundled nvpn binary.
-        let app = FfiApp(dataDir: dataDir, appVersion: "")
-        app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
-        self.app = app
-        self.state = app.state()
+        self.app = nil
+        self.state = NativeAppState()
+        // Construction shells out to `nvpn status` and the first state() can
+        // wait on the CLI too, so both run off the main thread and the window
+        // draws the empty placeholder first.
+        Task { @MainActor [weak self] in
+            let core = await Task.detached(priority: .userInitiated) {
+                // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
+                // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
+                // xcodeproj and the bundled nvpn binary.
+                let app = FfiApp(dataDir: dataDir, appVersion: "")
+                app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
+                return (app: app, state: app.state())
+            }.value
+            guard let self, self.app == nil else {
+                return
+            }
+            self.app = core.app
+            self.state = core.state
+            self.finishStartupSetup()
+            for url in self.pendingStartupUrls {
+                self.handle(url: url)
+            }
+            self.pendingStartupUrls.removeAll()
+        }
     }
 
     private static func appDataDir() -> String {
@@ -165,11 +185,10 @@ final class AppManager: ObservableObject {
             _ = FileManager.default.createFile(atPath: path, contents: Data())
         }
         #endif
-        drainStartupUrls()
         guard !fixtureMode else {
+            drainStartupUrls()
             return
         }
-        syncLaunchAgentWithSettings()
         startAutomaticUpdateChecks()
         refresh()
         guard refreshTask == nil else {
@@ -182,6 +201,23 @@ final class AppManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: interval)
             }
         }
+        if app != nil {
+            // The core finished initializing before start(); run the
+            // state-dependent setup now instead of waiting for the init task.
+            finishStartupSetup()
+        }
+    }
+
+    /// Startup steps that need the real core and state. They wait for the
+    /// first snapshot so the launch agent sync never reads the empty
+    /// placeholder state.
+    func finishStartupSetup() {
+        guard !startupSetupDone else {
+            return
+        }
+        startupSetupDone = true
+        drainStartupUrls()
+        syncLaunchAgentWithSettings()
     }
 
     deinit {
