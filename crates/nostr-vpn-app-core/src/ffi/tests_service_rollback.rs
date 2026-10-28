@@ -226,6 +226,8 @@ Endpoint = vpn.example.test:51820
         );
         let saved = AppConfig::load(&runtime.config_path).expect("load restored config");
         assert_eq!(saved.internet_source, InternetSource::Direct);
+        assert!(!saved.wireguard_exit.enabled);
+        assert!(saved.wireguard_exit.address.is_empty());
         // Inspect the configuration seen by the rollback reload. Direct is
         // omitted by serde, and HashMap table order can change across saves.
         let reloaded: AppConfig = toml::from_str(

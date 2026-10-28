@@ -107,7 +107,7 @@ loop {
                 fips_private_runtime_active(&app, vpn_enabled)
             };
             if maintain_fips {
-                maintain_fips_heartbeat(FipsHeartbeatContext {
+                if let Err(error) = maintain_fips_heartbeat(FipsHeartbeatContext {
                     runtime: &mut fips_tunnel_runtime,
                     app: &app,
                     config_path: &config_path,
@@ -127,7 +127,11 @@ loop {
                     pending_roster_recipients: &mut pending_fips_roster_recipients,
                     join_request_sends: &mut fips_join_request_sends,
                 })
-                .await;
+                .await {
+                    eprintln!("daemon: fatal FIPS runtime failure: {error:#}");
+                    fatal_runtime_failure = Some(error);
+                    break;
+                }
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                     drop(start_queued_join_roster_deliveries(runtime, &config_path));
                 }
