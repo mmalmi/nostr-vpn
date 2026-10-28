@@ -42,7 +42,8 @@ use nostr_vpn_core::fips_control_tcp::{
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_delivery::{
-    QueuedJoinRoster, join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
+    QueuedJoinRoster, expire_join_roster, join_roster_delivery_expired, load_join_rosters,
+    record_join_roster_attempt,
 };
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
 use nostr_vpn_core::join_roster_persistence::{

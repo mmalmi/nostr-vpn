@@ -98,3 +98,12 @@ fn remove_confirmation_file(path: &Path) -> Result<()> {
         Err(error) => Err(error).context("failed to consume confirmed join roster"),
     }
 }
+
+/// An expired approval can never deliver, so drop the retry payload and its
+/// pending marker together; otherwise the UI shows "approval pending" forever.
+pub fn expire_join_roster(path: &Path, queued: &QueuedJoinRoster) -> Result<()> {
+    remove_confirmation_file(path)?;
+    let confirmation = PendingJoinConfirmation::from_queued(queued)?;
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    remove_confirmation_file(&confirmation.path(directory))
+}

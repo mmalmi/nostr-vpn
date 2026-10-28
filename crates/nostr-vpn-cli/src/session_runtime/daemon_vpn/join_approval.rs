@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -212,7 +211,9 @@ pub(super) fn start_queued_join_roster_deliveries(
         }
         if join_roster_delivery_expired(&queued, crate::unix_timestamp()) {
             release_join_roster_delivery(&path);
-            consume_join_roster(&path);
+            if let Err(error) = nostr_vpn_core::join_delivery::expire_join_roster(&path, &queued) {
+                eprintln!("failed to expire queued join approval {}: {error:#}", path.display());
+            }
             eprintln!(
                 "expired queued join approval for {}; removed it from the outbox",
                 queued.recipient_npub
@@ -281,14 +282,10 @@ fn finish_join_roster_delivery(
     }
 }
 
-fn consume_join_roster(path: &Path) {
-    if let Err(error) = fs::remove_file(path) {
-        eprintln!("failed to remove join roster {}: {error}", path.display());
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     #[test]
