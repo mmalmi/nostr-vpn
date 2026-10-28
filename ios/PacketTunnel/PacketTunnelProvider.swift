@@ -25,6 +25,8 @@ private enum UnderlayPathSource: Hashable {
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let handoffLog = Logger(subsystem: "fi.siriusbusiness.nvpn", category: "config-handoff")
     private static let appMessageChunkSize = 3_072
+    // Fires inside the system's provider kill window if teardown stalls.
+    private static let stopTunnelCompletionTimeout: TimeInterval = 5
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
     private var tunnelGeneration: UInt64 = 0
@@ -235,8 +237,28 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping () -> Void
     ) {
         packetDebugLog("stopTunnel reason=\(reason.rawValue)")
+        let completionLock = NSLock()
+        var completionCalled = false
+        let completeOnce = { () -> Bool in
+            completionLock.lock()
+            let shouldComplete = !completionCalled
+            completionCalled = true
+            completionLock.unlock()
+            guard shouldComplete else {
+                return false
+            }
+            completionHandler()
+            return true
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.stopTunnelCompletionTimeout
+        ) {
+            if completeOnce() {
+                NSLog("nvpn-pkt: stopTunnel watchdog fired, teardown stalled reason=\(reason.rawValue)")
+            }
+        }
         stopRustTunnel()
-        completionHandler()
+        _ = completeOnce()
     }
 
     override func handleAppMessage(
