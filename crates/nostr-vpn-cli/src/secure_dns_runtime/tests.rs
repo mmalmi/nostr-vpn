@@ -1,11 +1,11 @@
 #[cfg(target_os = "macos")]
-use super::macos::{
-    MACOS_SECURE_DNS_STORE_KEY, macos_magic_dns_resolver_config, macos_resolver_configs,
-};
+use super::macos::{MACOS_SECURE_DNS_STORE_KEY, macos_resolver_configs};
 use super::*;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, RecordType};
 use hickory_proto::serialize::binary::BinEncoder;
+#[cfg(target_os = "macos")]
+use nostr_vpn_core::magic_dns::macos_secure_dns_resolver_config;
 use nostr_vpn_core::secure_dns::SecureDnsResolver;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -126,7 +126,7 @@ fn macos_secure_dns_uses_system_configuration_default_routing() {
             .any(|(path, _)| path == std::path::Path::new("/etc/resolver/fips"))
     );
 
-    let magic_dns_resolver = macos_magic_dns_resolver_config();
+    let magic_dns_resolver = macos_secure_dns_resolver_config();
     assert!(magic_dns_resolver.contains("nameserver 127.0.0.1\n"));
     assert!(magic_dns_resolver.contains("port 1053\n"));
     assert!(!magic_dns_resolver.contains("domain .\n"));
@@ -745,9 +745,13 @@ fn windows_wireguard_policy_uses_provider_dns_and_keeps_magic_dns_local() {
 #[cfg(target_os = "windows")]
 #[test]
 fn windows_dns_command_budget_is_operation_specific() {
-    assert_eq!(WINDOWS_DNS_COMMAND_TIMEOUT, Duration::from_secs(10));
+    assert_eq!(
+        nostr_vpn_core::magic_dns::WINDOWS_DNS_COMMAND_TIMEOUT,
+        Duration::from_secs(10)
+    );
     assert!(
-        WINDOWS_DNS_COMMAND_TIMEOUT > crate::wg_upstream_runtime::WINDOWS_CHILD_COMMAND_TIMEOUT,
+        nostr_vpn_core::magic_dns::WINDOWS_DNS_COMMAND_TIMEOUT
+            > crate::wg_upstream_runtime::WINDOWS_CHILD_COMMAND_TIMEOUT,
         "cold DnsClient PowerShell needs a larger bound than hot route/native commands"
     );
 }

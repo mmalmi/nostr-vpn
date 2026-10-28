@@ -4,8 +4,6 @@ use std::net::IpAddr;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
-#[cfg(target_os = "windows")]
-use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -16,6 +14,12 @@ use hickory_proto::rr::{Name, RData, RecordType};
 use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
 use nostr_vpn_core::config::ExitDnsResolverConfig;
 use nostr_vpn_core::magic_dns::resolve_fips_dns_if_handled;
+#[cfg(target_os = "windows")]
+use nostr_vpn_core::magic_dns::run_windows_powershell;
+#[cfg(target_os = "macos")]
+use nostr_vpn_core::magic_dns::{
+    remove_owned_macos_resolver_file, write_macos_resolver_atomically,
+};
 use nostr_vpn_core::secure_dns::{
     SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, build_servfail_response,
 };
@@ -52,20 +56,17 @@ pub(crate) use macos::cleanup_owned_macos_secure_dns_state;
 #[cfg(target_os = "macos")]
 use macos::{
     install_macos_secure_dns_store, macos_resolver_configs, macos_secure_dns_store_is_owned,
-    remove_owned_macos_resolver_file, remove_owned_macos_secure_dns_store,
-    write_macos_resolver_atomically,
+    remove_owned_macos_secure_dns_store,
 };
 
 #[cfg(target_os = "macos")]
-const SECURE_DNS_PORT: u16 = 1053;
+const SECURE_DNS_PORT: u16 = nostr_vpn_core::magic_dns::MACOS_SECURE_DNS_PORT;
 #[cfg(not(target_os = "macos"))]
 const SECURE_DNS_PORT: u16 = 53;
 const SECURE_DNS_BIND: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, SECURE_DNS_PORT));
 const SECURE_DNS_MAX_IN_FLIGHT: usize = 64;
 const SECURE_DNS_CLIENT_IDLE: Duration = Duration::from_secs(10);
-#[cfg(target_os = "windows")]
-const WINDOWS_DNS_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 type SharedResolver = Arc<dyn SecureDnsLookup>;
 type ResolverState = Arc<RwLock<SharedResolver>>;
 type FipsDnsEndpoint = Option<Arc<FipsEndpoint>>;
@@ -589,11 +590,6 @@ impl SystemDnsGuard {
         {
             let SystemDnsCleanupIntent::MacosResolverFiles = cleanup_intent;
             let resolver_configs = macos_resolver_configs();
-            if let Some(parent) = resolver_configs[0].0.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))
-                    .map_err(SystemDnsInstallFailure::rolled_back)?;
-            }
             let mut resolver_paths: Vec<PathBuf> = Vec::with_capacity(resolver_configs.len());
             for (resolver_path, config) in resolver_configs {
                 if let Err(error) = write_macos_resolver_atomically(&resolver_path, &config) {
@@ -889,27 +885,6 @@ fn windows_wireguard_dns_script(interface: &str, servers: &[IpAddr]) -> String {
         ),
         interface, servers, servers
     )
-}
-
-#[cfg(target_os = "windows")]
-fn run_windows_powershell(script: &str) -> Result<()> {
-    let output = crate::wg_upstream_runtime::run_windows_command_with_timeout(
-        Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]),
-        "Windows DNS configuration command",
-        WINDOWS_DNS_COMMAND_TIMEOUT,
-    )?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let details = if output.stderr.is_empty() {
-        String::from_utf8_lossy(&output.stdout)
-    } else {
-        String::from_utf8_lossy(&output.stderr)
-    };
-    Err(anyhow!(
-        "DNS configuration command failed: {}",
-        details.trim()
-    ))
 }
 
 #[cfg(test)]
