@@ -32,6 +32,54 @@ fn update_poll_interval_secs() -> u32 {
         .unwrap_or(DEFAULT_UPDATE_POLL_INTERVAL_SECS)
 }
 
+// Same cadence as the macOS app: stay at 1s while something is in flight or a
+// join approval is outstanding, 10s while a paid route is live, 15s with the
+// VPN connected, and 30s when idle.
+fn refresh_interval_secs(
+    actions_in_flight: bool,
+    service_settling: bool,
+    update_busy: bool,
+    state: &NativeAppState,
+) -> u32 {
+    let pending_roster = state.vpn_enabled
+        && active_network(state).is_some_and(|network| {
+            network
+                .participants
+                .iter()
+                .any(|participant| !participant.roster_accepted)
+        });
+    if actions_in_flight || service_settling || update_busy || pending_roster {
+        return 1;
+    }
+    if paid_route_live_refresh_wanted(state) {
+        return 10;
+    }
+    if state.vpn_enabled {
+        return 15;
+    }
+    30
+}
+
+fn paid_route_live_refresh_wanted(state: &NativeAppState) -> bool {
+    if state.paid_route_market.wallet.last_action.kind == "topup" {
+        return true;
+    }
+    if !state.paid_exit_seller.sessions.is_empty() {
+        return true;
+    }
+    state.paid_route_market.sessions.iter().any(|session| {
+        session.allow_routing
+            || matches!(
+                session.lifecycle_status.as_str(),
+                "opening" | "probing" | "active" | "paused"
+            )
+            || matches!(
+                session.access_state.as_str(),
+                "paid" | "free_probe" | "grace" | "suspended"
+            )
+    })
+}
+
 fn update_preferences_path() -> PathBuf {
     PathBuf::from(default_data_dir()).join("desktop-updates.conf")
 }

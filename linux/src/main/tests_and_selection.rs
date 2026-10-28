@@ -400,6 +400,70 @@ mod tests {
     }
 
     #[test]
+    fn refresh_interval_backs_off_when_idle_and_speeds_up_while_busy() {
+        assert_eq!(
+            refresh_interval_secs(false, false, false, &NativeAppState::default()),
+            30
+        );
+
+        let connected = NativeAppState {
+            vpn_enabled: true,
+            ..NativeAppState::default()
+        };
+        assert_eq!(refresh_interval_secs(false, false, false, &connected), 15);
+        assert_eq!(refresh_interval_secs(true, false, false, &connected), 1);
+        assert_eq!(refresh_interval_secs(false, true, false, &connected), 1);
+        assert_eq!(refresh_interval_secs(false, false, true, &connected), 1);
+
+        use nostr_vpn_app_core::native_state::{
+            NativePaidRouteMarketState, NativePaidRouteWalletActionState,
+            NativePaidRouteWalletState,
+        };
+        let topup = NativeAppState {
+            paid_route_market: NativePaidRouteMarketState {
+                wallet: NativePaidRouteWalletState {
+                    last_action: NativePaidRouteWalletActionState {
+                        kind: "topup".to_string(),
+                        ..NativePaidRouteWalletActionState::default()
+                    },
+                    ..NativePaidRouteWalletState::default()
+                },
+                ..NativePaidRouteMarketState::default()
+            },
+            ..NativeAppState::default()
+        };
+        assert_eq!(refresh_interval_secs(false, false, false, &topup), 10);
+
+        let live_session = NativeAppState {
+            paid_route_market: NativePaidRouteMarketState {
+                sessions: vec![NativePaidRouteSessionState {
+                    lifecycle_status: "active".to_string(),
+                    ..NativePaidRouteSessionState::default()
+                }],
+                ..NativePaidRouteMarketState::default()
+            },
+            ..NativeAppState::default()
+        };
+        assert_eq!(
+            refresh_interval_secs(false, false, false, &live_session),
+            10
+        );
+
+        let pending_join = NativeAppState {
+            vpn_enabled: true,
+            networks: vec![NativeNetworkState {
+                participants: vec![NativeParticipantState {
+                    roster_accepted: false,
+                    ..NativeParticipantState::default()
+                }],
+                ..NativeNetworkState::default()
+            }],
+            ..NativeAppState::default()
+        };
+        assert_eq!(refresh_interval_secs(false, false, false, &pending_join), 1);
+    }
+
+    #[test]
     fn accepted_roster_selector_is_absent_while_manual_join_is_pending() {
         let pending = NativeParticipantState {
             npub: "npub1pending".to_string(),
