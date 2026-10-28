@@ -242,8 +242,8 @@ pub(crate) fn fips_core_build_version() -> String {
 const MAGIC_DNS_PORT: u16 = 53;
 #[cfg(not(target_os = "windows"))]
 const MAGIC_DNS_PORT: u16 = 1053;
-#[cfg(any(target_os = "windows", test))]
-const WINDOWS_DAEMON_STATE_FRESHNESS_SECS: u64 = 5;
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+const DAEMON_STATE_FRESHNESS_SECS: u64 = 5;
 #[cfg(any(target_os = "macos", test))]
 const MACOS_SERVICE_LABEL: &str = "to.nostrvpn.nvpn";
 #[cfg(any(target_os = "linux", test))]

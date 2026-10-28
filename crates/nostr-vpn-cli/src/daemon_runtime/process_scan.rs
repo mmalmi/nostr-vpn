@@ -22,18 +22,14 @@ pub(crate) fn is_process_running(pid: u32) -> bool {
     linux_proc_stat_counts_as_running(&stat)
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(target_os = "macos")]
 pub(crate) fn is_process_running(pid: u32) -> bool {
-    ProcessCommand::new("ps")
-        .arg("-p")
-        .arg(pid.to_string())
-        .arg("-o")
-        .arg("pid=")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| !String::from_utf8_lossy(&output.stdout).trim().is_empty())
-        .unwrap_or(false)
+    macos_process_image_path(pid).is_some()
+}
+
+#[cfg(windows)]
+pub(crate) fn is_process_running(pid: u32) -> bool {
+    windows_nvpn_pids().contains(&pid)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -48,54 +44,16 @@ pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) 
             .is_ok_and(|cmdline| linux_proc_daemon_matches_config(&cmdline, config_path))
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
-pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) -> bool {
-    if !is_process_running(pid) {
-        return false;
-    }
-
-    let output = ProcessCommand::new("ps")
-        .arg("-ww")
-        .arg("-p")
-        .arg(pid.to_string())
-        .arg("-o")
-        .arg("stat=,command=")
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-
-    daemon_pids_from_ps_output(&String::from_utf8_lossy(&output.stdout), config_path).contains(&pid)
+#[cfg(target_os = "macos")]
+pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, _config_path: &Path) -> bool {
+    macos_process_image_path(pid).is_some_and(|image| {
+        daemon_command_has_nvpn_executable_prefix(&image.to_string_lossy())
+    })
 }
 
 #[cfg(windows)]
-pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) -> bool {
-    let script = format!(
-        "Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
-    );
-    let output = ProcessCommand::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script.as_str(),
-        ])
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-
-    windows_daemon_pid_record_matches_cim(
-        pid,
-        &String::from_utf8_lossy(&output.stdout),
-        config_path,
-    )
+pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, _config_path: &Path) -> bool {
+    is_process_running(pid)
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -116,24 +74,6 @@ pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
     pids.sort_unstable();
     pids.dedup();
     pids
-}
-
-#[cfg(all(unix, not(target_os = "linux")))]
-pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
-    let output = ProcessCommand::new("ps")
-        .arg("ax")
-        .arg("-ww")
-        .arg("-o")
-        .arg("pid=,stat=,command=")
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    daemon_pids_from_ps_output(&String::from_utf8_lossy(&output.stdout), config_path)
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -179,160 +119,114 @@ pub(crate) fn linux_proc_stat_counts_as_running(stat: &str) -> bool {
 }
 
 #[cfg(windows)]
-pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
-    let output = ProcessCommand::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-CimInstance Win32_Process -Filter \"Name LIKE 'nvpn%.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
-        ])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
+fn windows_process_images() -> Vec<(u32, String)> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
     };
-    if !output.status.success() {
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot.is_null() || snapshot == INVALID_HANDLE_VALUE {
         return Vec::new();
     }
 
-    daemon_pids_from_windows_cim_json(&String::from_utf8_lossy(&output.stdout), config_path)
-}
-
-#[cfg(not(any(unix, windows)))]
-pub(crate) fn find_daemon_pids_by_config(_config_path: &Path) -> Vec<u32> {
-    Vec::new()
-}
-
-#[cfg(any(all(unix, not(target_os = "linux")), test))]
-pub(crate) fn daemon_pids_from_ps_output(ps_output: &str, config_path: &Path) -> Vec<u32> {
-    let mut pids = Vec::new();
-
-    for line in ps_output.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let mut parts = trimmed.split_whitespace();
-        let Some(pid_text) = parts.next() else {
-            continue;
-        };
-        let Some(second) = parts.next() else {
-            continue;
-        };
-        let Ok(pid) = pid_text.parse::<u32>() else {
-            continue;
-        };
-
-        let (stat, command) = if unix_ps_field_looks_like_stat(second) {
-            let Some((_, command)) = trimmed
-                .split_once(second)
-                .map(|(prefix, suffix)| (prefix, suffix.trim_start()))
-            else {
-                continue;
-            };
-            (second, command)
-        } else {
-            ("", trimmed[pid_text.len()..].trim_start())
-        };
-
-        if !unix_process_stat_counts_as_running(stat) {
-            continue;
-        }
-
-        if daemon_command_matches_config(command, config_path) {
-            pids.push(pid);
+    let entry_size = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = entry_size;
+    let mut images = Vec::new();
+    if unsafe { Process32FirstW(snapshot, &mut entry) } != 0 {
+        loop {
+            let image_len = entry
+                .szExeFile
+                .iter()
+                .position(|ch| *ch == 0)
+                .unwrap_or(entry.szExeFile.len());
+            images.push((
+                entry.th32ProcessID,
+                String::from_utf16_lossy(&entry.szExeFile[..image_len]),
+            ));
+            entry.dwSize = entry_size;
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
         }
     }
-
-    pids.sort_unstable();
-    pids.dedup();
-    pids
-}
-
-#[cfg(any(all(unix, not(target_os = "linux")), test))]
-pub(crate) fn unix_process_stat_counts_as_running(stat: &str) -> bool {
-    let trimmed = stat.trim();
-    if trimmed.is_empty() {
-        return true;
-    }
-
-    let state = trimmed.chars().next().unwrap_or_default();
-    if matches!(state, 'Z' | 'X') {
-        return false;
-    }
-
-    !trimmed.contains('E')
-}
-
-#[cfg(any(all(unix, not(target_os = "linux")), test))]
-fn unix_ps_field_looks_like_stat(field: &str) -> bool {
-    let trimmed = field.trim();
-    !trimmed.is_empty()
-        && trimmed.len() <= 8
-        && trimmed
-            .chars()
-            .all(|ch| ch.is_ascii_alphabetic() || matches!(ch, '<' | '>' | '+' | '-' | '|' | ':'))
-}
-
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn tasklist_pids_from_output(tasklist_output: &str) -> Vec<u32> {
-    let trimmed = tasklist_output.trim();
-    if trimmed.is_empty()
-        || trimmed
-            .to_ascii_lowercase()
-            .contains("no tasks are running which match")
-    {
-        return Vec::new();
-    }
-
-    let mut pids = Vec::new();
-    for line in trimmed.lines() {
-        let line = line.trim();
-        if !(line.starts_with('"') && line.ends_with('"')) {
-            continue;
-        }
-        let inner = &line[1..line.len().saturating_sub(1)];
-        let mut fields = inner.split("\",\"");
-        let _image_name = fields.next();
-        let Some(pid_text) = fields.next() else {
-            continue;
-        };
-        let Ok(pid) = pid_text.parse::<u32>() else {
-            continue;
-        };
-        pids.push(pid);
-    }
-
-    pids.sort_unstable();
-    pids.dedup();
-    pids
+    unsafe { CloseHandle(snapshot) };
+    images
 }
 
 #[cfg(windows)]
 pub(crate) fn windows_nvpn_pids() -> Vec<u32> {
-    let output = ProcessCommand::new("tasklist")
-        .args(["/FI", "IMAGENAME eq nvpn.exe", "/FO", "CSV", "/NH"])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    tasklist_pids_from_output(&String::from_utf8_lossy(&output.stdout))
+    windows_process_images()
+        .into_iter()
+        .filter(|(_, image)| image.eq_ignore_ascii_case("nvpn.exe"))
+        .map(|(pid, _)| pid)
+        .collect()
 }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn recent_windows_daemon_pid_candidate(
+#[cfg(target_os = "macos")]
+// libproc is re-exported through libSystem, which every Rust binary on macOS
+// already links, so no #[link] attribute is needed.
+unsafe extern "C" {
+    fn proc_listallpids(buffer: *mut std::ffi::c_void, numpids: i32) -> i32;
+    fn proc_pidpath(pid: i32, buffer: *mut std::ffi::c_void, buffersize: u32) -> i32;
+}
+
+#[cfg(target_os = "macos")]
+const PROC_PIDPATHINFO_MAXSIZE: usize = 4096;
+
+#[cfg(target_os = "macos")]
+fn macos_process_image_path(pid: u32) -> Option<PathBuf> {
+    use std::ffi::{CStr, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buffer = [0u8; PROC_PIDPATHINFO_MAXSIZE];
+    let written =
+        unsafe { proc_pidpath(pid as i32, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    if written <= 0 {
+        return None;
+    }
+    let path = CStr::from_bytes_until_nul(&buffer).ok()?.to_bytes();
+    Some(PathBuf::from(OsStr::from_bytes(path)))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_all_pids() -> Vec<u32> {
+    let count = unsafe { proc_listallpids(std::ptr::null_mut(), 0) };
+    if count <= 0 {
+        return Vec::new();
+    }
+    let mut pids = vec![0i32; count as usize];
+    let written = unsafe { proc_listallpids(pids.as_mut_ptr().cast(), count) };
+    if written <= 0 {
+        return Vec::new();
+    }
+    pids.truncate(written as usize);
+    pids.into_iter().map(|pid| pid as u32).collect()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_nvpn_pids() -> Vec<u32> {
+    macos_all_pids()
+        .into_iter()
+        .filter(|pid| {
+            macos_process_image_path(*pid).is_some_and(|image| {
+                daemon_command_has_nvpn_executable_prefix(&image.to_string_lossy())
+            })
+        })
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
+pub(crate) fn recent_state_file_daemon_pid_candidate(
     state: Option<&DaemonRuntimeState>,
     current_pid: u32,
     nvpn_pids: &[u32],
     now: u64,
 ) -> Option<u32> {
     let state = state?;
-    if now.saturating_sub(state.updated_at) > WINDOWS_DAEMON_STATE_FRESHNESS_SECS {
+    if now.saturating_sub(state.updated_at) > DAEMON_STATE_FRESHNESS_SECS {
         return None;
     }
 
@@ -351,7 +245,10 @@ pub(crate) fn recent_windows_daemon_pid_candidate(
 }
 
 pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Result<Vec<u32>> {
+    #[cfg(target_os = "linux")]
     let mut daemon_pids = find_daemon_pids_by_config(config_path);
+    #[cfg(not(target_os = "linux"))]
+    let mut daemon_pids = Vec::new();
 
     let pid_file = daemon_pid_file_path(config_path)?;
     if let Some(record) = read_daemon_pid_record(&pid_file)?
@@ -362,13 +259,17 @@ pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Res
         daemon_pids.push(record.pid);
     }
 
-    #[cfg(windows)]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+        #[cfg(target_os = "macos")]
+        let nvpn_pids = macos_nvpn_pids();
+        #[cfg(windows)]
+        let nvpn_pids = windows_nvpn_pids();
         let state = read_daemon_state(&daemon_state_file_path(config_path)?)?;
-        if let Some(pid) = recent_windows_daemon_pid_candidate(
+        if let Some(pid) = recent_state_file_daemon_pid_candidate(
             state.as_ref(),
             current_pid,
-            &windows_nvpn_pids(),
+            &nvpn_pids,
             unix_timestamp(),
         ) && !daemon_pids.contains(&pid)
         {
@@ -382,32 +283,7 @@ pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Res
     Ok(daemon_pids)
 }
 
-#[cfg(any(not(target_os = "linux"), test))]
-pub(crate) fn daemon_command_matches_config(command: &str, config_path: &Path) -> bool {
-    let Some((prefix, _)) = command.split_once(" daemon ") else {
-        return false;
-    };
-
-    daemon_command_has_nvpn_executable_prefix(prefix)
-        && !daemon_command_prefix_looks_like_shell_wrapper(prefix)
-        && command.contains(" daemon ")
-        && command.contains("--config")
-        && daemon_command_mentions_config(command, config_path)
-}
-
-#[cfg(any(not(target_os = "linux"), test))]
-fn daemon_command_mentions_config(command: &str, config_path: &Path) -> bool {
-    let config_text = config_path.display().to_string();
-    if command.contains(config_text.as_str()) {
-        return true;
-    }
-
-    fs::canonicalize(config_path).ok().is_some_and(|canonical| {
-        let canonical_text = canonical.display().to_string();
-        command.contains(canonical_text.as_str())
-    })
-}
-
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn daemon_command_has_nvpn_executable_prefix(prefix: &str) -> bool {
     let trimmed = prefix.trim().trim_matches(|ch| ch == '"' || ch == '\'');
     if trimmed.is_empty() {
@@ -444,71 +320,4 @@ fn daemon_command_has_nvpn_executable_prefix(prefix: &str) -> bool {
     }
 
     false
-}
-
-#[cfg(any(not(target_os = "linux"), test))]
-fn daemon_command_prefix_looks_like_shell_wrapper(prefix: &str) -> bool {
-    let trimmed = prefix.trim_start();
-    let lower = trimmed.to_ascii_lowercase();
-    lower.starts_with("bash ")
-        || lower.starts_with("sh ")
-        || lower.starts_with("zsh ")
-        || lower.starts_with("dash ")
-        || lower.starts_with("fish ")
-        || lower.starts_with("cmd ")
-        || lower.starts_with("powershell ")
-        || lower.starts_with("pwsh ")
-        || trimmed.contains(" -c ")
-        || trimmed.contains(';')
-        || trimmed.contains("&&")
-        || trimmed.contains("||")
-}
-
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn daemon_pids_from_windows_cim_json(cim_json: &str, config_path: &Path) -> Vec<u32> {
-    let trimmed = cim_json.trim();
-    if trimmed.is_empty() || trimmed == "null" {
-        return Vec::new();
-    }
-
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return Vec::new();
-    };
-
-    let entries = match parsed {
-        serde_json::Value::Array(entries) => entries,
-        serde_json::Value::Object(entry) => vec![serde_json::Value::Object(entry)],
-        _ => return Vec::new(),
-    };
-
-    let mut pids = Vec::new();
-    for entry in entries {
-        let Some(command) = entry.get("CommandLine").and_then(serde_json::Value::as_str) else {
-            continue;
-        };
-        let Some(pid) = entry
-            .get("ProcessId")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|pid| u32::try_from(pid).ok())
-        else {
-            continue;
-        };
-
-        if daemon_command_matches_config(command, config_path) {
-            pids.push(pid);
-        }
-    }
-
-    pids.sort_unstable();
-    pids.dedup();
-    pids
-}
-
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_daemon_pid_record_matches_cim(
-    pid: u32,
-    cim_json: &str,
-    config_path: &Path,
-) -> bool {
-    daemon_pids_from_windows_cim_json(cim_json, config_path).contains(&pid)
 }
