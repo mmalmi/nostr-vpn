@@ -18,11 +18,44 @@ struct MobileWireGuardDnsFlow {
     client_port: u16,
 }
 
+// Flow entries only leave the table when a UDP response matches; TCP
+// entries and lost-response UDP entries would otherwise accumulate for
+// the life of the tunnel, so cap the table and evict the oldest flow.
+const MOBILE_EXIT_DNS_FLOWS_MAX: usize = 4096;
+
+#[derive(Default)]
+struct MobileExitDnsFlowTable {
+    set: HashSet<MobileWireGuardDnsFlow>,
+    insertion_order: VecDeque<MobileWireGuardDnsFlow>,
+}
+
+impl MobileExitDnsFlowTable {
+    fn insert(&mut self, flow: MobileWireGuardDnsFlow) {
+        if self.set.insert(flow) {
+            self.insertion_order.push_back(flow);
+        }
+        while self.set.len() > MOBILE_EXIT_DNS_FLOWS_MAX {
+            let Some(oldest) = self.insertion_order.pop_front() else {
+                break;
+            };
+            self.set.remove(&oldest);
+        }
+    }
+
+    fn remove(&mut self, flow: &MobileWireGuardDnsFlow) -> bool {
+        self.set.remove(flow)
+    }
+
+    fn contains(&self, flow: &MobileWireGuardDnsFlow) -> bool {
+        self.set.contains(flow)
+    }
+}
+
 struct MobileExitDnsNat {
     local_dns_server: Ipv4Addr,
     servers: Vec<Ipv4Addr>,
     next_server: AtomicUsize,
-    flows: Mutex<HashSet<MobileWireGuardDnsFlow>>,
+    flows: Mutex<MobileExitDnsFlowTable>,
 }
 
 impl MobileExitDnsNat {
@@ -31,7 +64,7 @@ impl MobileExitDnsNat {
             local_dns_server,
             servers,
             next_server: AtomicUsize::new(0),
-            flows: Mutex::new(HashSet::new()),
+            flows: Mutex::new(MobileExitDnsFlowTable::default()),
         })
     }
 
@@ -99,19 +132,25 @@ async fn mobile_dns_packet_action(
     };
     let response = match response {
         Some(response) => response,
-        None if forward_public_via_wireguard => {
-            return Some(MobileDnsPacketAction::ForwardViaExit);
-        }
-        None => match secure_dns {
-            Some(resolver) => match resolver.resolve(query.payload).await {
-                Ok(response) => response,
-                Err(error) => {
-                    tracing::debug!(%error, "mobile secure DNS resolution failed closed");
-                    build_servfail_response(query.payload)?
+        None => {
+            // Same order as the desktop stub: MagicDNS records, then FIPS, then any upstream (DoH or WG exit).
+            match resolve_fips_dns_if_handled(query.payload).map(|(response, _)| response) {
+                Some(response) => response,
+                None if forward_public_via_wireguard => {
+                    return Some(MobileDnsPacketAction::ForwardViaExit);
                 }
-            },
-            None => build_magic_dns_server_failure_response(query.payload)?,
-        },
+                None => match secure_dns {
+                    Some(resolver) => match resolver.resolve(query.payload).await {
+                        Ok(response) => response,
+                        Err(error) => {
+                            tracing::debug!(%error, "mobile secure DNS resolution failed closed");
+                            build_servfail_response(query.payload)?
+                        }
+                    },
+                    None => build_magic_dns_server_failure_response(query.payload)?,
+                },
+            }
+        }
     };
     build_mobile_dns_response_packet(&query, &response).map(MobileDnsPacketAction::Respond)
 }

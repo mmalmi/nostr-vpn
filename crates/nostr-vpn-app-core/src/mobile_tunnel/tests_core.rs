@@ -117,6 +117,35 @@
         )
     }
 
+    fn ipv4_tcp_packet(
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+        source_port: u16,
+        destination_port: u16,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let total_len = 40 + payload.len();
+        let mut packet = vec![0_u8; total_len];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(
+            &u16::try_from(total_len)
+                .expect("tcp packet length fits u16")
+                .to_be_bytes(),
+        );
+        packet[8] = 64;
+        packet[9] = 6;
+        packet[12..16].copy_from_slice(&source.octets());
+        packet[16..20].copy_from_slice(&destination.octets());
+        packet[20..22].copy_from_slice(&source_port.to_be_bytes());
+        packet[22..24].copy_from_slice(&destination_port.to_be_bytes());
+        packet[32] = 0x50;
+        packet[40..].copy_from_slice(payload);
+        let checksum = ipv4_header_checksum(&packet[..20]);
+        packet[10..12].copy_from_slice(&checksum.to_be_bytes());
+        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
+        packet
+    }
+
     #[test]
     fn mobile_inbound_roster_requires_signed_event() {
         let admin_hex = Keys::generate().public_key().to_hex();
@@ -841,6 +870,154 @@
         let mut direct_dns = ipv4_udp_packet(profile_dns[0], mesh, 53, 54000, b"direct DNS");
         assert!(!dns_nat.rewrite_response(&mut direct_dns));
         assert_eq!(&direct_dns[12..16], &profile_dns[0].octets());
+    }
+
+    #[test]
+    fn mobile_dns_answers_fips_queries_locally_before_upstream() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let app = Arc::new(RwLock::new(app));
+        let source = Ipv4Addr::new(10, 44, 206, 222);
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("magic dns server");
+        let identity = fips_core::Identity::generate();
+        let npub_query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53000,
+            53,
+            &dns_query(&format!("{}.fips", identity.npub()), 28),
+        );
+        let unknown_query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53001,
+            53,
+            &dns_query("invalid.fips", 28),
+        );
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        let response = runtime
+            .block_on(mobile_magic_dns_response_packet(
+                &npub_query,
+                &app,
+                Some(&FixtureSecureDns),
+                dns_server,
+            ))
+            .expect("local npub.fips response packet");
+        let dns = Message::from_vec(&response[28..]).expect("npub.fips DNS response");
+        let expected = identity.address().to_ipv6();
+        assert!(
+            dns.answers.iter().any(|answer| matches!(
+                &answer.data,
+                hickory_proto::rr::RData::AAAA(address) if address.0 == expected
+            )),
+            "npub.fips must be answered by the local FIPS resolver instead of DoH"
+        );
+
+        let response = runtime
+            .block_on(mobile_magic_dns_response_packet(
+                &unknown_query,
+                &app,
+                Some(&FixtureSecureDns),
+                dns_server,
+            ))
+            .expect("local invalid .fips response packet");
+        let dns = Message::from_vec(&response[28..]).expect("invalid .fips DNS response");
+        assert_eq!(
+            dns.metadata.response_code,
+            hickory_proto::op::ResponseCode::NXDomain,
+            "invalid .fips names must fail locally instead of reaching DoH"
+        );
+    }
+
+    #[test]
+    fn mobile_dns_answers_fips_queries_before_wireguard_exit_forward() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let app = Arc::new(RwLock::new(app));
+        let source = Ipv4Addr::new(10, 44, 206, 222);
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("magic dns server");
+        let identity = fips_core::Identity::generate();
+        let query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53000,
+            53,
+            &dns_query(&format!("{}.fips", identity.npub()), 28),
+        );
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        let action = runtime
+            .block_on(mobile_dns_packet_action(&query, &app, None, dns_server, true))
+            .expect("packet action");
+
+        assert!(
+            matches!(action, MobileDnsPacketAction::Respond(_)),
+            "a .fips query must be answered locally instead of NAT-forwarded through the exit"
+        );
+    }
+
+    #[test]
+    fn mobile_wireguard_dns_flow_table_caps_and_evicts_oldest_entries() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let server = Ipv4Addr::new(94, 140, 14, 14);
+        let dns_nat = MobileExitDnsNat::new(local_dns, vec![server]).unwrap();
+        let count = u16::try_from(MOBILE_EXIT_DNS_FLOWS_MAX)
+            .expect("flow cap fits u16")
+            + 8;
+        for offset in 0..count {
+            let mut query = ipv4_udp_packet(mesh, local_dns, 40000 + offset, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        }
+
+        assert_eq!(
+            dns_nat.flows.lock().expect("flow table").set.len(),
+            MOBILE_EXIT_DNS_FLOWS_MAX
+        );
+
+        let mut evicted = ipv4_udp_packet(server, mesh, 53, 40000, b"response");
+        assert!(!dns_nat.rewrite_response(&mut evicted));
+        let mut newest = ipv4_udp_packet(server, mesh, 53, 40000 + count - 1, b"response");
+        assert!(dns_nat.rewrite_response(&mut newest));
+        assert_eq!(&newest[12..16], &local_dns.octets());
+    }
+
+    #[test]
+    fn mobile_wireguard_dns_tcp_flows_rewrite_under_cap_pressure() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let server = Ipv4Addr::new(94, 140, 14, 14);
+        let dns_nat = MobileExitDnsNat::new(local_dns, vec![server]).unwrap();
+        let count = u16::try_from(MOBILE_EXIT_DNS_FLOWS_MAX)
+            .expect("flow cap fits u16")
+            + 16;
+        for offset in 0..count {
+            let mut query = ipv4_tcp_packet(mesh, local_dns, 20000 + offset, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        }
+
+        let mut evicted = ipv4_tcp_packet(server, mesh, 53, 20000, b"response");
+        assert!(!dns_nat.rewrite_response(&mut evicted));
+
+        let fresh_port = 20000 + count - 1;
+        let mut fresh = ipv4_tcp_packet(server, mesh, 53, fresh_port, b"response");
+        assert!(dns_nat.rewrite_response(&mut fresh));
+        assert_eq!(&fresh[12..16], &local_dns.octets());
+        let mut repeated = ipv4_tcp_packet(server, mesh, 53, fresh_port, b"response");
+        assert!(dns_nat.rewrite_response(&mut repeated));
+        assert_eq!(
+            dns_nat.flows.lock().expect("flow table").set.len(),
+            MOBILE_EXIT_DNS_FLOWS_MAX
+        );
     }
 
     #[test]
