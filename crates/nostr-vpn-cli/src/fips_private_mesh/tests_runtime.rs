@@ -618,17 +618,16 @@
         for run in runs {
             let source_node_addr = *run.source_peer().node_addr().as_bytes();
             let admitter = mesh.endpoint_source_admitter(&source_node_addr);
-            accepted = accepted
-                + bob_runtime
-                    .admit_direct_endpoint_packet_run_blocking(
-                        admitter.as_ref(),
-                        run,
-                        &mut admission_cache,
-                        &mut batch,
-                        &event_tx,
-                        &mut control_events_open,
-                    )
-                    .expect("admission succeeds");
+            accepted += bob_runtime
+                .admit_direct_endpoint_packet_run_blocking(
+                    admitter.as_ref(),
+                    run,
+                    &mut admission_cache,
+                    &mut batch,
+                    &event_tx,
+                    &mut control_events_open,
+                )
+                .expect("admission succeeds");
         }
 
         assert_eq!(
