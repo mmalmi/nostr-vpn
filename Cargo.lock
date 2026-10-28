@@ -4263,7 +4263,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn-cashu-service"
-version = "0.4.10"
+version = "0.4.11"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4294,7 +4294,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn-cdk-spilman"
-version = "0.17.7"
+version = "0.17.8"
 dependencies = [
  "anyhow",
  "async-trait",

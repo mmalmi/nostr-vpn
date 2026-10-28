@@ -41,6 +41,33 @@ pub fn compute_channel_from_token(
     maximum_amount_for_one_output: u64,
     requested_capacity: Option<u64>,
 ) -> Result<String, String> {
+    compute_channel_from_token_with_output_version(
+        token_string,
+        receiver_pubkey_hex,
+        sender_pubkey_hex,
+        channel_secret_hex,
+        expiry_timestamp,
+        keyset_info_json,
+        maximum_amount_for_one_output,
+        requested_capacity,
+        crate::ChannelOutputVersion::Legacy,
+    )
+}
+
+/// Compute a new channel with an output format agreed before funding.
+/// Existing funds must always use their saved parameters instead.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_channel_from_token_with_output_version(
+    token_string: &str,
+    receiver_pubkey_hex: &str,
+    sender_pubkey_hex: &str,
+    channel_secret_hex: &str,
+    expiry_timestamp: u64,
+    keyset_info_json: &str,
+    maximum_amount_for_one_output: u64,
+    requested_capacity: Option<u64>,
+    output_version: crate::ChannelOutputVersion,
+) -> Result<String, String> {
     // Parse the token
     let token: Token = token_string
         .parse()
@@ -137,7 +164,7 @@ pub fn compute_channel_from_token(
     channel_secret.copy_from_slice(&channel_secret_bytes);
 
     // Create channel parameters with pre-computed channel secret
-    let params = ChannelParameters::new(
+    let mut params = ChannelParameters::new(
         sender_pubkey,
         receiver_pubkey,
         mint_url.to_string(),
@@ -151,6 +178,7 @@ pub fn compute_channel_from_token(
         channel_secret,
     )
     .map_err(|e| format!("Failed to create channel params: {}", e))?;
+    params.output_version = output_version;
 
     // Serialize proofs
     let proofs_json =

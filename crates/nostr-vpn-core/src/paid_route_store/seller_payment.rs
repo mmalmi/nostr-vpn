@@ -175,6 +175,29 @@ impl PaidRouteStore {
         let service_id = trimmed_required(&envelope.service_id, "paid route service id")?;
         let lease_id = trimmed_required(&envelope.lease_id, "paid route lease id")?;
         let channel_id = trimmed_required(envelope.channel_id(), "paid route channel id")?;
+        if let StreamingRoutePaymentPayload::ChannelOpen(open) = &envelope.payload {
+            let output_version = paid_route_payment_output_version(&open.payment)?;
+            let quote = self
+                .leases
+                .get(&lease_id)
+                .and_then(|lease| self.quotes.get(&lease.lease.quote_id));
+            if quote.is_some_and(|quote| quote.quote.output_version != output_version) {
+                return Err(anyhow!(
+                    "paid route payment output format differs from its accepted agreement"
+                ));
+            }
+            if output_version != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION
+                && (quote.is_none()
+                    || self
+                        .channels
+                        .get(&channel_id)
+                        .is_none_or(|channel| channel.payment.cashu_spilman_payment.is_none()))
+            {
+                return Err(anyhow!(
+                    "Upgrade the buyer before opening a new paid route channel"
+                ));
+            }
+        }
         let accepted_terms =
             self.seller_payment_accepted_terms(&service_id, &lease_id, &channel_id, &buyer_npub)?;
         if accepted_terms.is_none() && !config.enabled {
@@ -379,6 +402,7 @@ impl PaidRouteStore {
 
         self.upsert_quote(
             PaidRouteQuote {
+                output_version: paid_route_payment_output_version(&open.payment)?,
                 quote_id: quote_id.clone(),
                 offer_id: context.service_id.to_string(),
                 payment_mode: PaidRoutePaymentMode::CashuSpilman,

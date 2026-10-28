@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Run inside a bounded controller that locks the shared Cargo target. Preserve each phase
+# log; the outer controller owns resource limits and process-group closure.
+set -euo pipefail
+umask 077
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+: "${CARGO_TARGET_DIR:?Set the existing Cargo target directory with one writer}"
+: "${NVPN_REFUND_EXPECTED_COMMIT:?Set the reviewed candidate commit}"
+logs="${1:?Pass a fresh evidence directory}"
+resume="${2:-channel-safety}"
+[[ -d "$CARGO_TARGET_DIR" && ! -e "$logs" ]]
+[[ "$(git rev-parse HEAD)" == "$NVPN_REFUND_EXPECTED_COMMIT" ]]
+[[ -z "$(git status --porcelain)" ]]
+export CARGO_BUILD_JOBS=2 RUSTUP_TOOLCHAIN=1.95.0
+[[ "$(rustc +1.95.0 --version)" == "rustc 1.95.0 "* ]]
+mkdir -p "$logs"
+logs="$(cd "$logs" && pwd)"
+printf 'phase\texit_code\tpassed\n' > "$logs/phases.tsv"
+printf '%s\n' "$NVPN_REFUND_EXPECTED_COMMIT" > "$logs/source-commit"
+started=0
+
+run_phase() {
+  local name="$1" code=0 passed
+  shift
+  if [[ "$started" == 0 && "$name" != "$resume" ]]; then return; fi
+  started=1
+  cargo +1.95.0 test --locked --offline "$@" -- --test-threads=1 \
+    > "$logs/$name.log" 2>&1 || code=$?
+  passed=$(sed -nE 's/^test result: ok\. ([0-9]+) passed;.*/\1/p' "$logs/$name.log" \
+    | awk '{total += $1} END {print total + 0}')
+  if [[ "$code" == 0 && "$passed" == 0 ]]; then code=1; fi
+  printf '%s\t%s\t%s\n' "$name" "$code" "$passed" | tee -a "$logs/phases.tsv"
+  if [[ "$code" != 0 ]]; then
+    tail -60 "$logs/$name.log"
+    return "$code"
+  fi
+}
+
+run_phase channel-safety -p nvpn-cdk-spilman --all-features --test channel_safety
+run_phase payout-spend -p nvpn-cashu-service --all-features --test spilman_payout_spend
+run_phase wallet-recovery -p nvpn-cashu-service --all-features \
+  --test spilman_channel_capacity --test mint_request_budget
+run_phase route-store -p nostr-vpn-core --lib paid_route_store::tests
+run_phase signed-offers -p nostr-vpn-core --lib paid_routes::tests
+run_phase daemon-wallet -p nvpn --bin nvpn cashu_wallet_daemon::tests
+run_phase embedded-wallet -p nostr-vpn-app-core --lib \
+  mobile_wallet_request_preserves_saved_payment_format
+[[ "$started" == 1 ]]
+[[ -z "$(git status --porcelain)" ]]

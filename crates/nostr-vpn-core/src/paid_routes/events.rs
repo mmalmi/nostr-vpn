@@ -175,6 +175,12 @@ pub struct SignedPaidRouteOffer {
 }
 
 impl SignedPaidRouteOffer {
+    /// The signed listing commits the seller to an output format before funding.
+    /// Legacy listings remain readable solely to retain existing agreements.
+    pub fn output_version(&self) -> Result<u8> {
+        paid_route_offer_output_version(self.event.tags.as_slice())
+    }
+
     pub fn sign(offer: PaidRouteOffer, keys: &Keys, signed_at: u64) -> Result<Self> {
         Self::sign_expiring_at(
             offer,
@@ -260,6 +266,9 @@ impl SignedPaidRouteOffer {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteQuote {
+    /// Immutable format agreed when opening this route; old records are v1.
+    #[serde(default = "legacy_output_version")]
+    pub output_version: u8,
     pub quote_id: String,
     pub offer_id: String,
     #[serde(default)]
@@ -267,6 +276,37 @@ pub struct PaidRouteQuote {
     pub channel_capacity_sat: u64,
     pub expires_at_unix: u64,
     pub receiver_pubkey_hex: String,
+}
+
+fn legacy_output_version() -> u8 {
+    1
+}
+
+pub fn paid_route_session_version(output_version: u8) -> Result<&'static str> {
+    match output_version {
+        1 => Ok(PAID_ROUTE_LEGACY_OFFER_VERSION),
+        PAID_ROUTE_OUTPUT_VERSION => Ok(PAID_ROUTE_OFFER_VERSION),
+        _ => Err(anyhow!(
+            "unsupported paid route output version {output_version}"
+        )),
+    }
+}
+
+fn paid_route_offer_output_version(tags: &[Tag]) -> Result<u8> {
+    let mut versions = tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().is_some_and(|kind| kind == "v"));
+    let version = versions
+        .next()
+        .ok_or_else(|| anyhow!("paid route offer event is missing version tag"))?;
+    if versions.next().is_some() || version.as_slice().len() != 2 {
+        return Err(anyhow!("paid route offer has ambiguous version tags"));
+    }
+    match version.as_slice()[1].as_str() {
+        PAID_ROUTE_LEGACY_OFFER_VERSION => Ok(1),
+        PAID_ROUTE_OFFER_VERSION => Ok(PAID_ROUTE_OUTPUT_VERSION),
+        value => Err(anyhow!("unsupported paid route offer version {value}")),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -465,8 +505,8 @@ fn validate_paid_route_offer(offer: &PaidRouteOffer) -> Result<()> {
 }
 
 fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Result<()> {
+    paid_route_offer_output_version(tags)?;
     let mut app_ok = false;
-    let mut version_ok = false;
     let mut id_ok = false;
     let mut service_ok = false;
     let mut payment_ok = false;
@@ -492,11 +532,7 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
                     .get(1)
                     .is_some_and(|value| value == PAID_ROUTE_OFFER_APP)
             }
-            "v" => {
-                version_ok |= parts
-                    .get(1)
-                    .is_some_and(|value| value == PAID_ROUTE_OFFER_VERSION)
-            }
+            "v" => {}
             "service" => {
                 let Some(value) = parts.get(1) else {
                     return Err(anyhow!("paid route offer event has empty service tag"));
@@ -591,9 +627,6 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
     }
     if !app_ok {
         return Err(anyhow!("paid route offer event is missing app tag"));
-    }
-    if !version_ok {
-        return Err(anyhow!("paid route offer event is missing version tag"));
     }
     if !service_ok {
         return Err(anyhow!("paid route offer event is missing service tag"));

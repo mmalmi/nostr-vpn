@@ -17,7 +17,7 @@ use cashu::secret::Secret;
 use cashu::Amount;
 
 use super::keysets_and_amounts::OrderedListOfAmounts;
-use super::params::{ChannelParameters, Stage2Role};
+use super::params::{ChannelOutputVersion, ChannelParameters, Stage2Role};
 
 /// Trait for mint connection operations needed by Spilman channels
 #[async_trait]
@@ -66,14 +66,36 @@ impl DeterministicSecretWithBlinding {
         amount: u64,
         index: usize,
     ) -> Result<Self, anyhow::Error> {
+        Self::new_p2pk_with_output_version(
+            pubkey,
+            nonce,
+            blinding_factor,
+            amount,
+            index,
+            ChannelOutputVersion::Legacy,
+        )
+    }
+
+    pub(crate) fn new_p2pk_with_output_version(
+        pubkey: &cashu::nuts::PublicKey,
+        nonce: String,
+        blinding_factor: SecretKey,
+        amount: u64,
+        index: usize,
+        output_version: ChannelOutputVersion,
+    ) -> Result<Self, anyhow::Error> {
         // Manually construct the NUT-10 P2PK secret JSON
-        // Format: ["P2PK", {"nonce": "...", "data": "pubkey_hex", "tags": null}]
+        // Preserve legacy bytes exactly; the new format uses NUT-10's list.
+        let tags = match output_version {
+            ChannelOutputVersion::Legacy => serde_json::Value::Null,
+            ChannelOutputVersion::Nut10 => serde_json::json!([]),
+        };
         let secret_json = serde_json::json!([
             "P2PK",
             {
                 "nonce": nonce,
                 "data": pubkey.to_hex(),
-                "tags": null
+                "tags": tags
             }
         ]);
 

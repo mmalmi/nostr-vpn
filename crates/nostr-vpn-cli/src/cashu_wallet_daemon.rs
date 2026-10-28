@@ -81,6 +81,11 @@ pub(crate) enum DaemonCashuWalletCommand {
     OpenSpilmanChannel {
         request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
     },
+    // Old daemons reject this command before spending, rather than ignoring
+    // the new format field and silently creating a legacy channel.
+    OpenSpilmanChannelV2 {
+        request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
+    },
     ImportProofs {
         mint_url: String,
         unit: String,
@@ -238,6 +243,10 @@ impl DaemonCashuWallet {
     }
 
     async fn execute(&self, command: DaemonCashuWalletCommand) -> Result<Value> {
+        let legacy_open_command = matches!(
+            &command,
+            DaemonCashuWalletCommand::OpenSpilmanChannel { .. }
+        );
         // A pooled socket may still have the source address of a previous
         // Internet mode. Do not let it spend the next channel's credit waiting
         // for a timeout before reconnecting through the current route.
@@ -303,7 +312,15 @@ impl DaemonCashuWallet {
                     .send_lightning_payment(&mint_url, &invoice)
                     .await?,
             )?,
-            DaemonCashuWalletCommand::OpenSpilmanChannel { request } => {
+            DaemonCashuWalletCommand::OpenSpilmanChannel { request }
+            | DaemonCashuWalletCommand::OpenSpilmanChannelV2 { request } => {
+                if legacy_open_command
+                    && request.output_version != cdk_spilman::ChannelOutputVersion::Legacy
+                {
+                    return Err(anyhow!(
+                        "new channel formats require the versioned wallet command"
+                    ));
+                }
                 let pending_before =
                     pending_cashu_sends(&self.service.load_wallet_activity().await?);
                 let pending_before = pending_before
@@ -448,6 +465,7 @@ fn legacy_route_open_recovery_requests(
             Some((
                 session_id.clone(),
                 cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                    output_version: quote.quote.output_version.try_into().ok()?,
                     mint_url: channel.mint_url.clone(),
                     receiver_pubkey_hex: quote.quote.receiver_pubkey_hex.clone(),
                     capacity_sat: session.session.payment.capacity_sat,

@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "nvpn-cashu-service"
-version = "0.4.10"
+version = "0.4.11"
 authors = ["Martti Malmi"]
 build = false
 autolib = false
@@ -161,7 +161,7 @@ package = "cdk-common"
 
 [dependencies.cdk-spilman]
 package = "nvpn-cdk-spilman"
-version = "=0.17.7"
+version = "=0.17.8"
 path = "../cdk-spilman"
 optional = true
 default-features = false
@@ -262,6 +262,11 @@ path = "tests/spilman_receiver_safety.rs"
 [[test]]
 name = "spilman_channel_capacity"
 path = "tests/spilman_channel_capacity.rs"
+
+[[test]]
+name = "spilman_payout_spend"
+path = "tests/spilman_payout_spend.rs"
+required-features = ["simulation", "spilman-wallet-http", "spilman-configurable-host-reqwest"]
 
 [[test]]
 name = "mint_request_budget"

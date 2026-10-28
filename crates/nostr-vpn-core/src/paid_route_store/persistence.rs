@@ -564,6 +564,21 @@ pub(super) fn seller_admission_preferred(
     }
 }
 
+pub(super) fn paid_route_payment_output_version(payment: &CashuSpilmanPayment) -> Result<u8> {
+    let params = payment
+        .params
+        .as_ref()
+        .ok_or_else(|| anyhow!("paid route payment is missing funding parameters"))?;
+    match params.get("output_version") {
+        None => Ok(1),
+        Some(value) => match value.as_u64() {
+            Some(1) => Ok(1),
+            Some(2) => Ok(2),
+            _ => Err(anyhow!("invalid payment channel output version")),
+        },
+    }
+}
+
 pub(super) fn validate_seller_open_payment(
     config: &PaidExitConfig,
     _seller_pubkey_hex: &str,
