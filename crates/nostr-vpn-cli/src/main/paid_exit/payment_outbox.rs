@@ -3,6 +3,9 @@ struct QueuedPaidExitPayment {
     envelope: StreamingRoutePaymentEnvelope,
 }
 
+// Refund lifetime ends by the 12h cutoff plus 24h reclaim; a week bounds dead-seller retries.
+const PAYMENT_OUTBOX_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+
 fn paid_exit_payment_outbox_directory(config_path: &Path) -> PathBuf {
     paid_route_store_file_path(config_path)
         .parent()
@@ -150,6 +153,19 @@ fn queue_paid_exit_payment(
     queue_paid_exit_payment_bytes(config_path, &id, &bytes)
 }
 
+fn paid_exit_outbox_entry_expired(path: &Path, now_unix: u64) -> bool {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .is_some_and(|modified| {
+            modified
+                .as_secs()
+                .saturating_add(PAYMENT_OUTBOX_RETENTION_SECS)
+                <= now_unix
+        })
+}
+
 fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPayment> {
     let directory = match prepare_paid_exit_payment_outbox(config_path) {
         Ok(directory) => directory,
@@ -169,6 +185,10 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
             return Vec::new();
         }
     };
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
     let paths = entries
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
@@ -181,6 +201,10 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
     let mut pending: Vec<QueuedPaidExitPayment> = paths
         .into_iter()
         .filter_map(|path| {
+            if paid_exit_outbox_entry_expired(&path, now_unix) {
+                let _ = fs::remove_file(path);
+                return None;
+            }
             match fs::read(&path)
                 .with_context(|| format!("failed to read {}", path.display()))
                 .and_then(|bytes| {
@@ -208,7 +232,7 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
         .collect();
     // A balance update is cumulative. Recover legacy backlogs as well as new
     // queues, retaining the strongest durable update for each exact binding.
-    // Funding and cooperative close records must remain until acknowledged.
+    // Funding and cooperative close records keep only their newest retry.
     let binding = |envelope: &StreamingRoutePaymentEnvelope| {
         (
             envelope.version,
@@ -221,10 +245,18 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
     };
     let mut newest = std::collections::HashMap::new();
     let mut strongest = std::collections::HashMap::new();
+    let mut newest_retry = std::collections::HashMap::new();
     for queued in &pending {
         let key = binding(&queued.envelope);
         let sent_at = newest.entry(key.clone()).or_insert(0);
         *sent_at = (*sent_at).max(queued.envelope.sent_at_unix);
+        let retry = (queued.envelope.sent_at_unix, queued.id.clone());
+        let record = newest_retry
+            .entry((key.clone(), std::mem::discriminant(&queued.envelope.payload)))
+            .or_insert_with(|| retry.clone());
+        if retry > *record {
+            *record = retry;
+        }
         let StreamingRoutePaymentPayload::BalanceUpdate(update) = &queued.envelope.payload else {
             continue;
         };
@@ -234,18 +266,26 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
             *current = candidate;
         }
     }
+    let remove_superseded = |queued: &QueuedPaidExitPayment| {
+        let path = directory.join(format!("{}.json", queued.id));
+        if let Err(error) = fs::remove_file(path) {
+            eprintln!("paid-exit: failed to remove superseded payment: {error}");
+        }
+    };
     pending.retain(|queued| {
+        let key = binding(&queued.envelope);
         let StreamingRoutePaymentPayload::BalanceUpdate(update) = &queued.envelope.payload else {
+            let (_, id) = &newest_retry[&(key, std::mem::discriminant(&queued.envelope.payload))];
+            if id != &queued.id {
+                remove_superseded(queued);
+                return false;
+            }
             return true;
         };
-        let key = binding(&queued.envelope);
         let (paid_msat, balance, id) = &strongest[&key];
         if id != &queued.id && *paid_msat >= update.paid_msat && *balance >= update.payment.balance
         {
-            let path = directory.join(format!("{}.json", queued.id));
-            if let Err(error) = fs::remove_file(path) {
-                eprintln!("paid-exit: failed to remove superseded payment: {error}");
-            }
+            remove_superseded(queued);
             return false;
         }
         true

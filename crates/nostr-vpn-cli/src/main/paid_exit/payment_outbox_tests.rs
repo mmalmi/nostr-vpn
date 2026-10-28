@@ -110,6 +110,77 @@ fn payment_outbox_recovery_coalesces_only_superseded_balances() {
     assert_eq!(load_paid_exit_payment_outbox(&outbox.config).len(), 1);
 }
 
+fn backdate_paid_exit_outbox_entry(config: &Path, envelope: &StreamingRoutePaymentEnvelope) {
+    let id = nostr_vpn_core::paid_route_store::paid_route_payment_id(envelope).unwrap();
+    let path = paid_exit_payment_outbox_directory(config).join(format!("{id}.json"));
+    let file = OpenOptions::new().write(true).open(path).unwrap();
+    let stale = SystemTime::now() - Duration::from_secs(PAYMENT_OUTBOX_RETENTION_SECS + 3_600);
+    file.set_times(std::fs::FileTimes::new().set_modified(stale)).unwrap();
+}
+
+#[test]
+fn payment_outbox_recovery_expires_dead_seller_backlog() {
+    let outbox = Outbox::new();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_secs();
+    let fresh = outbox.payment("fresh", 2);
+    outbox.queue(&fresh);
+    let StreamingRoutePaymentPayload::BalanceUpdate(fresh_update) = &fresh.payload else {
+        unreachable!()
+    };
+
+    // Once the refund lifetime is unreachable, an unresponsive seller stops
+    // accumulating balance updates and closes across restarts.
+    let expired = outbox.payment("expired", 3);
+    outbox.queue(&expired);
+    backdate_paid_exit_outbox_entry(&outbox.config, &expired);
+    let StreamingRoutePaymentPayload::BalanceUpdate(expired_update) = &expired.payload else {
+        unreachable!()
+    };
+    let mut expired_close = expired.clone();
+    expired_close.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: expired_update.paid_msat,
+            payment: expired_update.payment.clone(),
+        },
+    );
+    outbox.queue(&expired_close);
+    backdate_paid_exit_outbox_entry(&outbox.config, &expired_close);
+
+    // Repeated close attempts for a live binding collapse to the newest retry.
+    let mut close_old = fresh.clone();
+    close_old.sent_at_unix = now - 60;
+    close_old.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: fresh_update.paid_msat,
+            payment: fresh_update.payment.clone(),
+        },
+    );
+    let mut close_new = close_old.clone();
+    close_new.sent_at_unix = now;
+    outbox.queue(&close_old);
+    outbox.queue(&close_new);
+
+    let pending = load_paid_exit_payment_outbox(&outbox.config);
+    assert_eq!(pending.len(), 2);
+    assert!(pending.iter().any(|entry| entry.envelope == fresh));
+    assert!(pending.iter().any(|entry| entry.envelope == close_new));
+    assert_eq!(
+        fs::read_dir(paid_exit_payment_outbox_directory(&outbox.config))
+            .unwrap()
+            .count(),
+        2,
+        "expired and superseded files leave the outbox"
+    );
+    assert_eq!(
+        load_paid_exit_payment_outbox(&outbox.config).len(),
+        2,
+        "survives restart"
+    );
+}
+
 #[test]
 fn payment_outbox_recovery_preserves_funding_close_and_other_bindings() {
     let outbox = Outbox::new();
