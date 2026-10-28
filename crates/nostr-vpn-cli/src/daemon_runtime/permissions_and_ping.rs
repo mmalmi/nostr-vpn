@@ -51,7 +51,7 @@ pub(crate) fn open_daemon_log_file(path: &Path) -> Result<fs::File> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o644);
+        options.mode(0o600);
     }
     let file = options
         .open(path)
@@ -60,7 +60,7 @@ pub(crate) fn open_daemon_log_file(path: &Path) -> Result<fs::File> {
     // hard link must never turn the daemon into an arbitrary-file writer.
     validate_daemon_runtime_file(&file, path)?;
     #[cfg(unix)]
-    file.set_permissions(fs::Permissions::from_mode(0o644))
+    file.set_permissions(fs::Permissions::from_mode(0o600))
         .with_context(|| format!("failed to protect daemon log {}", path.display()))?;
     Ok(file)
 }

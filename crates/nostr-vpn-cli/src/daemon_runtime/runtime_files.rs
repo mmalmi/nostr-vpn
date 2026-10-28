@@ -1,5 +1,5 @@
 pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-    write_runtime_file_atomically_with_mode(path, contents, 0o644, false)
+    write_runtime_file_atomically_with_mode(path, contents, 0o600, false)
 }
 
 #[cfg(target_os = "linux")]

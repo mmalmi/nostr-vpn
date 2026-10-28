@@ -130,7 +130,7 @@ fn status_json_peers_preserves_daemon_reachability() {
 
 #[cfg(unix)]
 #[test]
-fn atomic_runtime_write_creates_desktop_readable_file() {
+fn atomic_runtime_write_creates_owner_private_file() {
     use std::os::unix::fs::PermissionsExt;
 
     let nonce = SystemTime::now()
@@ -148,7 +148,7 @@ fn atomic_runtime_write_creates_desktop_readable_file() {
         .mode()
         & 0o777;
 
-    assert_eq!(mode, 0o644);
+    assert_eq!(mode, 0o600);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -426,7 +426,7 @@ fn daemon_log_and_permissions_reject_linked_files_before_mutation() {
     let mut log = open_daemon_log_file(&runtime).expect("create a regular daemon log");
     std::io::Write::write_all(&mut log, b"normal log entry\n").unwrap();
     assert_eq!(fs::read_to_string(&runtime).unwrap(), "normal log entry\n");
-    assert_eq!(fs::metadata(&runtime).unwrap().permissions().mode() & 0o777, 0o644);
+    assert_eq!(fs::metadata(&runtime).unwrap().permissions().mode() & 0o777, 0o600);
     fs::remove_dir_all(dir).unwrap();
 }
 
