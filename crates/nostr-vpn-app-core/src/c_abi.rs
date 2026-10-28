@@ -69,11 +69,14 @@ pub extern "C" fn nostr_vpn_app_new(
     data_dir: *const c_char,
     app_version: *const c_char,
 ) -> *mut NvpnAppHandle {
-    let data_dir = c_string_lossy(data_dir);
-    let app_version = c_string_lossy(app_version);
-    Box::into_raw(Box::new(NvpnAppHandle {
-        app: FfiApp::new(data_dir, app_version),
-    }))
+    // Both mobile callers already treat a null handle as their failure path.
+    catch_panic("app new", ptr::null_mut(), || {
+        let data_dir = c_string_lossy(data_dir);
+        let app_version = c_string_lossy(app_version);
+        Box::into_raw(Box::new(NvpnAppHandle {
+            app: FfiApp::new(data_dir, app_version),
+        }))
+    })
 }
 
 /// # Safety
@@ -85,25 +88,37 @@ pub unsafe extern "C" fn nostr_vpn_app_free(handle: *mut NvpnAppHandle) {
     if handle.is_null() {
         return;
     }
-    unsafe {
+    catch_panic("app free", (), || unsafe {
         drop(Box::from_raw(handle));
-    }
+    });
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_app_state_json(handle: *const NvpnAppHandle) -> *mut c_char {
-    let state = app_from_handle(handle).map_or_else(
-        |error| error_state(error.to_string()),
-        |handle| handle.app.state(),
+    let state = catch_panic(
+        "app state json",
+        error_state("app state json panicked".to_string()),
+        || {
+            app_from_handle(handle).map_or_else(
+                |error| error_state(error.to_string()),
+                |handle| handle.app.state(),
+            )
+        },
     );
     json_string(&state)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_app_refresh_json(handle: *const NvpnAppHandle) -> *mut c_char {
-    let state = app_from_handle(handle).map_or_else(
-        |error| error_state(error.to_string()),
-        |handle| handle.app.refresh(),
+    let state = catch_panic(
+        "app refresh json",
+        error_state("app refresh json panicked".to_string()),
+        || {
+            app_from_handle(handle).map_or_else(
+                |error| error_state(error.to_string()),
+                |handle| handle.app.refresh(),
+            )
+        },
     );
     json_string(&state)
 }
@@ -113,18 +128,24 @@ pub extern "C" fn nostr_vpn_app_dispatch_json(
     handle: *const NvpnAppHandle,
     action_json: *const c_char,
 ) -> *mut c_char {
-    let state = app_from_handle(handle).map_or_else(
-        |error| error_state(error.to_string()),
-        |handle| {
-            let action_json = c_string_lossy(action_json);
-            match serde_json::from_str::<NativeAppAction>(&action_json) {
-                Ok(action) => handle.app.dispatch(action),
-                Err(error) => {
-                    let mut state = handle.app.state();
-                    state.error = format!("invalid native action JSON: {error}");
-                    state
-                }
-            }
+    let state = catch_panic(
+        "app dispatch json",
+        error_state("app dispatch json panicked".to_string()),
+        || {
+            app_from_handle(handle).map_or_else(
+                |error| error_state(error.to_string()),
+                |handle| {
+                    let action_json = c_string_lossy(action_json);
+                    match serde_json::from_str::<NativeAppAction>(&action_json) {
+                        Ok(action) => handle.app.dispatch(action),
+                        Err(error) => {
+                            let mut state = handle.app.state();
+                            state.error = format!("invalid native action JSON: {error}");
+                            state
+                        }
+                    }
+                },
+            )
         },
     );
     json_string(&state)
@@ -132,7 +153,12 @@ pub extern "C" fn nostr_vpn_app_dispatch_json(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_qr_matrix_json(text: *const c_char) -> *mut c_char {
-    let result = qr_matrix(&c_string_lossy(text)).unwrap_or_else(|error| QrMatrixResult {
+    let result = catch_panic(
+        "qr matrix json",
+        Err(anyhow!("qr matrix json panicked")),
+        || qr_matrix(&c_string_lossy(text)),
+    )
+    .unwrap_or_else(|error| QrMatrixResult {
         width: 0,
         cells: Vec::new(),
         error: error.to_string(),
@@ -142,7 +168,12 @@ pub extern "C" fn nostr_vpn_qr_matrix_json(text: *const c_char) -> *mut c_char {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_decode_qr_image_json(path: *const c_char) -> *mut c_char {
-    let result = decode_qr_image(&c_string_lossy(path)).map_or_else(
+    let result = catch_panic(
+        "decode qr image json",
+        Err(anyhow!("decode qr image json panicked")),
+        || decode_qr_image(&c_string_lossy(path)),
+    )
+    .map_or_else(
         |error| QrDecodeResult {
             value: String::new(),
             error: error.to_string(),
@@ -157,7 +188,11 @@ pub extern "C" fn nostr_vpn_decode_qr_image_json(path: *const c_char) -> *mut c_
 
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -> *mut c_char {
-    let config_json = tunnel_config_json(&c_string_lossy(data_dir));
+    let config_json = catch_panic(
+        "mobile tunnel config json",
+        String::new(),
+        || tunnel_config_json(&c_string_lossy(data_dir)),
+    );
     json_raw_string(&config_json)
 }
 
@@ -165,7 +200,11 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -
 pub extern "C" fn nostr_vpn_mobile_tunnel_provider_options_config_json(
     data_dir: *const c_char,
 ) -> *mut c_char {
-    let config_json = tunnel_provider_options_config_json(&c_string_lossy(data_dir));
+    let config_json = catch_panic(
+        "mobile tunnel provider options config json",
+        String::new(),
+        || tunnel_provider_options_config_json(&c_string_lossy(data_dir)),
+    );
     json_raw_string(&config_json)
 }
 
@@ -180,7 +219,12 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_runtime_state_json(
         return json_raw_string(r#"{"error":"mobile tunnel stopped"}"#);
     }
     let tunnel = unsafe { &*handle };
-    match tunnel.tunnel.runtime_state_json() {
+    let json = catch_panic(
+        "mobile tunnel runtime state json",
+        Err(anyhow!("mobile tunnel runtime state json panicked")),
+        || tunnel.tunnel.runtime_state_json(),
+    );
+    match json {
         Ok(json) => json_raw_string(&json),
         Err(error) => {
             let json = serde_json::json!({ "error": error.to_string() }).to_string();
@@ -200,7 +244,12 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_take_app_config_toml(
         return json_raw_string("");
     }
     let tunnel = unsafe { &*handle };
-    match tunnel.tunnel.take_app_config_toml() {
+    let toml = catch_panic(
+        "mobile tunnel app config toml",
+        Err(anyhow!("mobile tunnel app config read panicked")),
+        || tunnel.tunnel.take_app_config_toml(),
+    );
+    match toml {
         Ok(toml) => json_raw_string(&toml),
         Err(error) => json_raw_string(&format!("# failed to read mobile app config: {error}\n")),
     }
@@ -223,10 +272,16 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_ack_app_config_toml(
     }
     let tunnel = unsafe { &*handle };
     let expected_toml = c_string_lossy(expected_toml);
-    tunnel
-        .tunnel
-        .acknowledge_app_config_toml(&expected_toml)
-        .unwrap_or(false)
+    catch_panic(
+        "mobile tunnel ack app config toml",
+        false,
+        || {
+            tunnel
+                .tunnel
+                .acknowledge_app_config_toml(&expected_toml)
+                .unwrap_or(false)
+        },
+    )
 }
 
 #[unsafe(no_mangle)]
@@ -234,7 +289,9 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_new(
     config_json: *const c_char,
 ) -> *mut NvpnMobileTunnelHandle {
     let config_json = c_string_lossy(config_json);
-    start_mobile_tunnel_handle(&config_json)
+    catch_panic("mobile tunnel new", ptr::null_mut(), || {
+        start_mobile_tunnel_handle(&config_json)
+    })
 }
 
 #[cfg(feature = "updater")]
@@ -244,10 +301,16 @@ pub extern "C" fn nostr_vpn_update_check_json(
     mode: *const c_char,
     source: *const c_char,
 ) -> *mut c_char {
-    let result = check_product_update_blocking(
-        &c_string_lossy(current_version),
-        parse_update_mode(&c_string_lossy(mode)),
-        parse_update_source(&c_string_lossy(source)),
+    let result = catch_panic(
+        "update check json",
+        Err(anyhow!("update check panicked")),
+        || {
+            check_product_update_blocking(
+                &c_string_lossy(current_version),
+                parse_update_mode(&c_string_lossy(mode)),
+                parse_update_source(&c_string_lossy(source)),
+            )
+        },
     );
     update_result_json(result)
 }
@@ -261,11 +324,17 @@ pub extern "C" fn nostr_vpn_update_check_with_config_json(
     config_path: *const c_char,
 ) -> *mut c_char {
     let config_path = c_string_lossy(config_path);
-    let result = check_product_update_blocking_with_config(
-        &c_string_lossy(current_version),
-        parse_update_mode(&c_string_lossy(mode)),
-        parse_update_source(&c_string_lossy(source)),
-        Some(std::path::Path::new(&config_path)),
+    let result = catch_panic(
+        "update check with config json",
+        Err(anyhow!("update check panicked")),
+        || {
+            check_product_update_blocking_with_config(
+                &c_string_lossy(current_version),
+                parse_update_mode(&c_string_lossy(mode)),
+                parse_update_source(&c_string_lossy(source)),
+                Some(std::path::Path::new(&config_path)),
+            )
+        },
     );
     update_result_json(result)
 }
@@ -281,11 +350,17 @@ pub extern "C" fn nostr_vpn_update_download_json(
     let download_dir = c_string_lossy(download_dir);
     let download_dir =
         (!download_dir.trim().is_empty()).then(|| std::path::Path::new(&download_dir));
-    let result = download_product_update_blocking(
-        &c_string_lossy(current_version),
-        parse_update_mode(&c_string_lossy(mode)),
-        parse_update_source(&c_string_lossy(source)),
-        download_dir,
+    let result = catch_panic(
+        "update download json",
+        Err(anyhow!("update download panicked")),
+        || {
+            download_product_update_blocking(
+                &c_string_lossy(current_version),
+                parse_update_mode(&c_string_lossy(mode)),
+                parse_update_source(&c_string_lossy(source)),
+                download_dir,
+            )
+        },
     );
     update_result_json(result)
 }
@@ -303,12 +378,18 @@ pub extern "C" fn nostr_vpn_update_download_with_config_json(
     let download_dir =
         (!download_dir.trim().is_empty()).then(|| std::path::Path::new(&download_dir));
     let config_path = c_string_lossy(config_path);
-    let result = download_product_update_blocking_with_config(
-        &c_string_lossy(current_version),
-        parse_update_mode(&c_string_lossy(mode)),
-        parse_update_source(&c_string_lossy(source)),
-        download_dir,
-        Some(std::path::Path::new(&config_path)),
+    let result = catch_panic(
+        "update download with config json",
+        Err(anyhow!("update download panicked")),
+        || {
+            download_product_update_blocking_with_config(
+                &c_string_lossy(current_version),
+                parse_update_mode(&c_string_lossy(mode)),
+                parse_update_source(&c_string_lossy(source)),
+                download_dir,
+                Some(std::path::Path::new(&config_path)),
+            )
+        },
     );
     update_result_json(result)
 }
@@ -322,9 +403,9 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_free(handle: *mut NvpnMobileTun
     if handle.is_null() {
         return;
     }
-    unsafe {
+    catch_panic("mobile tunnel free", (), || unsafe {
         drop(Box::from_raw(handle));
-    }
+    });
 }
 
 #[cfg(target_os = "android")]
@@ -351,12 +432,12 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_wg_excluded_route(
         return json_raw_string("");
     }
     let tunnel = unsafe { &*handle };
-    json_raw_string(
-        &tunnel
-            .tunnel
-            .wg_upstream_excluded_route()
-            .unwrap_or_default(),
-    )
+    let route = catch_panic(
+        "mobile tunnel wg excluded route",
+        String::new(),
+        || tunnel.tunnel.wg_upstream_excluded_route().unwrap_or_default(),
+    );
+    json_raw_string(&route)
 }
 
 /// # Safety
@@ -367,9 +448,9 @@ pub unsafe extern "C" fn nostr_vpn_string_free(value: *mut c_char) {
     if value.is_null() {
         return;
     }
-    unsafe {
+    catch_panic("string free", (), || unsafe {
         drop(CString::from_raw(value));
-    }
+    });
 }
 
 #[cfg(target_os = "android")]
@@ -379,22 +460,24 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_initializeAndroidCo
     _class: JClass<'_>,
     context: JObject<'_>,
 ) {
-    static ANDROID_CONTEXT: OnceLock<Option<GlobalRef>> = OnceLock::new();
-    ANDROID_CONTEXT.get_or_init(|| match env.new_global_ref(&context) {
-        Ok(global) => {
-            let Ok(vm) = env.get_java_vm() else {
-                return None;
-            };
-            unsafe {
-                ndk_context::initialize_android_context(
-                    vm.get_java_vm_pointer() as *mut c_void,
-                    global.as_obj().as_raw() as *mut c_void,
-                );
+    catch_panic("jni initializeAndroidContext", (), || {
+        static ANDROID_CONTEXT: OnceLock<Option<GlobalRef>> = OnceLock::new();
+        ANDROID_CONTEXT.get_or_init(|| match env.new_global_ref(&context) {
+            Ok(global) => {
+                let Ok(vm) = env.get_java_vm() else {
+                    return None;
+                };
+                unsafe {
+                    ndk_context::initialize_android_context(
+                        vm.get_java_vm_pointer() as *mut c_void,
+                        global.as_obj().as_raw() as *mut c_void,
+                    );
+                }
+                Some(global)
             }
-            Some(global)
-        }
-        Err(_) => None,
-    });
+            Err(_) => None,
+        });
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -405,11 +488,14 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_appNew(
     data_dir: JString<'_>,
     app_version: JString<'_>,
 ) -> jlong {
-    let data_dir = jni_string_lossy(&mut env, &data_dir);
-    let app_version = jni_string_lossy(&mut env, &app_version);
-    Box::into_raw(Box::new(NvpnAppHandle {
-        app: FfiApp::new(data_dir, app_version),
-    })) as jlong
+    // A zero handle is the failure value the Kotlin caller already checks.
+    catch_panic("jni appNew", 0, || {
+        let data_dir = jni_string_lossy(&mut env, &data_dir);
+        let app_version = jni_string_lossy(&mut env, &app_version);
+        Box::into_raw(Box::new(NvpnAppHandle {
+            app: FfiApp::new(data_dir, app_version),
+        })) as jlong
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -422,9 +508,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_appFree(
     if handle == 0 {
         return;
     }
-    unsafe {
+    catch_panic("jni appFree", (), || unsafe {
         drop(Box::from_raw(handle as *mut NvpnAppHandle));
-    }
+    });
 }
 
 #[cfg(target_os = "android")]
@@ -434,7 +520,7 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_stateJson(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jstring {
-    jni_state_json(env, handle, |handle| handle.app.state())
+    jni_state_json(env, handle, "stateJson", |handle| handle.app.state())
 }
 
 #[cfg(target_os = "android")]
@@ -444,7 +530,7 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_refreshJson(
     _class: JClass<'_>,
     handle: jlong,
 ) -> jstring {
-    jni_state_json(env, handle, |handle| handle.app.refresh())
+    jni_state_json(env, handle, "refreshJson", |handle| handle.app.refresh())
 }
 
 #[cfg(target_os = "android")]
@@ -455,18 +541,24 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_dispatchJson(
     handle: jlong,
     action_json: JString<'_>,
 ) -> jstring {
-    let state = app_from_jlong(handle).map_or_else(
-        |error| error_state(error.to_string()),
-        |handle| {
-            let action_json = jni_string_lossy(&mut env, &action_json);
-            match serde_json::from_str::<NativeAppAction>(&action_json) {
-                Ok(action) => handle.app.dispatch(action),
-                Err(error) => {
-                    let mut state = handle.app.state();
-                    state.error = format!("invalid native action JSON: {error}");
-                    state
-                }
-            }
+    let state = catch_panic(
+        "jni dispatchJson",
+        error_state("jni dispatchJson panicked".to_string()),
+        || {
+            app_from_jlong(handle).map_or_else(
+                |error| error_state(error.to_string()),
+                |handle| {
+                    let action_json = jni_string_lossy(&mut env, &action_json);
+                    match serde_json::from_str::<NativeAppAction>(&action_json) {
+                        Ok(action) => handle.app.dispatch(action),
+                        Err(error) => {
+                            let mut state = handle.app.state();
+                            state.error = format!("invalid native action JSON: {error}");
+                            state
+                        }
+                    }
+                },
+            )
         },
     );
     jni_json_string(env, &state)
@@ -480,7 +572,12 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_qrMatrixJson(
     text: JString<'_>,
 ) -> jstring {
     let text = jni_string_lossy(&mut env, &text);
-    let result = qr_matrix(&text).unwrap_or_else(|error| QrMatrixResult {
+    let result = catch_panic(
+        "jni qrMatrixJson",
+        Err(anyhow!("qr matrix json panicked")),
+        || qr_matrix(&text),
+    )
+    .unwrap_or_else(|error| QrMatrixResult {
         width: 0,
         cells: Vec::new(),
         error: error.to_string(),
@@ -496,7 +593,12 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_decodeQrImageJson(
     path: JString<'_>,
 ) -> jstring {
     let path = jni_string_lossy(&mut env, &path);
-    let result = decode_qr_image(&path).map_or_else(
+    let result = catch_panic(
+        "jni decodeQrImageJson",
+        Err(anyhow!("decode qr image json panicked")),
+        || decode_qr_image(&path),
+    )
+    .map_or_else(
         |error| QrDecodeResult {
             value: String::new(),
             error: error.to_string(),
@@ -517,7 +619,12 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelConfigJ
     data_dir: JString<'_>,
 ) -> jstring {
     let data_dir = jni_string_lossy(&mut env, &data_dir);
-    jni_raw_string(env, tunnel_config_json(&data_dir))
+    let config_json = catch_panic(
+        "jni mobileTunnelConfigJson",
+        String::new(),
+        || tunnel_config_json(&data_dir),
+    );
+    jni_raw_string(env, config_json)
 }
 
 #[cfg(target_os = "android")]
@@ -528,7 +635,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNew(
     config_json: JString<'_>,
 ) -> jlong {
     let config_json = jni_string_lossy(&mut env, &config_json);
-    start_mobile_tunnel_handle(&config_json) as jlong
+    catch_panic("jni mobileTunnelNew", 0, || {
+        start_mobile_tunnel_handle(&config_json) as jlong
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -541,9 +650,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelFree(
     if handle == 0 {
         return;
     }
-    unsafe {
+    catch_panic("jni mobileTunnelFree", (), || unsafe {
         drop(Box::from_raw(handle as *mut NvpnMobileTunnelHandle));
-    }
+    });
 }
 
 #[cfg(target_os = "android")]
@@ -561,7 +670,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelAttachT
         reject_unattached_mobile_tun_fd(fd);
         return 0;
     };
-    u8::from(tunnel.tunnel.attach_tun_fd(fd).is_ok())
+    catch_panic("jni mobileTunnelAttachTunFd", 0, || {
+        u8::from(tunnel.tunnel.attach_tun_fd(fd).is_ok())
+    })
 }
 
 /// Returns the raw fd of the userspace WG upstream UDP socket so the
@@ -577,7 +688,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelWgSocke
     let Some(tunnel) = tunnel_from_jlong(handle) else {
         return -1;
     };
-    tunnel.tunnel.wg_upstream_socket_fd()
+    catch_panic("jni mobileTunnelWgSocketFd", -1, || {
+        tunnel.tunnel.wg_upstream_socket_fd()
+    })
 }
 
 fn app_from_handle<'a>(handle: *const NvpnAppHandle) -> Result<&'a NvpnAppHandle> {
@@ -632,11 +745,18 @@ fn jni_string_lossy(env: &mut JNIEnv<'_>, value: &JString<'_>) -> String {
 fn jni_state_json(
     env: JNIEnv<'_>,
     handle: jlong,
+    context: &str,
     state: impl FnOnce(&NvpnAppHandle) -> NativeAppState,
 ) -> jstring {
-    let state = app_from_jlong(handle).map_or_else(
-        |error| error_state(error.to_string()),
-        |handle| state(handle),
+    let state = catch_panic(
+        context,
+        error_state(format!("{context} panicked")),
+        || {
+            app_from_jlong(handle).map_or_else(
+                |error| error_state(error.to_string()),
+                |handle| state(handle),
+            )
+        },
     );
     jni_json_string(env, &state)
 }
@@ -671,6 +791,21 @@ fn start_mobile_tunnel_handle(config_json: &str) -> *mut NvpnMobileTunnelHandle 
                 panic_payload_message(&payload)
             ));
             ptr::null_mut()
+        }
+    }
+}
+
+/// Runs `body`, turning a panic into `fallback` so no unwind crosses the
+/// C/JNI boundary, where it would abort the whole app or tunnel process.
+fn catch_panic<T>(context: &str, fallback: T, body: impl FnOnce() -> T) -> T {
+    match panic::catch_unwind(AssertUnwindSafe(body)) {
+        Ok(value) => value,
+        Err(payload) => {
+            mobile_debug_log(format!(
+                "{context} panic: {}",
+                panic_payload_message(&payload)
+            ));
+            fallback
         }
     }
 }
@@ -943,6 +1078,19 @@ mod tests {
 
         let decoded = decode_qr_image(path.to_str().expect("UTF-8 path")).expect("decode QR");
         assert_eq!(decoded, request);
+    }
+
+    #[test]
+    fn catch_panic_returns_failure_value_instead_of_unwinding() {
+        let value = catch_panic("test guard", String::from("failure"), || -> String {
+            panic!("deliberate test panic");
+        });
+        assert_eq!(value, "failure");
+
+        let value = catch_panic("test guard", String::from("unused"), || {
+            String::from("success")
+        });
+        assert_eq!(value, "success");
     }
 
     fn temp_data_dir() -> std::path::PathBuf {

@@ -13,22 +13,24 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_network_changed(
         return false;
     }
     let tunnel = unsafe { &*handle };
-    match tunnel.tunnel.handle_underlay_network_change() {
-        Ok(outcome) => {
-            mobile_debug_log(format!(
-                "mobile: network change rebound {} FIPS carrier(s), refreshed {} peer path(s), \
-                 WireGuard handshake initiated={}",
-                outcome.rebound_transports,
-                outcome.refreshed_peers,
-                outcome.wireguard_handshake_initiated
-            ));
-            true
+    catch_panic("mobile tunnel network changed", false, || {
+        match tunnel.tunnel.handle_underlay_network_change() {
+            Ok(outcome) => {
+                mobile_debug_log(format!(
+                    "mobile: network change rebound {} FIPS carrier(s), refreshed {} peer path(s), \
+                     WireGuard handshake initiated={}",
+                    outcome.rebound_transports,
+                    outcome.refreshed_peers,
+                    outcome.wireguard_handshake_initiated
+                ));
+                true
+            }
+            Err(error) => {
+                mobile_debug_log(format!("mobile: network path refresh failed: {error:#}"));
+                false
+            }
         }
-        Err(error) => {
-            mobile_debug_log(format!("mobile: network path refresh failed: {error:#}"));
-            false
-        }
-    }
+    })
 }
 
 /// Reports whether a roster-triggered restart must wait for a join receipt.
@@ -44,7 +46,10 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_has_pending_join_receipts(
     if handle.is_null() {
         return false;
     }
-    unsafe { &*handle }.tunnel.has_pending_join_receipts()
+    let tunnel = unsafe { &*handle };
+    catch_panic("mobile tunnel has pending join receipts", false, || {
+        tunnel.tunnel.has_pending_join_receipts()
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -57,7 +62,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNetwork
     let Some(tunnel) = tunnel_from_jlong(handle) else {
         return 0;
     };
-    u8::from(tunnel.tunnel.handle_underlay_network_change().is_ok())
+    catch_panic("jni mobileTunnelNetworkChanged", 0, || {
+        u8::from(tunnel.tunnel.handle_underlay_network_change().is_ok())
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -70,7 +77,9 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelHasPend
     let Some(tunnel) = tunnel_from_jlong(handle) else {
         return 0;
     };
-    u8::from(tunnel.tunnel.has_pending_join_receipts())
+    catch_panic("jni mobileTunnelHasPendingJoinReceipts", 0, || {
+        u8::from(tunnel.tunnel.has_pending_join_receipts())
+    })
 }
 
 #[cfg(target_os = "android")]
@@ -83,5 +92,7 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelWireGua
     let Some(tunnel) = tunnel_from_jlong(handle) else {
         return 0;
     };
-    u8::from(tunnel.tunnel.handle_wireguard_underlay_ready().is_ok())
+    catch_panic("jni mobileTunnelWireGuardUnderlayReady", 0, || {
+        u8::from(tunnel.tunnel.handle_wireguard_underlay_ready().is_ok())
+    })
 }

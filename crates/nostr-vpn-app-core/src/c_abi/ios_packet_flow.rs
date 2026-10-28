@@ -14,8 +14,15 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_packet_flow_start(
     failure: Option<crate::mobile_tunnel::IosPacketFlowFailureCallback>,
     release: Option<crate::mobile_tunnel::IosPacketFlowReleaseCallback>,
 ) -> bool {
-    let callbacks =
-        match crate::mobile_tunnel::IosPacketFlowCallbacks::new(context, write, failure, release) {
+    // A panic after the callbacks are built drops them, which still invokes
+    // `release` exactly once via `IosPacketFlowCallbacks::drop`.
+    catch_panic("iOS packet flow start", false, || {
+        let callbacks = match crate::mobile_tunnel::IosPacketFlowCallbacks::new(
+            context,
+            write,
+            failure,
+            release,
+        ) {
             Ok(callbacks) => callbacks,
             Err(error) => {
                 mobile_debug_log(format!(
@@ -31,18 +38,19 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_packet_flow_start(
                 return false;
             }
         };
-    if handle.is_null() {
-        drop(callbacks);
-        return false;
-    }
-    let tunnel = unsafe { &mut *handle };
-    match tunnel.tunnel.attach_packet_flow(callbacks) {
-        Ok(()) => true,
-        Err(error) => {
-            mobile_debug_log(format!("mobile: iOS packet flow attach failed: {error:#}"));
-            false
+        if handle.is_null() {
+            drop(callbacks);
+            return false;
         }
-    }
+        let tunnel = unsafe { &mut *handle };
+        match tunnel.tunnel.attach_packet_flow(callbacks) {
+            Ok(()) => true,
+            Err(error) => {
+                mobile_debug_log(format!("mobile: iOS packet flow attach failed: {error:#}"));
+                false
+            }
+        }
+    })
 }
 
 /// Sends one batch returned by `NEPacketTunnelFlow.readPackets` into the Rust
@@ -71,14 +79,16 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_packet_flow_send(
     {
         return false;
     }
-    let tunnel = unsafe { &*handle };
-    let bytes = unsafe { std::slice::from_raw_parts(bytes, byte_count) };
-    let lengths = unsafe { std::slice::from_raw_parts(lengths, packet_count) };
-    match tunnel.tunnel.send_packet_flow_batch(bytes, lengths) {
-        Ok(()) => true,
-        Err(error) => {
-            mobile_debug_log(format!("mobile: iOS packet flow send failed: {error:#}"));
-            false
+    catch_panic("iOS packet flow send", false, || {
+        let tunnel = unsafe { &*handle };
+        let bytes = unsafe { std::slice::from_raw_parts(bytes, byte_count) };
+        let lengths = unsafe { std::slice::from_raw_parts(lengths, packet_count) };
+        match tunnel.tunnel.send_packet_flow_batch(bytes, lengths) {
+            Ok(()) => true,
+            Err(error) => {
+                mobile_debug_log(format!("mobile: iOS packet flow send failed: {error:#}"));
+                false
+            }
         }
-    }
+    })
 }
