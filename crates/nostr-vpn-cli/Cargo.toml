@@ -75,6 +75,7 @@ boringtun.workspace = true
 nostr-vpn-wintun.workspace = true
 wintun = "0.5.1"
 windows-service = "0.8"
+wmi = { version = "=0.18.4", default-features = false }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_NetworkManagement_IpHelper",
