@@ -22,5 +22,10 @@
     "svelte-check": "^4.1.4",
     "typescript": "^5.9.3",
     "vite": "^7.3.6"
+  },
+  "pnpm": {
+    "overrides": {
+      "devalue": "^5.9.3"
+    }
   }
 }
