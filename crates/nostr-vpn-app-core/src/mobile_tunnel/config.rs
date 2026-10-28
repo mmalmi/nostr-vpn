@@ -231,7 +231,7 @@ impl MobileTunnelLaunchConfig {
                         if !join_roster_delivery_expired(&queued, unix_timestamp()) {
                             return Some(queued);
                         }
-                        if let Err(error) = fs::remove_file(&path) {
+                        if let Err(error) = expire_join_roster(&path, &queued) {
                             tracing::warn!(
                                 ?error,
                                 "mobile: failed to remove expired queued join approval"

@@ -3,6 +3,7 @@ use std::io::ErrorKind;
 #[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,11 @@ pub fn queue_join_roster(
         record_pending_join_confirmation(&directory, &queued)?;
         return Ok(destination);
     }
+    if load_join_rosters(config_path).len() >= MAX_QUEUED_JOIN_ROSTERS {
+        anyhow::bail!(
+            "join approval outbox is full; deliver or wait for the pending approvals before approving more devices"
+        );
+    }
     let temporary = directory.join(format!(
         ".{recipient_npub}-{}-{event_id}.tmp",
         std::process::id()
@@ -125,7 +131,11 @@ pub fn load_join_rosters(config_path: &Path) -> Vec<(PathBuf, QueuedJoinRoster)>
             return Vec::new();
         }
     };
-    let mut paths = entries
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut queued = entries
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
         .map(|entry| entry.path())
@@ -133,11 +143,6 @@ pub fn load_join_rosters(config_path: &Path) -> Vec<(PathBuf, QueuedJoinRoster)>
             path.extension()
                 .is_some_and(|extension| extension == "json")
         })
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths.truncate(MAX_QUEUED_JOIN_ROSTERS);
-    paths
-        .into_iter()
         .filter_map(|path| {
             match fs::read(&path)
                 .with_context(|| format!("failed to read {}", path.display()))
@@ -150,6 +155,12 @@ pub fn load_join_rosters(config_path: &Path) -> Vec<(PathBuf, QueuedJoinRoster)>
                         && queued.join_roster.signed_roster.verify().is_ok()
                         && !queued.join_roster.request_secret.is_empty() =>
                 {
+                    if join_roster_delivery_expired(&queued, now) {
+                        if let Err(error) = expire_join_roster(&path, &queued) {
+                            eprintln!("failed to expire queued join roster: {error:#}");
+                        }
+                        return None;
+                    }
                     Some((path, queued))
                 }
                 Ok(_) => {
@@ -167,7 +178,17 @@ pub fn load_join_rosters(config_path: &Path) -> Vec<(PathBuf, QueuedJoinRoster)>
                 }
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // File names carry no timestamp, so rank by the roster's own signed_at
+    // and keep the newest approvals when the outbox overflows the cap.
+    queued.sort_by(|a, b| {
+        b.1.join_roster
+            .signed_roster
+            .signed_at()
+            .cmp(&a.1.join_roster.signed_roster.signed_at())
+    });
+    queued.truncate(MAX_QUEUED_JOIN_ROSTERS);
+    queued
 }
 
 #[cfg(unix)]
@@ -198,10 +219,45 @@ mod tests {
     use super::*;
     use crate::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 
+    fn unix_now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_secs()
+    }
+
+    fn unique_outbox_config_path(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "nvpn-join-roster-{tag}-{}-{}.toml",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ))
+    }
+
+    fn signed_join_roster(admin: &Keys, recipient: &str, signed_at: u64) -> JoinRosterControl {
+        let roster = SignedRoster::sign(
+            "network",
+            NetworkRoster {
+                network_name: "Home".to_string(),
+                devices: vec![recipient.to_string()],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at,
+            },
+            admin,
+        )
+        .expect("sign roster");
+        JoinRosterControl::new(roster, "request-secret").expect("join control")
+    }
+
     #[test]
     fn outbox_stores_exactly_one_signed_roster() {
         let admin = Keys::generate();
         let recipient = Keys::generate().public_key().to_hex();
+        let signed_at = unix_now_secs();
         let roster = SignedRoster::sign(
             "network",
             NetworkRoster {
@@ -209,21 +265,14 @@ mod tests {
                 devices: vec![recipient.clone()],
                 admins: vec![admin.public_key().to_hex()],
                 aliases: HashMap::new(),
-                signed_at: 100,
+                signed_at,
             },
             &admin,
         )
         .expect("sign roster");
         let join_roster =
             JoinRosterControl::new(roster.clone(), "request-secret").expect("join control");
-        let config_path = std::env::temp_dir().join(format!(
-            "nvpn-join-roster-{}-{}.toml",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
+        let config_path = unique_outbox_config_path("single");
 
         let path =
             queue_join_roster(&config_path, &recipient, &join_roster).expect("queue signed roster");
@@ -235,11 +284,11 @@ mod tests {
         assert_eq!(queued[0].1.attempts, 0);
         assert!(!join_roster_delivery_expired(
             &queued[0].1,
-            100 + JOIN_ROSTER_OUTBOX_TTL_SECS
+            signed_at + JOIN_ROSTER_OUTBOX_TTL_SECS
         ));
         assert!(join_roster_delivery_expired(
             &queued[0].1,
-            101 + JOIN_ROSTER_OUTBOX_TTL_SECS
+            signed_at + 1 + JOIN_ROSTER_OUTBOX_TTL_SECS
         ));
 
         let mut delivery = queued[0].1.clone();
@@ -250,7 +299,7 @@ mod tests {
 
         // A later approval can be queued while the old receipt is in flight.
         let mut newer_roster = roster.roster().expect("roster");
-        newer_roster.signed_at = 124;
+        newer_roster.signed_at = signed_at + 24;
         let newer = JoinRosterControl::new(
             SignedRoster::sign("network", newer_roster, &admin).expect("new signature"),
             "new-request-secret",
@@ -274,5 +323,130 @@ mod tests {
             .expect("duplicate receipt is harmless");
         assert!(pending_join_confirmations(&config_path, "network").is_empty());
         fs::remove_dir(join_roster_outbox_directory(&config_path)).expect("remove outbox");
+    }
+
+    #[test]
+    fn load_deletes_expired_entries_and_returns_the_newest_under_the_cap() {
+        let admin = Keys::generate();
+        let config_path = unique_outbox_config_path("expiry-cap");
+        let directory = join_roster_outbox_directory(&config_path);
+        fs::create_dir_all(&directory).expect("create outbox");
+        let signed_at = unix_now_secs();
+        let mut expected_recipients = Vec::new();
+        for offset in 0..7 {
+            let recipient = Keys::generate().public_key().to_hex();
+            expected_recipients.push(recipient.clone());
+            queue_join_roster(
+                &config_path,
+                &recipient,
+                &signed_join_roster(&admin, &recipient, signed_at + offset),
+            )
+            .expect("queue fresh approval");
+        }
+        // Written directly: queueing would purge them through load-time expiry.
+        for offset in 0..3 {
+            let recipient = Keys::generate().public_key().to_hex();
+            let stale = QueuedJoinRoster {
+                version: JOIN_ROSTER_OUTBOX_VERSION,
+                recipient_npub: recipient.clone(),
+                join_roster: signed_join_roster(&admin, &recipient, offset + 1),
+                attempts: 0,
+                last_attempt_at: 0,
+            };
+            fs::write(
+                directory.join(format!("stale-{offset}.json")),
+                serde_json::to_vec(&stale).expect("encode stale entry"),
+            )
+            .expect("write stale entry");
+        }
+        let outbox_json_count = || {
+            fs::read_dir(&directory)
+                .expect("outbox")
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .is_some_and(|extension| extension == "json")
+                })
+                .count()
+        };
+        assert_eq!(outbox_json_count(), 10);
+
+        let mut queued = load_join_rosters(&config_path);
+        assert!(queued.len() <= MAX_QUEUED_JOIN_ROSTERS);
+        assert_eq!(
+            queued.len(),
+            7,
+            "expired entries are deleted before capping"
+        );
+        queued.sort_by(|a, b| a.1.recipient_npub.cmp(&b.1.recipient_npub));
+        expected_recipients.sort();
+        assert_eq!(
+            queued
+                .into_iter()
+                .map(|(_, entry)| entry.recipient_npub)
+                .collect::<Vec<_>>(),
+            expected_recipients
+        );
+        for offset in 0..3 {
+            assert!(
+                !directory.join(format!("stale-{offset}.json")).exists(),
+                "expired entry {offset} must be deleted"
+            );
+        }
+        fs::remove_dir_all(&directory).expect("remove outbox");
+    }
+
+    #[test]
+    fn queueing_past_the_outbox_cap_is_rejected() {
+        let admin = Keys::generate();
+        let config_path = unique_outbox_config_path("cap");
+        let signed_at = unix_now_secs();
+        for offset in 0..MAX_QUEUED_JOIN_ROSTERS {
+            let recipient = Keys::generate().public_key().to_hex();
+            queue_join_roster(
+                &config_path,
+                &recipient,
+                &signed_join_roster(&admin, &recipient, signed_at + offset as u64),
+            )
+            .expect("queue approval under the cap");
+        }
+        let recipient = Keys::generate().public_key().to_hex();
+        let error = queue_join_roster(
+            &config_path,
+            &recipient,
+            &signed_join_roster(&admin, &recipient, signed_at),
+        )
+        .expect_err("full outbox must reject the approval");
+        assert!(
+            error.to_string().contains("outbox is full"),
+            "unexpected error: {error:#}"
+        );
+        fs::remove_dir_all(join_roster_outbox_directory(&config_path)).expect("remove outbox");
+    }
+
+    #[test]
+    fn expiring_an_outbox_entry_removes_its_pending_marker() {
+        let admin = Keys::generate();
+        let recipient = Keys::generate().public_key().to_hex();
+        let config_path = unique_outbox_config_path("marker");
+        queue_join_roster(
+            &config_path,
+            &recipient,
+            &signed_join_roster(&admin, &recipient, 1),
+        )
+        .expect("queue stale approval");
+        assert!(pending_join_confirmations(&config_path, "network").contains(&recipient));
+
+        assert!(
+            load_join_rosters(&config_path).is_empty(),
+            "the stale entry must expire at load time"
+        );
+        assert!(
+            pending_join_confirmations(&config_path, "network").is_empty(),
+            "expiry must remove the pending marker"
+        );
+        fs::remove_dir_all(join_roster_outbox_directory(&config_path)).expect("remove outbox");
     }
 }

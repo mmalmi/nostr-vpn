@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -6,7 +5,7 @@ use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::fips_control::JoinRosterControl;
 use nostr_vpn_core::join_delivery::{
-    join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
+    expire_join_roster, join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
 };
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 pub use nostr_vpn_core::join_requests::{
@@ -38,7 +37,7 @@ pub fn deliver_queued_join_rosters(config_path: &Path, timeout: Duration) -> Res
             if !join_roster_delivery_expired(delivery, now) {
                 return true;
             }
-            if let Err(error) = fs::remove_file(path) {
+            if let Err(error) = expire_join_roster(path, delivery) {
                 eprintln!(
                     "failed to remove expired join approval {}: {error}",
                     path.display()

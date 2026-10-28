@@ -270,7 +270,12 @@ fn roster_must_be_fresh_for_the_pending_request() {
 fn durable_delivery_contains_only_the_recipient_and_join_roster_control() {
     let joiner = pending_joiner();
     let signer = Keys::generate();
-    let roster = signed_roster(&joiner, &signer, SIGNED_AT);
+    // A fixed timestamp would expire the entry before load_join_rosters reads it.
+    let signed_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_secs();
+    let roster = signed_roster(&joiner, &signer, signed_at);
     let config_path = unique_temp_config_path("signed-roster-outbox");
     let recipient = joiner.own_nostr_pubkey_hex().expect("recipient");
 

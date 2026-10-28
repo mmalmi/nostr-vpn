@@ -117,7 +117,7 @@ async fn deliver_mobile_queued_join_roster(
         let now = unix_timestamp();
         if join_roster_delivery_expired(&queued, now) {
             if let Some(path) = outbox_path.as_deref()
-                && let Err(error) = fs::remove_file(path)
+                && let Err(error) = expire_join_roster(path, &queued)
             {
                 tracing::warn!(?error, "mobile: failed to remove expired join approval");
             }
