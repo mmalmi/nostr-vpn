@@ -174,7 +174,8 @@ fn payment_outbox_recovery_acks_old_payment_through_persisted_seller_path() {
     };
     let opening_payment = CashuSpilmanPayment {
         params: Some(serde_json::json!({ "mint": mint, "capacity": 10,
-            "expiry_timestamp": 500, "receiver_pubkey": receiver_key, "unit": "sat" })),
+            "expiry_timestamp": 500, "receiver_pubkey": receiver_key, "unit": "sat",
+            "output_version": nostr_vpn_core::paid_routes::PAID_ROUTE_OUTPUT_VERSION })),
         funding_proofs: Some(serde_json::json!({"proofs": []})),
         ..update.payment.clone()
     };

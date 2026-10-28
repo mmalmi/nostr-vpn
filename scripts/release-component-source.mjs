@@ -22,6 +22,8 @@ const harnessOnlyPaths = new Set([
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_core.rs',
   // Included only by mobile_tunnel.rs's cfg(test) module.
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_paid_route.rs',
+  // Included only by payment_outbox.rs's cfg(test) module.
+  'crates/nostr-vpn-cli/src/main/paid_exit/payment_outbox_tests.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_runtime/websocket_join.rs',
   'crates/nostr-vpn-core/examples/desktop_manual_join_e2e_fixture.rs',
   'scripts/appstore-draft',
