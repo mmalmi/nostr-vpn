@@ -184,6 +184,13 @@ pub trait SpilmanAsyncNetworking {
         swap_request_json: &str,
     ) -> Result<String, String>;
 
+    /// Call the mint's /v1/restore endpoint (NUT-09)
+    async fn call_mint_restore(
+        &self,
+        mint_url: &str,
+        restore_request_json: &str,
+    ) -> Result<String, String>;
+
     /// Refresh the keyset cache for a mint
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String>;
 }
@@ -687,6 +694,12 @@ fn extract_nut00_error_code(raw: &str) -> Option<u32> {
 /// <https://github.com/lescuer97/nutmix/issues/237>
 fn is_keyset_error_code(code: u32) -> bool {
     (12000..13000).contains(&code) || code == 99999
+}
+
+/// NUT-00 code 11001 ("Token Already Spent"). For a close swap this means the
+/// mint already processed it, so the issued signatures can be restored.
+fn is_spent_input_error(raw: &str) -> bool {
+    matches!(extract_nut00_error_code(raw), Some(11001))
 }
 
 /// Determine if a swap error should trigger a retry (refresh keysets + re-attempt).
