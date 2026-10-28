@@ -5,7 +5,9 @@ ADD --chmod=0644 --checksum=sha256:796f1389bfea13c0ed78f663b765baaff54a508e54837
 
 # APT verifies the complete package closure against these signed, hash-pinned
 # snapshot indexes on both amd64 and arm64. Do not refresh from mutable mirrors.
-RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
+RUN printf '%s\n' 'Acquire::https::CaInfo "/etc/ssl/certs/ca-certificates.crt";' \
+      > /etc/apt/apt.conf.d/99nvpn-bootstrap-ca \
+    && rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
     && rm -rf /var/lib/apt/lists/* \
     && printf '%s\n' \
       'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg check-valid-until=no] https://snapshot.debian.org/archive/debian/20261027T000000Z bookworm main' \
@@ -26,7 +28,8 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/* \
       socat \
       tcpdump \
       wireguard-tools \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -f /etc/apt/apt.conf.d/99nvpn-bootstrap-ca
 
 COPY scripts/mobile-wireguard-exit-server.sh /usr/local/bin/mobile-wireguard-exit-server
 COPY scripts/mobile-wireguard-http-probe.py /usr/local/bin/mobile-wireguard-http-probe.py
