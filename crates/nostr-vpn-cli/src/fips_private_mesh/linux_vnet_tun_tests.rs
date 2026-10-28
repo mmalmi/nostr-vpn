@@ -2,6 +2,7 @@
 mod linux_vnet_tun_tests {
     use super::*;
     use std::net::Ipv4Addr;
+    use std::net::Ipv6Addr;
 
     #[test]
     fn linux_vnet_plain_read_strips_virtio_header() {
@@ -156,6 +157,105 @@ mod linux_vnet_tun_tests {
         );
         assert_eq!(ipv4_transport_sum(&batch[0].bytes), 0xffff);
         assert_eq!(ipv4_transport_sum(&batch[1].bytes), 0xffff);
+    }
+
+    #[test]
+    fn linux_vnet_tcp6_gso_read_splits_into_checked_segments() {
+        let packet = ipv6_tcp_gso_packet(2400, 1200, 0x18);
+        let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];
+        LinuxVirtioNetHdr {
+            flags: LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: LINUX_VIRTIO_NET_HDR_GSO_TCPV6,
+            hdr_len: 60,
+            gso_size: 1200,
+            csum_start: 40,
+            csum_offset: 16,
+        }
+        .encode(&mut frame[..LINUX_VIRTIO_NET_HDR_LEN]);
+        frame[LINUX_VIRTIO_NET_HDR_LEN..].copy_from_slice(&packet);
+
+        let mut batch = Vec::new();
+        let count = handle_linux_vnet_read(&mut frame, &mut batch).expect("tcp6 gso read");
+        assert_eq!(count, 2);
+        assert_eq!(batch.len(), 2);
+        let destination = Some(IpAddr::V6(Ipv6Addr::new(0xfd00, 0x44, 0, 0, 0, 0, 0, 2)));
+        assert_eq!(batch[0].destination, destination);
+        assert_eq!(batch[1].destination, destination);
+
+        let first = &batch[0].bytes;
+        let second = &batch[1].bytes;
+        assert_eq!(first.len(), 1260);
+        assert_eq!(second.len(), 1260);
+        assert_eq!(first[0] >> 4, 6);
+        assert_eq!(second[0] >> 4, 6);
+        assert_eq!(u16::from_be_bytes([first[4], first[5]]), 1220);
+        assert_eq!(u16::from_be_bytes([second[4], second[5]]), 1220);
+        assert_eq!(
+            u32::from_be_bytes([first[44], first[45], first[46], first[47]]),
+            1000
+        );
+        assert_eq!(
+            u32::from_be_bytes([second[44], second[45], second[46], second[47]]),
+            2200
+        );
+        assert_eq!(first[53] & LINUX_TCP_FLAG_PSH, 0);
+        assert_ne!(second[53] & LINUX_TCP_FLAG_PSH, 0);
+        assert_eq!(ipv6_transport_sum(first), 0xffff);
+        assert_eq!(ipv6_transport_sum(second), 0xffff);
+
+        let mut payload = Vec::with_capacity(2400);
+        payload.extend_from_slice(&first[60..]);
+        payload.extend_from_slice(&second[60..]);
+        assert_eq!(payload, &packet[60..]);
+    }
+
+    #[test]
+    fn linux_vnet_udp4_gso_read_splits_into_checked_datagrams() {
+        let packet = ipv4_udp_gso_packet(2400, 1200);
+        let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];
+        LinuxVirtioNetHdr {
+            flags: LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: LINUX_VIRTIO_NET_HDR_GSO_UDP_L4,
+            hdr_len: 28,
+            gso_size: 1200,
+            csum_start: 20,
+            csum_offset: 6,
+        }
+        .encode(&mut frame[..LINUX_VIRTIO_NET_HDR_LEN]);
+        frame[LINUX_VIRTIO_NET_HDR_LEN..].copy_from_slice(&packet);
+
+        let mut batch = Vec::new();
+        let count = handle_linux_vnet_read(&mut frame, &mut batch).expect("udp4 gso read");
+        assert_eq!(count, 2);
+        assert_eq!(batch.len(), 2);
+        assert_eq!(
+            batch[0].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 44, 0, 2)))
+        );
+        assert_eq!(
+            batch[1].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 44, 0, 2)))
+        );
+
+        let first = &batch[0].bytes;
+        let second = &batch[1].bytes;
+        assert_eq!(first.len(), 1228);
+        assert_eq!(second.len(), 1228);
+        assert_eq!(u16::from_be_bytes([first[2], first[3]]), 1228);
+        assert_eq!(u16::from_be_bytes([second[2], second[3]]), 1228);
+        assert_eq!(u16::from_be_bytes([first[4], first[5]]), 0x1234);
+        assert_eq!(u16::from_be_bytes([second[4], second[5]]), 0x1235);
+        assert_eq!(u16::from_be_bytes([first[24], first[25]]), 1208);
+        assert_eq!(u16::from_be_bytes([second[24], second[25]]), 1208);
+        assert_eq!(linux_vnet_checksum(&first[..20], 0), 0xffff);
+        assert_eq!(linux_vnet_checksum(&second[..20], 0), 0xffff);
+        assert_eq!(ipv4_transport_sum(first), 0xffff);
+        assert_eq!(ipv4_transport_sum(second), 0xffff);
+
+        let mut payload = Vec::with_capacity(2400);
+        payload.extend_from_slice(&first[28..]);
+        payload.extend_from_slice(&second[28..]);
+        assert_eq!(payload, &packet[28..]);
     }
 
     #[test]
@@ -319,6 +419,54 @@ mod linux_vnet_tun_tests {
         packet
     }
 
+    fn ipv6_tcp_gso_packet(payload_len: usize, gso_size: usize, flags: u8) -> Vec<u8> {
+        let packet = ipv6_tcp_packet(1000, payload_len, flags);
+        assert_eq!(payload_len % gso_size, 0);
+        packet
+    }
+
+    fn ipv6_tcp_packet(seq: u32, payload_len: usize, flags: u8) -> Vec<u8> {
+        let total_len = 40 + 20 + payload_len;
+        let mut packet = vec![0_u8; total_len];
+        packet[0] = 0x60;
+        packet[4..6].copy_from_slice(&((total_len - 40) as u16).to_be_bytes());
+        packet[6] = LINUX_IPPROTO_TCP;
+        packet[7] = 64;
+        packet[8..24].copy_from_slice(&Ipv6Addr::new(0xfd00, 0x44, 0, 0, 0, 0, 0, 1).octets());
+        packet[24..40].copy_from_slice(&Ipv6Addr::new(0xfd00, 0x44, 0, 0, 0, 0, 0, 2).octets());
+        packet[40..42].copy_from_slice(&443_u16.to_be_bytes());
+        packet[42..44].copy_from_slice(&45172_u16.to_be_bytes());
+        packet[44..48].copy_from_slice(&seq.to_be_bytes());
+        packet[48..52].copy_from_slice(&777_u32.to_be_bytes());
+        packet[52] = 5 << 4;
+        packet[53] = flags;
+        packet[54..56].copy_from_slice(&65535_u16.to_be_bytes());
+        for i in 0..payload_len {
+            packet[60 + i] = (i % 251) as u8;
+        }
+        packet
+    }
+
+    fn ipv4_udp_gso_packet(payload_len: usize, gso_size: usize) -> Vec<u8> {
+        assert_eq!(payload_len % gso_size, 0);
+        let total_len = 20 + 8 + payload_len;
+        let mut packet = vec![0_u8; total_len];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
+        packet[4..6].copy_from_slice(&0x1234_u16.to_be_bytes());
+        packet[8] = 64;
+        packet[9] = LINUX_IPPROTO_UDP;
+        packet[12..16].copy_from_slice(&Ipv4Addr::new(10, 44, 0, 1).octets());
+        packet[16..20].copy_from_slice(&Ipv4Addr::new(10, 44, 0, 2).octets());
+        packet[20..22].copy_from_slice(&443_u16.to_be_bytes());
+        packet[22..24].copy_from_slice(&45172_u16.to_be_bytes());
+        packet[24..26].copy_from_slice(&((8 + payload_len) as u16).to_be_bytes());
+        for i in 0..payload_len {
+            packet[28 + i] = (i % 251) as u8;
+        }
+        packet
+    }
+
     fn ipv4_tcp_packet(seq: u32, payload_len: usize, flags: u8) -> Vec<u8> {
         ipv4_tcp_packet_with_ports(seq, payload_len, flags, 443, 45172)
     }
@@ -361,5 +509,16 @@ mod linux_vnet_tun_tests {
             transport_len as u16,
         );
         linux_vnet_checksum(&packet[20..], pseudo)
+    }
+
+    fn ipv6_transport_sum(packet: &[u8]) -> u16 {
+        let transport_len = packet.len() - 40;
+        let pseudo = linux_vnet_pseudo_header_sum(
+            packet[6],
+            &packet[8..24],
+            &packet[24..40],
+            transport_len as u16,
+        );
+        linux_vnet_checksum(&packet[40..], pseudo)
     }
 }
