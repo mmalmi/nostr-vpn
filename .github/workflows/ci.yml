@@ -114,7 +114,29 @@ jobs:
           cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets --no-deps -- -D warnings
 
       - name: Run workspace tests once
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
+
+      - name: Check cleanup journal ownership as root
+        run: |
+          set -o pipefail
+          cargo test --locked --workspace --no-run --message-format=json > "$RUNNER_TEMP/nvpn-test-artifacts.jsonl"
+          nvpn_test_binary="$(python3 -c '
+          import json, sys
+          records = [json.loads(line) for line in open(sys.argv[1])]
+          paths = {r["executable"] for r in records
+                   if r.get("reason") == "compiler-artifact"
+                   and r.get("target", {}).get("name") == "nvpn"
+                   and r.get("target", {}).get("kind") == ["bin"]
+                   and r.get("profile", {}).get("test") is True
+                   and r.get("executable")}
+          if len(paths) != 1:
+              raise SystemExit("expected exactly one current nvpn test executable")
+          print(paths.pop())
+          ' "$RUNNER_TEMP/nvpn-test-artifacts.jsonl")"
+          git rev-parse HEAD 'HEAD^{tree}'
+          sha256sum "$nvpn_test_binary"
+          sudo -n "$nvpn_test_binary" --exact daemon_runtime::linux_cleanup_journal_files::root_cleanup_journal_rejects_unprivileged_ownership --ignored --nocapture | tee "$RUNNER_TEMP/nvpn-root-cleanup-test.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/nvpn-root-cleanup-test.log"
 
   web:
     name: Web typecheck
