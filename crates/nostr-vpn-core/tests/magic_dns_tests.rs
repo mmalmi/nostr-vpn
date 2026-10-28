@@ -243,10 +243,12 @@ fn magic_dns_server_survives_roster_swap_and_identical_reapplication() {
 
     let before = send_dns_query(&socket, server_addr, "old-peer.nvpn.", RecordType::A);
     assert_eq!(before.response_code, ResponseCode::NoError);
-    assert!(before
-        .answers
-        .iter()
-        .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == old_ip)));
+    assert!(
+        before
+            .answers
+            .iter()
+            .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == old_ip))
+    );
 
     let mut roster = HashMap::new();
     roster.insert("new-peer.nvpn".to_string(), new_ip);
@@ -256,19 +258,23 @@ fn magic_dns_server_survives_roster_swap_and_identical_reapplication() {
     assert_eq!(removed.response_code, ResponseCode::NXDomain);
     let added = send_dns_query(&socket, server_addr, "new-peer.nvpn.", RecordType::A);
     assert_eq!(added.response_code, ResponseCode::NoError);
-    assert!(added
-        .answers
-        .iter()
-        .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == new_ip)));
+    assert!(
+        added
+            .answers
+            .iter()
+            .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == new_ip))
+    );
 
     // Re-applying an identical roster must keep the same names resolving.
     server.update_records(roster);
     let replay = send_dns_query(&socket, server_addr, "new-peer.nvpn.", RecordType::A);
     assert_eq!(replay.response_code, ResponseCode::NoError);
-    assert!(replay
-        .answers
-        .iter()
-        .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == new_ip)));
+    assert!(
+        replay
+            .answers
+            .iter()
+            .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == new_ip))
+    );
 
     server.stop();
 }
