@@ -838,17 +838,166 @@ pub(crate) fn wait_for_daemon_vpn_enabled(
     ))
 }
 
+// Staged configs and control requests are written into the config directory by
+// its owner, so refuse files another local user could have planted.
+#[cfg(unix)]
+fn validate_trusted_daemon_request_file(file: &fs::File, path: &Path, owner_uid: u32) -> Result<()> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let metadata = validate_daemon_runtime_file(file, path)?;
+    // An elevated CLI is also a legitimate writer, so accept the daemon's own
+    // uid next to the config directory owner.
+    let daemon_uid = unsafe { libc::geteuid() };
+    if (metadata.uid() != owner_uid && metadata.uid() != daemon_uid)
+        || metadata.mode() & 0o022 != 0
+    {
+        return Err(anyhow!(
+            "refusing untrusted daemon request file {}: expected a regular single-link file \
+             owned by the config directory owner without group/other write access",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn open_trusted_daemon_request_file(path: &Path) -> Result<Option<fs::File>> {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _};
+    use std::os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _, fs::OpenOptionsExt as _};
+
+    let parent = path.parent().context("daemon request file has no parent")?;
+    let directory = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(parent)
+    {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to open {}", parent.display()));
+        }
+    };
+    let directory_metadata = directory.metadata()?;
+    if directory_metadata.mode() & 0o022 != 0 {
+        return Err(anyhow!(
+            "refusing untrusted daemon request directory {}: expected a config directory \
+             without group/other write access",
+            parent.display()
+        ));
+    }
+    let name = std::ffi::CString::new(
+        path.file_name()
+            .context("daemon request file has no name")?
+            .as_bytes(),
+    )?;
+    let fd = unsafe {
+        libc::openat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::NotFound {
+            return Ok(None);
+        }
+        return Err(error).with_context(|| format!("failed to open {}", path.display()));
+    }
+    let file = unsafe { fs::File::from_raw_fd(fd) };
+    validate_trusted_daemon_request_file(&file, path, directory_metadata.uid())?;
+    Ok(Some(file))
+}
+
+#[cfg(target_os = "macos")]
+fn open_trusted_daemon_request_file(path: &Path) -> Result<Option<fs::File>> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let parent = path.parent().context("daemon request file has no parent")?;
+    let owner_uid = match fs::symlink_metadata(parent) {
+        Ok(metadata) => metadata.uid(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", parent.display()));
+        }
+    };
+    let file = match runtime_open_options_no_follow().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to open {}", path.display()));
+        }
+    };
+    validate_trusted_daemon_request_file(&file, path, owner_uid)?;
+    Ok(Some(file))
+}
+
+#[cfg(target_os = "windows")]
+fn open_trusted_daemon_request_file(path: &Path) -> Result<Option<fs::File>> {
+    use std::os::windows::fs::MetadataExt as _;
+
+    // The cleanup journal has no Windows trust checks yet; reparse points are
+    // the one locally forgeable file type this read can reject today.
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", path.display()));
+        }
+    };
+    if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(anyhow!(
+            "refusing daemon request reparse point {}",
+            path.display()
+        ));
+    }
+    match fs::File::open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to open {}", path.display())),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn open_trusted_daemon_request_file(path: &Path) -> Result<Option<fs::File>> {
+    match fs::File::open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("failed to open {}", path.display())),
+    }
+}
+
 pub(crate) fn take_daemon_control_request(config_path: &Path) -> Option<DaemonControlRequest> {
     let control_file = daemon_control_file_path(config_path);
-    let raw = match fs::read_to_string(&control_file) {
-        Ok(raw) => raw,
+    let raw = match open_trusted_daemon_request_file(&control_file) {
+        Ok(Some(mut file)) => {
+            let mut raw = String::new();
+            match std::io::Read::read_to_string(&mut file, &mut raw) {
+                Ok(_) => raw,
+                Err(error) => {
+                    eprintln!(
+                        "daemon: failed to read control request {}: {}",
+                        control_file.display(),
+                        error
+                    );
+                    return None;
+                }
+            }
+        }
+        Ok(None) => return None,
         Err(error) => {
-            if error.kind() != std::io::ErrorKind::NotFound {
+            // Log and consume only a file that is actually present; a bad
+            // config directory with no request in it must not log every tick.
+            if fs::symlink_metadata(&control_file).is_ok() {
                 eprintln!(
-                    "daemon: failed to read control request {}: {}",
-                    control_file.display(),
-                    error
+                    "daemon: ignoring untrusted control request {}: {error:#}",
+                    control_file.display()
                 );
+                let _ = fs::remove_file(&control_file);
             }
             return None;
         }
@@ -941,5 +1090,42 @@ fn write_daemon_status_file(path: &Path, contents: &[u8]) -> Result<()> {
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
         write_runtime_file_atomically(path, contents)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod trusted_daemon_request_files {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    #[test]
+    fn group_writable_staged_config_and_control_requests_are_rejected() {
+        let dir =
+            std::env::temp_dir().join(format!("nvpn-request-trust-{}", rand::random::<u128>()));
+        fs::create_dir(&dir).unwrap();
+        let config = dir.join("config.toml");
+        fs::write(&config, b"node_name = \"owned\"\n").unwrap();
+
+        let staged = daemon_staged_config_file_path(&config);
+        fs::write(&staged, b"node_name = \"attacker\"\n").unwrap();
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(update_daemon_config_from_staged_request(&config).is_err());
+        assert_eq!(
+            fs::read_to_string(&staged).unwrap(),
+            "node_name = \"attacker\"\n"
+        );
+        assert_eq!(AppConfig::load(&config).unwrap().node_name, "owned");
+        AppConfig::delete_persisted_secrets_for_path(&config).unwrap();
+
+        let control = daemon_control_file_path(&config);
+        fs::write(&control, b"stop\n").unwrap();
+        fs::set_permissions(&control, fs::Permissions::from_mode(0o666)).unwrap();
+        assert_eq!(take_daemon_control_request(&config), None);
+        assert!(
+            !control.exists(),
+            "a rejected control request is consumed so the loop does not re-log it"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }

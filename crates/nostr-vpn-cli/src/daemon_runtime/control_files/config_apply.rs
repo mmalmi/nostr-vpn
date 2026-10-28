@@ -18,7 +18,7 @@ pub(crate) fn stage_daemon_config_apply(config_path: &Path, source_path: &Path) 
 
 pub(crate) fn update_daemon_config_from_staged_request(config_path: &Path) -> Result<bool> {
     let staged_path = daemon_staged_config_file_path(config_path);
-    if !staged_path.exists() {
+    if open_trusted_daemon_request_file(&staged_path)?.is_none() {
         return Ok(false);
     }
 
