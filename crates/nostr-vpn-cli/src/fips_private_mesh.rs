@@ -293,6 +293,7 @@ mod tests {
     include!("fips_private_mesh/tests_runtime.rs");
     include!("fips_private_mesh/tests_endpoint_config.rs");
     include!("fips_private_mesh/tests_network_cleanup.rs");
+    #[cfg(unix)]
     include!("fips_private_mesh/tests_macos_bypass.rs");
     include!("fips_private_mesh/tests_config.rs");
 }
