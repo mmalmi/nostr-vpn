@@ -1096,10 +1096,11 @@ fn write_daemon_status_file(path: &Path, contents: &[u8]) -> Result<()> {
 #[cfg(all(test, unix))]
 mod trusted_daemon_request_files {
     use super::*;
-    use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
     fn group_writable_staged_config_and_control_requests_are_rejected() {
+        use std::os::unix::fs::PermissionsExt as _;
+
         let dir =
             std::env::temp_dir().join(format!("nvpn-request-trust-{}", rand::random::<u128>()));
         fs::create_dir(&dir).unwrap();
