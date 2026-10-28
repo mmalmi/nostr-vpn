@@ -397,9 +397,9 @@ fn remove_owned_macos_resolvers(resolver_dir: &Path) -> Result<()> {
         let path = entry.path();
         // The marker check here skips files whose bytes are not valid UTF-8
         // before remove_macos_resolver would fail reading them as text.
-        if !fs::read(&path).is_ok_and(|contents| {
-            contents.starts_with(MACOS_MAGIC_DNS_MARKER.as_bytes())
-        }) {
+        if !fs::read(&path)
+            .is_ok_and(|contents| contents.starts_with(MACOS_MAGIC_DNS_MARKER.as_bytes()))
+        {
             continue;
         }
         if let Err(error) = remove_macos_resolver(&path) {
