@@ -295,6 +295,8 @@ Endpoint = vpn.example.test:51820
         );
         let saved = AppConfig::load(&runtime.config_path).expect("load restored config");
         assert_eq!(saved.internet_source, InternetSource::Direct);
+        assert!(!saved.wireguard_exit.enabled);
+        assert!(saved.wireguard_exit.address.is_empty());
         let calls = fs::read_to_string(format!("{}.reloads", runtime.config_path.display()))
             .expect("read fake nvpn reloads");
         assert_eq!(
