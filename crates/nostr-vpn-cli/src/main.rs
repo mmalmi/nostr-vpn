@@ -156,6 +156,7 @@ use nostr_vpn_core::platform_paths::{
     windows_machine_config_path_from_program_data_dir,
     windows_service_config_path_from_sc_qc_output,
 };
+use nostr_vpn_core::process_ext::CommandWindowExt;
 use nostr_vpn_core::signed_rosters::{
     load_signed_rosters, signed_rosters_file_path, upsert_signed_roster,
 };

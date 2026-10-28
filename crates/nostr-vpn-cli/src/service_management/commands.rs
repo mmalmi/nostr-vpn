@@ -363,6 +363,7 @@ fn query_binary_version(path: &Path) -> Option<String> {
         .args(["version", "--json"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
+        .hide_console_window()
         .spawn()
         .ok()?;
     let started = Instant::now();

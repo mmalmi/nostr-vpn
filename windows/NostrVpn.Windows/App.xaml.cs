@@ -162,7 +162,7 @@ public partial class App : System.Windows.Application
         _window.Activate();
     }
 
-    private void Quit()
+    internal void Quit()
     {
         IsQuitting = true;
         Shutdown();

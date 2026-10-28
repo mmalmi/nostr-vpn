@@ -20,11 +20,23 @@ public sealed class TrayService : IDisposable
     {
         _normalIcon = LoadIcon();
         _blockedIcon = CreateBlockedIcon(_normalIcon);
+        var menu = new ContextMenuStrip();
+        menu.Opening += (_, e) =>
+        {
+            if (_viewModel is null)
+            {
+                e.Cancel = true;
+                return;
+            }
+            PopulateMenu(menu, _viewModel);
+            e.Cancel = false;
+        };
         _notifyIcon = new NotifyIcon
         {
             Icon = _normalIcon,
             Text = "Nostr VPN",
             Visible = true,
+            ContextMenuStrip = menu,
         };
         _notifyIcon.DoubleClick += (_, _) => _showWindow?.Invoke();
     }
@@ -47,25 +59,27 @@ public sealed class TrayService : IDisposable
 
         _notifyIcon.Text = TruncateTrayText(TrayText(_viewModel));
         _notifyIcon.Icon = _viewModel.State.ExitNodeBlocked ? _blockedIcon : _normalIcon;
-        _notifyIcon.ContextMenuStrip?.Dispose();
-        _notifyIcon.ContextMenuStrip = BuildMenu(_viewModel);
     }
 
     public void Dispose()
     {
         _notifyIcon.Visible = false;
+        _notifyIcon.ContextMenuStrip?.Dispose();
         _notifyIcon.Dispose();
         _normalIcon.Dispose();
         _blockedIcon.Dispose();
     }
 
-    private ContextMenuStrip BuildMenu(AppViewModel viewModel)
+    private void PopulateMenu(ContextMenuStrip menu, AppViewModel viewModel)
     {
+        // Refresh only when opening, so state updates cannot replace an open menu.
+        while (menu.Items.Count > 0)
+        {
+            menu.Items[0].Dispose();
+        }
         // 1. VPN toggle (first), 2. device-name section, 3. network/exit
         // submenus, 4. open/quit. See macOS TrayController.swift for the
         // canonical layout shared across platforms.
-        var menu = new ContextMenuStrip();
-
         var vpnToggle = Item("Nostr VPN", async (_, _) => await viewModel.ToggleVpnAsync(),
             viewModel.State.VpnControlSupported && !viewModel.ActionInFlight);
         vpnToggle.Checked = viewModel.State.VpnEnabled;
@@ -133,7 +147,6 @@ public sealed class TrayService : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Item("Open Nostr VPN", (_, _) => _showWindow?.Invoke()));
         menu.Items.Add(Item("Quit", (_, _) => _quit?.Invoke()));
-        return menu;
     }
 
     private static string DeviceDisplayName(AppViewModel viewModel)
