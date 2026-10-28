@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nvpn-4119-hosted-release
+  group: nvpn-hosted-release-${{ inputs.app_commit }}-${{ inputs.lane }}
   cancel-in-progress: false
 
 env:
@@ -103,7 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           ./scripts/publish.sh --dry-run 2>&1 | tee artifacts/hosted-4119/package.log
-          sha256sum target/package/nvpn-cashu-service-0.4.10.crate > artifacts/hosted-4119/package-sha256.txt
+          sha256sum target/package/*.crate > artifacts/hosted-4119/package-sha256.txt
       - uses: actions/upload-artifact@v6
         if: always()
         with:
@@ -114,7 +114,7 @@ jobs:
             artifacts/web-startos-manual-join
             artifacts/umbrel-web
             artifacts/umbrel-auth-join
-            target/package/nvpn-cashu-service-0.4.10.crate
+            target/package/*.crate
           retention-days: 14
           if-no-files-found: error
 
