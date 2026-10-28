@@ -930,7 +930,10 @@ mod tests {
         filter.note_outbound(peer, &exit_flow_icmp_echo(survivor_token));
         filter.note_outbound(peer, &exit_flow_icmp_echo(idle_token));
         let idle_key = *filter.order.back().expect("idle flow is tracked");
-        *filter.flows.get_mut(&idle_key).expect("idle flow is mapped") = Instant::now()
+        *filter
+            .flows
+            .get_mut(&idle_key)
+            .expect("idle flow is mapped") = Instant::now()
             .checked_sub(EXIT_ICMP_IDLE + Duration::from_secs(1))
             .expect("monotonic clock older than the ICMP idle timeout");
         for token in 100..100 + MAX_TRACKED_EXIT_FLOWS as u32 - 2 {
