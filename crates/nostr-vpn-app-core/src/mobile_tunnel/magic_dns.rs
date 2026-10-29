@@ -21,33 +21,64 @@ struct MobileWireGuardDnsFlow {
 // Flow entries only leave the table when a UDP response matches; TCP
 // entries and lost-response UDP entries would otherwise accumulate for
 // the life of the tunnel, so cap the table and evict the oldest flow.
+// `entries` owns membership, keyed by a generation stamp; `order` only
+// mirrors insertion order with those stamps, so stamps left behind by a
+// removal or a re-insertion go stale and are skipped by eviction and
+// dropped by compaction instead of evicting a newer active flow.
 const MOBILE_EXIT_DNS_FLOWS_MAX: usize = 4096;
 
 #[derive(Default)]
 struct MobileExitDnsFlowTable {
-    set: HashSet<MobileWireGuardDnsFlow>,
-    insertion_order: VecDeque<MobileWireGuardDnsFlow>,
+    entries: HashMap<MobileWireGuardDnsFlow, u64>,
+    order: VecDeque<(MobileWireGuardDnsFlow, u64)>,
+    next_generation: u64,
 }
 
 impl MobileExitDnsFlowTable {
     fn insert(&mut self, flow: MobileWireGuardDnsFlow) {
-        if self.set.insert(flow) {
-            self.insertion_order.push_back(flow);
+        let generation = self.next_generation;
+        self.next_generation += 1;
+        self.entries.insert(flow, generation);
+        self.order.push_back((flow, generation));
+        while self.entries.len() > MOBILE_EXIT_DNS_FLOWS_MAX {
+            match self.order.pop_front() {
+                Some((oldest, generation)) if self.entries.get(&oldest) == Some(&generation) => {
+                    self.entries.remove(&oldest);
+                }
+                Some(_) => {}
+                None => break,
+            }
         }
-        while self.set.len() > MOBILE_EXIT_DNS_FLOWS_MAX {
-            let Some(oldest) = self.insertion_order.pop_front() else {
-                break;
-            };
-            self.set.remove(&oldest);
-        }
+        self.drop_stale_order();
     }
 
     fn remove(&mut self, flow: MobileWireGuardDnsFlow) -> bool {
-        self.set.remove(&flow)
+        if self.entries.remove(&flow).is_none() {
+            return false;
+        }
+        while matches!(
+            self.order.front(),
+            Some((front, generation)) if self.entries.get(front) != Some(generation)
+        ) {
+            self.order.pop_front();
+        }
+        self.drop_stale_order();
+        true
     }
 
     fn contains(&self, flow: MobileWireGuardDnsFlow) -> bool {
-        self.set.contains(&flow)
+        self.entries.contains_key(&flow)
+    }
+
+    // Keeps `order` bounded: every entry either matches the live
+    // generation in `entries` or is stale, so compacting whenever stale
+    // entries push the queue past twice the live set restores
+    // `order.len() == entries.len()` at amortized constant cost.
+    fn drop_stale_order(&mut self) {
+        if self.order.len() > 2 * self.entries.len() {
+            self.order
+                .retain(|(flow, generation)| self.entries.get(flow) == Some(generation));
+        }
     }
 }
 
