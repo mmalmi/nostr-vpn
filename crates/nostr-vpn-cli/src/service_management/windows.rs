@@ -20,7 +20,11 @@ pub(crate) enum WindowsServiceState {
     StartPending,
     StopPending,
     Running,
+    // Retained for the stop state machine contract; the typed SCM query
+    // never reports transitional pending states.
+    #[allow(dead_code)]
     ContinuePending,
+    #[allow(dead_code)]
     PausePending,
     Paused,
     // Retained for the stop state machine contract; the typed SCM query

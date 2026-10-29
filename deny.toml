@@ -1,0 +1,43 @@
+# Dependency policy enforced by `cargo deny check advisories bans` in CI
+# (.github/workflows/ci.yml).
+#
+# vuln-0001 from a recent security assessment: CVE-2026-25537
+# (GHSA-h395-gr6q-cpjc) — jsonwebtoken < 10.3.0 treats a malformed standard
+# time claim (nbf/exp with the wrong JSON type) as FailedToParse and skips
+# time-based validation unless the claim is required, allowing an
+# authorization bypass.
+#
+# jsonwebtoken is not imported by this repo; it enters the graph only through
+# cdk-common, and the latest cdk-common 0.18.x still requires jsonwebtoken ^9,
+# so the dependency cannot be updated past the advisory yet. The RustSec DB
+# does not carry the GHSA, so the advisory check cannot flag it; a
+# `jsonwebtoken:<10.3.0` deny entry would fail the gate for as long as the
+# vendored cdk stack pins 9.3.1. Keep the range documented here and re-add
+# it as a [bans] deny once cdk-rs ships the jsonwebtoken 10 bump.
+#
+# The advisory ignores below cover findings that are green-now blockers with
+# no in-range fix (verified with `cargo update -p <crate> --dry-run`). Each
+# one should be dropped as soon as an upgraded release lands.
+[advisories]
+version = 2
+ignore = [
+    # basic-toml 0.1.10 is unmaintained with no fixed release; transitive-only.
+    { id = "RUSTSEC-2026-0374", reason = "basic-toml is unmaintained; no fixed release exists" },
+    # crypto-bigint 0.5.5: timing variability advisories are only fixed in 0.6,
+    # a semver-breaking bump for the current parents (0.5.5 is the newest 0.5.x).
+    { id = "RUSTSEC-2026-0387", reason = "no patched 0.5.x release; fix requires a breaking 0.6 bump" },
+    # instant 0.1.13 is unmaintained with no fixed release; transitive-only.
+    { id = "RUSTSEC-2024-0384", reason = "instant is unmaintained; no fixed release exists" },
+    # nostr-relay-pool 0.44.3 is unmaintained with no fixed release.
+    { id = "RUSTSEC-2026-0243", reason = "nostr-relay-pool is unmaintained; no fixed release exists" },
+    # paste 1.0.15 is unmaintained with no fixed release; transitive-only.
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; no fixed release exists" },
+    # zstd 0.13.3 abandoned-stream leak: no patched 0.13.x release; the fix is
+    # in 0.14, a semver-breaking bump that must move with its parent crates.
+    { id = "RUSTSEC-2026-0391", reason = "no patched 0.13.x release; fix requires a breaking 0.14 bump" },
+    # zstd-safe 7.x seekable decompression: both advisories remain open in
+    # 7.3.0 (the newest ^7.2-compatible release); the fixes land in a later
+    # zstd-safe line and must move with the zstd 0.14 stack bump.
+    { id = "RUSTSEC-2026-0398", reason = "no patched 7.x release; fix moves with the zstd 0.14 stack bump" },
+    { id = "RUSTSEC-2026-0403", reason = "no patched 7.x release; fix moves with the zstd 0.14 stack bump" },
+]

@@ -76,6 +76,24 @@ jobs:
       - name: Test post-release fleet rollout
         run: ./scripts/test-fleet-release-canary-harness.sh
 
+  cargo-deny:
+    name: Cargo deny advisories
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      # deny.toml gates the advisory DB: findings with no in-range fix are
+      # pinned to documented ignores, and jsonwebtoken < 10.3.0
+      # (CVE-2026-25537, not in the RustSec DB) is tracked in the header
+      # until the cdk stack can bump it.
+      - name: Check dependency advisories and bans
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans
+          # Check the committed Cargo.lock under default features.
+          arguments: ""
+
   rust-tests:
     name: Rust lint + workspace tests
     runs-on: ubuntu-latest
