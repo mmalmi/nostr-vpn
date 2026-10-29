@@ -4078,6 +4078,7 @@ dependencies = [
  "nvpn-fips-endpoint",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
+ "rand 0.9.4",
  "reqwest",
  "security-framework 2.11.1",
  "security-framework-sys",

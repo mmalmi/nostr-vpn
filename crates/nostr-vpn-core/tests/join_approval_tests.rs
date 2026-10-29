@@ -15,8 +15,8 @@ use nostr_vpn_core::join_delivery::{
     queue_join_roster,
 };
 use nostr_vpn_core::join_requests::{
-    MAX_NOSTR_JOIN_ROSTER_AGE_SECS, MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS, commit_join_approval,
-    prepare_join_approval,
+    MAX_NOSTR_JOIN_ROSTER_AGE_SECS, MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS,
+    MAX_NOSTR_JOIN_ROSTER_PAST_SECS, commit_join_approval, prepare_join_approval,
 };
 
 const REQUESTED_AT: u64 = 1_778_998_000;
@@ -362,7 +362,11 @@ fn roster_must_be_fresh_for_the_pending_request() {
     let signer = Keys::generate();
 
     let mut predating = pending_joiner();
-    let roster = signed_roster(&predating, &signer, REQUESTED_AT - 1);
+    let roster = signed_roster(
+        &predating,
+        &signer,
+        REQUESTED_AT - MAX_NOSTR_JOIN_ROSTER_PAST_SECS - 1,
+    );
     assert!(
         predating
             .apply_nostr_join_roster(&roster, SIGNED_AT)
@@ -394,6 +398,69 @@ fn roster_must_be_fresh_for_the_pending_request() {
             .to_string()
             .contains("stale")
     );
+}
+
+#[test]
+fn roster_signed_before_the_request_still_joins_within_clock_skew_tolerance() {
+    let signer = Keys::generate();
+
+    // An admin clock two minutes behind the joiner must still approve the QR.
+    let mut joiner = pending_joiner();
+    let roster = signed_roster(&joiner, &signer, REQUESTED_AT - 120);
+    joiner
+        .apply_nostr_join_roster(&roster, REQUESTED_AT + 30)
+        .expect("slightly predating roster joins within tolerance")
+        .expect("join completed");
+
+    // A roster signed before the pending request beyond the tolerance fails.
+    let mut laggard = pending_joiner();
+    let roster = signed_roster(
+        &laggard,
+        &signer,
+        REQUESTED_AT - MAX_NOSTR_JOIN_ROSTER_PAST_SECS - 1,
+    );
+    assert!(
+        laggard
+            .apply_nostr_join_roster(&roster, REQUESTED_AT + 30)
+            .expect_err("roster beyond the past tolerance must fail")
+            .to_string()
+            .contains("predates")
+    );
+}
+
+#[test]
+fn roster_signer_must_be_a_configured_admin_of_an_existing_network() {
+    let signer = Keys::generate();
+
+    // A matching network with no locally configured admins must not accept a
+    // roster signer just because it administers the roster itself.
+    let mut joiner = pending_joiner();
+    let entry_id = joiner.add_network("Home Mesh");
+    joiner
+        .network_by_id_mut(&entry_id)
+        .expect("network entry")
+        .network_id = "8d4f34f5425bc50e".to_string();
+    let roster = signed_roster(&joiner, &signer, SIGNED_AT);
+    let error = joiner
+        .apply_nostr_join_roster(&roster, SIGNED_AT + 1)
+        .expect_err("empty local admin list must reject a foreign signer");
+    assert!(error.to_string().contains("not a configured admin"));
+    assert!(joiner.pending_nostr_join_request.is_some());
+    assert!(joiner.networks[0].devices.is_empty());
+
+    // The same roster from a signer the network already lists joins normally.
+    let mut configured = pending_joiner();
+    let entry_id = configured.add_network("Home Mesh");
+    let network = configured
+        .network_by_id_mut(&entry_id)
+        .expect("network entry");
+    network.network_id = "8d4f34f5425bc50e".to_string();
+    network.admins = vec![signer.public_key().to_hex()];
+    let roster = signed_roster(&configured, &signer, SIGNED_AT);
+    configured
+        .apply_nostr_join_roster(&roster, SIGNED_AT + 1)
+        .expect("configured admin signer completes the join")
+        .expect("join completed");
 }
 
 #[test]

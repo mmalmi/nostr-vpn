@@ -1,19 +1,10 @@
-use std::fs;
-use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-use anyhow::{Context, Result, anyhow};
+use anyhow::Result;
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::fips_control::JoinRosterControl;
-use nostr_vpn_core::join_delivery::{
-    join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
-};
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 pub use nostr_vpn_core::join_requests::{
     PreparedJoinApproval, commit_join_approval, prepare_join_approval, prepare_manual_join_delivery,
 };
-
-use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};
 
 pub fn apply_join_roster(
     config: &mut AppConfig,
@@ -21,78 +12,6 @@ pub fn apply_join_roster(
     now: u64,
 ) -> Result<Option<AppliedNostrJoinRoster>> {
     config.apply_nostr_join_roster(join_roster, now)
-}
-
-/// Delivers the ordinary queued join-roster outbox through the embedded FIPS
-/// control plane. The runtime has no system tunnel and does not install or
-/// control a platform service.
-pub fn deliver_queued_join_rosters(config_path: &Path, timeout: Duration) -> Result<usize> {
-    let app = AppConfig::load(config_path)?;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let queued = load_join_rosters(config_path)
-        .into_iter()
-        .filter(|(path, delivery)| {
-            if !join_roster_delivery_expired(delivery, now) {
-                return true;
-            }
-            if let Err(error) = fs::remove_file(path) {
-                eprintln!(
-                    "failed to remove expired join approval {}: {error}",
-                    path.display()
-                );
-            }
-            false
-        })
-        .collect::<Vec<_>>();
-    if queued.is_empty() {
-        return Ok(0);
-    }
-
-    let participants = app.participant_pubkeys_hex();
-    for (_, delivery) in &queued {
-        if !participants.contains(&delivery.recipient_npub) {
-            return Err(anyhow!(
-                "join roster recipient {} is not in the active roster",
-                delivery.recipient_npub
-            ));
-        }
-    }
-
-    let mut runtime_config = MobileTunnelConfig::from_app_with_config_path(&app, config_path)?;
-    runtime_config.config_path.clear();
-    runtime_config.network_id.clear();
-    runtime_config.advertised_endpoint.clear();
-    runtime_config.listen_port = 0;
-    runtime_config.route_targets.clear();
-    runtime_config.connect_to_non_roster_fips_peers = true;
-    runtime_config.device_approval_pending = true;
-    runtime_config.excluded_routes.clear();
-    runtime_config.dns_servers.clear();
-    runtime_config.magic_dns_server.clear();
-    runtime_config.wireguard_exit = None;
-    let runtime_json =
-        serde_json::to_string(&runtime_config).context("encode FIPS join delivery runtime")?;
-    let runtime = MobileTunnel::start(&runtime_json)?;
-
-    let mut delivered = 0;
-    for (path, mut delivery) in queued {
-        let result =
-            runtime.send_join_roster(&delivery.recipient_npub, &delivery.join_roster, timeout);
-        let attempted_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        record_join_roster_attempt(&path, &mut delivery, attempted_at)?;
-        if result.is_ok() {
-            nostr_vpn_core::join_delivery::complete_join_roster_delivery(&path, &delivery)?;
-            delivered += 1;
-        }
-        result?;
-    }
-    Ok(delivered)
 }
 
 #[cfg(test)]

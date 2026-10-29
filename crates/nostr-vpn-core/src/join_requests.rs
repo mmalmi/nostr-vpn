@@ -24,6 +24,10 @@ pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 3;
 pub const NOSTR_VPN_JOIN_REQUEST_TYPE: &str = "nostr-vpn.join-request";
 pub const MAX_NOSTR_JOIN_ROSTER_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 pub const MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS: u64 = 10 * 60;
+// Admin and joiner clocks disagree in both directions. The request-secret
+// binding already blocks replays, so a roster signed slightly before the
+// pending request only reflects skew and must still approve.
+pub const MAX_NOSTR_JOIN_ROSTER_PAST_SECS: u64 = 5 * 60;
 pub(crate) const PENDING_NOSTR_JOIN_REQUEST_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,7 +329,7 @@ impl AppConfig {
             let network = updated
                 .network_by_id(&network_id)
                 .ok_or_else(|| anyhow!("approved network disappeared"))?;
-            if !network.admins.is_empty() && !network.admins.iter().any(|admin| admin == signer) {
+            if !network.admins.iter().any(|admin| admin == signer) {
                 return Err(anyhow!(
                     "signed join roster signer is not a configured admin"
                 ));
@@ -424,7 +428,7 @@ fn validate_join_roster_freshness(
 ) -> Result<()> {
     let requested_at = u64::try_from(pending.request.requested_at)
         .context("pending Nostr join request timestamp is negative")?;
-    if signed_at < requested_at {
+    if signed_at.saturating_add(MAX_NOSTR_JOIN_ROSTER_PAST_SECS) < requested_at {
         return Err(anyhow!("signed join roster predates the pending request"));
     }
     if signed_at > now.saturating_add(MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS) {

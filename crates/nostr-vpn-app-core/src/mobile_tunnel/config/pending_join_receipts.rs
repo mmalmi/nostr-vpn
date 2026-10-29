@@ -286,7 +286,10 @@ impl PendingJoinRosterReceiptQueue {
         };
         if receipts.is_empty() {
             match fs::remove_file(path) {
+                #[cfg(unix)]
                 Ok(()) => sync_pending_join_receipt_parent(path)?,
+                #[cfg(not(unix))]
+                Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     return Err(error)
@@ -386,7 +389,9 @@ fn write_pending_join_receipts_atomically(path: &Path, bytes: &[u8]) -> Result<(
             )
         });
     }
-    sync_pending_join_receipt_parent(path)
+    #[cfg(unix)]
+    sync_pending_join_receipt_parent(path)?;
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -398,10 +403,5 @@ fn sync_pending_join_receipt_parent(path: &Path) -> Result<()> {
     fs::File::open(parent)
         .and_then(|directory| directory.sync_all())
         .with_context(|| format!("failed to sync sidecar directory {}", parent.display()))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn sync_pending_join_receipt_parent(_: &Path) -> Result<()> {
     Ok(())
 }
