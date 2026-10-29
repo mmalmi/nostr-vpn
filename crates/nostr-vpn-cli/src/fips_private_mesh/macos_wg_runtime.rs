@@ -247,7 +247,7 @@ impl FipsPrivateTunnelRuntime {
             ipv4_forward_was_enabled: self.exit_node_runtime.ipv4_forward_was_enabled,
             pf_was_enabled: self.exit_node_runtime.pf_was_enabled,
             secure_dns_resolver_files: self.secure_dns.is_some(),
-            magic_dns_resolver_files: false,
+            magic_dns_resolver_files: None,
         };
         (!state.managed_routes.is_empty()
             || state.ipv4_forward_was_enabled.is_some()

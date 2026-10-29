@@ -282,7 +282,7 @@ pub(crate) fn persist_fips_daemon_network_cleanup_state(
         // The split MagicDNS runtime journals outside the FIPS runtime
         // snapshot, so its intent must survive this rebuild.
         let magic_dns_active = read_daemon_network_cleanup_state(&path)?
-            .is_some_and(|durable| durable.magic_dns_resolver_files);
+            .and_then(|durable| durable.magic_dns_resolver_files);
         let state = runtime
             .and_then(
                 crate::fips_private_mesh::FipsPrivateTunnelRuntime::macos_network_cleanup_state,
@@ -290,13 +290,15 @@ pub(crate) fn persist_fips_daemon_network_cleanup_state(
             .or_else(crate::fips_private_mesh::pending_macos_network_cleanup_state);
         match state {
             Some(mut state) => {
-                state.magic_dns_resolver_files |= magic_dns_active;
+                if state.magic_dns_resolver_files.is_none() {
+                    state.magic_dns_resolver_files = magic_dns_active;
+                }
                 write_daemon_network_cleanup_state(&path, &state)?;
             }
-            None if magic_dns_active => write_daemon_network_cleanup_state(
+            None if magic_dns_active.is_some() => write_daemon_network_cleanup_state(
                 &path,
                 &MacosNetworkCleanupState {
-                    magic_dns_resolver_files: true,
+                    magic_dns_resolver_files: magic_dns_active,
                     ..Default::default()
                 },
             )?,
@@ -308,19 +310,21 @@ pub(crate) fn persist_fips_daemon_network_cleanup_state(
     {
         let path = daemon_network_cleanup_file_path(config_path)?;
         let magic_dns_active = read_daemon_network_cleanup_state(&path)?
-            .is_some_and(|durable| durable.magic_dns_split_dns);
+            .and_then(|durable| durable.magic_dns_split_dns);
         let state = runtime
             .and_then(LinuxNetworkCleanupState::from_runtime)
             .or_else(crate::fips_private_mesh::pending_linux_network_cleanup_state);
         match state {
             Some(mut state) => {
-                state.magic_dns_split_dns |= magic_dns_active;
+                if state.magic_dns_split_dns.is_none() {
+                    state.magic_dns_split_dns = magic_dns_active;
+                }
                 write_daemon_network_cleanup_state(&path, &state)?;
             }
-            None if magic_dns_active => write_daemon_network_cleanup_state(
+            None if magic_dns_active.is_some() => write_daemon_network_cleanup_state(
                 &path,
                 &LinuxNetworkCleanupState {
-                    magic_dns_split_dns: true,
+                    magic_dns_split_dns: magic_dns_active,
                     ..Default::default()
                 },
             )?,
@@ -346,7 +350,9 @@ pub(crate) fn persist_fips_daemon_network_cleanup_state(
                 state.native_wireguard.push(cleanup);
             }
         }
-        state.magic_dns_nrpt_rules |= durable.magic_dns_nrpt_rules;
+        if state.magic_dns_nrpt_rules.is_none() {
+            state.magic_dns_nrpt_rules = durable.magic_dns_nrpt_rules;
+        }
         // Secure DNS teardown records failures in the pending registry. A
         // successful teardown deliberately disappears from the current
         // runtime/pending snapshot, so do not resurrect its durable entry.
@@ -440,32 +446,36 @@ pub(crate) fn persist_fips_secure_dns_cleanup_intent(
 }
 
 /// Write or clear the split MagicDNS crash-repair intent in the daemon
-/// cleanup journal. `retain` is set before the system resolver install and
-/// cleared after a successful uninstall or startup repair.
+/// cleanup journal. `retain` carries the exact resolver ownership recorded
+/// at install time and is set before the system resolver install; clearing
+/// happens after a successful uninstall or startup repair.
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) fn persist_fips_magic_dns_cleanup_intent(config_path: &Path, retain: bool) -> Result<()> {
+pub(crate) fn persist_fips_magic_dns_cleanup_intent(
+    config_path: &Path,
+    retain: Option<&nostr_vpn_core::magic_dns::MagicDnsResolverOwnership>,
+) -> Result<()> {
     #[cfg(target_os = "windows")]
     let _journal_lock = windows_network_cleanup_journal_lock();
     let path = daemon_network_cleanup_file_path(config_path)?;
     let existing = read_daemon_network_cleanup_state(&path)?;
-    if !retain && existing.is_none() {
+    if retain.is_none() && existing.is_none() {
         return Ok(());
     }
     let mut state = existing.unwrap_or_default();
 
     #[cfg(target_os = "linux")]
     {
-        state.magic_dns_split_dns = retain;
+        state.magic_dns_split_dns = retain.cloned();
     }
 
     #[cfg(target_os = "macos")]
     {
-        state.magic_dns_resolver_files = retain;
+        state.magic_dns_resolver_files = retain.cloned();
     }
 
     #[cfg(target_os = "windows")]
     {
-        state.magic_dns_nrpt_rules = retain;
+        state.magic_dns_nrpt_rules = retain.cloned();
     }
 
     if state.is_empty() {
@@ -622,19 +632,22 @@ pub(crate) async fn stop_fips_private_tunnel_runtime(
 #[cfg(all(test, any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod magic_dns_cleanup_journal_tests {
     use super::*;
+    use nostr_vpn_core::magic_dns::MagicDnsResolverOwnership;
 
-    fn magic_dns_intent_flag(state: &DaemonNetworkCleanupState) -> bool {
+    fn magic_dns_intent_ownership(
+        state: &DaemonNetworkCleanupState,
+    ) -> Option<MagicDnsResolverOwnership> {
         #[cfg(target_os = "linux")]
         {
-            state.magic_dns_split_dns
+            state.magic_dns_split_dns.clone()
         }
         #[cfg(target_os = "macos")]
         {
-            state.magic_dns_resolver_files
+            state.magic_dns_resolver_files.clone()
         }
         #[cfg(target_os = "windows")]
         {
-            state.magic_dns_nrpt_rules
+            state.magic_dns_nrpt_rules.clone()
         }
     }
 
@@ -651,14 +664,23 @@ mod magic_dns_cleanup_journal_tests {
         fs::create_dir_all(&dir).expect("create test directory");
         let config_path = dir.join("config.toml");
         let cleanup_path = daemon_network_cleanup_file_path(&config_path).expect("cleanup path");
+        let ownership = MagicDnsResolverOwnership::new("mesh.example", [
+            127, 0, 0, 1,
+        ]
+        .into(), 1053);
 
-        persist_fips_magic_dns_cleanup_intent(&config_path, true).expect("persist intent");
+        persist_fips_magic_dns_cleanup_intent(&config_path, Some(&ownership))
+            .expect("persist intent");
         let state = read_daemon_network_cleanup_state(&cleanup_path)
             .expect("read journaled state")
             .expect("intent must be journaled");
-        assert!(magic_dns_intent_flag(&state));
+        assert_eq!(
+            magic_dns_intent_ownership(&state),
+            Some(ownership),
+            "the journaled intent must carry the exact resolver ownership"
+        );
 
-        persist_fips_magic_dns_cleanup_intent(&config_path, false).expect("clear intent");
+        persist_fips_magic_dns_cleanup_intent(&config_path, None).expect("clear intent");
         assert!(
             !cleanup_path.exists(),
             "cleared intent must not leave an empty journal"

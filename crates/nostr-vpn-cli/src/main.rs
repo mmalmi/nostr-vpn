@@ -115,8 +115,8 @@ use nostr_vpn_core::fips_control::{
 use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
 use nostr_vpn_core::magic_dns::{
-    MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
-    uninstall_system_resolver,
+    MagicDnsResolverConfig, MagicDnsResolverOwnership, MagicDnsServer, build_magic_dns_records,
+    install_system_resolver, uninstall_system_resolver,
 };
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_probe::{

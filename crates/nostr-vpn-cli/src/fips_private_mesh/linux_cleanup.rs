@@ -219,12 +219,15 @@ impl LinuxNetworkCleanupState {
                 .secure_dns
                 .as_ref()
                 .and_then(crate::secure_dns_runtime::SecureDnsRuntime::linux_cleanup_state),
+            magic_dns_split_dns: None,
         };
         (!state.is_empty()).then_some(state)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        !self.has_network_ownership() && self.secure_dns.is_none() && !self.magic_dns_split_dns
+        !self.has_network_ownership()
+            && self.secure_dns.is_none()
+            && self.magic_dns_split_dns.is_none()
     }
 
     fn has_network_ownership(&self) -> bool {
@@ -632,10 +635,15 @@ pub(crate) fn repair_linux_network_cleanup_state(
     {
         failures.push(format!("secure DNS cleanup failed ({error:#})"));
     }
-    if state.magic_dns_split_dns
-        && let Err(error) = nostr_vpn_core::magic_dns::cleanup_owned_magic_dns_state()
+    // The recorded ownership identifies exactly the split DNS settings this
+    // configuration installed; another configuration's resolver state is
+    // never touched.
+    if let Some(owned) = state.magic_dns_split_dns.as_ref()
+        && let Err(error) = nostr_vpn_core::magic_dns::uninstall_system_resolver(owned)
     {
         failures.push(format!("MagicDNS cleanup failed ({error:#})"));
+    } else {
+        state.magic_dns_split_dns = None;
     }
     if failures.is_empty() {
         Ok(())

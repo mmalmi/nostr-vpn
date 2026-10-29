@@ -365,3 +365,93 @@
         super::take_pending_linux_network_cleanup_state();
         let _ = std::fs::remove_dir_all(directory);
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_magicdns_repair_only_reverts_the_recorded_configuration() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CHILD_CASE: &str = "NVPN_MAGICDNS_REPAIR_TEST_CASE";
+        const LOG_ENV: &str = "NVPN_MAGICDNS_REPAIR_LOG";
+        const FAKE_LO_DNS_ENV: &str = "NVPN_MAGICDNS_FAKE_LO_DNS";
+
+        // Child: repair the recorded ownership against a fake resolvectl and
+        // assert the per-link revert only happens while the link still
+        // carries this configuration's resolver.
+        if let Ok(case) = std::env::var(CHILD_CASE) {
+            let owned = nostr_vpn_core::magic_dns::MagicDnsResolverOwnership::new(
+                "repair.example",
+                std::net::Ipv4Addr::LOCALHOST,
+                1053,
+            );
+            let mut state = crate::LinuxNetworkCleanupState {
+                magic_dns_split_dns: Some(owned),
+                ..crate::LinuxNetworkCleanupState::default()
+            };
+            crate::fips_private_mesh::repair_linux_network_cleanup_state(&mut state)
+                .expect("recorded split DNS ownership must repair cleanly");
+            assert!(
+                state.magic_dns_split_dns.is_none(),
+                "repaired ownership must leave the cleanup state"
+            );
+            let log = std::fs::read_to_string(std::env::var(LOG_ENV).expect("log path"))
+                .unwrap_or_default();
+            assert_eq!(
+                log.contains("revert"),
+                case == "owned",
+                "{case}: unexpected resolvectl revert calls: {log}"
+            );
+            return;
+        }
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-linux-magicdns-repair-{nonce}"));
+        std::fs::create_dir_all(&directory).expect("create temp directory");
+        let fake_resolvectl = directory.join("resolvectl");
+        std::fs::write(
+            &fake_resolvectl,
+            "#!/bin/sh\nif [ \"$1\" = dns ] && [ \"$2\" = lo ]; then\n  echo \"Link 2 (lo): $NVPN_MAGICDNS_FAKE_LO_DNS\"\nfi\nif [ \"$1\" = revert ] && [ \"$2\" = lo ]; then\n  echo \"revert lo\" >> \"$NVPN_MAGICDNS_REPAIR_LOG\"\nfi\nexit 0\n",
+        )
+        .expect("write fake resolvectl");
+        std::fs::set_permissions(
+            &fake_resolvectl,
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .expect("make fake resolvectl executable");
+        let log_path = directory.join("resolvectl.log");
+
+        // "owned": the link still points at this configuration's resolver.
+        // "second-configuration": another configuration reinstalled the link
+        // settings; reverting them would tear down a running configuration.
+        for (case, link_dns) in [
+            ("owned", "127.0.0.1:1053"),
+            ("second-configuration", "127.0.0.1:2049"),
+        ] {
+            let _ = std::fs::remove_file(&log_path);
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    std::thread::current().name().unwrap(),
+                    "--nocapture",
+                ])
+                .env("PATH", &directory)
+                .env(CHILD_CASE, case)
+                .env(LOG_ENV, &log_path)
+                .env(FAKE_LO_DNS_ENV, link_dns)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+                "{case}: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }

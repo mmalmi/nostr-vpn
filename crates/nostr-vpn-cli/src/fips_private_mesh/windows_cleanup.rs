@@ -62,7 +62,7 @@ impl WindowsNetworkCleanupState {
             routes,
             native_wireguard,
             secure_dns_interface_indexes,
-            magic_dns_nrpt_rules: false,
+            magic_dns_nrpt_rules: None,
         }
     }
 
@@ -70,7 +70,7 @@ impl WindowsNetworkCleanupState {
         self.routes.is_empty()
             && self.native_wireguard.is_empty()
             && self.secure_dns_interface_indexes.is_empty()
-            && !self.magic_dns_nrpt_rules
+            && self.magic_dns_nrpt_rules.is_none()
     }
 }
 
@@ -107,9 +107,9 @@ pub(crate) fn repair_windows_network_cleanup_state(
     }
     state.secure_dns_interface_indexes = remaining_dns;
 
-    if state.magic_dns_nrpt_rules {
-        match nostr_vpn_core::magic_dns::cleanup_owned_magic_dns_state() {
-            Ok(()) => state.magic_dns_nrpt_rules = false,
+    if let Some(owned) = state.magic_dns_nrpt_rules.as_ref() {
+        match nostr_vpn_core::magic_dns::uninstall_system_resolver(owned) {
+            Ok(()) => state.magic_dns_nrpt_rules = None,
             Err(error) => failures.push(format!("MagicDNS NRPT rules: {error:#}")),
         }
     }
