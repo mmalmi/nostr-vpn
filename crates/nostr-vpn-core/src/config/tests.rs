@@ -686,23 +686,50 @@ mod tests {
                 .contains("invalid DNS-through-exit")
         );
 
-        #[cfg(feature = "secure-dns")]
-        {
-            let insecure_doh = ExitDnsConfig {
-                mode: ExitDnsMode::Encrypted,
-                doh_provider: ExitDohProvider::Custom,
-                custom_doh_url: "http://resolver.example/dns-query".to_string(),
-                custom_doh_bootstrap_ips: vec!["192.0.2.53".to_string()],
-                ..ExitDnsConfig::default()
-            };
-            assert!(
-                insecure_doh
-                    .resolver_config(None)
-                    .unwrap_err()
-                    .to_string()
-                    .contains("must use https")
-            );
-        }
+        let insecure_doh = ExitDnsConfig {
+            mode: ExitDnsMode::Encrypted,
+            doh_provider: ExitDohProvider::Custom,
+            custom_doh_url: "http://resolver.example/dns-query".to_string(),
+            custom_doh_bootstrap_ips: vec!["192.0.2.53".to_string()],
+            ..ExitDnsConfig::default()
+        };
+        assert!(
+            insecure_doh
+                .resolver_config(None)
+                .unwrap_err()
+                .to_string()
+                .contains("must use https")
+        );
+
+        let ip_literal_doh = ExitDnsConfig {
+            mode: ExitDnsMode::Encrypted,
+            doh_provider: ExitDohProvider::Custom,
+            custom_doh_url: "https://192.0.2.53/dns-query".to_string(),
+            custom_doh_bootstrap_ips: vec!["192.0.2.53".to_string()],
+            ..ExitDnsConfig::default()
+        };
+        assert!(
+            ip_literal_doh
+                .resolver_config(None)
+                .unwrap_err()
+                .to_string()
+                .contains("DNS hostname")
+        );
+
+        let loopback_bootstrap = ExitDnsConfig {
+            mode: ExitDnsMode::Encrypted,
+            doh_provider: ExitDohProvider::Custom,
+            custom_doh_url: "https://resolver.example/dns-query".to_string(),
+            custom_doh_bootstrap_ips: vec!["127.0.0.1".to_string()],
+            ..ExitDnsConfig::default()
+        };
+        assert!(
+            loopback_bootstrap
+                .resolver_config(None)
+                .unwrap_err()
+                .to_string()
+                .contains("must be a public address")
+        );
     }
 
     #[test]
