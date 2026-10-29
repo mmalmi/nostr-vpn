@@ -3,9 +3,6 @@ struct QueuedPaidExitPayment {
     envelope: StreamingRoutePaymentEnvelope,
 }
 
-// Refund lifetime ends by the 12h cutoff plus 24h reclaim; a week bounds dead-seller retries.
-const PAYMENT_OUTBOX_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
-
 fn paid_exit_payment_outbox_directory(config_path: &Path) -> PathBuf {
     paid_route_store_file_path(config_path)
         .parent()
@@ -153,19 +150,6 @@ fn queue_paid_exit_payment(
     queue_paid_exit_payment_bytes(config_path, &id, &bytes)
 }
 
-fn paid_exit_outbox_entry_expired(path: &Path, now_unix: u64) -> bool {
-    fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .ok()
-        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
-        .is_some_and(|modified| {
-            modified
-                .as_secs()
-                .saturating_add(PAYMENT_OUTBOX_RETENTION_SECS)
-                <= now_unix
-        })
-}
-
 fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPayment> {
     let directory = match prepare_paid_exit_payment_outbox(config_path) {
         Ok(directory) => directory,
@@ -185,10 +169,6 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
             return Vec::new();
         }
     };
-    let now_unix = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
     let paths = entries
         .filter_map(|entry| entry.ok())
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
@@ -201,10 +181,6 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
     let mut pending: Vec<QueuedPaidExitPayment> = paths
         .into_iter()
         .filter_map(|path| {
-            if paid_exit_outbox_entry_expired(&path, now_unix) {
-                let _ = fs::remove_file(path);
-                return None;
-            }
             match fs::read(&path)
                 .with_context(|| format!("failed to read {}", path.display()))
                 .and_then(|bytes| {
@@ -232,7 +208,11 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
         .collect();
     // A balance update is cumulative. Recover legacy backlogs as well as new
     // queues, retaining the strongest durable update for each exact binding.
-    // Funding and cooperative close records keep only their newest retry.
+    // Funding and cooperative close records stay until the seller
+    // acknowledges them; file age proves nothing about settlement. The only
+    // pruning beyond acknowledgments drops duplicates: every retry is signed
+    // fresh when queued and carries the whole obligation for its binding, so
+    // a strictly newer retry of the same kind makes the older copy redundant.
     let binding = |envelope: &StreamingRoutePaymentEnvelope| {
         (
             envelope.version,
