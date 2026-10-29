@@ -116,4 +116,34 @@ mod tests {
         assert!(super::decode_cashu_wallet_seed(&hex::encode([42_u8; 63])).is_err());
         assert!(super::decode_cashu_wallet_seed("not hex").is_err());
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn restrictive_sidecar_acl_gate_matches_only_the_machine_config_root() {
+        use std::ffi::OsStr;
+        use std::path::Path;
+
+        let machine_sidecar =
+            Path::new(r"C:\ProgramData\Nostr VPN\.config.toml.nostr-secret-key.dpapi");
+        let user_sidecar = Path::new(
+            r"C:\Users\Example\AppData\Roaming\Nostr VPN\.config.toml.nostr-secret-key.dpapi",
+        );
+
+        assert!(super::platform::secret_path_shares_machine_config_root(
+            machine_sidecar,
+            Some(Path::new(r"C:\ProgramData").as_os_str()),
+        ));
+        assert!(super::platform::secret_path_shares_machine_config_root(
+            machine_sidecar,
+            Some(Path::new(r"c:\programdata\").as_os_str()),
+        ));
+        assert!(!super::platform::secret_path_shares_machine_config_root(
+            machine_sidecar,
+            None,
+        ));
+        assert!(!super::platform::secret_path_shares_machine_config_root(
+            user_sidecar,
+            Some(OsStr::new(r"C:\ProgramData")),
+        ));
+    }
 }
