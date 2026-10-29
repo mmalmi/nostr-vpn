@@ -25,8 +25,10 @@ private enum UnderlayPathSource: Hashable {
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let handoffLog = Logger(subsystem: "fi.siriusbusiness.nvpn", category: "config-handoff")
     private static let appMessageChunkSize = 3_072
-    // Fires inside the system's provider kill window if teardown stalls.
-    private static let stopTunnelCompletionTimeout: TimeInterval = 5
+    // Bounds the stopRustTunnel active-call drain so stopTunnel completes
+    // only after teardown finished or escalated, never while it is still
+    // running. Stays inside the system's provider kill window.
+    private static let teardownCallDrainTimeout: TimeInterval = 4
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
     private var tunnelGeneration: UInt64 = 0
@@ -237,28 +239,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping () -> Void
     ) {
         packetDebugLog("stopTunnel reason=\(reason.rawValue)")
-        let completionLock = NSLock()
-        var completionCalled = false
-        let completeOnce = { () -> Bool in
-            completionLock.lock()
-            let shouldComplete = !completionCalled
-            completionCalled = true
-            completionLock.unlock()
-            guard shouldComplete else {
-                return false
-            }
-            completionHandler()
-            return true
-        }
-        DispatchQueue.main.asyncAfter(
-            deadline: .now() + Self.stopTunnelCompletionTimeout
-        ) {
-            if completeOnce() {
-                NSLog("nvpn-pkt: stopTunnel watchdog fired, teardown stalled reason=\(reason.rawValue)")
-            }
-        }
+        // stopRustTunnel bounds its own teardown (call drain deadline plus
+        // escalation), so this completion always reports a tunnel that has
+        // actually stopped, or has been force-torn down after escalation.
         stopRustTunnel()
-        _ = completeOnce()
+        completionHandler()
     }
 
     override func handleAppMessage(
@@ -471,10 +456,28 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         packetFlowBridge?.stop()
         let handle = tunnelHandle
         tunnelHandle = nil
-        while activeTunnelCalls > 0 {
-            tunnelCondition.wait()
+        // Wait for in-flight runtime calls, but never unboundedly: past the
+        // deadline, log and free anyway so teardown always finishes and
+        // stopTunnel can report a definite state inside the kill window.
+        var stuckCalls = 0
+        if activeTunnelCalls > 0 {
+            let drainDeadline = Date().addingTimeInterval(Self.teardownCallDrainTimeout)
+            while activeTunnelCalls > 0 {
+                guard tunnelCondition.wait(until: drainDeadline) else {
+                    stuckCalls = activeTunnelCalls
+                    break
+                }
+            }
         }
         tunnelCondition.unlock()
+        if stuckCalls > 0 {
+            NSLog(
+                "nvpn-pkt: teardown escalated; \(stuckCalls) runtime call(s) still "
+                    + "active after \(Int(Self.teardownCallDrainTimeout))s; freeing "
+                    + "handle anyway generation=\(stoppedGeneration)"
+            )
+            packetDebugLog("teardown escalated activeCalls=\(stuckCalls) generation=\(stoppedGeneration)")
+        }
         stopUnderlayNetworkMonitor()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -661,7 +664,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         defer {
             tunnelCondition.lock()
-            activeTunnelCalls -= 1
+            // A call that outlived an escalated teardown can decrement after
+            // the counter was reset for a new generation; clamp at zero so
+            // the stale decrement cannot under-count the live generation.
+            activeTunnelCalls = max(0, activeTunnelCalls - 1)
             if activeTunnelCalls == 0 {
                 tunnelCondition.broadcast()
             }
