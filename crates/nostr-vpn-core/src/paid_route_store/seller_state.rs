@@ -1,5 +1,4 @@
 use super::{persistence::*, *};
-use std::collections::BTreeSet;
 
 impl PaidRouteStore {
     /// Retire elapsed free trials without involving a mint or discarding history.
@@ -381,96 +380,5 @@ impl PaidRouteStore {
             .filter(|url| self.wallet.mints.iter().any(|mint| mint.url == *url))
             .or_else(|| self.wallet.mints.first().map(|mint| mint.url.clone()))
             .unwrap_or_default();
-        self.prune_settled_records();
-    }
-
-    /// Removes only records whose funds are provably settled. A channel is
-    /// Closed only after its money finished moving: buyer refund recovery
-    /// marks a channel closed once the mint refund was restored and imported,
-    /// and seller collection marks one closed after its verified close
-    /// receipt was imported. Records reachable only through a settled channel
-    /// go with it. Closing, Expired, and Failed channels stay no matter how
-    /// old they are: their payment material can still be recovered, and a
-    /// buyer returning online after any offline interval must still find it.
-    pub(super) fn prune_settled_records(&mut self) {
-        let settled_channel_ids = self
-            .channels
-            .iter()
-            .filter(|(_, channel)| channel.status == PaidRouteLifecycleStatus::Closed)
-            .map(|(channel_id, _)| channel_id.clone())
-            .collect::<BTreeSet<_>>();
-        for channel_id in &settled_channel_ids {
-            self.channels.remove(channel_id);
-        }
-
-        // A session dies only with its settled channel; its lease and quote
-        // die once nothing live references them anymore.
-        let pruned_session_ids = self
-            .sessions
-            .iter()
-            .filter(|(_, record)| settled_channel_ids.contains(&record.session.payment.channel_id))
-            .map(|(session_id, _)| session_id.clone())
-            .collect::<BTreeSet<_>>();
-        let orphan_lease_ids = self
-            .sessions
-            .iter()
-            .filter(|(session_id, _)| pruned_session_ids.contains(*session_id))
-            .map(|(_, record)| record.session.lease_id.clone())
-            .collect::<BTreeSet<_>>();
-        let orphan_quote_ids = self
-            .leases
-            .iter()
-            .filter(|(lease_id, _)| orphan_lease_ids.contains(lease_id.as_str()))
-            .map(|(_, record)| record.lease.quote_id.clone())
-            .collect::<BTreeSet<_>>();
-        for session_id in &pruned_session_ids {
-            self.sessions.remove(session_id);
-        }
-        let live_lease_ids = self
-            .sessions
-            .values()
-            .map(|record| record.session.lease_id.as_str())
-            .collect::<BTreeSet<_>>();
-        let pruned_lease_ids = self
-            .leases
-            .iter()
-            .filter(|(lease_id, _)| {
-                orphan_lease_ids.contains(lease_id.as_str())
-                    && !live_lease_ids.contains(lease_id.as_str())
-            })
-            .map(|(lease_id, _)| lease_id.clone())
-            .collect::<BTreeSet<_>>();
-        for lease_id in &pruned_lease_ids {
-            self.leases.remove(lease_id);
-        }
-        let live_quote_ids = self
-            .leases
-            .values()
-            .map(|record| record.lease.quote_id.as_str())
-            .collect::<BTreeSet<_>>();
-        self.quotes.retain(|quote_id, _| {
-            live_quote_ids.contains(quote_id.as_str()) || !orphan_quote_ids.contains(quote_id)
-        });
-
-        // Everything keyed by a pruned session has no live reader.
-        let lease_ids = self
-            .leases
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        self.buyer_session_admissions
-            .retain(|lease_id, _| lease_ids.contains(lease_id.as_str()));
-        self.buyer_session_renewals.retain(|session_id, next| {
-            self.sessions.contains_key(session_id) && self.sessions.contains_key(next)
-        });
-        self.buyer_session_renewal_starts
-            .retain(|session_id, _| self.sessions.contains_key(session_id));
-        self.buyer_session_open_attempts
-            .retain(|session_id, _| self.sessions.contains_key(session_id));
-        self.seller_session_tunnel_ips
-            .retain(|session_id, _| self.sessions.contains_key(session_id));
-        if !self.sessions.contains_key(&self.selected_buyer_session_id) {
-            self.selected_buyer_session_id.clear();
-        }
     }
 }

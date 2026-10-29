@@ -164,7 +164,7 @@
 
     /// A buyer returning online after an offline gap far longer than any
     /// retention window must still have its refunds recoverable: store loads
-    /// prune only proven-completed settlements, never recoverable channels.
+    /// never prune records, so recoverable channels always survive.
     #[test]
     fn refund_recovery_survives_offline_gap_longer_than_any_retention() {
         let directory = TestDirectory::new();
