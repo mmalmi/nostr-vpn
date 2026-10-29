@@ -245,6 +245,7 @@ mod tests {
                     aliases: Default::default(),
                     signed_at: 1_778_998_002,
                     signed_by: admin_pubkey,
+                    artifact_hash: "a".repeat(64),
                 })
                 .expect("apply accepted roster")
         );

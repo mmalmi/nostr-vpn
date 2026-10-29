@@ -130,6 +130,7 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
+            "hash",
         ))
         .expect("apply shared roster");
 
@@ -183,6 +184,7 @@ fn newer_stale_admin_snapshot_cannot_resurrect_locally_removed_device() {
             std::collections::HashMap::new(),
             removed_at + 1,
             &other_admin_hex,
+            "hash",
         ))
         .expect("apply newer stale snapshot");
 
@@ -288,6 +290,7 @@ fn apply_admin_signed_shared_roster_clears_join_request_when_own_key_is_added() 
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
+            "hash",
         ))
         .expect("apply accepted roster");
 
@@ -327,6 +330,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
+            "hash",
         ))
         .expect("apply accepted roster");
     assert!(config.active_network_has_confirmed_local_identity());
@@ -340,6 +344,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
             std::collections::HashMap::new(),
             1_726_000_001,
             &current_admin_hex,
+            "hash",
         ))
         .expect("apply removal roster");
 
@@ -379,6 +384,7 @@ fn apply_admin_signed_shared_roster_keeps_network_when_own_key_was_never_in_rost
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
+            "hash",
         ))
         .expect("apply roster with own absent");
 
@@ -507,6 +513,7 @@ fn apply_admin_signed_shared_roster_ignores_unknown_signer() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &unknown_admin.public_key().to_hex(),
+            "hash",
         ))
         .expect("ignore unknown signer");
 
@@ -606,10 +613,143 @@ fn apply_admin_signed_shared_roster_clears_data_peers_when_own_key_is_removed() 
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
+            "hash",
         ))
         .expect("apply removal roster");
 
     assert!(changed);
     assert!(config.networks[0].devices.is_empty());
     assert_eq!(config.networks[0].admins, vec![current_admin_hex]);
+}
+
+#[test]
+fn equal_timestamp_rosters_converge_on_one_live_configuration_in_both_orders() {
+    let own = Keys::generate();
+    let admin = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let admin_hex = admin.public_key().to_hex();
+    let member_a = Keys::generate().public_key().to_hex();
+    let member_b = Keys::generate().public_key().to_hex();
+
+    // Two rosters signed in the same second are both valid. Name them so
+    // `winner` is whichever roster wins the artifact-hash tie-break the
+    // roster store uses. Both carry the same network name; they differ in
+    // which device they approved, like two admins approving different
+    // devices within the same second.
+    let (loser, winner) = {
+        let sign = |devices: Vec<String>| {
+            SignedRoster::sign(
+                "mesh-home",
+                NetworkRoster {
+                    network_name: "Home".to_string(),
+                    devices,
+                    admins: vec![admin_hex.clone()],
+                    aliases: std::collections::HashMap::new(),
+                    signed_at: 1_726_000_000,
+                },
+                &admin,
+            )
+            .expect("sign roster")
+        };
+        let first = sign(vec![admin_hex.clone(), member_a.clone(), own_hex.clone()]);
+        let second = sign(vec![admin_hex.clone(), member_b.clone(), own_hex.clone()]);
+        if first.artifact_hash() > second.artifact_hash() {
+            (second, first)
+        } else {
+            (first, second)
+        }
+    };
+    assert_ne!(
+        loser.artifact_hash(),
+        winner.artifact_hash(),
+        "distinct same-second rosters must have distinct artifact hashes"
+    );
+    let (winner_member, loser_member) =
+        if winner.roster().expect("winner roster").devices.contains(&member_a) {
+            (&member_a, &member_b)
+        } else {
+            (&member_b, &member_a)
+        };
+
+    let joined_config = || {
+        let mut config = AppConfig::generated();
+        config.nostr.secret_key = own.secret_key().to_secret_hex();
+        config.nostr.public_key = own_hex.clone();
+        config.networks[0].network_id = "mesh-home".to_string();
+        config.networks[0].admins = vec![admin_hex.clone()];
+        config.networks[0].devices = vec![admin_hex.clone()];
+        config.ensure_defaults();
+        config
+    };
+
+    let mut loser_then_winner = joined_config();
+    assert!(
+        loser_then_winner
+            .apply_verified_admin_signed_shared_roster(&loser)
+            .expect("apply losing roster first")
+    );
+    assert!(
+        loser_then_winner
+            .apply_verified_admin_signed_shared_roster(&winner)
+            .expect("apply winning roster"),
+        "the greater artifact hash must win the equal-timestamp tie-break"
+    );
+
+    let mut winner_then_loser = joined_config();
+    assert!(
+        winner_then_loser
+            .apply_verified_admin_signed_shared_roster(&winner)
+            .expect("apply winning roster first")
+    );
+    assert!(
+        !winner_then_loser
+            .apply_verified_admin_signed_shared_roster(&loser)
+            .expect("apply losing roster"),
+        "the losing roster must be rejected without an error, like a stale roster"
+    );
+    assert!(
+        !winner_then_loser
+            .apply_verified_admin_signed_shared_roster(&winner)
+            .expect("replay winning roster"),
+        "replaying the identical roster must be a no-op"
+    );
+
+    let loser_first = &loser_then_winner.networks[0];
+    let winner_first = &winner_then_loser.networks[0];
+    assert_eq!(loser_first.name, "Home");
+    assert_eq!(loser_first.devices, winner_first.devices);
+    assert!(loser_first.devices.contains(winner_member));
+    assert!(!loser_first.devices.contains(loser_member));
+    assert_eq!(loser_first.admins, winner_first.admins);
+    assert_eq!(loser_first.removed_devices, winner_first.removed_devices);
+    assert_eq!(loser_first.join_request_admin, winner_first.join_request_admin);
+    assert_eq!(
+        loser_first.local_identity_confirmation_pending,
+        winner_first.local_identity_confirmation_pending
+    );
+    assert_eq!(
+        loser_first.outbound_join_request,
+        winner_first.outbound_join_request
+    );
+    assert_eq!(
+        loser_first.inbound_join_requests,
+        winner_first.inbound_join_requests
+    );
+    assert_eq!(
+        loser_first.shared_roster_updated_at,
+        winner_first.shared_roster_updated_at
+    );
+    assert_eq!(
+        loser_first.shared_roster_signed_by,
+        winner_first.shared_roster_signed_by
+    );
+    assert_eq!(
+        loser_first.shared_roster_artifact_hash,
+        winner.artifact_hash(),
+        "both orders must record the winning artifact hash"
+    );
+    assert_eq!(
+        winner_first.shared_roster_artifact_hash,
+        loser_first.shared_roster_artifact_hash
+    );
 }

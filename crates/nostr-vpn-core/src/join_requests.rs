@@ -344,6 +344,7 @@ impl AppConfig {
             network.admins = vec![signer.to_string()];
             network.shared_roster_updated_at = 0;
             network.shared_roster_signed_by.clear();
+            network.shared_roster_artifact_hash.clear();
             updated.set_network_enabled(&entry_id, true)?;
             entry_id
         };

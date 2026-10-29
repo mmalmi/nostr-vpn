@@ -73,6 +73,7 @@ impl AppConfig {
             aliases,
             signed_at,
             signed_by,
+            artifact_hash,
         } = update;
 
         let normalized_network_id = normalize_runtime_network_id(&network_id);
@@ -104,7 +105,12 @@ impl AppConfig {
             {
                 return Ok(false);
             }
-            if signed_at <= network.shared_roster_updated_at {
+            if !signed_roster_artifact_wins(
+                network.shared_roster_updated_at,
+                &network.shared_roster_artifact_hash,
+                signed_at,
+                &artifact_hash,
+            ) {
                 return Ok(false);
             }
         }
@@ -173,6 +179,7 @@ impl AppConfig {
         }
         network.shared_roster_updated_at = signed_at;
         network.shared_roster_signed_by = normalized_signed_by;
+        network.shared_roster_artifact_hash = artifact_hash;
         if own_in_shared_roster {
             network.local_identity_confirmation_pending = false;
         }
@@ -184,6 +191,7 @@ impl AppConfig {
             network.shared_roster_updated_at =
                 next_shared_roster_updated_at(network.shared_roster_updated_at);
             network.shared_roster_signed_by = own_pubkey.clone().unwrap_or_default();
+            network.shared_roster_artifact_hash.clear();
         }
         network.outbound_join_request = if own_join_completed {
             None
@@ -245,6 +253,7 @@ impl AppConfig {
             aliases: roster.aliases,
             signed_at: roster.signed_at,
             signed_by,
+            artifact_hash: signed_roster.artifact_hash(),
         })
     }
 

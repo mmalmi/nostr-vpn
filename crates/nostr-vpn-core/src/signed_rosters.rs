@@ -19,6 +19,21 @@ pub struct SignedRosterStore {
     pub removals: HashMap<String, HashMap<String, SignedRoster>>,
 }
 
+/// One winner per network: a strictly newer roster replaces the stored one,
+/// and rosters signed in the same second (timestamp resolution) are broken by
+/// the greater artifact hash so every replica converges on the same roster
+/// regardless of arrival order. An empty stored hash means no artifact is
+/// recorded for that state and sorts below every real artifact.
+pub(crate) fn signed_roster_artifact_wins(
+    stored_signed_at: u64,
+    stored_artifact_hash: &str,
+    incoming_signed_at: u64,
+    incoming_artifact_hash: &str,
+) -> bool {
+    incoming_signed_at > stored_signed_at
+        || (incoming_signed_at == stored_signed_at && incoming_artifact_hash > stored_artifact_hash)
+}
+
 impl SignedRosterStore {
     pub fn latest_for(&self, network_id: &str) -> Option<&SignedRoster> {
         let key = normalize_runtime_network_id(network_id);
@@ -31,19 +46,15 @@ impl SignedRosterStore {
         if key.is_empty() {
             return Ok(false);
         }
-        let incoming_hash = signed_roster.artifact_hash();
         let replace = match self.rosters.get(&key) {
             None => true,
             Some(existing) if existing.verify().is_err() => true,
-            Some(existing) if existing.signed_at() < signed_roster.signed_at() => true,
-            Some(existing) if existing.artifact_hash() == incoming_hash => return Ok(false),
-            // Timestamps have second resolution, so two admins can sign valid
-            // rosters in the same second. Break the tie on the artifact hash so
-            // every replica converges on the same roster.
-            Some(existing) => {
-                existing.signed_at() == signed_roster.signed_at()
-                    && existing.artifact_hash() < incoming_hash
-            }
+            Some(existing) => signed_roster_artifact_wins(
+                existing.signed_at(),
+                &existing.artifact_hash(),
+                signed_roster.signed_at(),
+                &signed_roster.artifact_hash(),
+            ),
         };
         if !replace {
             return Ok(false);
