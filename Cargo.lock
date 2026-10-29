@@ -4073,6 +4073,7 @@ dependencies = [
  "nvpn-fips-endpoint",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
+ "rand 0.9.4",
  "rcgen",
  "reqwest 0.12.28",
  "security-framework 2.11.1",
