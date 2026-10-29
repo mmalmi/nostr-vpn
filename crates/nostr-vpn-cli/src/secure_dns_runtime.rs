@@ -592,11 +592,12 @@ impl SystemDnsGuard {
             let resolver_configs = macos_resolver_configs();
             let mut resolver_paths: Vec<PathBuf> = Vec::with_capacity(resolver_configs.len());
             for (resolver_path, config) in resolver_configs {
-                if let Err(error) = write_macos_resolver_atomically(&resolver_path, &config) {
+                // Secure DNS installs only the fixed resolver names.
+                if let Err(error) = write_macos_resolver_atomically(&resolver_path, &config, "") {
                     let mut rollback_failures = Vec::new();
                     for installed_path in &resolver_paths {
                         if let Err(rollback_error) =
-                            remove_owned_macos_resolver_file(installed_path)
+                            remove_owned_macos_resolver_file(installed_path, "")
                         {
                             rollback_failures.push(format!(
                                 "remove {}: {rollback_error}",
@@ -629,7 +630,9 @@ impl SystemDnsGuard {
                 let install_error = anyhow!(error).context("failed to install macOS secure DNS");
                 let mut rollback_failures = Vec::new();
                 for installed_path in &resolver_paths {
-                    if let Err(rollback_error) = remove_owned_macos_resolver_file(installed_path) {
+                    if let Err(rollback_error) =
+                        remove_owned_macos_resolver_file(installed_path, "")
+                    {
                         rollback_failures.push(format!(
                             "remove {}: {rollback_error}",
                             installed_path.display()
@@ -756,7 +759,7 @@ impl SystemDnsGuard {
             }
             let mut remaining = Vec::new();
             for resolver_path in std::mem::take(&mut self.resolver_paths) {
-                match remove_owned_macos_resolver_file(&resolver_path) {
+                match remove_owned_macos_resolver_file(&resolver_path, "") {
                     Ok(_) => {}
                     Err(error) => {
                         failures.push(format!("remove {}: {error}", resolver_path.display()));

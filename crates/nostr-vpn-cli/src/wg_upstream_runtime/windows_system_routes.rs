@@ -556,11 +556,10 @@ fn run_windows_netsh(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod windows_command_timeout_tests {
     use super::*;
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn native_queries_find_the_physical_default_route() {
         let default =
@@ -583,7 +582,6 @@ mod windows_command_timeout_tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn timed_out_child_is_terminated_and_reported() {
         let mut command = ProcessCommand::new("powershell");

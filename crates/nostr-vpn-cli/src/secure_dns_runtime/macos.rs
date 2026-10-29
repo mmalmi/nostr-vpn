@@ -43,7 +43,7 @@ pub(crate) fn cleanup_owned_macos_secure_dns_state() -> anyhow::Result<bool> {
         Path::new("/etc/resolver/nvpn"),
         Path::new("/etc/resolver/fips"),
     ] {
-        match remove_owned_macos_resolver_file(path) {
+        match remove_owned_macos_resolver_file(path, "") {
             Ok(was_removed) => removed |= was_removed,
             Err(error) => failures.push(format!("remove {}: {error}", path.display())),
         }
