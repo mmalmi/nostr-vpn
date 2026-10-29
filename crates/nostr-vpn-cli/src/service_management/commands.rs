@@ -156,7 +156,21 @@ pub(crate) fn install_service_executable_copy(source: &Path, destination: &Path)
 
     let temp = destination.with_extension(format!("tmp-{}", std::process::id()));
     let copy_result = (|| -> Result<()> {
-        fs::copy(source, &temp).with_context(|| {
+        // Stage through a writable handle: the staged bytes can only be
+        // flushed through a handle with write access, because Windows
+        // FlushFileBuffers rejects read-only handles.
+        let mut staged = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&temp)
+            .with_context(|| format!("failed to create {}", temp.display()))?;
+        std::io::copy(
+            &mut fs::File::open(source)
+                .with_context(|| format!("failed to open {}", source.display()))?,
+            &mut staged,
+        )
+        .with_context(|| {
             format!(
                 "failed to copy service executable from {} to {}",
                 source.display(),
@@ -164,8 +178,15 @@ pub(crate) fn install_service_executable_copy(source: &Path, destination: &Path)
             )
         })?;
         #[cfg(unix)]
-        fs::set_permissions(&temp, fs::Permissions::from_mode(0o755))
+        staged
+            .set_permissions(fs::Permissions::from_mode(0o755))
             .with_context(|| format!("failed to chmod {}", temp.display()))?;
+        // Sync the staged bytes before rename so power loss right after
+        // install cannot leave a truncated service binary.
+        staged
+            .sync_all()
+            .with_context(|| format!("failed to sync {}", temp.display()))?;
+        drop(staged);
         fs::rename(&temp, destination).with_context(|| {
             format!(
                 "failed to move {} into {}",
@@ -173,6 +194,19 @@ pub(crate) fn install_service_executable_copy(source: &Path, destination: &Path)
                 destination.display()
             )
         })?;
+        // Sync the directory entry so the rename itself survives power loss.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_DIRECTORY)
+                .open(parent)
+                .with_context(|| format!("failed to open {}", parent.display()))?
+                .sync_all()
+                .with_context(|| format!("failed to sync {}", parent.display()))?;
+        }
         Ok(())
     })();
 
@@ -395,5 +429,46 @@ fn query_binary_version(path: &Path) -> Option<String> {
         None
     } else {
         Some(version.to_string())
+    }
+}
+
+// The cross-platform staging sequence (writable temp handle, sync_all on
+// that handle, rename, parent directory fsync, and the Windows
+// read-only-handle FlushFileBuffers rejection) is covered by the
+// service_executable_staging integration test target, which also runs on
+// Windows where this linux-only installer is not compiled.
+#[cfg(all(test, target_os = "linux"))]
+mod install_service_executable_copy_tests {
+    use super::*;
+
+    #[test]
+    fn install_service_executable_copy_lands_synced_executable_bytes() {
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-install-service-copy-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("create staging directory");
+        let source = dir.join("nvpn-daemon-source");
+        let destination = dir.join("nvpn-daemon-installed");
+        fs::write(&source, b"service executable bytes").expect("write source bytes");
+
+        install_service_executable_copy(&source, &destination)
+            .expect("service executable installation succeeds");
+        assert_eq!(
+            fs::read(&destination).expect("read installed file"),
+            b"service executable bytes"
+        );
+        assert!(
+            fs::metadata(&destination)
+                .expect("installed file metadata")
+                .permissions()
+                .mode()
+                & 0o111
+                != 0,
+            "installed service executable stays runnable"
+        );
+
+        fs::remove_dir_all(&dir).expect("clean up staging directory");
     }
 }
