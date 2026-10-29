@@ -5,11 +5,41 @@ const MAX_TRACKED_EXIT_FLOWS: usize = 16_384;
 const EXIT_TCP_IDLE: Duration = Duration::from_secs(5 * 24 * 60 * 60);
 const EXIT_UDP_IDLE: Duration = Duration::from_secs(3 * 60);
 const EXIT_ICMP_IDLE: Duration = Duration::from_secs(30);
+const EXIT_FLOW_REFRESH_GROUPS: usize = 3;
+const NO_EXIT_FLOW_SLOT: usize = usize::MAX;
 
-#[derive(Debug, Default)]
+// One slab slot per tracked flow. `older` and `newer` link the slot into its
+// refresh group's list: toward `older` sit flows refreshed earlier, toward
+// `newer` flows refreshed later. Refresh times are only ever written from the
+// monotonic clock, so every list stays sorted by last refresh and its front is
+// the least recently refreshed flow of the group.
+#[derive(Debug)]
+struct ExitFlowNode {
+    key: ExitFlowKey,
+    seen: Instant,
+    older: usize,
+    newer: usize,
+}
+
+#[derive(Debug)]
 pub struct ExitFlowFilter {
-    flows: HashMap<ExitFlowKey, Instant>,
-    order: VecDeque<ExitFlowKey>,
+    flows: HashMap<ExitFlowKey, usize>,
+    nodes: Vec<ExitFlowNode>,
+    free_nodes: Vec<usize>,
+    group_fronts: [usize; EXIT_FLOW_REFRESH_GROUPS],
+    group_backs: [usize; EXIT_FLOW_REFRESH_GROUPS],
+}
+
+impl Default for ExitFlowFilter {
+    fn default() -> Self {
+        Self {
+            flows: HashMap::default(),
+            nodes: Vec::default(),
+            free_nodes: Vec::default(),
+            group_fronts: [NO_EXIT_FLOW_SLOT; EXIT_FLOW_REFRESH_GROUPS],
+            group_backs: [NO_EXIT_FLOW_SLOT; EXIT_FLOW_REFRESH_GROUPS],
+        }
+    }
 }
 
 impl ExitFlowFilter {
@@ -18,51 +48,17 @@ impl ExitFlowFilter {
             return;
         };
         let now = Instant::now();
-        if let Some(seen) = self.flows.get_mut(&key) {
-            *seen = now;
+        if let Some(&slot) = self.flows.get(&key) {
+            self.refresh_flow(slot, now);
             return;
         }
-        while self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
-            if !self.evict_one_flow(now) {
-                break;
-            }
+        if self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
+            self.evict_one_flow(now);
         }
-        self.flows.insert(key, now);
-        self.order.push_back(key);
-    }
-
-    // Evict the front entry once it is past its idle timeout, skipping live
-    // entries to the back, and fall back to the least recently refreshed one
-    // after a full pass so an active flow is never evicted while stale ones sit
-    // behind it.
-    fn evict_one_flow(&mut self, now: Instant) -> bool {
-        let mut pending = self.order.len();
-        let mut least_recent: Option<(ExitFlowKey, Instant)> = None;
-        while pending > 0 {
-            pending -= 1;
-            let Some(candidate) = self.order.pop_front() else {
-                break;
-            };
-            let Some(seen) = self.flows.get(&candidate).copied() else {
-                continue;
-            };
-            if now.saturating_duration_since(seen) > exit_flow_timeout(candidate.protocol) {
-                self.flows.remove(&candidate);
-                return true;
-            }
-            if least_recent.is_none_or(|(_, oldest)| seen < oldest) {
-                least_recent = Some((candidate, seen));
-            }
-            self.order.push_back(candidate);
-        }
-        match least_recent {
-            Some((key, _)) => {
-                self.flows.remove(&key);
-                self.order.retain(|candidate| candidate != &key);
-                true
-            }
-            None => false,
-        }
+        let slot = self.alloc_flow(key, now);
+        let group = exit_flow_group(key.protocol);
+        self.link_newer_end(group, slot);
+        self.flows.insert(key, slot);
     }
 
     pub fn admits_inbound(&mut self, peer: [u8; 16], packet: &[u8]) -> bool {
@@ -77,16 +73,118 @@ impl ExitFlowFilter {
         };
         let timeout = exit_flow_timeout(key.protocol);
         let now = Instant::now();
-        let Some(seen) = self.flows.get_mut(&key) else {
+        let Some(&slot) = self.flows.get(&key) else {
             return false;
         };
-        if now.saturating_duration_since(*seen) > timeout {
-            self.flows.remove(&key);
-            self.order.retain(|candidate| candidate != &key);
+        if now.saturating_duration_since(self.nodes[slot].seen) > timeout {
+            self.free_flow(slot);
             return false;
         }
-        *seen = now;
+        self.refresh_flow(slot, now);
         true
+    }
+
+    // Evict one flow in O(1): a flow past its idle timeout when any group
+    // front is idle (the most idle front first), otherwise the least recently
+    // refreshed flow overall. Group lists are sorted by last refresh, so the
+    // three fronts are the only candidates the idle-before-active policy can
+    // prefer and no scan of the tracked table is ever needed.
+    fn evict_one_flow(&mut self, now: Instant) {
+        let mut idle: Option<usize> = None;
+        let mut least_recent: Option<usize> = None;
+        for group in 0..EXIT_FLOW_REFRESH_GROUPS {
+            let front = self.group_fronts[group];
+            if front == NO_EXIT_FLOW_SLOT {
+                continue;
+            }
+            let seen = self.nodes[front].seen;
+            if least_recent.is_none_or(|slot| seen < self.nodes[slot].seen) {
+                least_recent = Some(front);
+            }
+            let timeout = exit_flow_timeout(self.nodes[front].key.protocol);
+            if now.saturating_duration_since(seen) > timeout
+                && idle.is_none_or(|slot| seen < self.nodes[slot].seen)
+            {
+                idle = Some(front);
+            }
+        }
+        if let Some(slot) = idle.or(least_recent) {
+            self.free_flow(slot);
+        }
+    }
+
+    // Refreshing moves the flow to the newer end of its group, keeping each
+    // list ordered by last refresh.
+    fn refresh_flow(&mut self, slot: usize, now: Instant) {
+        self.unlink_flow(slot);
+        self.nodes[slot].seen = now;
+        let group = exit_flow_group(self.nodes[slot].key.protocol);
+        self.link_newer_end(group, slot);
+    }
+
+    fn unlink_flow(&mut self, slot: usize) {
+        let (older, newer, group) = {
+            let node = &self.nodes[slot];
+            (node.older, node.newer, exit_flow_group(node.key.protocol))
+        };
+        match older {
+            NO_EXIT_FLOW_SLOT => self.group_fronts[group] = newer,
+            front_older => self.nodes[front_older].newer = newer,
+        }
+        match newer {
+            NO_EXIT_FLOW_SLOT => self.group_backs[group] = older,
+            back_newer => self.nodes[back_newer].older = older,
+        }
+        let node = &mut self.nodes[slot];
+        node.older = NO_EXIT_FLOW_SLOT;
+        node.newer = NO_EXIT_FLOW_SLOT;
+    }
+
+    fn link_newer_end(&mut self, group: usize, slot: usize) {
+        let older = self.group_backs[group];
+        self.nodes[slot].older = older;
+        if older == NO_EXIT_FLOW_SLOT {
+            self.group_fronts[group] = slot;
+        } else {
+            self.nodes[older].newer = slot;
+        }
+        self.group_backs[group] = slot;
+    }
+
+    fn alloc_flow(&mut self, key: ExitFlowKey, seen: Instant) -> usize {
+        let node = ExitFlowNode {
+            key,
+            seen,
+            older: NO_EXIT_FLOW_SLOT,
+            newer: NO_EXIT_FLOW_SLOT,
+        };
+        match self.free_nodes.pop() {
+            Some(slot) => {
+                self.nodes[slot] = node;
+                slot
+            }
+            None => {
+                self.nodes.push(node);
+                self.nodes.len() - 1
+            }
+        }
+    }
+
+    fn free_flow(&mut self, slot: usize) {
+        self.unlink_flow(slot);
+        let key = self.nodes[slot].key;
+        self.flows.remove(&key);
+        self.free_nodes.push(slot);
+    }
+}
+
+// Match the grouping of exit_flow_timeout: TCP, UDP, and the shared ICMP
+// idle timeout.
+fn exit_flow_group(protocol: u8) -> usize {
+    match protocol {
+        IPPROTO_TCP => 0,
+        IPPROTO_UDP => 1,
+        _ => 2,
     }
 }
 

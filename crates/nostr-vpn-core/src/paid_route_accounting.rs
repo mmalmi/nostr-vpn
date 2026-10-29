@@ -929,13 +929,7 @@ mod tests {
         let idle_token = 2u32;
         filter.note_outbound(peer, &exit_flow_icmp_echo(survivor_token));
         filter.note_outbound(peer, &exit_flow_icmp_echo(idle_token));
-        let idle_key = *filter.order.back().expect("idle flow is tracked");
-        *filter
-            .flows
-            .get_mut(&idle_key)
-            .expect("idle flow is mapped") = Instant::now()
-            .checked_sub(EXIT_ICMP_IDLE + Duration::from_secs(1))
-            .expect("monotonic clock older than the ICMP idle timeout");
+        make_exit_flow_idle(&mut filter, idle_token);
         for token in 100..100 + MAX_TRACKED_EXIT_FLOWS as u32 - 2 {
             filter.note_outbound(peer, &exit_flow_icmp_echo(token));
         }
@@ -945,6 +939,58 @@ mod tests {
         assert!(!filter.admits_inbound(peer, &exit_flow_icmp_reply(idle_token)));
         assert!(filter.admits_inbound(peer, &exit_flow_icmp_reply(survivor_token)));
         assert!(filter.admits_inbound(peer, &exit_flow_icmp_reply(fresh_token)));
+    }
+
+    // Backdate one tracked flow past its idle timeout and move it to the front
+    // of its refresh group, where a flow that stopped being refreshed belongs.
+    fn make_exit_flow_idle(filter: &mut ExitFlowFilter, token: u32) {
+        let key = *filter
+            .flows
+            .keys()
+            .find(|key| key.token == token)
+            .expect("flow is tracked");
+        let slot = filter.flows[&key];
+        filter.nodes[slot].seen = Instant::now()
+            .checked_sub(exit_flow_timeout(key.protocol) + Duration::from_secs(1))
+            .expect("monotonic clock older than the flow idle timeout");
+        filter.unlink_flow(slot);
+        let group = exit_flow_group(key.protocol);
+        let newer = filter.group_fronts[group];
+        filter.nodes[slot].newer = newer;
+        if newer == NO_EXIT_FLOW_SLOT {
+            filter.group_backs[group] = slot;
+        } else {
+            filter.nodes[newer].older = slot;
+        }
+        filter.group_fronts[group] = slot;
+    }
+
+    #[test]
+    fn exit_flow_eviction_stays_idle_first_after_full_table_churn() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        for port in 0..MAX_TRACKED_EXIT_FLOWS as u16 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        for port in 20_000..21_024u16 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        assert_eq!(filter.flows.len(), MAX_TRACKED_EXIT_FLOWS);
+        // The churn evicted the least recently refreshed fill flows in order.
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(0)));
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(1_023)));
+
+        // Nothing is idle yet, so the next insert evicts the least recently
+        // refreshed live flow.
+        filter.note_outbound(peer, &exit_flow_icmp_echo(7));
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(1_024)));
+
+        // A flow gone idle during the churn is still evicted before live ones.
+        make_exit_flow_idle(&mut filter, 7);
+        filter.note_outbound(peer, &exit_flow_udp_packet(21_024));
+        assert!(!filter.admits_inbound(peer, &exit_flow_icmp_reply(7)));
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(1_025)));
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(21_024)));
     }
 
     #[test]
@@ -993,5 +1039,39 @@ mod tests {
                 payload_len: 0,
             }),
         ));
+    }
+
+    #[test]
+    #[ignore = "full-table churn measurement; run with: cargo test -p nostr-vpn-core \
+                --release exit_flow_full_table_churn -- --ignored --nocapture"]
+    fn exit_flow_full_table_churn_measurement() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        for port in 0..MAX_TRACKED_EXIT_FLOWS as u16 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        assert_eq!(filter.flows.len(), MAX_TRACKED_EXIT_FLOWS);
+
+        const CHURN_OPS: usize = 4_096;
+        let packets: Vec<Vec<u8>> = (0..CHURN_OPS)
+            .map(|offset| exit_flow_udp_packet(MAX_TRACKED_EXIT_FLOWS as u16 + offset as u16))
+            .collect();
+        let mut worst_single_op = Duration::ZERO;
+        let churn_start = Instant::now();
+        for packet in &packets {
+            let op_start = Instant::now();
+            filter.note_outbound(peer, packet);
+            worst_single_op = worst_single_op.max(op_start.elapsed());
+        }
+        let churn_elapsed = churn_start.elapsed();
+
+        assert_eq!(filter.flows.len(), MAX_TRACKED_EXIT_FLOWS);
+        let per_op = churn_elapsed / CHURN_OPS as u32;
+        let ops_per_sec = CHURN_OPS as f64 / churn_elapsed.as_secs_f64();
+        println!(
+            "exit flow full-table churn: {CHURN_OPS} insert/evict ops against a live \
+             {MAX_TRACKED_EXIT_FLOWS}-entry table in {churn_elapsed:?} \
+             ({per_op:?}/op average, {ops_per_sec:.0} ops/sec, {worst_single_op:?} worst single op)"
+        );
     }
 }
