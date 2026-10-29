@@ -72,6 +72,60 @@ pub(super) fn macos_service_config_suffix(config_path: &Path) -> String {
     identity[..16].to_string()
 }
 
+/// Suffix derivation builds of this crate used before the SHA-256 change.
+/// DefaultHasher output is unspecified across rustc releases, so this matches
+/// the legacy label only when the running binary and the installed one agree
+/// on the hash; keep it for cleanup of those installations.
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn macos_service_legacy_config_suffix(config_path: &Path) -> String {
+    use std::hash::{Hash, Hasher};
+
+    let canonical = canonicalize_lossy(config_path);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonical.as_os_str().hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Launchd label and artifact paths of a service installed under the
+/// pre-SHA-256 suffix scheme, if that differs from the current identity.
+#[cfg(any(target_os = "macos", test))]
+pub(super) struct MacosLegacyServiceIdentity {
+    pub label: String,
+    pub plist_path: PathBuf,
+    pub binary_path: PathBuf,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl MacosLegacyServiceIdentity {
+    pub(super) fn target(&self) -> String {
+        format!("system/{}", self.label)
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(super) fn macos_service_legacy_identity(
+    config_path: &Path,
+) -> Option<MacosLegacyServiceIdentity> {
+    if macos_service_uses_default_label(config_path) {
+        // Default-config installs kept the fixed label across both schemes.
+        return None;
+    }
+
+    let label = format!(
+        "{MACOS_SERVICE_LABEL}.{}",
+        macos_service_legacy_config_suffix(config_path)
+    );
+    if label == macos_service_label(config_path) {
+        return None;
+    }
+
+    Some(MacosLegacyServiceIdentity {
+        plist_path: PathBuf::from(format!("/Library/LaunchDaemons/{label}.plist")),
+        binary_path: PathBuf::from(format!("/Library/PrivilegedHelperTools/{label}")),
+        label,
+    })
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn macos_install_service(
     executable: &Path,
@@ -91,6 +145,10 @@ pub(super) fn macos_install_service(
     }
 
     macos_service_bootout(config_path, true)?;
+    if let Some(legacy) = macos_service_legacy_identity(config_path) {
+        // Supersede a pre-SHA-256 install instead of running beside it.
+        macos_cleanup_legacy_service(&legacy)?;
+    }
     stop_existing_daemons_before_service_install(config_path)?;
     let service_executable = macos_service_binary_path(config_path);
     crate::macos_privileged_files::install_executable(executable, &service_executable)?;
@@ -112,15 +170,48 @@ pub(super) fn macos_install_service(
 
 #[cfg(target_os = "macos")]
 pub(super) fn macos_uninstall_service(config_path: &Path) -> Result<()> {
+    let plist_path = macos_service_plist_path(config_path);
+    let legacy =
+        macos_service_legacy_identity(config_path).filter(|legacy| legacy.plist_path.exists());
+    if !plist_path.exists() {
+        let Some(legacy) = legacy else {
+            return Err(anyhow!(
+                "system service plist not found: {}",
+                plist_path.display()
+            ));
+        };
+        // Upgrade without reinstall: the service still runs under the
+        // pre-SHA-256 identity; remove it in place.
+        macos_cleanup_legacy_service(&legacy)?;
+        println!("uninstalled system service: {}", legacy.label);
+        return Ok(());
+    }
+
     macos_service_bootout(config_path, true)?;
     macos_service_enable(config_path)?;
-    let plist_path = macos_service_plist_path(config_path);
     let binary_path = macos_service_binary_path(config_path);
     macos_remove_service_artifacts(&plist_path, &binary_path)?;
+    if let Some(legacy) = legacy {
+        macos_cleanup_legacy_service(&legacy)?;
+    }
     println!(
         "uninstalled system service: {}",
         macos_service_label(config_path)
     );
+    Ok(())
+}
+
+/// Unload and remove a service installed under the pre-SHA-256 identity so
+/// upgrades and uninstalls do not strand it beside the current one.
+#[cfg(target_os = "macos")]
+fn macos_cleanup_legacy_service(legacy: &MacosLegacyServiceIdentity) -> Result<()> {
+    run_launchctl_allow_missing(
+        &["bootout", legacy.target().as_str()],
+        "bootout legacy service",
+        true,
+    )?;
+    macos_remove_service_artifacts(&legacy.plist_path, &legacy.binary_path)?;
+    println!("removed legacy system service: {}", legacy.label);
     Ok(())
 }
 
@@ -156,18 +247,52 @@ pub(super) fn macos_enable_service(config_path: &Path) -> Result<()> {
 #[cfg(target_os = "macos")]
 pub(super) fn macos_disable_service(config_path: &Path) -> Result<()> {
     let plist_path = macos_service_plist_path(config_path);
-    let service_label = macos_service_label(config_path);
+    let legacy =
+        macos_service_legacy_identity(config_path).filter(|legacy| legacy.plist_path.exists());
     if !plist_path.exists() {
-        return Err(anyhow!(
-            "system service plist not found: {}",
-            plist_path.display()
-        ));
+        let Some(legacy) = legacy else {
+            return Err(anyhow!(
+                "system service plist not found: {}",
+                plist_path.display()
+            ));
+        };
+        // Upgrade without reinstall: the service still runs under the
+        // pre-SHA-256 identity; stop it in place.
+        return macos_disable_legacy_service(&legacy);
     }
 
     macos_service_bootout(config_path, true)?;
+    if let Some(legacy) = &legacy {
+        run_launchctl_allow_missing(
+            &["bootout", legacy.target().as_str()],
+            "bootout legacy service",
+            true,
+        )?;
+        run_launchctl_checked(
+            &["disable", legacy.target().as_str()],
+            "disable legacy service",
+        )?;
+    }
     macos_service_disable(config_path)?;
     println!("disabled system service: {}", plist_path.display());
+    let service_label = macos_service_label(config_path);
     println!("label: {service_label}");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn macos_disable_legacy_service(legacy: &MacosLegacyServiceIdentity) -> Result<()> {
+    run_launchctl_allow_missing(
+        &["bootout", legacy.target().as_str()],
+        "bootout legacy service",
+        true,
+    )?;
+    run_launchctl_checked(
+        &["disable", legacy.target().as_str()],
+        "disable legacy service",
+    )?;
+    println!("disabled system service: {}", legacy.plist_path.display());
+    println!("label: {}", legacy.label);
     Ok(())
 }
 
