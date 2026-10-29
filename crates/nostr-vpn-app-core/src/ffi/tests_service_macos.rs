@@ -356,16 +356,27 @@ exit 0
     }
 
     #[cfg(target_os = "macos")]
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct StaticPrivilegedRunner {
         stdout: Vec<u8>,
+        calls: PathBuf,
     }
 
     #[cfg(target_os = "macos")]
     impl PrivilegedCommandRunner for StaticPrivilegedRunner {
-        fn run(&self, _executable: String, _args: Vec<String>) -> PrivilegedCommandOutput {
+        fn run(&self, executable: String, args: Vec<String>) -> PrivilegedCommandOutput {
             // Faithful to AEWP: stderr arrives merged into stdout, and there
             // is no exit status, so any completed child reports success.
+            // Record the privileged invocation alongside the direct CLI calls
+            // so tests can assert on the full command sequence.
+            let _ = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.calls)
+                .and_then(|mut file| {
+                    use std::io::Write;
+                    writeln!(file, "{} {}", executable, args.join(" "))
+                });
             PrivilegedCommandOutput {
                 success: true,
                 cancelled: false,
@@ -430,6 +441,7 @@ exit 0
             StaticPrivilegedRunner {
                 stdout: b"Error: system artifact directory is not root-owned and protected: /Library"
                     .to_vec(),
+                calls: calls_path.clone(),
             },
         )));
 
@@ -497,6 +509,7 @@ exit 0
         runtime.privileged_command_runner = Some(PrivilegedCommandRunnerHandle(Arc::new(
             StaticPrivilegedRunner {
                 stdout: b"installed system service".to_vec(),
+                calls: dir.join("calls.txt"),
             },
         )));
 
