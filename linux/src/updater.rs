@@ -156,7 +156,11 @@ fn update_download_dir() -> PathBuf {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("NostrVpnDownloads"))
+        .unwrap_or_else(|| download_dir_under(&crate::default_data_dir()))
+}
+
+fn download_dir_under(data_dir: &str) -> PathBuf {
+    PathBuf::from(data_dir).join("update-downloads")
 }
 
 #[cfg(test)]

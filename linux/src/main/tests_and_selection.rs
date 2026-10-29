@@ -295,6 +295,32 @@ mod tests {
         assert!(entry.contains("Exec=/opt/Nostr\\ VPN/nostr-vpn --hidden\n"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn session_bus_socket_is_only_used_when_the_current_user_owns_it() {
+        let directory = std::env::temp_dir().join(format!(
+            "nvpn-dbus-owner-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let socket = directory.join("nostr-vpn-dbus.sock");
+        std::fs::write(&socket, b"").unwrap();
+        let uid = effective_user_id();
+
+        assert!(session_bus_socket_owned_by(&socket, uid));
+        assert!(
+            !session_bus_socket_owned_by(&socket, uid ^ 1),
+            "a socket owned by another local user must be rejected"
+        );
+        assert!(!session_bus_socket_owned_by(&directory.join("missing"), uid));
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
     #[test]
     fn state_needs_render_ignores_revision_only_refreshes() {
         let previous = NativeAppState {
