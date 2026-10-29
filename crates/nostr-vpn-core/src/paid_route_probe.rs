@@ -136,7 +136,7 @@ pub fn paid_route_stun_host_port(server: &str) -> Option<(String, u16)> {
     Some((authority.to_string(), 3478))
 }
 
-/// RFC 5389 requires 96 bits of randomness so an on-path peer cannot forge binding responses.
+/// Unpredictable transaction IDs prevent off-path guessing of binding responses.
 pub fn paid_route_stun_transaction_id() -> [u8; 12] {
     rand::random()
 }
