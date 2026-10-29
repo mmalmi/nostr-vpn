@@ -1,0 +1,30 @@
+name: Temp macOS App Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Full macOS app build
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install build tools
+        run: brew install just xcodegen
+
+      - name: Select Xcode
+        run: |
+          if [ -d /Applications/Xcode_15.4.app ]; then
+            echo "DEVELOPER_DIR=/Applications/Xcode_15.4.app/Contents/Developer" >> "$GITHUB_ENV"
+          else
+            echo "Xcode_15.4.app not present; using the runner default" >&2
+          fi
+          xcodebuild -version
+
+      - name: Build macOS app
+        run: just macos-build
