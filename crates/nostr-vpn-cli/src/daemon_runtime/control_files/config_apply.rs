@@ -18,11 +18,20 @@ pub(crate) fn stage_daemon_config_apply(config_path: &Path, source_path: &Path) 
 
 pub(crate) fn update_daemon_config_from_staged_request(config_path: &Path) -> Result<bool> {
     let staged_path = daemon_staged_config_file_path(config_path);
-    if open_trusted_daemon_request_file(&staged_path)?.is_none() {
+    let Some(mut staged_file) = open_trusted_daemon_request_file(&staged_path)? else {
         return Ok(false);
-    }
+    };
 
-    let result = apply_config_file(&staged_path, config_path);
+    // The trust checks validated this handle; apply the bytes read from it.
+    // Reopening the staged path would let a replacement behind that path after
+    // validation swap in contents that were never validated.
+    let result = (|| {
+        let mut raw = String::new();
+        std::io::Read::read_to_string(&mut staged_file, &mut raw).with_context(|| {
+            format!("failed to read staged config {}", staged_path.display())
+        })?;
+        apply_config_bytes(&raw, &staged_path, config_path)
+    })();
     let _ = fs::remove_file(&staged_path);
     let _ = AppConfig::delete_persisted_secrets_for_path(&staged_path);
     result?;

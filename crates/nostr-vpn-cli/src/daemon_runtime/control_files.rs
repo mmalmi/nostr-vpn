@@ -1129,4 +1129,39 @@ mod trusted_daemon_request_files {
 
         fs::remove_dir_all(dir).unwrap();
     }
+
+    // A swap between validation and apply cannot be timed deterministically,
+    // so exercise the two halves the apply path uses: take the bytes from the
+    // validated handle, replace the on-disk file, and apply those bytes. The
+    // applied config must be the validated snapshot, never the reopened path.
+    #[test]
+    fn staged_config_apply_consumes_the_validated_bytes_not_a_reopened_path() {
+        let dir =
+            std::env::temp_dir().join(format!("nvpn-request-swap-{}", rand::random::<u128>()));
+        fs::create_dir(&dir).unwrap();
+        let config = dir.join("config.toml");
+        fs::write(&config, b"node_name = \"owned\"\n").unwrap();
+
+        let staged = daemon_staged_config_file_path(&config);
+        fs::write(&staged, b"node_name = \"validated\"\n").unwrap();
+
+        let mut validated_file = open_trusted_daemon_request_file(&staged)
+            .unwrap()
+            .expect("staged config passes the trust checks");
+        let mut validated = String::new();
+        std::io::Read::read_to_string(&mut validated_file, &mut validated).unwrap();
+        drop(validated_file);
+
+        fs::write(&staged, b"node_name = \"swapped\"\n").unwrap();
+
+        apply_config_bytes(&validated, &staged, &config).unwrap();
+        assert_eq!(
+            AppConfig::load(&config).unwrap().node_name,
+            "validated",
+            "the applied config must come from the validated bytes, not the swapped file"
+        );
+        AppConfig::delete_persisted_secrets_for_path(&config).unwrap();
+
+        fs::remove_dir_all(dir).unwrap();
+    }
 }
