@@ -886,6 +886,8 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     #[cfg(target_os = "linux")]
     linux_network_state_initialized: bool,
     #[cfg(target_os = "linux")]
+    mesh_fd00_main_rule: bool,
+    #[cfg(target_os = "linux")]
     exit_node_runtime: crate::LinuxExitNodeRuntime,
     #[cfg(target_os = "macos")]
     exit_node_runtime: crate::MacosExitNodeRuntime,

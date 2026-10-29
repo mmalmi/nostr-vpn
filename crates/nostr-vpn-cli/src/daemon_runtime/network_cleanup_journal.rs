@@ -747,6 +747,23 @@ mod linux_cleanup_journal_files {
     }
 
     #[test]
+    fn mesh_fd00_main_rule_ownership_round_trips_through_the_journal() {
+        let dir = fixture();
+        let path = dir.join("cleanup/daemon.cleanup.json");
+        let state = DaemonNetworkCleanupState {
+            iface: "nvpn0".to_string(),
+            mesh_fd00_main_rule: true,
+            ..DaemonNetworkCleanupState::default()
+        };
+        write_daemon_network_cleanup_state(&path, &state).unwrap();
+        let restored = read_daemon_network_cleanup_state(&path)
+            .unwrap()
+            .expect("journal readback");
+        assert!(restored.mesh_fd00_main_rule);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn unsafe_cleanup_journal_permissions_are_not_repaired_or_discarded() {
         let dir = fixture();
         let path = dir.join("cleanup/daemon.cleanup.json");

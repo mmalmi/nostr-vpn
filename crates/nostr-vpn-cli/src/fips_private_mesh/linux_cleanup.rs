@@ -73,6 +73,7 @@ fn take_pending_linux_network_cleanup_state() -> Option<LinuxNetworkCleanupState
 #[cfg(any(test, target_os = "linux"))]
 trait LinuxNetworkCleanupActions {
     fn cleanup_endpoint_bypass_routes(&mut self) -> anyhow::Result<()>;
+    fn cleanup_fd00_main_rule(&mut self) -> anyhow::Result<()>;
     fn cleanup_forwarding_and_wireguard(&mut self) -> anyhow::Result<()>;
     fn restore_original_ipv4_default(&mut self);
     fn restore_original_ipv6_default(&mut self);
@@ -111,6 +112,22 @@ fn cleanup_linux_network_state_with_actions(
     // NetworkManager default after an underlay switch.
     actions.restore_original_ipv4_default();
     actions.restore_original_ipv6_default();
+
+    let mut fd00_cleanup_error = None;
+    for _ in 0..LINUX_NETWORK_CLEANUP_ATTEMPTS {
+        match actions.cleanup_fd00_main_rule() {
+            Ok(()) => {
+                fd00_cleanup_error = None;
+                break;
+            }
+            Err(error) => fd00_cleanup_error = Some(error),
+        }
+    }
+    if let Some(error) = fd00_cleanup_error {
+        failures.push(format!(
+            "fd00::/8 main-table rule cleanup failed after three attempts: {error:#}"
+        ));
+    }
 
     let mut forwarding_cleanup_error = None;
     for _ in 0..LINUX_NETWORK_CLEANUP_ATTEMPTS {
@@ -179,6 +196,14 @@ impl LinuxNetworkCleanupActions for FipsPrivateTunnelRuntime {
         cleanup_linux_endpoint_bypass_routes(&mut self.endpoint_bypass_routes)
     }
 
+    fn cleanup_fd00_main_rule(&mut self) -> anyhow::Result<()> {
+        if self.mesh_fd00_main_rule {
+            crate::remove_linux_fd00_main_rule()?;
+            self.mesh_fd00_main_rule = false;
+        }
+        Ok(())
+    }
+
     fn cleanup_forwarding_and_wireguard(&mut self) -> anyhow::Result<()> {
         self.reconcile_linux_exit_node_forwarding_cleanup()
     }
@@ -219,6 +244,7 @@ impl LinuxNetworkCleanupState {
                 .secure_dns
                 .as_ref()
                 .and_then(crate::secure_dns_runtime::SecureDnsRuntime::linux_cleanup_state),
+            mesh_fd00_main_rule: runtime.mesh_fd00_main_rule,
         };
         (!state.is_empty()).then_some(state)
     }
@@ -231,6 +257,7 @@ impl LinuxNetworkCleanupState {
         !self.endpoint_bypass_routes.is_empty()
             || self.original_default_route.is_some()
             || self.original_default_ipv6_route.is_some()
+            || self.mesh_fd00_main_rule
             || !linux_exit_cleanup_state_is_empty(&self.exit_node_runtime)
     }
 }
@@ -587,6 +614,14 @@ pub(super) fn cleanup_linux_exit_node_state(
 impl LinuxNetworkCleanupActions for LinuxNetworkCleanupState {
     fn cleanup_endpoint_bypass_routes(&mut self) -> Result<()> {
         cleanup_linux_endpoint_bypass_routes(&mut self.endpoint_bypass_routes)
+    }
+
+    fn cleanup_fd00_main_rule(&mut self) -> Result<()> {
+        if self.mesh_fd00_main_rule {
+            crate::remove_linux_fd00_main_rule()?;
+            self.mesh_fd00_main_rule = false;
+        }
+        Ok(())
     }
 
     fn cleanup_forwarding_and_wireguard(&mut self) -> Result<()> {

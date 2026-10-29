@@ -78,6 +78,7 @@
     struct FakeLinuxNetworkCleanupActions {
         events: Vec<&'static str>,
         forwarding_failures_remaining: usize,
+        fd00_failures_remaining: usize,
         ipv4_restore_unblocked_by_forwarding_cleanup: bool,
         ipv4_restore_failures_remaining: usize,
         ipv4_restore_pending: bool,
@@ -88,6 +89,15 @@
     impl super::LinuxNetworkCleanupActions for FakeLinuxNetworkCleanupActions {
         fn cleanup_endpoint_bypass_routes(&mut self) -> anyhow::Result<()> {
             self.events.push("endpoint");
+            Ok(())
+        }
+
+        fn cleanup_fd00_main_rule(&mut self) -> anyhow::Result<()> {
+            self.events.push("fd00-main-rule");
+            if self.fd00_failures_remaining > 0 {
+                self.fd00_failures_remaining -= 1;
+                return Err(anyhow::anyhow!("synthetic fd00 rule cleanup failure"));
+            }
             Ok(())
         }
 
@@ -162,6 +172,7 @@
                 "endpoint",
                 "restore-ipv4",
                 "restore-ipv6",
+                "fd00-main-rule",
                 "forwarding-wireguard",
                 "forwarding-wireguard",
                 "forwarding-wireguard",
@@ -194,12 +205,40 @@
                 "endpoint",
                 "restore-ipv4",
                 "restore-ipv6",
+                "fd00-main-rule",
                 "forwarding-wireguard",
                 "restore-ipv4",
                 "flush-route-cache",
             ]
         );
         assert!(!actions.ipv4_restore_pending);
+    }
+
+    #[test]
+    fn linux_cleanup_retries_fd00_main_rule_removal_and_reports_its_failure() {
+        let mut actions = FakeLinuxNetworkCleanupActions {
+            fd00_failures_remaining: usize::MAX,
+            ..FakeLinuxNetworkCleanupActions::default()
+        };
+
+        let error = super::cleanup_linux_network_state_with_actions(&mut actions)
+            .expect_err("persistent fd00 rule cleanup failure remains reportable");
+
+        assert_eq!(
+            actions
+                .events
+                .iter()
+                .filter(|event| **event == "fd00-main-rule")
+                .count(),
+            super::LINUX_NETWORK_CLEANUP_ATTEMPTS
+        );
+        assert!(
+            format!("{error:#}")
+                .contains("fd00::/8 main-table rule cleanup failed after three attempts")
+        );
+        assert!(
+            format!("{error:#}").contains("synthetic fd00 rule cleanup failure")
+        );
     }
 
     #[test]

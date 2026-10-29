@@ -431,6 +431,77 @@ fn remove_stale_linux_interface_addresses(iface: &str, desired: &[String]) -> Re
     Ok(())
 }
 
+// This mesh rule lives in RPDB beyond the tunnel interface lifetime, so Linux
+// cleanup state journals its ownership and removes it during teardown.
+#[cfg(any(target_os = "linux", test))]
+fn linux_fd00_main_rule_present(rules: &str) -> bool {
+    rules.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("5265:")
+            && line.contains("to fd00::/8 ")
+            && line.contains("lookup main")
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_ipv6_rule_show() -> Result<String> {
+    let output = ProcessCommand::new("ip")
+        .args(["-6", "rule", "show"])
+        .output()
+        .context("inspect Linux IPv6 policy rules")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "inspect Linux IPv6 policy rules failed with {}",
+            output.status
+        ));
+    }
+    std::str::from_utf8(&output.stdout)
+        .context("Linux IPv6 policy rules were not UTF-8")
+        .map(str::to_owned)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn ensure_linux_fd00_main_rule() -> Result<()> {
+    if linux_fd00_main_rule_present(&linux_ipv6_rule_show()?) {
+        return Ok(());
+    }
+    run_checked(
+        ProcessCommand::new("ip").args([
+            "-6",
+            "rule",
+            "add",
+            "to",
+            "fd00::/8",
+            "table",
+            "main",
+            "priority",
+            "5265",
+        ]),
+    )
+    .context("add mesh fd00::/8 main-table policy rule")
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn remove_linux_fd00_main_rule() -> Result<()> {
+    if !linux_fd00_main_rule_present(&linux_ipv6_rule_show()?) {
+        return Ok(());
+    }
+    run_checked(
+        ProcessCommand::new("ip").args([
+            "-6",
+            "rule",
+            "del",
+            "to",
+            "fd00::/8",
+            "table",
+            "main",
+            "priority",
+            "5265",
+        ]),
+    )
+    .context("remove mesh fd00::/8 main-table policy rule")
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
     iface: &str,
@@ -489,17 +560,7 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
             ));
             run_checked(&mut command)?;
             if target == "fd00::/8" {
-                let _ = ProcessCommand::new("ip")
-                    .arg("-6")
-                    .arg("rule")
-                    .arg("add")
-                    .arg("to")
-                    .arg(target)
-                    .arg("table")
-                    .arg("main")
-                    .arg("priority")
-                    .arg("5265")
-                    .status();
+                ensure_linux_fd00_main_rule()?;
             }
         }
         return Ok(());
