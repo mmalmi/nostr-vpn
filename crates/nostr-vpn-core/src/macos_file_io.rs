@@ -475,8 +475,7 @@ fn reject_write_acl_impl(file: &File, allow_builtin_admin_group: bool) -> Result
             }
             if tag == ACL_EXTENDED_ALLOW
                 && permissions & WRITE_PERMISSIONS != 0
-                && !(allow_builtin_admin_group
-                    && qualifier_is_builtin_admin_or_wheel(entry))
+                && !(allow_builtin_admin_group && qualifier_is_builtin_admin_or_wheel(entry))
             {
                 bail!("system artifact path has a write-granting ACL");
             }
