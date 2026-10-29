@@ -106,7 +106,7 @@ extension AppManager {
 
     func fetchUpdateCheck() async throws -> UpdateCheck {
         let (currentVersion, configPath) = await MainActor.run {
-            (self.state.appVersion, self.state.configPath)
+            (self.state?.appVersion ?? "", self.state?.configPath ?? "")
         }
         let result = try await runCoreUpdateCheck(
             currentVersion: currentVersion,
@@ -156,7 +156,7 @@ extension AppManager {
                 let downloadDir = FileManager.default.temporaryDirectory
                     .appendingPathComponent("NostrVpnDownloads", isDirectory: true)
                 let (currentVersion, configPath) = await MainActor.run {
-                    (self.state.appVersion, self.state.configPath)
+                    (self.state?.appVersion ?? "", self.state?.configPath ?? "")
                 }
                 let result = try await runCoreUpdateDownload(
                     currentVersion: currentVersion,
@@ -197,6 +197,9 @@ extension AppManager {
     }
 
     func syncLaunchAgentWithSettings() {
+        guard let state else {
+            return
+        }
         do {
             try configureLaunchAgent(
                 enabled: state.startupSettingsSupported && state.launchOnStartup,

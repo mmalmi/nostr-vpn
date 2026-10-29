@@ -61,7 +61,8 @@ extension AppManager {
             dispatch(.tick, status: "Refreshing")
         case "accept-join":
             let requestedNetwork = Self.debugQueryValue("networkId", aliases: ["network"], in: url)
-            guard let network = state.networks.first(where: {
+            guard let state,
+                  let network = state.networks.first(where: {
                 requestedNetwork == nil || $0.id == requestedNetwork || $0.networkId == requestedNetwork
             }) else {
                 return
@@ -231,10 +232,10 @@ extension AppManager {
     }
 
     func relayLists() -> (enabled: [String], disabled: [String]) {
-        let enabled = state.relays
+        let enabled = (state?.relays ?? [])
             .filter(\.enabled)
             .compactMap { Self.normalizedRelayUrl($0.url) }
-        let disabled = state.relays
+        let disabled = (state?.relays ?? [])
             .filter { !$0.enabled }
             .compactMap { Self.normalizedRelayUrl($0.url) }
         return (

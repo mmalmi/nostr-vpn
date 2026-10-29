@@ -100,8 +100,10 @@ struct RootView: View {
     @State var lastSyncedManualPaidExitProvider: String? = nil
     @State var lastSyncedPaidExitSeller: NativePaidExitSellerState? = nil
 
+    /// Body renders `startupLoading` until the core snapshot lands, and state
+    /// is set exactly once after that, so the panes can read it unwrapped.
     var state: NativeAppState {
-        manager.state
+        manager.state!
     }
 
     var activeNetwork: NativeNetworkState? {
@@ -160,6 +162,28 @@ struct RootView: View {
     }
 
     var body: some View {
+        if manager.state == nil {
+            startupLoading
+        } else {
+            mainContent
+        }
+    }
+
+    /// Shown while the core constructs off the main thread, before the first
+    /// state snapshot arrives.
+    var startupLoading: some View {
+        VStack(spacing: 10) {
+            ProgressView()
+            Text("Starting…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .ignoresSafeArea(.container, edges: .top)
+    }
+
+    var mainContent: some View {
         VStack(spacing: 0) {
             headerBar
             if manager.serviceUpdateRecommended {
