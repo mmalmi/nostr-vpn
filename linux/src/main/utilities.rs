@@ -228,9 +228,19 @@ fn bootstrap_session_bus() {
         return;
     }
     let socket = "/tmp/nostr-vpn-dbus.sock";
-    if std::path::Path::new(socket).exists() {
+    if session_bus_socket_owned_by(std::path::Path::new(socket), effective_user_id()) {
         std::env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={socket}"));
     }
+}
+
+fn effective_user_id() -> u32 {
+    // nix re-exports libc; this crate has no direct libc dependency.
+    unsafe { nix::libc::geteuid() }
+}
+
+fn session_bus_socket_owned_by(path: &std::path::Path, uid: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.uid() == uid)
 }
 
 fn install_css() {

@@ -71,33 +71,6 @@ pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) 
     daemon_pids_from_ps_output(&String::from_utf8_lossy(&output.stdout), config_path).contains(&pid)
 }
 
-#[cfg(windows)]
-pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) -> bool {
-    let script = format!(
-        "Get-CimInstance Win32_Process -Filter \"ProcessId = {pid}\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
-    );
-    let output = ProcessCommand::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            script.as_str(),
-        ])
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-
-    windows_daemon_pid_record_matches_cim(
-        pid,
-        &String::from_utf8_lossy(&output.stdout),
-        config_path,
-    )
-}
-
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn daemon_pid_record_counts_as_running(_pid: u32, _config_path: &Path) -> bool {
     false
@@ -178,26 +151,6 @@ pub(crate) fn linux_proc_stat_counts_as_running(stat: &str) -> bool {
         .is_some_and(|state| !matches!(state, 'Z' | 'X'))
 }
 
-#[cfg(windows)]
-pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
-    let output = ProcessCommand::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-CimInstance Win32_Process -Filter \"Name LIKE 'nvpn%.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
-        ])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    daemon_pids_from_windows_cim_json(&String::from_utf8_lossy(&output.stdout), config_path)
-}
-
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn find_daemon_pids_by_config(_config_path: &Path) -> Vec<u32> {
     Vec::new()
@@ -275,81 +228,83 @@ fn unix_ps_field_looks_like_stat(field: &str) -> bool {
             .all(|ch| ch.is_ascii_alphabetic() || matches!(ch, '<' | '>' | '+' | '-' | '|' | ':'))
 }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn tasklist_pids_from_output(tasklist_output: &str) -> Vec<u32> {
-    let trimmed = tasklist_output.trim();
-    if trimmed.is_empty()
-        || trimmed
-            .to_ascii_lowercase()
-            .contains("no tasks are running which match")
+#[cfg(any(windows, test))]
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct WindowsProcess {
+    process_id: u32,
+    name: String,
+    command_line: Option<String>,
+}
+
+#[cfg(windows)]
+fn windows_nvpn_processes() -> Result<Vec<WindowsProcess>> {
+    // Query the same provider as Get-CimInstance, without starting PowerShell.
+    wmi::WMIConnection::new()
+        .context("connect to Windows process service")?
+        .raw_query(
+            "SELECT ProcessId, Name, CommandLine FROM Win32_Process WHERE Name LIKE 'nvpn%.exe'",
+        )
+        .context("query Windows daemon processes")
+}
+
+#[cfg(any(windows, test))]
+fn windows_daemon_candidates(
+    processes: &[WindowsProcess],
+    config_path: &Path,
+    current_pid: u32,
+    state: Option<&DaemonRuntimeState>,
+    now: u64,
+) -> Vec<u32> {
+    let mut pids = processes
+        .iter()
+        .filter(|process| process.process_id != current_pid)
+        .filter(|process| {
+            process
+                .command_line
+                .as_deref()
+                .is_some_and(|command| daemon_command_matches_config(command, config_path))
+        })
+        .map(|process| process.process_id)
+        .collect::<Vec<_>>();
+
+    // Unelevated clients cannot always read the service command line. Retain
+    // the existing fresh-state/single-process recovery only for that case;
+    // never override a visible command identifying another config or CLI call.
+    if pids.is_empty()
+        && state.is_some_and(|state| {
+            now.saturating_sub(state.updated_at) <= WINDOWS_DAEMON_STATE_FRESHNESS_SECS
+        })
     {
-        return Vec::new();
-    }
-
-    let mut pids = Vec::new();
-    for line in trimmed.lines() {
-        let line = line.trim();
-        if !(line.starts_with('"') && line.ends_with('"')) {
-            continue;
+        let mut candidates = processes.iter().filter(|process| {
+            process.process_id != current_pid && process.name.eq_ignore_ascii_case("nvpn.exe")
+        });
+        if let Some(process) = candidates.next()
+            && candidates.next().is_none()
+            && process.command_line.is_none()
+        {
+            pids.push(process.process_id);
         }
-        let inner = &line[1..line.len().saturating_sub(1)];
-        let mut fields = inner.split("\",\"");
-        let _image_name = fields.next();
-        let Some(pid_text) = fields.next() else {
-            continue;
-        };
-        let Ok(pid) = pid_text.parse::<u32>() else {
-            continue;
-        };
-        pids.push(pid);
     }
-
     pids.sort_unstable();
     pids.dedup();
     pids
 }
 
 #[cfg(windows)]
-pub(crate) fn windows_nvpn_pids() -> Vec<u32> {
-    let output = ProcessCommand::new("tasklist")
-        .args(["/FI", "IMAGENAME eq nvpn.exe", "/FO", "CSV", "/NH"])
-        .output();
-    let Ok(output) = output else {
-        return Vec::new();
-    };
-    if !output.status.success() {
-        return Vec::new();
-    }
-
-    tasklist_pids_from_output(&String::from_utf8_lossy(&output.stdout))
+pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Result<Vec<u32>> {
+    let processes = windows_nvpn_processes()?;
+    let state = read_daemon_state(&daemon_state_file_path(config_path)?)?;
+    Ok(windows_daemon_candidates(
+        &processes,
+        config_path,
+        current_pid,
+        state.as_ref(),
+        unix_timestamp(),
+    ))
 }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn recent_windows_daemon_pid_candidate(
-    state: Option<&DaemonRuntimeState>,
-    current_pid: u32,
-    nvpn_pids: &[u32],
-    now: u64,
-) -> Option<u32> {
-    let state = state?;
-    if now.saturating_sub(state.updated_at) > WINDOWS_DAEMON_STATE_FRESHNESS_SECS {
-        return None;
-    }
-
-    let mut other_pids = nvpn_pids
-        .iter()
-        .copied()
-        .filter(|pid| *pid != current_pid)
-        .collect::<Vec<_>>();
-    other_pids.sort_unstable();
-    other_pids.dedup();
-    if other_pids.len() == 1 {
-        Some(other_pids[0])
-    } else {
-        None
-    }
-}
-
+#[cfg(not(windows))]
 pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Result<Vec<u32>> {
     let mut daemon_pids = find_daemon_pids_by_config(config_path);
 
@@ -360,20 +315,6 @@ pub(crate) fn daemon_candidate_pids(config_path: &Path, current_pid: u32) -> Res
         && !daemon_pids.contains(&record.pid)
     {
         daemon_pids.push(record.pid);
-    }
-
-    #[cfg(windows)]
-    {
-        let state = read_daemon_state(&daemon_state_file_path(config_path)?)?;
-        if let Some(pid) = recent_windows_daemon_pid_candidate(
-            state.as_ref(),
-            current_pid,
-            &windows_nvpn_pids(),
-            unix_timestamp(),
-        ) && !daemon_pids.contains(&pid)
-        {
-            daemon_pids.push(pid);
-        }
     }
 
     daemon_pids.retain(|pid| *pid != current_pid);
@@ -464,51 +405,93 @@ fn daemon_command_prefix_looks_like_shell_wrapper(prefix: &str) -> bool {
         || trimmed.contains("||")
 }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn daemon_pids_from_windows_cim_json(cim_json: &str, config_path: &Path) -> Vec<u32> {
-    let trimmed = cim_json.trim();
-    if trimmed.is_empty() || trimmed == "null" {
-        return Vec::new();
-    }
-
-    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return Vec::new();
-    };
-
-    let entries = match parsed {
-        serde_json::Value::Array(entries) => entries,
-        serde_json::Value::Object(entry) => vec![serde_json::Value::Object(entry)],
-        _ => return Vec::new(),
-    };
-
-    let mut pids = Vec::new();
-    for entry in entries {
-        let Some(command) = entry.get("CommandLine").and_then(serde_json::Value::as_str) else {
-            continue;
+#[cfg(test)]
+mod windows_process_tests {
+    use super::*;
+    #[test]
+    fn windows_daemon_snapshot_requires_daemon_command_and_same_config() {
+        let config = Path::new(r"C:\Users\Example\nvpn\config.toml");
+        let state = DaemonRuntimeState {
+            updated_at: 100,
+            ..Default::default()
         };
-        let Some(pid) = entry
-            .get("ProcessId")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|pid| u32::try_from(pid).ok())
-        else {
-            continue;
-        };
-
-        if daemon_command_matches_config(command, config_path) {
-            pids.push(pid);
+        for (command, expected) in [
+            (
+                r#""C:\Program Files\Nostr VPN\nvpn.exe" daemon --config "C:\Users\Example\nvpn\config.toml""#,
+                vec![1736],
+            ),
+            (
+                r#""C:\Program Files\Nostr VPN\nvpn.exe" daemon --config "C:\other\config.toml""#,
+                vec![],
+            ),
+            (
+                r#""C:\Program Files\Nostr VPN\nvpn.exe" status --config "C:\Users\Example\nvpn\config.toml""#,
+                vec![],
+            ),
+            (
+                r#"powershell -Command nvpn daemon --config "C:\Users\Example\nvpn\config.toml""#,
+                vec![],
+            ),
+        ] {
+            let processes = serde_json::from_value::<Vec<WindowsProcess>>(serde_json::json!([
+                {"ProcessId": 1736, "Name": "nvpn.exe", "CommandLine": command},
+                {"ProcessId": 42, "Name": "nvpn.exe", "CommandLine": command}
+            ]))
+            .unwrap();
+            assert_eq!(
+                windows_daemon_candidates(&processes, config, 42, Some(&state), 103),
+                expected
+            );
         }
     }
 
-    pids.sort_unstable();
-    pids.dedup();
-    pids
-}
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_process_query_observes_current_cli_process() {
+        let processes = windows_nvpn_processes().expect("native WMI process query");
+        let current = processes
+            .iter()
+            .find(|process| process.process_id == std::process::id())
+            .expect("WMI must include the running nvpn test executable");
+        assert!(
+            current
+                .command_line
+                .as_deref()
+                .is_some_and(|command| !command.is_empty())
+        );
+        assert!(
+            windows_daemon_candidates(
+                std::slice::from_ref(current),
+                Path::new("other.toml"),
+                0,
+                None,
+                0
+            )
+            .is_empty()
+        );
+    }
 
-#[cfg(any(target_os = "windows", test))]
-pub(crate) fn windows_daemon_pid_record_matches_cim(
-    pid: u32,
-    cim_json: &str,
-    config_path: &Path,
-) -> bool {
-    daemon_pids_from_windows_cim_json(cim_json, config_path).contains(&pid)
+    #[test]
+    fn windows_service_recovery_requires_fresh_state_and_one_unreadable_process() {
+        let config = Path::new("config.toml");
+        let state = DaemonRuntimeState {
+            updated_at: 100,
+            ..Default::default()
+        };
+        let processes = serde_json::from_value::<Vec<WindowsProcess>>(serde_json::json!([
+            {"ProcessId": 42, "Name": "nvpn.exe", "CommandLine": null},
+            {"ProcessId": 9564, "Name": "nvpn.exe", "CommandLine": null},
+            {"ProcessId": 97597, "Name": "nvpn.exe", "CommandLine": null}
+        ]))
+        .unwrap();
+        assert_eq!(
+            windows_daemon_candidates(&processes[..2], config, 42, Some(&state), 103),
+            vec![9564]
+        );
+        assert!(
+            windows_daemon_candidates(&processes[..2], config, 42, Some(&state), 106).is_empty()
+        );
+        assert!(windows_daemon_candidates(&processes, config, 42, Some(&state), 103).is_empty());
+        assert!(windows_daemon_candidates(&processes[..2], config, 42, None, 103).is_empty());
+    }
 }
