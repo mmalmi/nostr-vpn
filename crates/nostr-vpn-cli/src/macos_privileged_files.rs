@@ -217,7 +217,7 @@ pub(crate) fn runtime_directory(config_path: &Path) -> Result<PathBuf> {
     Ok(runtime_root().join(identity))
 }
 
-fn runtime_root() -> &'static Path {
+pub(crate) fn runtime_root() -> &'static Path {
     Path::new("/Library/Application Support/nvpn/runtime")
 }
 
@@ -246,24 +246,23 @@ pub(crate) fn remove_exit_claim(config_path: &Path) -> Result<()> {
     }
 }
 
-pub(crate) fn other_exit_claims_remain(config_path: &Path) -> Result<bool> {
-    let claim = exit_claim_path(config_path)?;
-    let root = claim.parent().context("exit claim has no parent")?;
-    let own = claim
-        .file_name()
-        .context("exit claim has no filename")?
-        .to_string_lossy()
-        .to_string();
-    let directory = match fs::read_dir(root) {
+pub(crate) fn other_exit_claims_remain(claims_root: &Path, config_path: &Path) -> Result<bool> {
+    // Directory entries carry the claim suffix; the checker compares bare
+    // config identities, the same representation `exit_claim_path` names
+    // claim files with.
+    let own = crate::macos_network::macos_config_identity(config_path);
+    let directory = match fs::read_dir(claims_root) {
         Ok(directory) => directory,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
-            return Err(error).with_context(|| format!("failed to inspect {}", root.display()));
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", claims_root.display()));
         }
     };
     let mut entries = Vec::new();
     for entry in directory {
-        let entry = entry.with_context(|| format!("failed to inspect {}", root.display()))?;
+        let entry =
+            entry.with_context(|| format!("failed to inspect {}", claims_root.display()))?;
         entries.push(entry.file_name().to_string_lossy().to_string());
     }
     Ok(crate::macos_network::macos_other_exit_claims_remain(

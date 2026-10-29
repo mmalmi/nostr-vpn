@@ -188,3 +188,38 @@ fn macos_exit_claims_from_other_owners_keep_pf_enabled() {
         "with no claims left the last owner disables the global knobs"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_exit_claim_wrapper_restores_globals_for_the_sole_owner() {
+    let claims_root =
+        std::env::temp_dir().join(format!("nvpn-exit-claims-{}", rand::random::<u64>()));
+    std::fs::create_dir(&claims_root).unwrap();
+    let owner = Path::new("/etc/nvpn/one.toml");
+    let other = Path::new("/etc/nvpn/two.toml");
+    let claim_file = |config: &Path| {
+        claims_root.join(format!(
+            "{}{}",
+            crate::macos_network::macos_config_identity(config),
+            crate::macos_network::MACOS_EXIT_CLAIM_SUFFIX
+        ))
+    };
+    let remains = |config: &Path| {
+        crate::macos_privileged_files::other_exit_claims_remain(&claims_root, config)
+            .expect("inspect macOS exit claims")
+    };
+
+    std::fs::write(claim_file(owner), b"1\n").unwrap();
+    assert!(
+        !remains(owner),
+        "with only its own claim on disk, the wrapper must let the last owner restore PF and IPv4 forwarding"
+    );
+
+    std::fs::write(claim_file(other), b"1\n").unwrap();
+    assert!(
+        remains(owner),
+        "a foreign exit claim must keep the global knobs enabled"
+    );
+
+    std::fs::remove_dir_all(claims_root).unwrap();
+}

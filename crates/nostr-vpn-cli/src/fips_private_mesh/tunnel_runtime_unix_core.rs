@@ -874,6 +874,7 @@ impl FipsPrivateTunnelRuntime {
             || self.exit_node_runtime.ipv4_forward_was_enabled.is_some()
         {
             other_claims = match crate::macos_privileged_files::other_exit_claims_remain(
+                crate::macos_privileged_files::runtime_root(),
                 &self.cleanup_journal_config_path,
             ) {
                 Ok(remain) => remain,

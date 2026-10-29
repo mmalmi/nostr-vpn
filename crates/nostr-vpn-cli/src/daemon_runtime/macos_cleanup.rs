@@ -165,6 +165,7 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
         let mut other_exit_claims = false;
         if state.pf_was_enabled.is_some() || state.ipv4_forward_was_enabled == Some(false) {
             other_exit_claims = match crate::macos_privileged_files::other_exit_claims_remain(
+                crate::macos_privileged_files::runtime_root(),
                 config_path,
             ) {
                 Ok(remain) => remain,
