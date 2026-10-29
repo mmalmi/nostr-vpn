@@ -1,12 +1,6 @@
 use super::{persistence::*, *};
 use std::collections::BTreeSet;
 
-/// Terminal records stay this long after their last update before pruning.
-/// Collection opens at the 12-hour service cutoff and buyers can reclaim
-/// uncollected funds until 24 hours after expiry, so a week covers every
-/// collection, refund, and reclaim retry window with margin.
-const PAID_ROUTE_TERMINAL_RECORD_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
-
 impl PaidRouteStore {
     /// Retire elapsed free trials without involving a mint or discarding history.
     pub fn expire_unfunded_seller_sessions(&mut self, now_unix: u64) -> bool {
@@ -387,104 +381,78 @@ impl PaidRouteStore {
             .filter(|url| self.wallet.mints.iter().any(|mint| mint.url == *url))
             .or_else(|| self.wallet.mints.first().map(|mint| mint.url.clone()))
             .unwrap_or_default();
-        self.prune_terminal_records(crate::config_defaults::current_unix_timestamp());
+        self.prune_settled_records();
     }
 
-    /// Removes settled history that no live flow can reach anymore: channels,
-    /// sessions, leases, quotes, admissions, and renewal markers that are
-    /// terminal and older than the retention window, plus everything hanging
-    /// off a pruned channel. Without this the store grows without bound and
-    /// every store update reparses and rewrites the full history.
-    pub(super) fn prune_terminal_records(&mut self, now_unix: u64) {
-        let cutoff = now_unix.saturating_sub(PAID_ROUTE_TERMINAL_RECORD_RETENTION_SECS);
-        let terminal = |status: PaidRouteLifecycleStatus| {
-            matches!(
-                status,
-                PaidRouteLifecycleStatus::Closed
-                    | PaidRouteLifecycleStatus::Expired
-                    | PaidRouteLifecycleStatus::Failed
-            )
-        };
-        let aged = |created_at_unix: u64, updated_at_unix: u64| {
-            created_at_unix.max(updated_at_unix) <= cutoff
-        };
-
-        // Closing stays: settlement and its close receipt are still in flight.
-        let pruned_channels = self
+    /// Removes only records whose funds are provably settled. A channel is
+    /// Closed only after its money finished moving: buyer refund recovery
+    /// marks a channel closed once the mint refund was restored and imported,
+    /// and seller collection marks one closed after its verified close
+    /// receipt was imported. Records reachable only through a settled channel
+    /// go with it. Closing, Expired, and Failed channels stay no matter how
+    /// old they are: their payment material can still be recovered, and a
+    /// buyer returning online after any offline interval must still find it.
+    pub(super) fn prune_settled_records(&mut self) {
+        let settled_channel_ids = self
             .channels
             .iter()
-            .filter(|(_, channel)| {
-                terminal(channel.status) && aged(channel.created_at_unix, channel.updated_at_unix)
-            })
+            .filter(|(_, channel)| channel.status == PaidRouteLifecycleStatus::Closed)
             .map(|(channel_id, _)| channel_id.clone())
             .collect::<BTreeSet<_>>();
-        for channel_id in &pruned_channels {
+        for channel_id in &settled_channel_ids {
             self.channels.remove(channel_id);
         }
 
-        // A session dies with its channel, or once its channel and lease are
-        // both terminal and the record itself has aged out.
-        let pruned_sessions = self
+        // A session dies only with its settled channel; its lease and quote
+        // die once nothing live references them anymore.
+        let pruned_session_ids = self
             .sessions
             .iter()
-            .filter(|(_, record)| {
-                pruned_channels.contains(&record.session.payment.channel_id)
-                    || (self
-                        .channels
-                        .get(&record.session.payment.channel_id)
-                        .is_some_and(|channel| terminal(channel.status))
-                        && self
-                            .leases
-                            .get(&record.session.lease_id)
-                            .is_some_and(|lease| terminal(lease.status))
-                        && aged(record.created_at_unix, record.updated_at_unix))
-            })
+            .filter(|(_, record)| settled_channel_ids.contains(&record.session.payment.channel_id))
             .map(|(session_id, _)| session_id.clone())
             .collect::<BTreeSet<_>>();
-        let pruned_session_lease_ids = self
+        let orphan_lease_ids = self
             .sessions
             .iter()
-            .filter(|(session_id, _)| pruned_sessions.contains(*session_id))
+            .filter(|(session_id, _)| pruned_session_ids.contains(*session_id))
             .map(|(_, record)| record.session.lease_id.clone())
             .collect::<BTreeSet<_>>();
-        for session_id in &pruned_sessions {
+        let orphan_quote_ids = self
+            .leases
+            .iter()
+            .filter(|(lease_id, _)| orphan_lease_ids.contains(lease_id.as_str()))
+            .map(|(_, record)| record.lease.quote_id.clone())
+            .collect::<BTreeSet<_>>();
+        for session_id in &pruned_session_ids {
             self.sessions.remove(session_id);
         }
-
-        // A lease is dropped once nothing live references it: it is terminal
-        // itself, or its channel was pruned underneath its last session.
         let live_lease_ids = self
             .sessions
             .values()
             .map(|record| record.session.lease_id.as_str())
             .collect::<BTreeSet<_>>();
-        let pruned_leases = self
+        let pruned_lease_ids = self
             .leases
             .iter()
-            .filter(|(lease_id, record)| {
-                aged(record.created_at_unix, record.updated_at_unix)
+            .filter(|(lease_id, _)| {
+                orphan_lease_ids.contains(lease_id.as_str())
                     && !live_lease_ids.contains(lease_id.as_str())
-                    && (terminal(record.status)
-                        || pruned_session_lease_ids.contains(lease_id.as_str()))
             })
             .map(|(lease_id, _)| lease_id.clone())
             .collect::<BTreeSet<_>>();
-        for lease_id in &pruned_leases {
+        for lease_id in &pruned_lease_ids {
             self.leases.remove(lease_id);
         }
-
-        // Quotes are only reachable through a lease and die once expired.
-        let referenced_quote_ids = self
+        let live_quote_ids = self
             .leases
             .values()
             .map(|record| record.lease.quote_id.as_str())
             .collect::<BTreeSet<_>>();
-        self.quotes.retain(|quote_id, record| {
-            referenced_quote_ids.contains(quote_id.as_str())
-                || record.quote.expires_at_unix > cutoff
+        self.quotes.retain(|quote_id, _| {
+            live_quote_ids.contains(quote_id.as_str()) || !orphan_quote_ids.contains(quote_id)
         });
 
-        // Everything keyed by a pruned lease or session has no live reader.
+        // Everything keyed by a pruned session has no live reader.
         let lease_ids = self
             .leases
             .keys()

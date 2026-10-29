@@ -162,6 +162,48 @@
         );
     }
 
+    /// A buyer returning online after an offline gap far longer than any
+    /// retention window must still have its refunds recoverable: store loads
+    /// prune only proven-completed settlements, never recoverable channels.
+    #[test]
+    fn refund_recovery_survives_offline_gap_longer_than_any_retention() {
+        let directory = TestDirectory::new();
+        let config_path = directory.0.join("config.toml");
+        let store_path = paid_route_store_file_path(&config_path);
+        let months_ago = unix_timestamp().saturating_sub(90 * 24 * 60 * 60);
+        let mut store = PaidRouteStore::default();
+        for (channel_id, status) in [
+            ("closing", PaidRouteLifecycleStatus::Closing),
+            ("expired", PaidRouteLifecycleStatus::Expired),
+            ("failed", PaidRouteLifecycleStatus::Failed),
+        ] {
+            let mut record = channel(channel_id, PaidRouteChannelRole::Buyer, status);
+            record.created_at_unix = months_ago;
+            record.expires_at_unix = months_ago;
+            record.updated_at_unix = months_ago;
+            store.upsert_channel(record);
+        }
+        update_paid_route_store(&store_path, |target| {
+            *target = store;
+            Ok(())
+        })
+        .expect("write paid route fixture");
+
+        let mut reloaded = load_paid_route_store(&store_path).expect("reload store");
+        for _ in 0..5 {
+            reloaded = load_paid_route_store(&store_path).expect("reload store");
+        }
+
+        assert_eq!(
+            paid_exit_buyer_refund_channel_ids(&reloaded),
+            vec![
+                "closing".to_string(),
+                "expired".to_string(),
+                "failed".to_string()
+            ]
+        );
+    }
+
     #[test]
     fn network_deadline_suppresses_refund_background_but_still_takes_control() {
         let directory = TestDirectory::new();
