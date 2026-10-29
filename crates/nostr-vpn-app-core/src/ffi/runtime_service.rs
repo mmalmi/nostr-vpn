@@ -80,7 +80,9 @@ impl NativeAppRuntime {
         Err(privileged_output_failure("nvpn install-cli", privileged_output))
     }
 
+    // Signature is cfg-paired with the macOS implementation above.
     #[cfg(not(target_os = "macos"))]
+    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
     fn verify_cli_install(&self, _privileged_output: &Output) -> Result<()> {
         Ok(())
     }
