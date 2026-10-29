@@ -2,9 +2,26 @@ use super::*;
 
 const CONFIG_PATH_ENV: &str = "NVPN_CONFIG_PATH";
 
+/// How `install-cli` places the executable at the destination.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CliInstallMode {
+    /// Copy the executable, so the destination is independent of any app.
+    Copy,
+    /// Symlink the executable so the destination tracks app updates. The
+    /// macOS app updater replaces the bundle in place at the same path, so a
+    /// link to the bundled binary never goes stale between releases.
+    Link,
+}
+
 pub(crate) fn install_cli(args: InstallCliArgs) -> Result<()> {
+    let explicit_path = args.path.is_some();
     let destination = args.path.unwrap_or_else(default_cli_install_path);
-    install_cli_to_path(&destination, args.force).map_err(|error| {
+    let mode = if !explicit_path && cfg!(target_os = "macos") {
+        CliInstallMode::Link
+    } else {
+        CliInstallMode::Copy
+    };
+    install_cli_to_path(&destination, args.force, mode).map_err(|error| {
         if error
             .downcast_ref::<std::io::Error>()
             .is_none_or(|error| error.kind() != std::io::ErrorKind::PermissionDenied)
@@ -19,7 +36,8 @@ pub(crate) fn install_cli(args: InstallCliArgs) -> Result<()> {
         let force = if args.force { " --force" } else { "" };
         error.context(format!(
             "permission denied installing nvpn CLI to {}. \
-             Retry the same command with administrator privileges, or use a directory you own{shell}:\n  \
+             Use the Install CLI action in the Nostr VPN app, or retry the same command with \
+             administrator privileges, or install into a directory you own{shell}:\n  \
              nvpn install-cli{force} --path {user_path}\n\
              Add that directory to PATH if needed",
             destination.display()
@@ -60,7 +78,11 @@ pub(crate) fn default_tunnel_iface() -> String {
     }
 }
 
-fn install_cli_to_path(destination: &Path, force: bool) -> Result<()> {
+pub(crate) fn install_cli_to_path(
+    destination: &Path,
+    force: bool,
+    mode: CliInstallMode,
+) -> Result<()> {
     let source = std::env::current_exe().context("failed to resolve current executable")?;
     let source = fs::canonicalize(&source)
         .with_context(|| format!("failed to canonicalize {}", source.display()))?;
@@ -120,22 +142,37 @@ fn install_cli_to_path(destination: &Path, force: bool) -> Result<()> {
         let _ = fs::remove_file(&temp_path);
     }
 
-    fs::copy(&source, &temp_path).with_context(|| {
-        format!(
-            "failed to copy {} to {}",
-            source.display(),
-            temp_path.display()
-        )
-    })?;
-
-    #[cfg(unix)]
-    {
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755)).with_context(|| {
+    if mode == CliInstallMode::Link {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&source, &temp_path).with_context(|| {
             format!(
-                "failed to set executable permissions on {}",
+                "failed to link {} to {}",
+                temp_path.display(),
+                source.display()
+            )
+        })?;
+        #[cfg(not(unix))]
+        return Err(anyhow!("link installation is unsupported on this platform"));
+    } else {
+        fs::copy(&source, &temp_path).with_context(|| {
+            format!(
+                "failed to copy {} to {}",
+                source.display(),
                 temp_path.display()
             )
         })?;
+
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755)).with_context(
+                || {
+                    format!(
+                        "failed to set executable permissions on {}",
+                        temp_path.display()
+                    )
+                },
+            )?;
+        }
     }
 
     fs::rename(&temp_path, destination).with_context(|| {
@@ -151,13 +188,17 @@ fn install_cli_to_path(destination: &Path, force: bool) -> Result<()> {
 }
 
 fn uninstall_cli_path(destination: &Path) -> Result<()> {
-    if !destination.exists() {
-        println!("nvpn CLI not installed at {}", destination.display());
-        return Ok(());
-    }
-
-    let metadata = fs::symlink_metadata(destination)
-        .with_context(|| format!("failed to inspect {}", destination.display()))?;
+    let metadata = match fs::symlink_metadata(destination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            println!("nvpn CLI not installed at {}", destination.display());
+            return Ok(());
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", destination.display()));
+        }
+    };
     if metadata.file_type().is_dir() {
         return Err(anyhow!(
             "refusing to remove directory {}",
