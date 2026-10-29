@@ -10,8 +10,7 @@ use nostr_vpn_core::join_delivery::{
 };
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 pub use nostr_vpn_core::join_requests::{
-    PreparedJoinApproval, ensure_roster_unchanged_since_snapshot, prepare_join_approval,
-    prepare_manual_join_delivery,
+    PreparedJoinApproval, commit_join_approval, prepare_join_approval, prepare_manual_join_delivery,
 };
 
 use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};

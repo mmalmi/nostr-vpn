@@ -1,7 +1,5 @@
 mod approval;
-pub use approval::{
-    PreparedJoinApproval, ensure_roster_unchanged_since_snapshot, prepare_join_approval,
-};
+pub use approval::{PreparedJoinApproval, commit_join_approval, prepare_join_approval};
 
 use anyhow::{Context, Result, anyhow};
 use nostr_identity::{
