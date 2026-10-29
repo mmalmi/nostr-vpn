@@ -130,7 +130,7 @@ fn status_json_peers_preserves_daemon_reachability() {
 
 #[cfg(unix)]
 #[test]
-fn atomic_runtime_write_creates_owner_private_file() {
+fn atomic_runtime_write_creates_desktop_readable_file() {
     use std::os::unix::fs::PermissionsExt;
 
     let nonce = SystemTime::now()
@@ -141,14 +141,76 @@ fn atomic_runtime_write_creates_owner_private_file() {
     fs::create_dir_all(&dir).expect("create temp dir");
     let path = dir.join("staged-config.toml");
 
-    write_runtime_file_atomically(&path, b"secret = true\n").expect("write runtime file");
+    write_runtime_file_atomically(&path, b"state = true\n").expect("write runtime file");
     let mode = fs::metadata(&path)
         .expect("runtime metadata")
         .permissions()
         .mode()
         & 0o777;
 
-    assert_eq!(mode, 0o600);
+    assert_eq!(mode, 0o644);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_written_ready_and_result_files_stay_client_readable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-client-readable-test-{nonce}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let config = dir.join("config.toml");
+
+    // A root daemon writes the readiness marker; an unprivileged desktop or
+    // CLI must still read it, or daemon_control_ready_for_pid reports the
+    // running daemon as unavailable.
+    write_daemon_control_ready(&config, 42).expect("write ready marker");
+    let ready_path = daemon_control_ready_file_path(&config);
+    let ready_mode = fs::metadata(&ready_path)
+        .expect("ready marker metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_ne!(
+        ready_mode & 0o004,
+        0,
+        "ready marker must stay readable by other users"
+    );
+    assert!(
+        daemon_control_ready_for_pid(&config, 42),
+        "client read of a daemon-written marker must succeed"
+    );
+
+    write_daemon_control_result(&config, DaemonControlRequest::Reload, Ok(()))
+        .expect("write control result");
+    let result_path = daemon_control_result_file_path(&config);
+    let result_mode = fs::metadata(&result_path)
+        .expect("result file metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_ne!(
+        result_mode & 0o004,
+        0,
+        "control result must stay readable by other users"
+    );
+    wait_for_daemon_control_result(&config, DaemonControlRequest::Reload, Duration::from_millis(100))
+        .expect("client read of a daemon-written result must succeed");
+
+    let private_path = dir.join("daemon.private.json");
+    write_private_runtime_file_atomically(&private_path, b"secret\n")
+        .expect("write private runtime file");
+    let private_mode = fs::metadata(&private_path)
+        .expect("private file metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(private_mode, 0o600, "private data must stay owner-only");
+
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -426,7 +488,7 @@ fn daemon_log_and_permissions_reject_linked_files_before_mutation() {
     let mut log = open_daemon_log_file(&runtime).expect("create a regular daemon log");
     std::io::Write::write_all(&mut log, b"normal log entry\n").unwrap();
     assert_eq!(fs::read_to_string(&runtime).unwrap(), "normal log entry\n");
-    assert_eq!(fs::metadata(&runtime).unwrap().permissions().mode() & 0o777, 0o600);
+    assert_eq!(fs::metadata(&runtime).unwrap().permissions().mode() & 0o777, 0o644);
     fs::remove_dir_all(dir).unwrap();
 }
 
