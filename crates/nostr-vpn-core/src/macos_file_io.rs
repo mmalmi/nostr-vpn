@@ -494,17 +494,22 @@ fn reject_write_acl_impl(file: &File, allow_builtin_admin_group: bool) -> Result
 fn qualifier_is_builtin_admin_or_wheel(entry: *mut std::ffi::c_void) -> bool {
     use std::ffi::c_void;
     unsafe extern "C" {
-        fn acl_get_tag_qualifier(entry: *mut c_void, qualifier: *mut u8) -> i32;
+        fn acl_get_qualifier(entry: *mut c_void) -> *mut c_void;
+        fn acl_free(acl: *mut c_void) -> i32;
     }
     const GROUP_GUID_PREFIX: [u8; 12] = [
         0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF,
     ];
     let mut qualifier = [0u8; 16];
     // SAFETY: `entry` came from acl_get_entry on a live ACL and outlives this
-    // call; `qualifier` is a 16-byte uuid_t (guid_t) out-buffer.
-    if unsafe { acl_get_tag_qualifier(entry, qualifier.as_mut_ptr()) } != 0 {
+    // call; acl_get_qualifier returns a 16-byte guid_t (uuid_t) for extended
+    // entries and NULL when the entry carries no qualifier.
+    let raw = unsafe { acl_get_qualifier(entry) };
+    if raw.is_null() {
         return false;
     }
+    qualifier.copy_from_slice(unsafe { std::slice::from_raw_parts(raw.cast::<u8>(), 16) });
+    unsafe { acl_free(raw) };
     qualifier[..12] == GROUP_GUID_PREFIX
         && matches!(
             u32::from_be_bytes([qualifier[12], qualifier[13], qualifier[14], qualifier[15]]),
