@@ -31,6 +31,7 @@ public enum AppPage
 public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 {
     private AppCoreClient? _core;
+    private bool _disposed;
     private readonly Dispatcher _dispatcher;
     private readonly List<string> _pendingDeepLinks = [];
     private readonly DispatcherTimer _refreshTimer;
@@ -189,26 +190,54 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
             built = await Task.Run(() =>
             {
                 var core = new AppCoreClient(dataDir, version);
-                return (core, core.State());
+                try
+                {
+                    return (core, core.State());
+                }
+                catch
+                {
+                    core.Dispose();
+                    throw;
+                }
             });
         }
         catch (Exception error)
         {
-            _ = _dispatcher.BeginInvoke(() => Notice = error.Message);
+            _ = _dispatcher.BeginInvoke(() =>
+            {
+                if (!_disposed)
+                {
+                    Notice = error.Message;
+                }
+            });
             return;
         }
-        _core = built.Core;
-        _ = _dispatcher.BeginInvoke(() =>
+        if (_disposed || _dispatcher.HasShutdownStarted)
         {
-            ApplyState(built.State, syncDrafts: true);
-            SyncLaunchOnStartupRegistration();
-            foreach (var url in _pendingDeepLinks)
-            {
-                HandleDeepLink(url);
-            }
-            _pendingDeepLinks.Clear();
-            _ = CheckUpdatesAsync(manual: false);
-        });
+            built.Core.Dispose();
+            return;
+        }
+        _ = _dispatcher.BeginInvoke(() => FinishCoreInitialization(built.Core, built.State));
+    }
+
+    private void FinishCoreInitialization(AppCoreClient core, NativeAppState state)
+    {
+        // Quitting while the core is still building must not publish into a
+        // torn-down view; the just-built core is discarded instead.
+        if (_disposed)
+        {
+            core.Dispose();
+            return;
+        }
+        _core = core;
+        ApplyState(state, syncDrafts: true);
+        SyncLaunchOnStartupRegistration();
+        foreach (var url in _pendingDeepLinks)
+        {
+            HandleDeepLink(url);
+        }
+        _pendingDeepLinks.Clear();
+        _ = CheckUpdatesAsync(manual: false);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -940,6 +969,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _refreshTimer.Stop();
         _updateTimer.Stop();
         _themeService.Dispose();
