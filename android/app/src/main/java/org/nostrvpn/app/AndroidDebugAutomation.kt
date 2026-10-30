@@ -175,7 +175,8 @@ internal object AndroidDebugAutomation {
         }
         dispatch(NativeActions.updateSettings(*settings.toTypedArray()))
         delay(500)
-        val current = core.refresh()
+        // Core refresh can block on network round trips; keep it off main.
+        val current = withContext(Dispatchers.IO) { core.refresh() }
         val result = JSONObject()
             .put("probeId", requested.optString("probeId"))
             .put("error", current.error)

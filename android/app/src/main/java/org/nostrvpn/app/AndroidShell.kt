@@ -125,7 +125,7 @@ internal fun NostrVpnApp(
     qrJson: (String) -> JSONObject,
     scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
-    dispatchSucceeded: (JSONObject) -> Boolean,
+    dispatchSucceeded: (JSONObject, () -> Unit) -> Unit,
     currentActiveNetworkId: () -> String?,
     deviceAddCompletionNonce: Long,
     toggleVpn: () -> Unit,
