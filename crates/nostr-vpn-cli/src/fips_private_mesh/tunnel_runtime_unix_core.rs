@@ -459,6 +459,7 @@ impl FipsPrivateTunnelRuntime {
                 dns.update_records(config.magic_dns_records.clone());
             } else {
                 self.pending_paid_exit_dns = crate::ConnectMagicDnsRuntime::start_records(
+                    Some(&self.cleanup_journal_config_path),
                     &config.magic_dns_suffix,
                     config.magic_dns_records.clone(),
                 );

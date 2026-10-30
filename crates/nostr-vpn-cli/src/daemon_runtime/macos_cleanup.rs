@@ -200,6 +200,16 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
             failures.push(format!("remove secure DNS state: {error}"));
         }
 
+        // The recorded ownership identifies exactly the resolver files this
+        // configuration installed; another configuration's files survive.
+        if let Some(owned) = state.magic_dns_resolver_files.as_ref()
+            && let Err(error) = nostr_vpn_core::magic_dns::uninstall_system_resolver(owned)
+        {
+            failures.push(format!("remove MagicDNS resolver files: {error}"));
+        } else {
+            state.magic_dns_resolver_files = None;
+        }
+
         if using_legacy_route_cleanup
             && let Err(error) = repair_legacy_macos_network_state(config_path)
         {
