@@ -47,6 +47,14 @@ pub(super) async fn funding_state<M: MintConnection>(
     })
 }
 
+/// `Unexpired` carries the funding expiry so callers can wait out the
+/// finished-but-unexpired window instead of rechecking the mint every minute.
+pub(super) enum ExpiredFundingRecovery {
+    Recovered(Vec<Proof>),
+    Unexpired(u64),
+    Unavailable,
+}
+
 pub(super) async fn recover_expired_funding<M: MintConnection>(
     data_dir: &Path,
     saved_refund: Option<ExpiryRefund>,
@@ -56,16 +64,25 @@ pub(super) async fn recover_expired_funding<M: MintConnection>(
     mint: &M,
     client: &reqwest::Client,
     state: State,
-) -> anyhow::Result<Option<Vec<Proof>>> {
+) -> anyhow::Result<ExpiredFundingRecovery> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs();
-    if now <= channel.params.expiry_timestamp || state == State::Pending {
-        return Ok(None);
+    if now <= channel.params.expiry_timestamp {
+        return Ok(if state == State::Unspent {
+            ExpiredFundingRecovery::Unexpired(channel.params.expiry_timestamp)
+        } else {
+            ExpiredFundingRecovery::Unavailable
+        });
+    }
+    if state == State::Pending {
+        return Ok(ExpiredFundingRecovery::Unavailable);
     }
     let refund = match saved_refund {
         Some(refund) => refund,
-        None if state == State::Spent => return Ok(None), // Seller settled first.
+        None if state == State::Spent => {
+            return Ok(ExpiredFundingRecovery::Unavailable); // Seller settled first.
+        }
         None => {
             let keyset_json = fetch_spilman_keyset_info_json_with_client(
                 client,
@@ -156,7 +173,7 @@ pub(super) async fn recover_expired_funding<M: MintConnection>(
         );
         if response.outputs.is_empty() {
             // A seller may have won the race after we persisted our intent.
-            return Ok(None);
+            return Ok(ExpiredFundingRecovery::Unavailable);
         }
         ensure!(
             response.outputs.len() == outputs.len(),
@@ -177,7 +194,7 @@ pub(super) async fn recover_expired_funding<M: MintConnection>(
         }
         signatures
     };
-    unblind_refund(&refund, &outputs, signatures).map(Some)
+    unblind_refund(&refund, &outputs, signatures).map(ExpiredFundingRecovery::Recovered)
 }
 
 fn unblind_refund(
