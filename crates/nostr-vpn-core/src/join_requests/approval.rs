@@ -86,12 +86,14 @@ fn stage_approved_config(
 
 /// Serializes one approval read-modify-write across processes: the on-disk
 /// roster freshness check and the durable writes hold the same exclusive lock
-/// beside the config, so two writers that loaded the same roster timestamp can
+/// beside the config, so two writers that loaded the same roster snapshot can
 /// no longer both pass the check and overwrite each other. `apply` queues the
 /// durable outbox entry and saves the approved config while the lock is held;
 /// nothing is written when the snapshot no longer matches disk, because saving
 /// a stale snapshot would revert a concurrently approved device and kick it on
-/// missing-self.
+/// missing-self. The check spans every network's roster because the save
+/// overwrites the whole config: an approval for one network must not silently
+/// revert an approval another writer committed for a different network.
 pub fn commit_join_approval(
     config_path: &Path,
     snapshot: &AppConfig,
@@ -99,19 +101,26 @@ pub fn commit_join_approval(
     apply: impl FnOnce() -> Result<()>,
 ) -> Result<()> {
     let _config_lock = exclusive_config_lock(config_path)?;
-    let snapshot_at = snapshot
-        .network_by_id(network_entry_id)
-        .ok_or_else(|| anyhow!("network not found"))?
-        .shared_roster_updated_at;
-    let on_disk_at = AppConfig::load(config_path)?
-        .network_by_id(network_entry_id)
-        .map(|network| network.shared_roster_updated_at);
-    if on_disk_at != Some(snapshot_at) {
+    if snapshot.network_by_id(network_entry_id).is_none() {
+        return Err(anyhow!("network not found"));
+    }
+    if roster_state(&AppConfig::load(config_path)?) != roster_state(snapshot) {
         return Err(anyhow!(
-            "network roster changed on disk while this approval was prepared; reload the network and approve again"
+            "config roster changed on disk while this approval was prepared; reload the network and approve again"
         ));
     }
     apply()
+}
+
+/// Roster entry identity and version for every network. The approval save
+/// overwrites the whole config, so this state must still match disk when the
+/// save runs.
+fn roster_state(config: &AppConfig) -> Vec<(&str, u64)> {
+    config
+        .networks
+        .iter()
+        .map(|network| (network.id.as_str(), network.shared_roster_updated_at))
+        .collect()
 }
 
 /// Same cross-process convention as the paid-route store: a private sidecar

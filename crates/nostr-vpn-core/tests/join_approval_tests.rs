@@ -79,6 +79,27 @@ fn approval_admin() -> (AppConfig, String) {
     (admin, network_entry_id)
 }
 
+fn admin_with_second_network() -> (AppConfig, String, String) {
+    let (mut admin, first_entry) = approval_admin();
+    let admin_pubkey = admin.own_nostr_pubkey_hex().expect("admin pubkey");
+    let second_entry = admin.add_network("Second Mesh");
+    {
+        let network = admin
+            .network_by_id_mut(&second_entry)
+            .expect("second network entry");
+        network.network_id = "second-mesh".to_string();
+        network.devices = vec![admin_pubkey.clone()];
+        network.admins = vec![admin_pubkey.clone()];
+    }
+    admin.ensure_defaults();
+    let network = admin
+        .network_by_id_mut(&second_entry)
+        .expect("second network entry");
+    network.shared_roster_updated_at = REQUESTED_AT;
+    network.shared_roster_signed_by = admin_pubkey;
+    (admin, first_entry, second_entry)
+}
+
 fn pending_bootstrap(config: &AppConfig) -> NostrIdentityDeviceApprovalBootstrap {
     let pending = config
         .pending_nostr_join_request
@@ -178,6 +199,97 @@ fn two_concurrent_approvals_serialize_into_exactly_one_durable_save() {
         &first_pubkey
     };
     assert!(!devices.contains(loser), "losing approval wrote nothing");
+
+    let queued = load_join_rosters(&config_path);
+    assert_eq!(queued.len(), 1, "only the winning approval queues delivery");
+    assert_eq!(queued[0].1.recipient_npub, winner);
+
+    let _ = fs::remove_dir_all(join_roster_outbox_directory(&config_path));
+    let _ = fs::remove_file(config_path.with_extension("toml.lock"));
+    fs::remove_file(&config_path).expect("remove temp config");
+}
+
+/// The save overwrites the whole config, so two writers that loaded the same
+/// snapshot must not both commit approvals for DIFFERENT networks: the second
+/// save would revert the first winner's device and kick it on missing-self.
+/// Exactly one commit may pass, and it must leave the other network untouched.
+#[test]
+fn concurrent_approvals_for_different_networks_admit_exactly_one_save() {
+    let (admin, first_entry, second_entry) = admin_with_second_network();
+    let config_path = unique_temp_config_path("approval-two-networks");
+    admin.save(&config_path).expect("persist admin config");
+
+    let first_joiner = pending_joiner();
+    let second_joiner = pending_joiner();
+    let first_pubkey = approved_device_pubkey(&first_joiner);
+    let second_pubkey = approved_device_pubkey(&second_joiner);
+    let both_loaded = std::sync::Barrier::new(2);
+
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            stage_and_commit(
+                &config_path,
+                &first_entry,
+                &first_joiner,
+                SIGNED_AT + 1,
+                &both_loaded,
+            )
+        });
+        let second = scope.spawn(|| {
+            stage_and_commit(
+                &config_path,
+                &second_entry,
+                &second_joiner,
+                SIGNED_AT + 2,
+                &both_loaded,
+            )
+        });
+        (
+            first.join().expect("first writer"),
+            second.join().expect("second writer"),
+        )
+    });
+
+    let (winner, error) = match (first, second) {
+        (Ok(winner), Err(error)) | (Err(error), Ok(winner)) => (winner, error),
+        _ => panic!("the config lock must admit exactly one of two concurrent approvals"),
+    };
+    assert!(
+        error.to_string().contains("changed on disk"),
+        "the losing writer must report the stale snapshot: {error:#}"
+    );
+    let (winner_entry, loser_entry) = if winner == first_pubkey {
+        (&first_entry, &second_entry)
+    } else {
+        (&second_entry, &first_entry)
+    };
+    let loser = if winner == first_pubkey {
+        &second_pubkey
+    } else {
+        &first_pubkey
+    };
+
+    let on_disk = AppConfig::load(&config_path).expect("reload config");
+    let winning_network = on_disk
+        .network_by_id(winner_entry)
+        .expect("winning network");
+    assert!(
+        winning_network.devices.contains(&winner),
+        "winning approval stays durable"
+    );
+    assert!(
+        winning_network.shared_roster_updated_at > REQUESTED_AT,
+        "the winner bumps only its own network roster"
+    );
+    let losing_network = on_disk.network_by_id(loser_entry).expect("losing network");
+    assert!(
+        !losing_network.devices.contains(loser),
+        "the losing approval must not add its device"
+    );
+    assert_eq!(
+        losing_network.shared_roster_updated_at, REQUESTED_AT,
+        "the winner's save must not touch the loser's network"
+    );
 
     let queued = load_join_rosters(&config_path);
     assert_eq!(queued.len(), 1, "only the winning approval queues delivery");
