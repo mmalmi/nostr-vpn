@@ -4,7 +4,9 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::join_requests::prepare_manual_join_delivery;
+use nostr_vpn_core::signed_rosters::SignedRosterStore;
 
+#[allow(clippy::too_many_arguments)]
 fn admin_signed_roster_update(
     network_id: &str,
     network_name: &str,
@@ -13,6 +15,7 @@ fn admin_signed_roster_update(
     aliases: std::collections::HashMap<String, String>,
     signed_at: u64,
     signed_by: &str,
+    artifact_hash: &str,
 ) -> AdminSignedSharedRosterUpdate {
     AdminSignedSharedRosterUpdate {
         network_id: network_id.to_string(),
@@ -22,6 +25,7 @@ fn admin_signed_roster_update(
         aliases,
         signed_at,
         signed_by: signed_by.to_string(),
+        artifact_hash: artifact_hash.to_string(),
     }
 }
 

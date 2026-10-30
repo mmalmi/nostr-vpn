@@ -10,10 +10,19 @@ fn apply_mobile_roster(
     app.ensure_defaults();
     let signed_roster =
         signed_roster.ok_or_else(|| anyhow!("FIPS roster frame is missing signed roster event"))?;
-    let changed = app.apply_verified_admin_signed_shared_roster(signed_roster)?;
     let apply_network_id = signed_roster.network_id()?;
+    let stored_latest = config_path.and_then(|config_path| {
+        stored_roster_for_apply(
+            &signed_rosters_file_path(config_path),
+            &apply_network_id,
+            signed_roster,
+        )
+    });
+    let changed =
+        app.apply_verified_admin_signed_shared_roster(signed_roster, stored_latest.as_ref())?;
     if let Some(config_path) = config_path
-        && mobile_signed_roster_is_current_for_app(&app, &apply_network_id, signed_roster)
+        && (changed
+            || mobile_signed_roster_is_current_for_app(&app, &apply_network_id, signed_roster))
         && let Err(error) = upsert_signed_roster(
             &signed_rosters_file_path(config_path),
             signed_roster.clone(),
@@ -114,6 +123,41 @@ fn mobile_signed_roster_is_current_for_app(
             && normalize_nostr_pubkey(&network.shared_roster_signed_by)
                 .is_ok_and(|value| value == signed_by)
     })
+}
+
+/// Records the incoming artifact before applying so the apply can consult the
+/// store's converged winner when an earlier roster removed the network entry,
+/// and returns that winner.
+fn stored_roster_for_apply(
+    store_path: &Path,
+    network_id: &str,
+    signed_roster: &SignedRoster,
+) -> Option<SignedRoster> {
+    let Ok(mut store) = load_signed_rosters(store_path) else {
+        return None;
+    };
+    let mut stored_latest = store.latest_for(network_id).cloned();
+    if stored_latest.is_some() {
+        match store.upsert(signed_roster.clone()) {
+            Ok(true) => {
+                stored_latest = Some(signed_roster.clone());
+                if let Err(error) = write_signed_rosters(store_path, &store) {
+                    mobile_debug_log(format!(
+                        "mobile: signed roster artifact record failed: {error:#}"
+                    ));
+                    tracing::warn!(?error, "mobile: signed roster artifact record failed");
+                }
+            }
+            Ok(false) => {}
+            Err(error) => {
+                mobile_debug_log(format!(
+                    "mobile: signed roster artifact record failed: {error:#}"
+                ));
+                tracing::warn!(?error, "mobile: signed roster artifact record failed");
+            }
+        }
+    }
+    stored_latest
 }
 
 fn record_mobile_join_request(

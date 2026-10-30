@@ -201,13 +201,22 @@ fn persist_shared_network_roster(
 ) -> Result<Option<String>> {
     let signed_roster =
         signed_roster.ok_or_else(|| anyhow!("FIPS roster frame is missing signed roster event"))?;
-    let changed = app.apply_verified_admin_signed_shared_roster(signed_roster)?;
     let apply_network_id = signed_roster.network_id()?;
-    if signed_roster_is_current_for_app(app, &apply_network_id, signed_roster) {
-        upsert_signed_roster(
-            &signed_rosters_file_path(config_path),
-            signed_roster.clone(),
-        )?;
+    let store_path = signed_rosters_file_path(config_path);
+    let mut store = load_signed_rosters(&store_path)?;
+    // Record the incoming artifact before applying so the apply below can
+    // consult the store's converged winner even when an earlier roster
+    // removed the network entry itself.
+    if store.latest_for(&apply_network_id).is_some()
+        && store.upsert(signed_roster.clone())?
+    {
+        write_signed_rosters(&store_path, &store)?;
+    }
+    let stored_latest = store.latest_for(&apply_network_id).cloned();
+    let changed =
+        app.apply_verified_admin_signed_shared_roster(signed_roster, stored_latest.as_ref())?;
+    if changed || signed_roster_is_current_for_app(app, &apply_network_id, signed_roster) {
+        upsert_signed_roster(&store_path, signed_roster.clone())?;
     }
     if !changed {
         return Ok(None);

@@ -296,7 +296,7 @@ impl AppConfig {
                 "signed manual join roster signer is not a roster admin"
             ));
         }
-        if !self.apply_verified_admin_signed_shared_roster(signed_roster)? {
+        if !self.apply_verified_admin_signed_shared_roster(signed_roster, None)? {
             return Err(anyhow!("signed manual join roster was not applied"));
         }
         self.set_network_enabled(&network_entry_id, true)?;
@@ -348,11 +348,12 @@ impl AppConfig {
             network.admins = vec![signer.to_string()];
             network.shared_roster_updated_at = 0;
             network.shared_roster_signed_by.clear();
+            network.shared_roster_artifact_hash.clear();
             updated.set_network_enabled(&entry_id, true)?;
             entry_id
         };
 
-        if !updated.apply_verified_admin_signed_shared_roster(signed_roster)? {
+        if !updated.apply_verified_admin_signed_shared_roster(signed_roster, None)? {
             return Err(anyhow!("signed join roster was not applied"));
         }
         updated.pending_nostr_join_request = None;
