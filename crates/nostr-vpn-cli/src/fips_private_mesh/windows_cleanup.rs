@@ -90,6 +90,8 @@ pub(crate) fn repair_windows_network_cleanup_state(
         {
             failures.push(format!("native WireGuard service/config: {error:#}"));
             remaining_native.push(cleanup);
+        } else if !cleanup.is_empty() {
+            remaining_native.push(cleanup);
         }
     }
     state.native_wireguard = remaining_native;
