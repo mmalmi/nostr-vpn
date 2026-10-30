@@ -238,6 +238,9 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
 
     #[cfg(target_os = "windows")]
     {
+        // Repair rewrites the shared journal, so hold the same cross-process
+        // lock as the persist entry points; never repair an unlocked file.
+        let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
         let path = daemon_network_cleanup_file_path(config_path)?;
         let Some(mut state) = read_daemon_network_cleanup_state(&path)? else {
             return Ok(false);
