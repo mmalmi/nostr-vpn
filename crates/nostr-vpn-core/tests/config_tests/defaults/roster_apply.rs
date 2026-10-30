@@ -131,7 +131,7 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply shared roster");
 
     assert!(changed);
@@ -185,7 +185,7 @@ fn newer_stale_admin_snapshot_cannot_resurrect_locally_removed_device() {
             removed_at + 1,
             &other_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply newer stale snapshot");
 
     assert!(changed);
@@ -224,7 +224,7 @@ fn apply_verified_admin_signed_shared_roster_applies_newer_admin_event_name() {
     let signed = SignedRoster::sign("mesh-home", roster, &current_admin).expect("sign roster");
 
     let changed = config
-        .apply_verified_admin_signed_shared_roster(&signed)
+        .apply_verified_admin_signed_shared_roster(&signed, None)
         .expect("apply same roster metadata");
 
     assert!(changed);
@@ -291,7 +291,7 @@ fn apply_admin_signed_shared_roster_clears_join_request_when_own_key_is_added() 
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply accepted roster");
 
     assert!(changed);
@@ -331,7 +331,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply accepted roster");
     assert!(config.active_network_has_confirmed_local_identity());
 
@@ -345,7 +345,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
             1_726_000_001,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply removal roster");
 
     assert!(changed);
@@ -385,7 +385,7 @@ fn apply_admin_signed_shared_roster_keeps_network_when_own_key_was_never_in_rost
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply roster with own absent");
 
     assert!(changed);
@@ -448,7 +448,7 @@ fn manual_join_stays_pending_until_a_signed_roster_contains_this_device() {
     .expect("sign pre-acceptance roster");
     assert!(
         joining
-            .apply_verified_admin_signed_shared_roster(&roster_without_joiner)
+            .apply_verified_admin_signed_shared_roster(&roster_without_joiner, None)
             .expect("apply configured admin roster")
     );
     assert!(
@@ -514,7 +514,7 @@ fn apply_admin_signed_shared_roster_ignores_unknown_signer() {
             1_726_000_000,
             &unknown_admin.public_key().to_hex(),
             "hash",
-        ))
+        ), None)
         .expect("ignore unknown signer");
 
     assert!(!changed);
@@ -547,7 +547,7 @@ fn apply_verified_admin_signed_shared_roster_rejects_tampered_event() {
     let tampered = SignedRoster { event };
 
     let error = config
-        .apply_verified_admin_signed_shared_roster(&tampered)
+        .apply_verified_admin_signed_shared_roster(&tampered, None)
         .expect_err("tampered roster event must be rejected");
 
     assert!(
@@ -580,7 +580,7 @@ fn apply_verified_admin_signed_shared_roster_ignores_non_admin_author() {
     };
     let signed = SignedRoster::sign("mesh-home", roster, &outsider).expect("sign roster");
     let changed = config
-        .apply_verified_admin_signed_shared_roster(&signed)
+        .apply_verified_admin_signed_shared_roster(&signed, None)
         .expect("valid signature by non-admin author should be ignored");
 
     assert!(!changed);
@@ -614,7 +614,7 @@ fn apply_admin_signed_shared_roster_clears_data_peers_when_own_key_is_removed() 
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply removal roster");
 
     assert!(changed);
@@ -685,12 +685,12 @@ fn equal_timestamp_rosters_converge_on_one_live_configuration_in_both_orders() {
     let mut loser_then_winner = joined_config();
     assert!(
         loser_then_winner
-            .apply_verified_admin_signed_shared_roster(&loser)
+            .apply_verified_admin_signed_shared_roster(&loser, None)
             .expect("apply losing roster first")
     );
     assert!(
         loser_then_winner
-            .apply_verified_admin_signed_shared_roster(&winner)
+            .apply_verified_admin_signed_shared_roster(&winner, None)
             .expect("apply winning roster"),
         "the greater artifact hash must win the equal-timestamp tie-break"
     );
@@ -698,18 +698,18 @@ fn equal_timestamp_rosters_converge_on_one_live_configuration_in_both_orders() {
     let mut winner_then_loser = joined_config();
     assert!(
         winner_then_loser
-            .apply_verified_admin_signed_shared_roster(&winner)
+            .apply_verified_admin_signed_shared_roster(&winner, None)
             .expect("apply winning roster first")
     );
     assert!(
         !winner_then_loser
-            .apply_verified_admin_signed_shared_roster(&loser)
+            .apply_verified_admin_signed_shared_roster(&loser, None)
             .expect("apply losing roster"),
         "the losing roster must be rejected without an error, like a stale roster"
     );
     assert!(
         !winner_then_loser
-            .apply_verified_admin_signed_shared_roster(&winner)
+            .apply_verified_admin_signed_shared_roster(&winner, None)
             .expect("replay winning roster"),
         "replaying the identical roster must be a no-op"
     );
@@ -752,4 +752,289 @@ fn equal_timestamp_rosters_converge_on_one_live_configuration_in_both_orders() {
         winner_first.shared_roster_artifact_hash,
         loser_first.shared_roster_artifact_hash
     );
+}
+
+#[test]
+fn higher_hash_same_second_roster_retaining_device_rebuilds_removed_network() {
+    let own = Keys::generate();
+    let other = Keys::generate().public_key().to_hex();
+    let own_hex = own.public_key().to_hex();
+    let network_id = "mesh-home";
+
+    let sign = |admin: &Keys, admin_hex: &str, signed_at: u64, devices: Vec<String>| {
+        SignedRoster::sign(
+            network_id,
+            NetworkRoster {
+                network_name: "Home".to_string(),
+                devices,
+                admins: vec![admin_hex.to_string()],
+                aliases: std::collections::HashMap::new(),
+                signed_at,
+            },
+            admin,
+        )
+        .expect("sign roster")
+    };
+    // Fresh admin keys per candidate pair: the artifact hash covers the
+    // unsigned event content, so only new keys reroll the tie-break order.
+    // This pair keeps the roster that retains this device as the winner.
+    let (admin_keys, admin_hex, removal, retained) = std::iter::repeat_with(|| {
+        let admin = Keys::generate();
+        let admin_hex = admin.public_key().to_hex();
+        let removal = sign(&admin, &admin_hex, 1_726_000_001, vec![
+            admin_hex.clone(),
+            other.clone(),
+        ]);
+        let retained = sign(&admin, &admin_hex, 1_726_000_001, vec![
+            admin_hex.clone(),
+            other.clone(),
+            own_hex.clone(),
+        ]);
+        (retained.artifact_hash() > removal.artifact_hash())
+            .then_some((admin, admin_hex, removal, retained))
+    })
+    .flatten()
+    .next()
+    .expect("roster pair whose retaining roster wins the tie-break");
+    let joined = sign(
+        &admin_keys,
+        &admin_hex,
+        1_726_000_000,
+        vec![admin_hex.clone(), other.clone(), own_hex.clone()],
+    );
+
+    let joined_config = || {
+        let mut config = AppConfig::generated();
+        config.nostr.secret_key = own.secret_key().to_secret_hex();
+        config.nostr.public_key = own_hex.clone();
+        config.networks[0].network_id = network_id.to_string();
+        config.networks[0].admins = vec![admin_hex.clone()];
+        config.networks[0].devices = vec![admin_hex.clone()];
+        config.networks[0].enabled = true;
+        config.ensure_defaults();
+        config
+    };
+    let apply = |config: &mut AppConfig, store: &SignedRosterStore, roster: &SignedRoster| {
+        config
+            .apply_verified_admin_signed_shared_roster(roster, store.latest_for(network_id))
+            .expect("apply roster")
+    };
+
+    // Removal first: the removal roster deletes the network entry, and the
+    // retaining winner arrives at a config that no longer has the network.
+    let mut removal_first = joined_config();
+    let mut removal_store = SignedRosterStore::default();
+    assert!(removal_store.upsert(joined.clone()).expect("store joined"));
+    assert!(apply(&mut removal_first, &removal_store, &joined));
+    assert!(
+        removal_store
+            .upsert(removal.clone())
+            .expect("store removal")
+    );
+    assert!(apply(&mut removal_first, &removal_store, &removal));
+    assert!(
+        !removal_first
+            .networks
+            .iter()
+            .any(|network| network.network_id == network_id),
+        "the removal roster deletes the network entry"
+    );
+    assert!(
+        removal_store
+            .upsert(retained.clone())
+            .expect("store retaining winner")
+    );
+    assert!(
+        apply(&mut removal_first, &removal_store, &retained),
+        "the retaining winner must rebuild the removed network"
+    );
+
+    // Retaining winner first: the removal roster loses the tie-break against
+    // the live config and the store.
+    let mut retained_first = joined_config();
+    let mut retained_store = SignedRosterStore::default();
+    assert!(retained_store.upsert(joined.clone()).expect("store joined"));
+    assert!(apply(&mut retained_first, &retained_store, &joined));
+    assert!(
+        retained_store
+            .upsert(retained.clone())
+            .expect("store retaining winner")
+    );
+    assert!(apply(&mut retained_first, &retained_store, &retained));
+    assert!(
+        !retained_store.upsert(removal.clone()).expect("store removal"),
+        "the losing removal roster must not enter the store"
+    );
+    assert!(
+        !apply(&mut retained_first, &retained_store, &removal),
+        "the losing removal roster must be rejected"
+    );
+    assert!(
+        !apply(&mut removal_first, &removal_store, &removal),
+        "a replayed losing roster must not alter the rebuilt network"
+    );
+
+    let rebuilt = removal_first
+        .networks
+        .iter()
+        .find(|network| network.network_id == network_id)
+        .expect("rebuilt network present");
+    let kept = retained_first
+        .networks
+        .iter()
+        .find(|network| network.network_id == network_id)
+        .expect("kept network present");
+    assert_eq!(rebuilt.devices, kept.devices);
+    assert_eq!(rebuilt.admins, kept.admins);
+    assert_eq!(rebuilt.name, kept.name);
+    assert_eq!(rebuilt.enabled, kept.enabled);
+    assert_eq!(rebuilt.removed_devices, kept.removed_devices);
+    assert_eq!(rebuilt.join_request_admin, kept.join_request_admin);
+    assert_eq!(
+        rebuilt.local_identity_confirmation_pending,
+        kept.local_identity_confirmation_pending
+    );
+    assert_eq!(rebuilt.outbound_join_request, kept.outbound_join_request);
+    assert_eq!(rebuilt.inbound_join_requests, kept.inbound_join_requests);
+    assert_eq!(
+        rebuilt.shared_roster_updated_at,
+        kept.shared_roster_updated_at
+    );
+    assert_eq!(
+        rebuilt.shared_roster_signed_by,
+        kept.shared_roster_signed_by
+    );
+    assert_eq!(
+        rebuilt.shared_roster_artifact_hash,
+        retained.artifact_hash(),
+        "both orders must end at the retaining winner's artifact"
+    );
+    assert!(removal_first.active_network_has_confirmed_local_identity());
+    assert!(retained_first.active_network_has_confirmed_local_identity());
+}
+
+#[test]
+fn higher_hash_same_second_roster_removing_device_keeps_removal_sticky() {
+    let own = Keys::generate();
+    let other = Keys::generate().public_key().to_hex();
+    let own_hex = own.public_key().to_hex();
+    let network_id = "mesh-home";
+
+    let sign = |admin: &Keys, admin_hex: &str, signed_at: u64, devices: Vec<String>| {
+        SignedRoster::sign(
+            network_id,
+            NetworkRoster {
+                network_name: "Home".to_string(),
+                devices,
+                admins: vec![admin_hex.to_string()],
+                aliases: std::collections::HashMap::new(),
+                signed_at,
+            },
+            admin,
+        )
+        .expect("sign roster")
+    };
+    // Mirror of the retaining-winner test: fresh admin keys per candidate
+    // pair until the roster that removes this device wins the tie-break.
+    let (admin_keys, admin_hex, retained, removal) = std::iter::repeat_with(|| {
+        let admin = Keys::generate();
+        let admin_hex = admin.public_key().to_hex();
+        let retained = sign(&admin, &admin_hex, 1_726_000_001, vec![
+            admin_hex.clone(),
+            other.clone(),
+            own_hex.clone(),
+        ]);
+        let removal = sign(&admin, &admin_hex, 1_726_000_001, vec![
+            admin_hex.clone(),
+            other.clone(),
+        ]);
+        (removal.artifact_hash() > retained.artifact_hash())
+            .then_some((admin, admin_hex, retained, removal))
+    })
+    .flatten()
+    .next()
+    .expect("roster pair whose removing roster wins the tie-break");
+    let joined = sign(
+        &admin_keys,
+        &admin_hex,
+        1_726_000_000,
+        vec![admin_hex.clone(), other.clone(), own_hex.clone()],
+    );
+
+    let joined_config = || {
+        let mut config = AppConfig::generated();
+        config.nostr.secret_key = own.secret_key().to_secret_hex();
+        config.nostr.public_key = own_hex.clone();
+        config.networks[0].network_id = network_id.to_string();
+        config.networks[0].admins = vec![admin_hex.clone()];
+        config.networks[0].devices = vec![admin_hex.clone()];
+        config.ensure_defaults();
+        config
+    };
+    let apply = |config: &mut AppConfig, store: &SignedRosterStore, roster: &SignedRoster| {
+        config
+            .apply_verified_admin_signed_shared_roster(roster, store.latest_for(network_id))
+            .expect("apply roster")
+    };
+    let network_present = |config: &AppConfig| {
+        config
+            .networks
+            .iter()
+            .any(|network| network.network_id == network_id)
+    };
+
+    // Removal winner first: the network is deleted and the losing retaining
+    // roster must not resurrect it.
+    let mut removal_first = joined_config();
+    let mut removal_store = SignedRosterStore::default();
+    assert!(removal_store.upsert(joined.clone()).expect("store joined"));
+    assert!(apply(&mut removal_first, &removal_store, &joined));
+    assert!(
+        removal_store
+            .upsert(removal.clone())
+            .expect("store removal winner")
+    );
+    assert!(apply(&mut removal_first, &removal_store, &removal));
+    assert!(!network_present(&removal_first));
+    assert!(
+        !removal_store
+            .upsert(retained.clone())
+            .expect("store retaining loser"),
+        "the losing retaining roster must not enter the store"
+    );
+    assert!(
+        !apply(&mut removal_first, &removal_store, &retained),
+        "the losing retaining roster must not resurrect the removed network"
+    );
+    assert!(!network_present(&removal_first));
+
+    // Retaining roster first: the removal winner still deletes the network.
+    let mut retained_first = joined_config();
+    let mut retained_store = SignedRosterStore::default();
+    assert!(retained_store.upsert(joined.clone()).expect("store joined"));
+    assert!(apply(&mut retained_first, &retained_store, &joined));
+    assert!(
+        retained_store
+            .upsert(retained.clone())
+            .expect("store retaining loser")
+    );
+    assert!(apply(&mut retained_first, &retained_store, &retained));
+    assert!(network_present(&retained_first));
+    assert!(
+        retained_store
+            .upsert(removal.clone())
+            .expect("store removal winner")
+    );
+    assert!(apply(&mut retained_first, &retained_store, &removal));
+    assert!(
+        !network_present(&retained_first),
+        "the removal winner must delete the network in this order too"
+    );
+
+    assert_eq!(
+        removal_store.latest_for(network_id),
+        Some(&removal),
+        "the store must converge on the removing winner"
+    );
+    assert_eq!(retained_store.latest_for(network_id), Some(&removal));
 }

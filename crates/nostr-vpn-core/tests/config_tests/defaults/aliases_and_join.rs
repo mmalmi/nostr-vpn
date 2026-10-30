@@ -73,7 +73,7 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply shared roster");
 
     assert!(changed);
@@ -116,7 +116,7 @@ fn apply_admin_signed_shared_roster_clears_removed_exit_node() {
             1_726_000_000,
             &current_admin_hex,
             "hash",
-        ))
+        ), None)
         .expect("apply shared roster");
 
     assert!(changed);

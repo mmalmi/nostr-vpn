@@ -246,7 +246,7 @@ mod tests {
                     signed_at: 1_778_998_002,
                     signed_by: admin_pubkey,
                     artifact_hash: "a".repeat(64),
-                })
+                }, None)
                 .expect("apply accepted roster")
         );
 

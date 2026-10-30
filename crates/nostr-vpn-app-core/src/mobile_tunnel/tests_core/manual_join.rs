@@ -48,7 +48,7 @@
         )
         .expect("sign admin roster without joiner");
         assert!(
-            app.apply_verified_admin_signed_shared_roster(&signed_without_joiner)
+            app.apply_verified_admin_signed_shared_roster(&signed_without_joiner, None)
                 .expect("apply configured admin roster")
         );
 

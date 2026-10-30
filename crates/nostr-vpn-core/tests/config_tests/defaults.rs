@@ -4,6 +4,7 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::join_requests::prepare_manual_join_delivery;
+use nostr_vpn_core::signed_rosters::SignedRosterStore;
 
 #[allow(clippy::too_many_arguments)]
 fn admin_signed_roster_update(
