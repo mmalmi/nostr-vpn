@@ -488,7 +488,7 @@ fn legacy_selection(
             current_target()
         )
     })?;
-    let asset_url = manifest_asset_url(&manifest_url, &asset.path);
+    let asset_url = manifest_asset_url(&manifest_url, &asset.path)?;
     let source_name = if manifest_url.contains("api.github.com") {
         GITHUB_SOURCE_NAME
     } else {
@@ -686,15 +686,20 @@ fn fetch_manifest(url: &str) -> Result<ReleaseManifest> {
     serde_json::from_slice(&output.stdout).context("failed to parse release manifest")
 }
 
-fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
-    if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("file://") {
-        return path.to_string();
+fn manifest_asset_url(manifest_url: &str, path: &str) -> Result<String> {
+    match path.split_once("://") {
+        Some(("https", _)) => Ok(path.to_string()),
+        Some((scheme, _)) => Err(anyhow!(
+            "update asset URL must use https, got {scheme} in {path}"
+        )),
+        None => {
+            let base = manifest_url
+                .rsplit_once('/')
+                .map(|(base, _)| base)
+                .unwrap_or(manifest_url);
+            Ok(format!("{}/{}", base, path.trim_start_matches('/')))
+        }
     }
-    let base = manifest_url
-        .rsplit_once('/')
-        .map(|(base, _)| base)
-        .unwrap_or(manifest_url);
-    format!("{}/{}", base, path.trim_start_matches('/'))
 }
 
 fn download_asset(url: &str, destination: &Path) -> Result<()> {
@@ -800,9 +805,31 @@ mod tests {
             manifest_asset_url(
                 "https://example.invalid/latest/release.json",
                 "assets/nvpn.tgz"
-            ),
+            )
+            .expect("relative asset URL"),
             "https://example.invalid/latest/assets/nvpn.tgz"
         );
+    }
+
+    #[test]
+    fn rejects_non_https_manifest_asset_urls() {
+        assert_eq!(
+            manifest_asset_url(
+                "https://example.invalid/latest/release.json",
+                "https://cdn.example.invalid/assets/nvpn.tgz"
+            )
+            .expect("https asset URL"),
+            "https://cdn.example.invalid/assets/nvpn.tgz"
+        );
+        for path in [
+            "http://cdn.example.invalid/assets/nvpn.tgz",
+            "file:///tmp/nvpn.tgz",
+        ] {
+            assert!(
+                manifest_asset_url("https://example.invalid/latest/release.json", path).is_err(),
+                "non-https asset URL {path} must be rejected"
+            );
+        }
     }
 
     #[tokio::test]
