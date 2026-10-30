@@ -90,6 +90,8 @@ require_var NVPN_ASC_AUTH_KEY_ISSUER_ID
 export NVPN_IOS_BUNDLE_ID="$BUNDLE_ID"
 export NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID="$PACKET_TUNNEL_BUNDLE_ID"
 export NVPN_IOS_APP_GROUP_IDENTIFIER="$APP_GROUP_IDENTIFIER"
+# Baked into the staticlib for the shared keychain access group both entitlements declare.
+export NVPN_IOS_KEYCHAIN_ACCESS_GROUP="$TEAM_ID.$BUNDLE_ID"
 
 run_ios_rust() {
   "$ROOT/tools/run-ios" rust
