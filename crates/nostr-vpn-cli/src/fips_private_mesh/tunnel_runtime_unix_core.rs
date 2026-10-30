@@ -821,6 +821,13 @@ impl FipsPrivateTunnelRuntime {
             .context("read macOS IPv4 forwarding state")?;
         self.exit_node_runtime.ipv4_forward_was_enabled = Some(previous_forwarding);
         self.persist_network_cleanup_ownership()?;
+        if let Err(error) =
+            crate::macos_privileged_files::write_exit_claim(&self.cleanup_journal_config_path)
+        {
+            return Err(self.rollback_macos_exit_node_setup(
+                error.context("record macOS exit forwarding claim"),
+            ));
+        }
         if !previous_forwarding
             && let Err(error) = crate::write_macos_ipv4_forwarding(true)
         {
@@ -846,9 +853,12 @@ impl FipsPrivateTunnelRuntime {
                 self.rollback_macos_exit_node_setup(error.context("enable macOS PF for exit NAT"))
             );
         }
-        if let Err(error) =
-            crate::apply_macos_exit_node_pf_rules(&self.iface, &outbound_iface, &tunnel_source_cidr)
-        {
+        if let Err(error) = crate::apply_macos_exit_node_pf_rules(
+            &self.cleanup_journal_config_path,
+            &self.iface,
+            &outbound_iface,
+            &tunnel_source_cidr,
+        ) {
             return Err(
                 self.rollback_macos_exit_node_setup(error.context("install macOS exit PF rules"))
             );
@@ -859,10 +869,27 @@ impl FipsPrivateTunnelRuntime {
     #[cfg(target_os = "macos")]
     fn cleanup_macos_exit_node_forwarding_checked(&mut self) -> Result<()> {
         let mut failures = Vec::new();
+        let mut other_claims = false;
+        if self.exit_node_runtime.pf_was_enabled.is_some()
+            || self.exit_node_runtime.ipv4_forward_was_enabled.is_some()
+        {
+            other_claims = match crate::macos_privileged_files::other_exit_claims_remain(
+                crate::macos_privileged_files::runtime_root(),
+                &self.cleanup_journal_config_path,
+            ) {
+                Ok(remain) => remain,
+                Err(error) => {
+                    failures.push(format!("inspect macOS exit claims: {error:#}"));
+                    true
+                }
+            };
+        }
         if self.exit_node_runtime.pf_was_enabled.is_some() {
-            match crate::cleanup_macos_pf_nat() {
+            let anchor =
+                crate::macos_network::macos_exit_pf_anchor(&self.cleanup_journal_config_path);
+            match crate::cleanup_macos_pf_nat(&anchor) {
                 Ok(()) => {
-                    if self.exit_node_runtime.pf_was_enabled == Some(false) {
+                    if self.exit_node_runtime.pf_was_enabled == Some(false) && !other_claims {
                         match crate::run_checked(ProcessCommand::new("pfctl").arg("-d")) {
                             Ok(()) => self.exit_node_runtime.pf_was_enabled = None,
                             Err(error) => {
@@ -870,13 +897,23 @@ impl FipsPrivateTunnelRuntime {
                             }
                         }
                     } else {
+                        // This config's anchor is gone; another live exit owns PF now.
                         self.exit_node_runtime.pf_was_enabled = None;
                     }
                 }
                 Err(error) => failures.push(format!("remove PF exit rules: {error:#}")),
             }
         }
+        if let Err(error) =
+            crate::macos_privileged_files::remove_exit_claim(&self.cleanup_journal_config_path)
+        {
+            failures.push(format!("remove macOS exit forwarding claim: {error:#}"));
+        }
         match self.exit_node_runtime.ipv4_forward_was_enabled {
+            Some(false) if other_claims => {
+                // Another configuration keeps forwarding alive; it owns the knob now.
+                self.exit_node_runtime.ipv4_forward_was_enabled = None;
+            }
             Some(false) => match crate::write_macos_ipv4_forwarding(false) {
                 Ok(()) => self.exit_node_runtime.ipv4_forward_was_enabled = None,
                 Err(error) => {
