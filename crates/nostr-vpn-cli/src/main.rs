@@ -172,10 +172,12 @@ use windows_service::service_control_handler::{self, ServiceControlHandlerResult
 #[cfg(target_os = "windows")]
 use windows_service::service_dispatcher;
 
-#[cfg(test)]
-pub(crate) use crate::config_bootstrap::default_cli_install_path;
 #[cfg(target_os = "windows")]
 pub(crate) use crate::config_bootstrap::windows_service_install_config_path;
+#[cfg(test)]
+pub(crate) use crate::config_bootstrap::{
+    CliInstallMode, default_cli_install_path, install_cli_to_path,
+};
 pub(crate) use crate::config_bootstrap::{
     apply_config_file, apply_devices_override, apply_participants_override, default_config_path,
     default_tunnel_iface, init_config, install_cli, load_config_read_only, load_or_default_config,

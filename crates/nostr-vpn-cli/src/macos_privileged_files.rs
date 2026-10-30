@@ -6,7 +6,9 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use nostr_vpn_core::macos_file_io::{clear_inherited_acl, reject_write_acl};
+use nostr_vpn_core::macos_file_io::{
+    clear_inherited_acl, reject_untrusted_ancestor_write_acl, reject_write_acl,
+};
 
 pub(crate) fn helper_destination(path: &Path) -> Option<PathBuf> {
     let helpers = Path::new("/Library/PrivilegedHelperTools");
@@ -100,13 +102,21 @@ pub(crate) fn require_root() -> Result<()> {
 
 /// Validate from the filesystem root down. Once each ancestor is protected,
 /// an unprivileged process cannot exchange the next component between checks.
+///
+/// Intermediate ancestors follow stock macOS practice: `/Library` and
+/// `/Library/Application Support` are root-owned and group-writable by the
+/// built-in `admin` group (whose members can already sudo), so they only need
+/// to be root-owned and not world-writable. The final component holds the
+/// artifact itself and must reject every non-root write, including ACL grants.
 pub(crate) fn protected_directory(path: &Path, create: bool) -> Result<File> {
     if !path.is_absolute() {
         bail!("system artifact directory must be absolute");
     }
+    let components: Vec<Component<'_>> = path.components().collect();
+    let leaf = components.len().saturating_sub(1);
     let mut current = PathBuf::new();
     let mut directory = None;
-    for component in path.components() {
+    for (index, component) in components.into_iter().enumerate() {
         match component {
             Component::RootDir | Component::Normal(_) => current.push(component.as_os_str()),
             _ => bail!("system artifact directory must not contain parent traversal"),
@@ -129,13 +139,18 @@ pub(crate) fn protected_directory(path: &Path, create: bool) -> Result<File> {
             result => result.with_context(|| format!("open protected {}", current.display()))?,
         };
         let metadata = file.metadata()?;
-        if metadata.uid() != 0 || metadata.mode() & 0o022 != 0 {
+        let write_mask = if index == leaf { 0o022 } else { 0o002 };
+        if metadata.uid() != 0 || metadata.mode() & write_mask != 0 {
             bail!(
                 "system artifact directory is not root-owned and protected: {}",
                 current.display()
             );
         }
-        reject_write_acl(&file)?;
+        if index == leaf {
+            reject_write_acl(&file)?;
+        } else {
+            reject_untrusted_ancestor_write_acl(&file)?;
+        }
         directory = Some(file);
     }
     directory.context("missing system artifact directory")

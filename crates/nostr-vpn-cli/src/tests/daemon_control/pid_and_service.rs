@@ -414,11 +414,71 @@ fn install_cli_permission_denied_preserves_cause_and_offers_recovery() {
         );
         let message = error.to_string();
         assert!(message.contains(&target.display().to_string()), "{message}");
-        assert!(message.contains("Retry the same command with administrator privileges"));
+        assert!(message.contains("Use the Install CLI action in the Nostr VPN app"));
+        assert!(message.contains("retry the same command with administrator privileges"));
         let force_flag = if force { " --force" } else { "" };
         assert!(message.contains(&format!(
             "nvpn install-cli{force_flag} --path \"$HOME/.local/bin/nvpn\""
         )));
         assert!(format!("{error:#}").contains(context), "{error:#}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn install_cli_link_mode_tracks_source_and_replaces_stale_links() {
+    use std::os::unix::fs::symlink;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-install-link-{nonce}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let target = dir.join("nvpn");
+    let source = fs::canonicalize(std::env::current_exe().expect("test executable"))
+        .expect("canonicalize test executable");
+    let installed_target = || {
+        fs::read_link(&target).expect("installed destination must be a symlink")
+    };
+
+    install_cli_to_path(&target, true, CliInstallMode::Link).expect("link install");
+    assert_eq!(installed_target(), source);
+
+    // Reinstalling through the installed link resolves to the same source.
+    install_cli_to_path(&target, true, CliInstallMode::Link).expect("idempotent link install");
+    assert_eq!(installed_target(), source);
+
+    // A dangling link repairs without --force because it resolves to nothing.
+    fs::remove_file(&target).expect("remove installed link");
+    symlink(dir.join("missing"), &target).expect("create dangling link");
+    install_cli_to_path(&target, false, CliInstallMode::Link).expect("repair dangling link");
+    assert_eq!(installed_target(), source);
+
+    // A real file at the destination still requires --force.
+    fs::remove_file(&target).expect("remove link");
+    fs::write(&target, b"not nvpn").expect("create plain file");
+    let error = install_cli_to_path(&target, false, CliInstallMode::Link)
+        .expect_err("existing file must require --force");
+    assert!(
+        error.to_string().contains("already exists (pass --force"),
+        "{error}"
+    );
+    install_cli_to_path(&target, true, CliInstallMode::Link).expect("replace file with link");
+    assert_eq!(installed_target(), source);
+
+    // Uninstall removes both a live link and a dangling one.
+    uninstall_cli(UninstallCliArgs {
+        path: Some(target.clone()),
+    })
+    .expect("uninstall live link");
+    assert!(fs::symlink_metadata(&target).is_err());
+    symlink(dir.join("missing"), &target).expect("create dangling link");
+    uninstall_cli(UninstallCliArgs {
+        path: Some(target.clone()),
+    })
+    .expect("uninstall dangling link");
+    assert!(fs::symlink_metadata(&target).is_err());
+
+    let _ = fs::remove_dir_all(&dir);
 }

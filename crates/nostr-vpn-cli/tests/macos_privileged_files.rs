@@ -572,3 +572,83 @@ fn root_failed_publication_preserves_existing_artifact() {
     assert_eq!(fs::read(&destination).unwrap(), b"old fixture");
     assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 1);
 }
+
+#[test]
+#[ignore = "requires root; only creates isolated filesystem fixtures"]
+fn root_protected_directory_accepts_stock_macos_group_writable_ancestors() {
+    let fixture = Fixture::root();
+    let library = fixture.path("Library");
+    fs::create_dir(&library).unwrap();
+    // Stock /Library shape: root:admin, group-writable, with an inherited
+    // admin-group ACL grant.
+    chown(&library, Some(0), Some(80)).unwrap();
+    fs::set_permissions(&library, fs::Permissions::from_mode(0o775)).unwrap();
+    let launch_daemons = library.join("LaunchDaemons");
+    fs::create_dir(&launch_daemons).unwrap();
+    let plist = launch_daemons.join("to.nostrvpn.nvpn.plist");
+    let publish_plist = || publish(&mut &b"plist fixture"[..], &plist, 0o644);
+    let chmod = |target: &Path, action: &str, rule: &str| {
+        assert!(
+            std::process::Command::new("/bin/chmod")
+                .args([action, rule])
+                .arg(target)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+
+    publish_plist().unwrap();
+    assert_protected(&plist, 0o644);
+    fs::remove_file(&plist).unwrap();
+
+    chmod(
+        &library,
+        "+a",
+        "group:admin allow add_file,add_subdirectory",
+    );
+    publish_plist().unwrap();
+    assert_protected(&plist, 0o644);
+    fs::remove_file(&plist).unwrap();
+
+    // Any other write-granting principal on an ancestor stays rejected.
+    chmod(
+        &library,
+        "+a",
+        "group:staff allow add_file,add_subdirectory",
+    );
+    assert!(publish_plist().is_err());
+    assert!(!plist.exists());
+    chmod(
+        &library,
+        "-a",
+        "group:staff allow add_file,add_subdirectory",
+    );
+    chmod(
+        &library,
+        "+a",
+        "user:daemon allow add_file,add_subdirectory",
+    );
+    assert!(publish_plist().is_err());
+    assert!(!plist.exists());
+    chmod(
+        &library,
+        "-a",
+        "user:daemon allow add_file,add_subdirectory",
+    );
+
+    // World-writable and non-root-owned ancestors stay rejected.
+    fs::set_permissions(&library, fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(publish_plist().is_err());
+    assert!(!plist.exists());
+    fs::set_permissions(&library, fs::Permissions::from_mode(0o775)).unwrap();
+    chown(&library, Some(65534), None).unwrap();
+    assert!(publish_plist().is_err());
+    assert!(!plist.exists());
+    chown(&library, Some(0), Some(80)).unwrap();
+
+    // The leaf directory holding the artifact keeps the strict policy.
+    fs::set_permissions(&launch_daemons, fs::Permissions::from_mode(0o775)).unwrap();
+    assert!(publish_plist().is_err());
+    assert!(!plist.exists());
+}
