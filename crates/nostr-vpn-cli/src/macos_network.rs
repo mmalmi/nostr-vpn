@@ -199,6 +199,15 @@ pub(crate) fn macos_underlay_default_route_needs_restore(routes: &[MacosRouteSpe
 }
 
 #[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_saved_default_restore_required(routes: &[MacosRouteSpec]) -> bool {
+    // Mirrors linux_saved_default_restore_required for crash-journal replay:
+    // any physical default in the table is foreign (our tunnel is a utun), so
+    // its presence means the OS or another connection owns the default and the
+    // saved restore obligation is stale.
+    macos_underlay_default_route_from_routes(routes).is_none()
+}
+
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_endpoint_bypass_targets_for_hosts(
     hosts: &[Ipv4Addr],
     interfaces: &[netdev::Interface],
@@ -239,7 +248,16 @@ pub(crate) fn macos_ipconfig_router_from_output(output: &str) -> Option<Ipv4Addr
         let value = if let Some(value) = line.strip_prefix("router (ip):") {
             value.trim()
         } else if let Some(value) = line.strip_prefix("router (ip_mult):") {
-            value.trim().trim_start_matches('{').trim_end_matches('}')
+            // Some DHCP servers hand out a router list: "{a, b}". The host
+            // uses the first entry.
+            value
+                .trim()
+                .trim_start_matches('{')
+                .trim_end_matches('}')
+                .split(',')
+                .next()
+                .unwrap_or_default()
+                .trim()
         } else {
             continue;
         };
