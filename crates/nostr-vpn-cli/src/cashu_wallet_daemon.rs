@@ -163,7 +163,11 @@ impl DaemonCashuWallet {
         }
         prepare_ipc_directories(config_path)?;
         let wallet = Self { service };
-        wallet.sync_balances(config_path).await?;
+        // Balance sync retries on every wallet request; it must not abort the
+        // daemon when the paid route store is unreadable.
+        if let Err(error) = wallet.sync_balances(config_path).await {
+            eprintln!("cashu-wallet: failed to synchronize wallet balances: {error:#}");
+        }
         Ok(wallet)
     }
 

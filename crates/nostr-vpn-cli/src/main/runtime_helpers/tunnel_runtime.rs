@@ -66,27 +66,6 @@ fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'sta
                 .into_iter()
                 .map(|queued| ("paid-exit", queued.envelope.seller)),
         );
-        let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
-        recipients.extend(
-            store
-                .channels
-                .values()
-                .filter(|channel| {
-                    channel.role == PaidRouteChannelRole::Seller
-                        && !matches!(
-                            channel.status,
-                            PaidRouteLifecycleStatus::Closed
-                                | PaidRouteLifecycleStatus::Expired
-                                | PaidRouteLifecycleStatus::Failed
-                        )
-                })
-                .map(|channel| {
-                    (
-                        "paid-exit seller settlement",
-                        channel.counterparty_npub.clone(),
-                    )
-                }),
-        );
         recipients
     };
     Ok(recipients)
