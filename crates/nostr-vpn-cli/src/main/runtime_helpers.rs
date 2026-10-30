@@ -594,12 +594,17 @@ fn fips_tunnel_config_from_app(
             config.control_plane_bypass_hosts.sort_unstable();
             config.control_plane_bypass_hosts.dedup();
         }
-        if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex()
-            && let Some(store) = paid_route_store.as_ref()
-        {
-            config.require_public_paid_exit_admission(
-                store.buyer_has_seller_admission(&seller_pubkey, unix_timestamp())?,
-            );
+        if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
+            // An unreadable store cannot prove admission, so the buyer-side
+            // gate stays closed even though seller-side paid-exit is disabled;
+            // disabling the seller flag alone does not disable the buyer route.
+            let admitted = match paid_route_store.as_ref() {
+                Some(store) => {
+                    store.buyer_has_seller_admission(&seller_pubkey, unix_timestamp())?
+                }
+                None => false,
+            };
+            config.require_public_paid_exit_admission(admitted);
         }
         config.paid_route_wallet_data_dir = paid_exit_wallet_data_dir(config_path);
         config.paid_route_payment_relays = paid_exit_relay_urls(app, &[]);

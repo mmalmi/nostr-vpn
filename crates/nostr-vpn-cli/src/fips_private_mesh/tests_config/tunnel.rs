@@ -908,5 +908,59 @@
         assert_eq!(admin.addresses[0].seen_at_ms, None);
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn corrupt_paid_route_store_keeps_public_exit_admission_gate_closed() {
+        let seller = Keys::generate();
+        let mut app = AppConfig::generated();
+        app.nostr.relays.clear();
+        app.select_public_paid_exit_node(&seller.public_key().to_hex())
+            .expect("select public paid seller");
+        app.paid_exit.enabled = true;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-corrupt-paid-store-{nonce}"));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let config_path = dir.join("config.toml");
+        let store_path = nostr_vpn_core::paid_route_store::paid_route_store_file_path(&config_path);
+        std::fs::write(&store_path, b"{\"version\":").expect("write corrupt store");
+
+        let own_pubkey = app.own_nostr_pubkey_hex().expect("own pubkey");
+        let config = crate::fips_tunnel_config_from_app(crate::FipsTunnelConfigInput {
+            app: &app,
+            config_path: &config_path,
+            network_id: &app.networks[0].network_id,
+            iface: "utun-test".to_string(),
+            underlay_interface: None,
+            underlay_interface_mtu: None,
+            own_pubkey: Some(&own_pubkey),
+            recent_peers: None,
+            live_peer_endpoints: &[],
+            ethernet_underlay: None,
+        })
+        .expect("build config with corrupt paid route store");
+
+        assert!(
+            !config.paid_exit.enabled,
+            "an unreadable store must disable selling for this run"
+        );
+        assert!(
+            config.public_paid_exit_waiting_for_admission,
+            "the selected buyer route must keep waiting for admission"
+        );
+        assert!(
+            config
+                .route_targets
+                .iter()
+                .any(|route| route == "0.0.0.0/0"),
+            "disabling the seller flag alone must not drop the selected buyer route"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     include!("tunnel/recent_transit.rs");
     include!("recent_peer_budget.rs");
