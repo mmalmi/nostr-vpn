@@ -40,7 +40,7 @@ pub struct MagicDnsResolverConfig {
 
 pub struct MagicDnsServer {
     local_addr: SocketAddr,
-    records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    records: Arc<RwLock<Arc<HashMap<String, Ipv4Addr>>>>,
     stop_flag: Arc<AtomicBool>,
     finished_rx: mpsc::Receiver<()>,
     join_handle: Option<thread::JoinHandle<()>>,
@@ -57,7 +57,7 @@ impl MagicDnsServer {
         let local_addr = socket
             .local_addr()
             .context("failed to get local magic dns socket address")?;
-        let records = Arc::new(RwLock::new(records));
+        let records = Arc::new(RwLock::new(Arc::new(records)));
         let records_for_loop = Arc::clone(&records);
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_for_loop = Arc::clone(&stop_flag);
@@ -81,9 +81,10 @@ impl MagicDnsServer {
         self.local_addr
     }
 
+    /// Only roster or config reloads swap the snapshot; queries clone the Arc.
     pub fn update_records(&self, records: HashMap<String, Ipv4Addr>) {
         if let Ok(mut guard) = self.records.write() {
-            *guard = records;
+            *guard = Arc::new(records);
         }
     }
 
@@ -104,7 +105,7 @@ impl Drop for MagicDnsServer {
 
 fn run_dns_loop(
     socket: UdpSocket,
-    records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    records: Arc<RwLock<Arc<HashMap<String, Ipv4Addr>>>>,
     stop_flag: Arc<AtomicBool>,
 ) {
     let mut packet = [0_u8; 512];
@@ -116,8 +117,8 @@ fn run_dns_loop(
         let request = &packet[..len];
         let snapshot = records
             .read()
-            .map(|guard| (*guard).clone())
-            .unwrap_or_else(|_| HashMap::new());
+            .map(|guard| Arc::clone(&guard))
+            .unwrap_or_else(|_| Arc::new(HashMap::new()));
 
         let Some(response) = resolve_fips_dns_if_handled(request)
             .map(|(response, _)| response)

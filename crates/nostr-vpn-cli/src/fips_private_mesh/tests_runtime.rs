@@ -486,6 +486,162 @@
             .expect("shutdown bob");
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn corrupt_control_frame_packet_is_dropped_before_data_admission() {
+        std::thread::Builder::new()
+            .name("fips-corrupt-control-frame".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("corrupt control frame runtime")
+                    .block_on(corrupt_control_frame_packet_dropped_run());
+            })
+            .expect("spawn corrupt control frame test")
+            .join()
+            .expect("corrupt control frame test thread");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    async fn corrupt_control_frame_packet_dropped_run() {
+        use super::{DirectTunWriteBatch, FipsEndpointAdmissionCache};
+
+        let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let bob_nsec = bob_keys.secret_key().to_bech32().expect("bob nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let alice_port = available_udp_port();
+        let bob_port = available_udp_port();
+        let alice_ip = Ipv4Addr::new(10, 44, 22, 1);
+        let bob_ip = Ipv4Addr::new(10, 44, 22, 2);
+        let scope = "nostr-vpn:corrupt-control-frame";
+
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            alice_nsec,
+            Some(scope.to_string()),
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: bob_pubkey.clone(),
+                endpoint_npub: bob_npub.clone(),
+                allowed_ips: vec![format!("{bob_ip}/32")],
+            }],
+            direct_udp_endpoint_config(alice_port, &bob_npub, bob_port, true),
+            vec![format!("{alice_ip}/32")],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("alice endpoint should bind");
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
+            bob_nsec,
+            Some(scope.to_string()),
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: alice_pubkey.clone(),
+                endpoint_npub: alice_npub.clone(),
+                // The fake IPv4 source inside the control magic is 82.76.0.1;
+                // allowing it keeps a dropped frame from being masked by the
+                // source admission check.
+                allowed_ips: vec![format!("{alice_ip}/32"), "82.76.0.0/24".to_string()],
+            }],
+            direct_udp_endpoint_config(bob_port, &alice_npub, alice_port, false),
+            vec![format!("{bob_ip}/32")],
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("bob endpoint should bind");
+
+        wait_for_fips_peer(&alice_runtime, &bob_npub).await;
+        wait_for_fips_peer(&bob_runtime, &alice_npub).await;
+
+        // Valid magic, corrupt JSON. The magic's leading 'N' parses as an IPv4
+        // header with IHL 14, so the fake source is 82.76.0.1 and the first
+        // payload bytes place the fake destination on bob's tunnel IP.
+        let mut corrupt_frame = Vec::from(&b"NVPN-FIPS-CTRL\0"[..]);
+        corrupt_frame.push(0x01);
+        corrupt_frame.extend_from_slice(&bob_ip.octets());
+        corrupt_frame.extend_from_slice(b"{\"v\":1,\"frame\":");
+        while corrupt_frame.len() < 64 {
+            corrupt_frame.push(b' ');
+        }
+        let data_packet = ipv4_packet(alice_ip, bob_ip);
+        send_with_retry(&alice_runtime, &corrupt_frame).await;
+        send_with_retry(&alice_runtime, &data_packet).await;
+
+        let runs = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut collected = Vec::new();
+            loop {
+                match bob_runtime
+                    .direct_endpoint_rx
+                    .try_recv(FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS)
+                {
+                    Ok(runs) => collected.extend(runs),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        panic!("direct endpoint receiver disconnected");
+                    }
+                }
+                let packets: usize = collected.iter().map(FipsEndpointDirectPacketRun::len).sum();
+                if packets >= 2 {
+                    return collected;
+                }
+            }
+        })
+        .await
+        .expect("bob should receive both packets");
+
+        bob_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown bob");
+        alice_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown alice");
+
+        let mesh = bob_runtime.stable_mesh_snapshot().1;
+        let mut batch = DirectTunWriteBatch::with_capacity(runs.len());
+        let mut admission_cache = FipsEndpointAdmissionCache::default();
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel(16);
+        let mut control_events_open = true;
+        let mut accepted = 0usize;
+        for run in runs {
+            let source_node_addr = *run.source_peer().node_addr().as_bytes();
+            let admitter = mesh.endpoint_source_admitter(&source_node_addr);
+            accepted += bob_runtime
+                .admit_direct_endpoint_packet_run_blocking(
+                    admitter.as_ref(),
+                    run,
+                    &mut admission_cache,
+                    &mut batch,
+                    &event_tx,
+                    &mut control_events_open,
+                )
+                .expect("admission succeeds");
+        }
+
+        assert_eq!(
+            accepted, 1,
+            "only the ordinary data packet may be admitted"
+        );
+        let written: Vec<Vec<u8>> = batch.run_slices().map(<[u8]>::to_vec).collect();
+        assert_eq!(
+            written,
+            vec![data_packet],
+            "the corrupt control frame must stay out of the dataplane batch"
+        );
+    }
+
     #[test]
     fn pending_join_ping_retries_after_the_peer_becomes_reachable() {
         std::thread::Builder::new()

@@ -59,7 +59,6 @@ impl MobileTunnel {
         Ok(Self {
             runtime,
             endpoint: Some(started.endpoint),
-            state_control: started.state_control,
             control_pubsub: started.control_pubsub,
             mesh: started.mesh,
             presence: started.presence,
@@ -604,6 +603,7 @@ impl MobileTunnel {
 
         Ok(MobileTunnelStarted {
             endpoint,
+            #[cfg(test)]
             state_control: state_control_sender,
             control_pubsub,
             mesh,
@@ -829,29 +829,6 @@ impl MobileTunnel {
             &self.pending_join_roster_receipts,
             expected_toml,
         )
-    }
-
-    pub(crate) fn send_join_roster(
-        &self,
-        recipient: &str,
-        join_roster: &JoinRosterControl,
-        timeout: Duration,
-    ) -> Result<()> {
-        let app = self
-            .app_config
-            .read()
-            .map_err(|_| anyhow!("mobile app config lock poisoned"))?
-            .clone();
-        let destination = mobile_join_roster_destination(&app, recipient)?.with_context(|| {
-            format!("missing FIPS endpoint identity for participant {recipient}")
-        })?;
-        self.runtime.block_on(send_join_roster_with_receipt(
-            &self.state_control,
-            destination,
-            join_roster,
-            timeout,
-        ))?;
-        Ok(())
     }
 }
 

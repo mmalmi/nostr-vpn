@@ -152,10 +152,9 @@ pub(super) fn restore_linux_resolved_components(
 }
 
 pub(super) fn linux_direct_resolv_conf_needs_restore(current: &[u8], previous: &[u8]) -> bool {
+    // Restore only our own written content; a foreign prefix of `previous` belongs to another manager.
     current != previous
-        && (current == LINUX_DIRECT_RESOLV_CONF
-            || LINUX_DIRECT_RESOLV_CONF.starts_with(current)
-            || previous.starts_with(current))
+        && (current == LINUX_DIRECT_RESOLV_CONF || LINUX_DIRECT_RESOLV_CONF.starts_with(current))
 }
 
 pub(super) fn linux_direct_resolv_conf_allowed(container: bool, openrc: bool) -> bool {
