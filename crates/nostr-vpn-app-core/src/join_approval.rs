@@ -3,7 +3,7 @@ use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::fips_control::JoinRosterControl;
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 pub use nostr_vpn_core::join_requests::{
-    PreparedJoinApproval, prepare_join_approval, prepare_manual_join_delivery,
+    PreparedJoinApproval, commit_join_approval, prepare_join_approval, prepare_manual_join_delivery,
 };
 
 pub fn apply_join_roster(

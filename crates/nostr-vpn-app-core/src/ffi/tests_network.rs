@@ -192,6 +192,10 @@
         let admin_network_id = create_test_network(&mut admin, "Home");
         admin.config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
         admin.config.networks[0].admins = vec![admin_pubkey.clone()];
+        admin
+            .config
+            .save(&admin.config_path)
+            .expect("persist admin config before approval");
 
         let mut joiner = NativeAppRuntime::from_startup_error(&error);
         joiner.startup_error = None;

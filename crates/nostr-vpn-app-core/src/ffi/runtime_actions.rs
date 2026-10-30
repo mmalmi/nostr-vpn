@@ -473,12 +473,24 @@ impl NativeAppRuntime {
         let network_id = self.active_admin_network_id()?;
         let prepared =
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
-        self.config = prepared.updated_config;
-        self.queue_join_roster_delivery(bootstrap, &prepared.join_roster)?;
-        // Commit the durable outbox entry before asking the daemon to apply
-        // the new roster. The daemon can then start delivery as part of that
-        // same control transaction instead of waiting for its next heartbeat.
-        self.save_reload_and_refresh()?;
+        // One serialized read-modify-write: the on-disk roster check, the
+        // durable outbox entry, and the config save share a cross-process
+        // lock, so a concurrent approval can no longer overwrite this roster.
+        // Only the durable writes hold the lock; daemon reload and status
+        // refresh run after it is released so they cannot block a concurrent
+        // approval.
+        let config_path = self.config_path.clone();
+        let snapshot = self.config.clone();
+        commit_join_approval(&config_path, &snapshot, &network_id, || {
+            self.queue_join_roster_delivery(bootstrap, &prepared.join_roster)?;
+            self.config = prepared.updated_config;
+            // Commit the durable outbox entry before asking the daemon to
+            // apply the new roster. The daemon can then start delivery as
+            // part of that same control transaction instead of waiting for
+            // its next heartbeat.
+            self.save_config()
+        })?;
+        self.reload_and_refresh_saved_config()?;
         if self.config.autoconnect && !self.vpn_enabled {
             self.connect_vpn()?;
         }
