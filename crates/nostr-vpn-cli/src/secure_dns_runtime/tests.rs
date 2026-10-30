@@ -745,13 +745,9 @@ fn windows_wireguard_policy_uses_provider_dns_and_keeps_magic_dns_local() {
 #[cfg(target_os = "windows")]
 #[test]
 fn windows_dns_command_budget_is_operation_specific() {
-    assert_eq!(
-        nostr_vpn_core::magic_dns::WINDOWS_DNS_COMMAND_TIMEOUT,
-        Duration::from_secs(10)
-    );
+    assert_eq!(WINDOWS_DNS_COMMAND_TIMEOUT, Duration::from_secs(10));
     assert!(
-        nostr_vpn_core::magic_dns::WINDOWS_DNS_COMMAND_TIMEOUT
-            > crate::wg_upstream_runtime::WINDOWS_CHILD_COMMAND_TIMEOUT,
+        WINDOWS_DNS_COMMAND_TIMEOUT > crate::wg_upstream_runtime::WINDOWS_CHILD_COMMAND_TIMEOUT,
         "cold DnsClient PowerShell needs a larger bound than hot route/native commands"
     );
 }

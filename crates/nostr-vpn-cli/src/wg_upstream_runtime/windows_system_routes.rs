@@ -2,8 +2,54 @@
 pub(crate) const WINDOWS_CHILD_COMMAND_TIMEOUT: std::time::Duration =
     std::time::Duration::from_secs(3);
 
-#[cfg(target_os = "windows")]
-pub(crate) use nostr_vpn_core::magic_dns::run_windows_command_with_timeout;
+#[cfg(any(test, target_os = "windows"))]
+pub(crate) fn run_windows_command_with_timeout(
+    command: &mut ProcessCommand,
+    operation: &str,
+    timeout: std::time::Duration,
+) -> Result<std::process::Output> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("spawn {operation}"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child
+                    .wait_with_output()
+                    .with_context(|| format!("collect output from {operation}"));
+            }
+            Ok(None) if started.elapsed() < timeout => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let kill_error = child.kill().err();
+                let wait_error = child.wait().err();
+                let cleanup_error = match (kill_error, wait_error) {
+                    (None, None) => String::new(),
+                    (kill, wait) => format!(
+                        "; process cleanup failed (kill={:?}, wait={:?})",
+                        kill.map(|error| error.to_string()),
+                        wait.map(|error| error.to_string())
+                    ),
+                };
+                return Err(anyhow!(
+                    "{operation} timed out after {}s{cleanup_error}",
+                    timeout.as_secs_f64()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error).with_context(|| format!("wait for {operation}"));
+            }
+        }
+    }
+}
 
 #[cfg(target_os = "windows")]
 pub(crate) fn run_windows_command(
@@ -556,10 +602,11 @@ fn run_windows_netsh(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, target_os = "windows"))]
+#[cfg(test)]
 mod windows_command_timeout_tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn native_queries_find_the_physical_default_route() {
         let default =
@@ -584,13 +631,21 @@ mod windows_command_timeout_tests {
 
     #[test]
     fn timed_out_child_is_terminated_and_reported() {
-        let mut command = ProcessCommand::new("powershell");
-        command.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Start-Sleep -Seconds 5",
-        ]);
+        let mut command = ProcessCommand::new(if cfg!(target_os = "windows") {
+            "powershell"
+        } else {
+            "sleep"
+        });
+        if cfg!(target_os = "windows") {
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Start-Sleep -Seconds 5",
+            ]);
+        } else {
+            command.arg("5");
+        }
 
         let started = std::time::Instant::now();
         let error = run_windows_command_with_timeout(

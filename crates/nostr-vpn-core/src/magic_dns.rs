@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 #[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::io::ErrorKind;
 #[cfg(target_os = "macos")]
 use std::io::Write as _;
@@ -814,76 +814,34 @@ fn uninstall_windows_resolver(suffix: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn run_windows_command_with_timeout(
-    command: &mut Command,
-    operation: &str,
-    timeout: Duration,
-) -> Result<std::process::Output> {
-    command
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("spawn {operation}"))?;
-    let started = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => {
-                return child
-                    .wait_with_output()
-                    .with_context(|| format!("collect output from {operation}"));
-            }
-            Ok(None) if started.elapsed() < timeout => {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let kill_error = child.kill().err();
-                let wait_error = child.wait().err();
-                let cleanup_error = match (kill_error, wait_error) {
-                    (None, None) => String::new(),
-                    (kill, wait) => format!(
-                        "; process cleanup failed (kill={:?}, wait={:?})",
-                        kill.map(|error| error.to_string()),
-                        wait.map(|error| error.to_string())
-                    ),
-                };
-                return Err(anyhow!(
-                    "{operation} timed out after {}s{cleanup_error}",
-                    timeout.as_secs_f64()
-                ));
-            }
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error).with_context(|| format!("wait for {operation}"));
-            }
+fn run_windows_powershell(script: &str) -> Result<()> {
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Err(anyhow!(
+                "powershell not found; configure Windows NRPT manually for split DNS"
+            ));
         }
-    }
-}
+        Err(error) => {
+            return Err(anyhow!("failed to execute powershell: {error}"));
+        }
+    };
 
-#[cfg(target_os = "windows")]
-pub const WINDOWS_DNS_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
-
-#[cfg(target_os = "windows")]
-pub fn run_windows_powershell(script: &str) -> Result<()> {
-    let output = run_windows_command_with_timeout(
-        Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]),
-        "Windows DNS configuration command",
-        WINDOWS_DNS_COMMAND_TIMEOUT,
-    )?;
     if output.status.success() {
         return Ok(());
     }
-    let details = if output.stderr.is_empty() {
-        String::from_utf8_lossy(&output.stdout)
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let details = if stderr.trim().is_empty() {
+        stdout.trim()
     } else {
-        String::from_utf8_lossy(&output.stderr)
+        stderr.trim()
     };
-    Err(anyhow!(
-        "DNS configuration command failed: {}",
-        details.trim()
-    ))
+    Err(anyhow!("powershell NRPT update failed: {details}"))
 }
 
 fn strip_cidr(value: &str) -> &str {

@@ -4,6 +4,8 @@ use std::net::IpAddr;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
+#[cfg(target_os = "windows")]
+use std::process::Command;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
@@ -14,8 +16,6 @@ use hickory_proto::rr::{Name, RData, RecordType};
 use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
 use nostr_vpn_core::config::ExitDnsResolverConfig;
 use nostr_vpn_core::magic_dns::resolve_fips_dns_if_handled;
-#[cfg(target_os = "windows")]
-use nostr_vpn_core::magic_dns::run_windows_powershell;
 #[cfg(target_os = "macos")]
 use nostr_vpn_core::magic_dns::{
     remove_owned_macos_resolver_file, write_macos_resolver_atomically,
@@ -67,6 +67,8 @@ const SECURE_DNS_BIND: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, SECURE_DNS_PORT));
 const SECURE_DNS_MAX_IN_FLIGHT: usize = 64;
 const SECURE_DNS_CLIENT_IDLE: Duration = Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const WINDOWS_DNS_COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
 type SharedResolver = Arc<dyn SecureDnsLookup>;
 type ResolverState = Arc<RwLock<SharedResolver>>;
 type FipsDnsEndpoint = Option<Arc<FipsEndpoint>>;
@@ -888,6 +890,27 @@ fn windows_wireguard_dns_script(interface: &str, servers: &[IpAddr]) -> String {
         ),
         interface, servers, servers
     )
+}
+
+#[cfg(target_os = "windows")]
+fn run_windows_powershell(script: &str) -> Result<()> {
+    let output = crate::wg_upstream_runtime::run_windows_command_with_timeout(
+        Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]),
+        "Windows DNS configuration command",
+        WINDOWS_DNS_COMMAND_TIMEOUT,
+    )?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let details = if output.stderr.is_empty() {
+        String::from_utf8_lossy(&output.stdout)
+    } else {
+        String::from_utf8_lossy(&output.stderr)
+    };
+    Err(anyhow!(
+        "DNS configuration command failed: {}",
+        details.trim()
+    ))
 }
 
 #[cfg(test)]
