@@ -241,6 +241,161 @@
         );
     }
 
+    // The fd00::/8 journal records ownership, not intent: only the config
+    // that created the rule removes it on teardown, while a pre-existing rule
+    // is borrowed and left to its owner. A stub `ip` binary serves the rule
+    // table from a state file so both sides of that contract run without
+    // touching the host RPDB.
+    #[cfg(target_os = "linux")]
+    fn run_fd00_ownership_test_child(case: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CHILD_CASE: &str = "NVPN_FD00_OWNERSHIP_TEST_CASE";
+        if let Ok(case) = std::env::var(CHILD_CASE) {
+            let state_dir = std::path::PathBuf::from(
+                std::env::var("NVPN_FD00_OWNERSHIP_STATE_DIR").expect("state directory"),
+            );
+            let log = state_dir.join("commands.log");
+            let commands = || std::fs::read_to_string(&log).unwrap_or_default();
+            // The stub stores the rule state as file content because the
+            // child's stripped PATH offers no external file tools.
+            let rule_present = || {
+                std::fs::read_to_string(state_dir.join("rule-mode"))
+                    .map(|mode| mode.trim() == "add")
+                    .unwrap_or(false)
+            };
+            match case.as_str() {
+                "pre-existing" => {
+                    std::fs::write(state_dir.join("rule-mode"), b"add").unwrap();
+                    // An identical rule already exists: it is borrowed, so it
+                    // is not created again and not journaled for our cleanup.
+                    assert!(!crate::ensure_linux_fd00_main_rule().unwrap());
+                    assert_eq!(commands(), "");
+                    let mut borrower = crate::LinuxNetworkCleanupState::default();
+                    super::cleanup_linux_network_state_with_actions(&mut borrower).unwrap();
+                    assert_eq!(
+                        commands(),
+                        "",
+                        "a borrower's teardown must not remove a rule it did not create"
+                    );
+                    assert!(
+                        rule_present(),
+                        "a pre-existing rule must survive a borrower's teardown"
+                    );
+                }
+                "created" => {
+                    // The owner config starts while the rule is absent and
+                    // creates it.
+                    assert!(crate::ensure_linux_fd00_main_rule().unwrap());
+                    assert_eq!(commands(), "add\n");
+                    // A second config starting meanwhile finds the rule and
+                    // borrows it without journaling ownership.
+                    assert!(!crate::ensure_linux_fd00_main_rule().unwrap());
+                    assert_eq!(commands(), "add\n");
+                    let mut borrower = crate::LinuxNetworkCleanupState::default();
+                    super::cleanup_linux_network_state_with_actions(&mut borrower).unwrap();
+                    assert_eq!(
+                        commands(),
+                        "add\n",
+                        "the borrower's stop must leave the owner's rule in place"
+                    );
+                    assert!(rule_present());
+                    // The owner config stops and removes the rule it created.
+                    let mut owner = crate::LinuxNetworkCleanupState::default();
+                    owner.mesh_fd00_main_rule = true;
+                    super::cleanup_linux_network_state_with_actions(&mut owner).unwrap();
+                    assert_eq!(commands(), "add\ndel\n");
+                    assert!(
+                        !rule_present(),
+                        "the owner's stop removes the rule it created"
+                    );
+                }
+                other => panic!("unknown fd00 ownership case {other}"),
+            }
+            return;
+        }
+
+        let directory = std::env::temp_dir().join(format!(
+            "nvpn-fd00-ownership-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let ip = directory.join("ip");
+        std::fs::write(
+            &ip,
+            r#"#!/bin/sh
+state_dir="$NVPN_FD00_OWNERSHIP_STATE_DIR"
+if [ "$1" = -6 ] && [ "$2" = rule ]; then
+  if [ "$3" = show ]; then
+    mode=absent
+    if [ -f "$state_dir/rule-mode" ]; then
+      read mode < "$state_dir/rule-mode"
+    fi
+    if [ "$mode" = add ]; then
+      printf '0:\tfrom all lookup local\n5265:\tfrom all to fd00::/8 lookup main\n32766:\tfrom all lookup main\n'
+    else
+      printf '0:\tfrom all lookup local\n32766:\tfrom all lookup main\n'
+    fi
+    exit 0
+  fi
+  if [ "$3" = add ]; then
+    echo add > "$state_dir/rule-mode"
+    echo add >> "$state_dir/commands.log"
+    exit 0
+  fi
+  if [ "$3" = del ]; then
+    echo del > "$state_dir/rule-mode"
+    echo del >> "$state_dir/commands.log"
+    exit 0
+  fi
+fi
+exit 0
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&ip, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let state_dir = directory.join("state");
+        std::fs::create_dir(&state_dir).unwrap();
+
+        // Child-local PATH keeps the host `ip` unreachable and avoids
+        // changing the environment of concurrently running tests.
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                std::thread::current().name().unwrap(),
+                "--nocapture",
+            ])
+            .env("PATH", &directory)
+            .env(CHILD_CASE, case)
+            .env("NVPN_FD00_OWNERSHIP_STATE_DIR", &state_dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "{case}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_fd00_main_rule_cleanup_preserves_a_pre_existing_rule() {
+        run_fd00_ownership_test_child("pre-existing");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_fd00_main_rule_removal_follows_creation_across_two_configs() {
+        run_fd00_ownership_test_child("created");
+    }
+
     #[test]
     fn linux_cleanup_bounds_default_restore_retries() {
         let mut actions = FakeLinuxNetworkCleanupActions {
