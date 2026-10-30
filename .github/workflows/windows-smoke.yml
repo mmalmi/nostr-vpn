@@ -40,7 +40,7 @@ jobs:
           cache-bin: false
 
       - name: Run Rust tests
-        run: cargo test --workspace
+        run: cargo test --locked --workspace
 
       - name: Build CLI release binary
         run: cargo build --release -p nvpn

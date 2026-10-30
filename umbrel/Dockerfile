@@ -12,7 +12,7 @@ RUN --mount=type=cache,id=nostr-vpn-umbrel-pnpm-store,target=/pnpm/store \
 COPY web/control-panel ./
 RUN pnpm run build
 
-FROM rust:1.94-bookworm AS rust-builder
+FROM rust:1.95.0-bookworm AS rust-builder
 ARG TARGETPLATFORM
 WORKDIR /work
 
