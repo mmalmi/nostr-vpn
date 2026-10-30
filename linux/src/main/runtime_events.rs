@@ -401,16 +401,16 @@ fn drain_pending_urls(runtime: &AppRuntime) {
 }
 
 fn handle_deep_link(app: &AppRef, raw: &str) {
-    match deep_link::parse(raw) {
-        Some(deep_link::DeepLink::JoinRequest(request)) => {
-            dispatch(app, NativeAppAction::ImportJoinRequest { request });
+    match deep_link::parse(raw).map(deep_link::route) {
+        Some(deep_link::DeepLinkRoute::ConfirmJoinRequest(request)) => {
+            confirm_import_join_request(app, request);
         }
         #[cfg(debug_assertions)]
-        Some(deep_link::DeepLink::Debug(deep_link::DebugAction::Tick)) => {
+        Some(deep_link::DeepLinkRoute::Debug(deep_link::DebugAction::Tick)) => {
             dispatch(app, NativeAppAction::Tick);
         }
         #[cfg(debug_assertions)]
-        Some(deep_link::DeepLink::Debug(deep_link::DebugAction::AcceptJoin {
+        Some(deep_link::DeepLinkRoute::Debug(deep_link::DebugAction::AcceptJoin {
             network_id,
             requester_npub,
         })) => {
@@ -444,6 +444,29 @@ fn handle_deep_link(app: &AppRef, raw: &str) {
         }
         None => {}
     }
+}
+
+fn confirm_import_join_request(app: &AppRef, request: String) {
+    let dialog = adw::AlertDialog::new(
+        Some("Add device?"),
+        Some("This adds the device from a join request link to your network."),
+    );
+    dialog.add_responses(&[("cancel", "Cancel"), ("add", "Add")]);
+    dialog.set_close_response("cancel");
+    dialog.set_default_response(Some("cancel"));
+    {
+        let app = app.clone();
+        dialog.connect_response(Some("add"), move |_, _| {
+            dispatch(
+                &app,
+                NativeAppAction::ImportJoinRequest {
+                    request: request.clone(),
+                },
+            );
+        });
+    }
+    let window = app.borrow().window.clone();
+    dialog.present(Some(&window));
 }
 
 fn create_network(app: &AppRef, name: String) {

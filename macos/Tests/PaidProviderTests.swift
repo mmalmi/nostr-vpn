@@ -11,15 +11,19 @@ struct PaidProviderTests {
         let manager = AppManager()
         precondition(manager.fixtureMode)
         precondition(UserDefaults.standard.bool(forKey: "updates.autoCheck"), "Fixture mode must preserve update preferences")
-        // Exercise URL routing while another action holds the queue.
-        manager.actionInFlight = true
+        // Deep links must stage for user confirmation instead of dispatching.
+        let joinLink = URL(string: "nvpn://join-request/nvpn1requestpayload")!
+        manager.handle(url: joinLink)
+        precondition(manager.deepLinkJoinRequest == joinLink.absoluteString, "Join deep links must stage for the confirm alert")
+        precondition(!manager.actionInFlight && manager.actionStatus.isEmpty, "Join deep links must not dispatch an import")
+        manager.deepLinkJoinRequest = nil
         let link = URL(string: "nvpn://paid-exit/@npub1example?maxMsatPerGb=1000")!
         manager.handle(url: link)
         precondition(manager.paidExitChooserRequested)
-        precondition(manager.pendingPaidExitLink == link.absoluteString)
-        manager.actionInFlight = false
-        manager.openPendingPaidExitLink()
-        precondition(manager.pendingPaidExitLink == nil)
+        precondition(manager.deepLinkPaidExit == link.absoluteString, "Paid-exit deep links must stage for the market field")
+        precondition(manager.pendingPaidExitLink == nil, "Paid-exit deep links must not queue a dispatch")
+        precondition(manager.openingPaidExitLink == nil, "Paid-exit deep links must not dispatch")
+        manager.deepLinkPaidExit = nil
         manager.paidExitChooserRequested = false
         var offer = manager.state.paidRouteMarket.offers[1]
         offer.acceptedMints = ["https://testnut.cashu.space", "https://mint.example/Bitcoin"]
