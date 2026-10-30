@@ -235,6 +235,55 @@ fn payment_outbox_recovery_collapses_repeated_funding_and_close_retries() {
 }
 
 #[test]
+fn payment_outbox_recovery_keeps_close_payloads_that_differ() {
+    let outbox = Outbox::new();
+    let balance = outbox.payment("channel", 5);
+    outbox.queue(&balance);
+    let StreamingRoutePaymentPayload::BalanceUpdate(update) = &balance.payload else {
+        unreachable!()
+    };
+    let mut close_low = balance.clone();
+    close_low.sent_at_unix = 110;
+    close_low.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: update.paid_msat,
+            payment: update.payment.clone(),
+        },
+    );
+    // A close at a higher final balance is a distinct obligation. A clock
+    // rollback gives it an older timestamp, which must not discard it.
+    let mut close_high = close_low.clone();
+    close_high.sent_at_unix = 105;
+    close_high.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: update.paid_msat + 1000,
+            payment: update.payment.clone(),
+        },
+    );
+    outbox.queue(&close_low);
+    outbox.queue(&close_high);
+
+    let directory = paid_exit_payment_outbox_directory(&outbox.config);
+    for round in 0..2 {
+        let pending = load_paid_exit_payment_outbox(&outbox.config);
+        assert_eq!(pending.len(), 3, "round {round}");
+        assert!(
+            pending.iter().any(|entry| entry.envelope == close_low),
+            "round {round}"
+        );
+        assert!(
+            pending.iter().any(|entry| entry.envelope == close_high),
+            "round {round}"
+        );
+        assert_eq!(
+            fs::read_dir(&directory).unwrap().count(),
+            3,
+            "round {round}: neither close is pruned"
+        );
+    }
+}
+
+#[test]
 fn payment_outbox_recovery_preserves_funding_close_and_other_bindings() {
     let outbox = Outbox::new();
     let balance = outbox.payment("channel", 5);
