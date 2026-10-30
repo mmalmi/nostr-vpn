@@ -156,9 +156,6 @@ pub(crate) fn install_service_executable_copy(source: &Path, destination: &Path)
 
     let temp = destination.with_extension(format!("tmp-{}", std::process::id()));
     let copy_result = (|| -> Result<()> {
-        // Stage through a writable handle: the staged bytes can only be
-        // flushed through a handle with write access, because Windows
-        // FlushFileBuffers rejects read-only handles.
         let mut staged = OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -432,11 +429,6 @@ fn query_binary_version(path: &Path) -> Option<String> {
     }
 }
 
-// The cross-platform staging sequence (writable temp handle, sync_all on
-// that handle, rename, parent directory fsync, and the Windows
-// read-only-handle FlushFileBuffers rejection) is covered by the
-// service_executable_staging integration test target, which also runs on
-// Windows where this linux-only installer is not compiled.
 #[cfg(all(test, target_os = "linux"))]
 mod install_service_executable_copy_tests {
     use super::*;
