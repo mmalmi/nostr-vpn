@@ -30,7 +30,10 @@ public enum AppPage
 
 public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 {
-    private readonly AppCoreClient _core;
+    private AppCoreClient? _core;
+    private bool _disposed;
+    private readonly Dispatcher _dispatcher;
+    private readonly List<string> _pendingDeepLinks = [];
     private readonly DispatcherTimer _refreshTimer;
     private readonly DispatcherTimer _updateTimer;
     private readonly UpdateService _updateService = new();
@@ -106,13 +109,14 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "Nostr VPN");
         }
-        _core = new AppCoreClient(dataDir, version);
+        _dispatcher = Dispatcher.CurrentDispatcher;
         _refreshTimer = new DispatcherTimer { Interval = IdleRefreshInterval };
         _themeService = new ThemeService();
         _themeService.Applied += OnThemeApplied;
         _autoInstallUpdates = LoadAutoInstallUpdates();
-        ApplyState(_core.State(), syncDrafts: true);
-        SyncLaunchOnStartupRegistration();
+        // Constructing the core shells out to the CLI, so build it on a worker
+        // and let the default state render until the first snapshot arrives.
+        _ = InitializeCoreAsync(dataDir, version);
 
         ShowDevicesCommand = new RelayCommand(_ => Page = AppPage.Devices);
         ShowAddNetworkCommand = new RelayCommand(_ =>
@@ -172,11 +176,68 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _refreshTimer.Start();
-        _ = CheckUpdatesAsync(manual: false);
 
         _updateTimer = new DispatcherTimer { Interval = UpdatePollInterval };
         _updateTimer.Tick += async (_, _) => await CheckUpdatesAsync(manual: false);
         _updateTimer.Start();
+    }
+
+    private async Task InitializeCoreAsync(string dataDir, string version)
+    {
+        (AppCoreClient Core, NativeAppState State) built;
+        try
+        {
+            built = await Task.Run(() =>
+            {
+                var core = new AppCoreClient(dataDir, version);
+                try
+                {
+                    return (core, core.State());
+                }
+                catch
+                {
+                    core.Dispose();
+                    throw;
+                }
+            });
+        }
+        catch (Exception error)
+        {
+            _ = _dispatcher.BeginInvoke(() =>
+            {
+                if (!_disposed)
+                {
+                    Notice = error.Message;
+                }
+            });
+            return;
+        }
+        if (_disposed || _dispatcher.HasShutdownStarted)
+        {
+            built.Core.Dispose();
+            return;
+        }
+        _ = _dispatcher.BeginInvoke(() => FinishCoreInitialization(built.Core, built.State));
+    }
+
+    private void FinishCoreInitialization(AppCoreClient core, NativeAppState state)
+    {
+        // Quitting while the core is still building must not publish into a
+        // torn-down view; the just-built core is discarded instead.
+        if (_disposed)
+        {
+            core.Dispose();
+            return;
+        }
+        _core = core;
+        ApplyState(state, syncDrafts: true);
+        SyncLaunchOnStartupRegistration();
+        foreach (var url in _pendingDeepLinks)
+        {
+            HandleDeepLink(url);
+        }
+        _pendingDeepLinks.Clear();
+        _ = CheckUpdatesAsync(manual: false);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -702,6 +763,11 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task RefreshAsync()
     {
+        var core = _core;
+        if (core is null)
+        {
+            return;
+        }
         using var nativeCall = _nativeCoreCallGate.TryEnterRefresh();
         if (nativeCall is null)
         {
@@ -709,7 +775,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
         try
         {
-            var state = await Task.Run(_core.Refresh);
+            var state = await Task.Run(core.Refresh);
             ApplyState(state, syncDrafts: false);
         }
         catch (Exception error)
@@ -903,15 +969,21 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _disposed = true;
         _refreshTimer.Stop();
         _updateTimer.Stop();
         _themeService.Dispose();
-        _core.Dispose();
+        _core?.Dispose();
     }
 
     private async Task<bool> DispatchAsync(string actionJson, string status)
     {
         if (ActionInFlight)
+        {
+            return false;
+        }
+        var core = _core;
+        if (core is null)
         {
             return false;
         }
@@ -933,7 +1005,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             using var nativeCall = await _nativeCoreCallGate.EnterDispatchAsync();
-            var state = await Task.Run(() => _core.Dispatch(actionJson));
+            var state = await Task.Run(() => core.Dispatch(actionJson));
 #if DEBUG
             DebugRosterE2eTrace($"dispatch completed: {state.Error}");
 #endif
