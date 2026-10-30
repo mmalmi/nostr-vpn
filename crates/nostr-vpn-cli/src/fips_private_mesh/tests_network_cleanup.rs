@@ -373,11 +373,13 @@
 
         const CHILD_CASE: &str = "NVPN_MAGICDNS_REPAIR_TEST_CASE";
         const LOG_ENV: &str = "NVPN_MAGICDNS_REPAIR_LOG";
+        const EXPECT_REVERT_ENV: &str = "NVPN_MAGICDNS_REPAIR_EXPECT_REVERT";
         const FAKE_LO_DNS_ENV: &str = "NVPN_MAGICDNS_FAKE_LO_DNS";
+        const FAKE_LO_DOMAIN_ENV: &str = "NVPN_MAGICDNS_FAKE_LO_DOMAIN";
 
         // Child: repair the recorded ownership against a fake resolvectl and
-        // assert the per-link revert only happens while the link still
-        // carries this configuration's resolver.
+        // assert the per-link revert only happens while the link carries
+        // exactly this configuration's resolver and routing domains.
         if let Ok(case) = std::env::var(CHILD_CASE) {
             let owned = nostr_vpn_core::magic_dns::MagicDnsResolverOwnership::new(
                 "repair.example",
@@ -398,7 +400,7 @@
                 .unwrap_or_default();
             assert_eq!(
                 log.contains("revert"),
-                case == "owned",
+                std::env::var(EXPECT_REVERT_ENV).as_deref() == Ok("1"),
                 "{case}: unexpected resolvectl revert calls: {log}"
             );
             return;
@@ -414,7 +416,7 @@
         let fake_resolvectl = directory.join("resolvectl");
         std::fs::write(
             &fake_resolvectl,
-            "#!/bin/sh\nif [ \"$1\" = dns ] && [ \"$2\" = lo ]; then\n  echo \"Link 2 (lo): $NVPN_MAGICDNS_FAKE_LO_DNS\"\nfi\nif [ \"$1\" = revert ] && [ \"$2\" = lo ]; then\n  echo \"revert lo\" >> \"$NVPN_MAGICDNS_REPAIR_LOG\"\nfi\nexit 0\n",
+            "#!/bin/sh\nif [ \"$1\" = dns ] && [ \"$2\" = lo ]; then\n  echo \"Link 2 (lo): $NVPN_MAGICDNS_FAKE_LO_DNS\"\nfi\nif [ \"$1\" = domain ] && [ \"$2\" = lo ]; then\n  echo \"Link 2 (lo): $NVPN_MAGICDNS_FAKE_LO_DOMAIN\"\nfi\nif [ \"$1\" = revert ] && [ \"$2\" = lo ]; then\n  echo \"revert lo\" >> \"$NVPN_MAGICDNS_REPAIR_LOG\"\nfi\nexit 0\n",
         )
         .expect("write fake resolvectl");
         std::fs::set_permissions(
@@ -424,12 +426,33 @@
         .expect("make fake resolvectl executable");
         let log_path = directory.join("resolvectl.log");
 
-        // "owned": the link still points at this configuration's resolver.
+        // "owned": the link still carries exactly this configuration's
+        // resolver and routing domains.
         // "second-configuration": another configuration reinstalled the link
         // settings; reverting them would tear down a running configuration.
-        for (case, link_dns) in [
-            ("owned", "127.0.0.1:1053"),
-            ("second-configuration", "127.0.0.1:2049"),
+        // "mixed-owner": another configuration added its own server and
+        // domain while this configuration's settings are still present;
+        // reverting the shared link would delete the foreign settings too,
+        // so no resolvectl mutation may run at all.
+        for (case, link_dns, link_domain, expect_revert) in [
+            (
+                "owned",
+                "127.0.0.1:1053",
+                "~fips ~repair.example",
+                true,
+            ),
+            (
+                "second-configuration",
+                "127.0.0.1:2049",
+                "~fips ~other.example",
+                false,
+            ),
+            (
+                "mixed-owner",
+                "127.0.0.1:1053 127.0.0.1:2049",
+                "~fips ~repair.example ~other.example",
+                false,
+            ),
         ] {
             let _ = std::fs::remove_file(&log_path);
             let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -441,7 +464,9 @@
                 .env("PATH", &directory)
                 .env(CHILD_CASE, case)
                 .env(LOG_ENV, &log_path)
+                .env(EXPECT_REVERT_ENV, if expect_revert { "1" } else { "0" })
                 .env(FAKE_LO_DNS_ENV, link_dns)
+                .env(FAKE_LO_DOMAIN_ENV, link_domain)
                 .output()
                 .unwrap();
             assert!(

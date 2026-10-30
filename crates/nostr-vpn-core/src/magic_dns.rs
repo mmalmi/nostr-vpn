@@ -552,12 +552,13 @@ fn linux_resolver_argument(nameserver: Ipv4Addr, port: u16) -> String {
     }
 }
 
-/// Report whether the resolved per-link DNS servers still contain the exact
-/// resolver string `install_linux_resolver` configured.
+/// The per-link settings `resolvectl <subcommand> <link>` reports: the
+/// whitespace-separated values printed after the `Link <index> (<link>):`
+/// prefix.
 #[cfg(target_os = "linux")]
-fn linux_resolved_link_dns_contains(link: &str, resolver: &str) -> Result<bool> {
+fn linux_resolved_link_values(subcommand: &str, link: &str) -> Result<Vec<String>> {
     let output = Command::new("resolvectl")
-        .args(["dns", link])
+        .args([subcommand, link])
         .output()
         .map_err(|error| anyhow!("failed to execute resolvectl: {error}"))?;
     if !output.status.success() {
@@ -568,23 +569,62 @@ fn linux_resolved_link_dns_contains(link: &str, resolver: &str) -> Result<bool> 
         } else {
             stderr.trim()
         };
-        return Err(anyhow!("resolvectl dns {link} failed: {details}"));
+        return Err(anyhow!("resolvectl {subcommand} {link} failed: {details}"));
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .split_ascii_whitespace()
-        .any(|token| token == resolver))
+    let mut values = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((label, settings)) = line.split_once(':') else {
+            continue;
+        };
+        if !label.trim_start().starts_with("Link") {
+            continue;
+        }
+        values.extend(settings.split_ascii_whitespace().map(str::to_string));
+    }
+    Ok(values)
+}
+
+/// Report whether the link still carries exactly the settings
+/// `install_linux_resolver` wrote for `owned`: its one resolver and its
+/// routing domains, and nothing else. `resolvectl revert` resets every
+/// per-link setting, so a mixed link — our resolver still present next to
+/// another configuration's server or domain — is reported as not owned and
+/// left alone with one log line instead of deleting the foreign state.
+#[cfg(target_os = "linux")]
+fn linux_resolved_link_owned(link: &str, owned: &MagicDnsResolverOwnership) -> Result<bool> {
+    let resolver = linux_resolver_argument(owned.nameserver, owned.port);
+    let mut expected_domains: Vec<_> = resolver_suffixes(&owned.suffix)
+        .iter()
+        .map(|suffix| format!("~{suffix}"))
+        .collect();
+    expected_domains.sort_unstable();
+
+    let mut servers = linux_resolved_link_values("dns", link)?;
+    let mut domains = linux_resolved_link_values("domain", link)?;
+    servers.sort_unstable();
+    domains.sort_unstable();
+    if servers.as_slice() == [resolver.as_str()] && domains == expected_domains {
+        return Ok(true);
+    }
+    if servers.iter().any(|server| *server == resolver)
+        || domains
+            .iter()
+            .any(|domain| expected_domains.contains(domain))
+    {
+        eprintln!(
+            "magicdns: {link} DNS settings changed since this install; leaving them to the current owner"
+        );
+    }
+    Ok(false)
 }
 
 #[cfg(target_os = "linux")]
 fn uninstall_linux_resolver(owned: &MagicDnsResolverOwnership) -> Result<()> {
     // The per-link DNS settings are shared by every configuration on the
-    // host. Revert only while the link still points at the resolver this
-    // configuration installed; otherwise another configuration owns the
-    // link now and its state must survive.
-    let resolved_uninstall = match linux_resolved_link_dns_contains(
-        "lo",
-        &linux_resolver_argument(owned.nameserver, owned.port),
-    ) {
+    // host. Revert only while the link still carries exactly the settings
+    // this configuration installed; otherwise the link is mixed or another
+    // configuration owns it now and its state must survive.
+    let resolved_uninstall = match linux_resolved_link_owned("lo", owned) {
         Ok(true) => run_linux_resolvectl(&["revert", "lo"]),
         Ok(false) => Ok(()),
         Err(error) => Err(error),
