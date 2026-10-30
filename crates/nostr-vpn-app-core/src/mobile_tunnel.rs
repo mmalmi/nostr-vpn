@@ -50,7 +50,7 @@ use nostr_vpn_core::join_roster_persistence::{
 };
 use nostr_vpn_core::magic_dns::{
     build_magic_dns_records, build_magic_dns_response_if_handled,
-    build_magic_dns_server_failure_response,
+    build_magic_dns_server_failure_response, resolve_fips_dns_if_handled,
 };
 use nostr_vpn_core::secure_dns::{SecureDnsLookup, SecureDnsResolver, build_servfail_response};
 use nostr_vpn_core::signed_rosters::{signed_rosters_file_path, upsert_signed_roster};
