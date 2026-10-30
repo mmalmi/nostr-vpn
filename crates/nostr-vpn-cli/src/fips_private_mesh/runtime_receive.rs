@@ -425,11 +425,8 @@ impl FipsPrivateMeshRuntime {
                         }
                         return false;
                     }
-                    Ok(None) => {}
-                    Err(error) => {
-                        control_error = Some(error);
-                        return false;
-                    }
+                    // Control frames that fail to decode are dropped, never admitted as data.
+                    Ok(None) | Err(_) => return false,
                 }
             }
 
