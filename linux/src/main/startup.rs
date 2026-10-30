@@ -270,10 +270,7 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
 
     {
         let model = model.clone();
-        glib::timeout_add_seconds_local(2, move || {
-            refresh_now(&model);
-            glib::ControlFlow::Continue
-        });
+        schedule_state_refresh(&model);
     }
     {
         let model = model.clone();
@@ -300,4 +297,32 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
         window.present();
     }
     drain_pending_urls(runtime);
+}
+
+// Full refreshes shell out to the nvpn CLI, so the cadence follows the macOS
+// app: 1s while an action, service settlement, update or pending join approval
+// is in flight, 10s with a live paid route, 15s with the VPN on, and 30s once
+// idle. Each firing schedules the next timeout from the state it observed.
+// Until the worker has produced its first state the tick retries at 1s;
+// refresh_now skips it, so it costs no CLI spawn.
+fn schedule_state_refresh(model: &AppRef) {
+    let interval = {
+        let model = model.borrow();
+        if model.core_ready {
+            refresh_interval_secs(
+                !model.pending_actions.is_empty(),
+                model.service_settling,
+                model.update.checking || model.update.downloading,
+                &model.state,
+            )
+        } else {
+            1
+        }
+    };
+    let model = model.clone();
+    glib::timeout_add_seconds_local(interval, move || {
+        refresh_now(&model);
+        schedule_state_refresh(&model);
+        glib::ControlFlow::Break
+    });
 }
