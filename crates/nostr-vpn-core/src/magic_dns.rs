@@ -1,11 +1,15 @@
 use std::collections::HashMap;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(target_os = "linux")]
 use std::fs;
-#[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::io::ErrorKind;
-use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
 #[cfg(target_os = "macos")]
-use std::path::{Path, PathBuf};
+use std::io::Write as _;
+use std::net::{Ipv4Addr, SocketAddr, UdpSocket};
+#[cfg(any(target_os = "macos", test))]
+use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::Command;
 use std::sync::Arc;
@@ -356,103 +360,157 @@ pub fn uninstall_system_resolver(suffix: &str) -> Result<()> {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 const MACOS_MAGIC_DNS_MARKER: &str = "# Managed by nvpn MagicDNS\n";
 
-#[cfg(target_os = "macos")]
-fn install_macos_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Result<()> {
-    let resolver_path = macos_resolver_path(suffix);
-    write_macos_resolver(&resolver_path, nameserver, port)
+#[cfg(any(target_os = "macos", test))]
+pub const MACOS_SECURE_DNS_PORT: u16 = 1053;
+
+#[cfg(any(target_os = "macos", test))]
+pub fn macos_secure_dns_resolver_config() -> String {
+    format!(
+        "# Managed by nvpn secure DNS\nnameserver 127.0.0.1\nport {MACOS_SECURE_DNS_PORT}\noptions timeout:7 attempts:1\n"
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn legacy_macos_secure_dns_resolver_config() -> String {
+    format!(
+        "# Managed by nvpn\ndomain .\nsearch_order 1\nnameserver 127.0.0.1\nport {MACOS_SECURE_DNS_PORT}\noptions timeout:7 attempts:1\n"
+    )
+}
+
+// One ownership scheme for /etc/resolver: secure-DNS files count by exact
+// body, legacy MagicDNS files by marker, so either writer may replace the
+// other's file and either cleanup may remove it. `suffix` is the configured
+// MagicDNS suffix; empty means only the fixed names are owned.
+#[cfg(any(target_os = "macos", test))]
+fn macos_resolver_contents_owned(path: &Path, contents: &[u8], suffix: &str) -> bool {
+    let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
+    let name = path.file_name().and_then(std::ffi::OsStr::to_str);
+    if name
+        .is_some_and(|name| name == "nvpn" || name == "fips" || name.eq_ignore_ascii_case(&suffix))
+    {
+        return contents == macos_secure_dns_resolver_config().as_bytes()
+            || contents.starts_with(MACOS_MAGIC_DNS_MARKER.as_bytes());
+    }
+    if name == Some("nvpn-secure-dns") {
+        return contents == legacy_macos_secure_dns_resolver_config().as_bytes();
+    }
+    false
 }
 
 #[cfg(target_os = "macos")]
-fn write_macos_resolver(resolver_path: &Path, nameserver: Ipv4Addr, port: u16) -> Result<()> {
-    if let Some(parent) = resolver_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| {
-            if error.kind() == ErrorKind::PermissionDenied {
-                anyhow!(
-                    "permission denied creating {}; run with admin privileges",
-                    parent.display()
-                )
-            } else {
-                anyhow!(
-                    "failed to create resolver directory {}: {error}",
-                    parent.display()
-                )
-            }
-        })?;
-    }
-
-    let legacy_body =
-        format!("nameserver {nameserver}\nport {port}\noptions timeout:1 attempts:1\n");
-    match fs::symlink_metadata(resolver_path) {
-        Ok(metadata) => {
-            if !metadata.file_type().is_file() {
-                return Err(anyhow!(
-                    "refusing to replace non-regular resolver {}",
-                    resolver_path.display()
-                ));
-            }
-            let current = fs::read_to_string(resolver_path)?;
-            if current != legacy_body && !current.starts_with(MACOS_MAGIC_DNS_MARKER) {
-                return Err(anyhow!(
-                    "refusing to replace foreign resolver {}",
-                    resolver_path.display()
-                ));
-            }
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
-    let body = format!("{MACOS_MAGIC_DNS_MARKER}{legacy_body}");
-    fs::write(resolver_path, body).map_err(|error| {
-        if error.kind() == ErrorKind::PermissionDenied {
-            anyhow!(
-                "permission denied writing {}; run with admin privileges",
-                resolver_path.display()
-            )
-        } else {
-            anyhow!(
-                "failed to write resolver file {}: {error}",
-                resolver_path.display()
-            )
-        }
+pub fn write_macos_resolver_atomically(
+    path: &Path,
+    contents: &str,
+    suffix: &str,
+) -> std::io::Result<()> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("resolver path has no parent: {}", path.display()),
+        )
     })?;
+    std::fs::create_dir_all(parent)?;
+    let file_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("resolver path has no UTF-8 file name: {}", path.display()),
+            )
+        })?;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "refusing to replace non-regular resolver path {}",
+                        path.display()
+                    ),
+                ));
+            }
+            if !macos_resolver_contents_owned(path, &std::fs::read(path)?, suffix) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!(
+                        "refusing to replace foreign resolver file {}",
+                        path.display()
+                    ),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let temporary = parent.join(format!(".{file_name}.nvpn-{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&temporary);
+    let result = (|| -> std::io::Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        file.write_all(contents.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)?;
+        std::fs::File::open(parent)?.sync_all()
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
 
+#[cfg(target_os = "macos")]
+pub fn remove_owned_macos_resolver_file(path: &Path, suffix: &str) -> std::io::Result<bool> {
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    if !macos_resolver_contents_owned(path, &std::fs::read(path)?, suffix) {
+        return Ok(false);
+    }
+    match std::fs::remove_file(path) {
+        Ok(()) => {
+            if let Some(parent) = path.parent() {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Result<()> {
+    write_macos_resolver(&macos_resolver_path(suffix), nameserver, port, suffix)
+}
+
+#[cfg(target_os = "macos")]
+fn write_macos_resolver(
+    resolver_path: &Path,
+    nameserver: Ipv4Addr,
+    port: u16,
+    suffix: &str,
+) -> Result<()> {
+    let body = format!(
+        "{MACOS_MAGIC_DNS_MARKER}nameserver {nameserver}\nport {port}\noptions timeout:1 attempts:1\n"
+    );
+    write_macos_resolver_atomically(resolver_path, &body, suffix)?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 fn uninstall_macos_resolver(suffix: &str) -> Result<()> {
-    let resolver_path = macos_resolver_path(suffix);
-    remove_macos_resolver(&resolver_path)
-}
-
-#[cfg(target_os = "macos")]
-fn remove_macos_resolver(resolver_path: &Path) -> Result<()> {
-    match fs::symlink_metadata(resolver_path) {
-        Ok(metadata) if !metadata.file_type().is_file() => return Ok(()),
-        Ok(_) => {}
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error.into()),
-    }
-    if !fs::read_to_string(resolver_path)?.starts_with(MACOS_MAGIC_DNS_MARKER) {
-        return Ok(());
-    }
-
-    fs::remove_file(resolver_path).map_err(|error| {
-        if error.kind() == ErrorKind::PermissionDenied {
-            anyhow!(
-                "permission denied removing {}; run with admin privileges",
-                resolver_path.display()
-            )
-        } else {
-            anyhow!(
-                "failed to remove resolver file {}: {error}",
-                resolver_path.display()
-            )
-        }
-    })?;
+    remove_owned_macos_resolver_file(&macos_resolver_path(suffix), suffix)?;
     Ok(())
 }
 
@@ -822,35 +880,101 @@ mod tests {
         assert_eq!(super::resolver_suffixes(".FIPS."), ["fips"]);
     }
 
+    #[test]
+    fn macos_resolver_ownership_accepts_both_nvpn_marker_styles() {
+        let owned = |suffix: &str, name: &str, contents: &[u8]| {
+            super::macos_resolver_contents_owned(std::path::Path::new(name), contents, suffix)
+        };
+        let secure = super::macos_secure_dns_resolver_config();
+        let magic =
+            b"# Managed by nvpn MagicDNS\nnameserver 127.0.0.1\nport 1053\noptions timeout:1 attempts:1\n";
+        assert!(owned("", "/etc/resolver/nvpn", secure.as_bytes()));
+        assert!(owned("", "/etc/resolver/fips", secure.as_bytes()));
+        assert!(owned("", "/etc/resolver/nvpn", magic));
+        assert!(!owned(
+            "",
+            "/etc/resolver/nvpn",
+            b"# Managed by nvpn secure DNS\nforeign\n"
+        ));
+        assert!(!owned("", "/etc/resolver/nvpn", b"nameserver 192.0.2.53\n"));
+        assert!(!owned("", "/etc/resolver/nvpn", b""));
+        assert!(!owned("", "/etc/resolver/foreign", secure.as_bytes()));
+        assert!(!owned("", "/etc/resolver/foreign", magic));
+    }
+
+    #[test]
+    fn macos_resolver_ownership_recognizes_the_configured_suffix() {
+        let owned = |suffix: &str, name: &str, contents: &[u8]| {
+            super::macos_resolver_contents_owned(std::path::Path::new(name), contents, suffix)
+        };
+        let secure = super::macos_secure_dns_resolver_config();
+        let magic =
+            b"# Managed by nvpn MagicDNS\nnameserver 127.0.0.1\nport 1053\noptions timeout:1 attempts:1\n";
+        assert!(owned("mesh", "/etc/resolver/mesh", magic));
+        assert!(owned("mesh", "/etc/resolver/mesh", secure.as_bytes()));
+        assert!(owned(" .Mesh. ", "/etc/resolver/mesh", magic));
+        // The same content under an unrelated name stays foreign.
+        assert!(!owned("mesh", "/etc/resolver/foreign", magic));
+        assert!(!owned(
+            "mesh",
+            "/etc/resolver/mesh",
+            b"nameserver 192.0.2.53\n"
+        ));
+        assert!(!owned("", "/etc/resolver/mesh", magic));
+        // The legacy secure-DNS name keeps its legacy-only rule.
+        assert!(owned(
+            "",
+            "/etc/resolver/nvpn-secure-dns",
+            super::legacy_macos_secure_dns_resolver_config().as_bytes()
+        ));
+        assert!(!owned("", "/etc/resolver/nvpn-secure-dns", magic));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_split_dns_installs_and_cleans_fips_without_replacing_foreign_files() {
-        use super::{remove_macos_resolver, write_macos_resolver};
+        use super::{
+            macos_secure_dns_resolver_config, remove_owned_macos_resolver_file,
+            write_macos_resolver, write_macos_resolver_atomically,
+        };
         use std::fs;
 
         let directory =
             std::env::temp_dir().join(format!("nvpn-split-dns-{}", uuid::Uuid::new_v4()));
         let path = directory.join("fips");
-        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053).unwrap();
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "").unwrap();
         let contents = fs::read_to_string(&path).unwrap();
         assert!(contents.contains("nameserver 127.0.0.1\nport 1053\n"));
         // A restart can update a resolver already owned by this listener.
-        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1054).unwrap();
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1054, "").unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains("port 1054\n"));
-        remove_macos_resolver(&path).unwrap();
+        // The secure-DNS writer takes over a legacy MagicDNS resolver file.
+        write_macos_resolver_atomically(&path, &macos_secure_dns_resolver_config(), "").unwrap();
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .starts_with("# Managed by nvpn secure DNS\n")
+        );
+        // And the legacy writer takes it back; cleanup removes both marker styles.
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "").unwrap();
+        assert!(remove_owned_macos_resolver_file(&path, "").unwrap());
         assert!(!path.exists());
+        assert!(
+            !remove_owned_macos_resolver_file(&path, "").unwrap(),
+            "an absent file owns nothing"
+        );
 
         let foreign = "nameserver 192.0.2.53\n";
         fs::write(&path, foreign).unwrap();
-        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053).is_err());
-        remove_macos_resolver(&path).unwrap();
+        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "").is_err());
+        assert!(!remove_owned_macos_resolver_file(&path, "").unwrap());
         assert_eq!(fs::read_to_string(&path).unwrap(), foreign);
         fs::remove_file(&path).unwrap();
         let target = directory.join("foreign");
         fs::write(&target, foreign).unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();
-        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053).is_err());
-        remove_macos_resolver(&path).unwrap();
+        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "").is_err());
+        assert!(!remove_owned_macos_resolver_file(&path, "").unwrap());
         assert!(
             fs::symlink_metadata(&path)
                 .unwrap()
@@ -858,6 +982,44 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read_to_string(&target).unwrap(), foreign);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_custom_suffix_resolver_supports_install_update_and_remove() {
+        use super::{remove_owned_macos_resolver_file, write_macos_resolver};
+        use std::fs;
+
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-custom-suffix-{}", uuid::Uuid::new_v4()));
+        let path = directory.join("mesh");
+        // Install writes the custom-suffixed resolver file.
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "mesh").unwrap();
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("nameserver 127.0.0.1\nport 1053\n")
+        );
+        // A restart updates the owned custom-suffixed file in place.
+        write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1054, "mesh").unwrap();
+        assert!(fs::read_to_string(&path).unwrap().contains("port 1054\n"));
+        // Cleanup removes it.
+        assert!(remove_owned_macos_resolver_file(&path, "mesh").unwrap());
+        assert!(!path.exists());
+        assert!(!remove_owned_macos_resolver_file(&path, "mesh").unwrap());
+
+        // A foreign file wearing the custom name but carrying wrong content
+        // is refused by both the writer and cleanup.
+        let foreign = "nameserver 192.0.2.53\n";
+        fs::write(&path, foreign).unwrap();
+        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "mesh").is_err());
+        assert!(!remove_owned_macos_resolver_file(&path, "mesh").unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), foreign);
+        // A different configured suffix does not own the file either.
+        assert!(write_macos_resolver(&path, Ipv4Addr::LOCALHOST, 1053, "other").is_err());
+        assert!(!remove_owned_macos_resolver_file(&path, "other").unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), foreign);
         fs::remove_dir_all(&directory).unwrap();
     }
 

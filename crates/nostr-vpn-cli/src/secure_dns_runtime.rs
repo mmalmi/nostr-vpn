@@ -16,6 +16,10 @@ use hickory_proto::rr::{Name, RData, RecordType};
 use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
 use nostr_vpn_core::config::ExitDnsResolverConfig;
 use nostr_vpn_core::magic_dns::resolve_fips_dns_if_handled;
+#[cfg(target_os = "macos")]
+use nostr_vpn_core::magic_dns::{
+    remove_owned_macos_resolver_file, write_macos_resolver_atomically,
+};
 use nostr_vpn_core::secure_dns::{
     SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, build_servfail_response,
 };
@@ -52,12 +56,11 @@ pub(crate) use macos::cleanup_owned_macos_secure_dns_state;
 #[cfg(target_os = "macos")]
 use macos::{
     install_macos_secure_dns_store, macos_resolver_configs, macos_secure_dns_store_is_owned,
-    remove_owned_macos_resolver_file, remove_owned_macos_secure_dns_store,
-    write_macos_resolver_atomically,
+    remove_owned_macos_secure_dns_store,
 };
 
 #[cfg(target_os = "macos")]
-const SECURE_DNS_PORT: u16 = 1053;
+const SECURE_DNS_PORT: u16 = nostr_vpn_core::magic_dns::MACOS_SECURE_DNS_PORT;
 #[cfg(not(target_os = "macos"))]
 const SECURE_DNS_PORT: u16 = 53;
 const SECURE_DNS_BIND: SocketAddr =
@@ -589,18 +592,14 @@ impl SystemDnsGuard {
         {
             let SystemDnsCleanupIntent::MacosResolverFiles = cleanup_intent;
             let resolver_configs = macos_resolver_configs();
-            if let Some(parent) = resolver_configs[0].0.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))
-                    .map_err(SystemDnsInstallFailure::rolled_back)?;
-            }
             let mut resolver_paths: Vec<PathBuf> = Vec::with_capacity(resolver_configs.len());
             for (resolver_path, config) in resolver_configs {
-                if let Err(error) = write_macos_resolver_atomically(&resolver_path, &config) {
+                // Secure DNS installs only the fixed resolver names.
+                if let Err(error) = write_macos_resolver_atomically(&resolver_path, &config, "") {
                     let mut rollback_failures = Vec::new();
                     for installed_path in &resolver_paths {
                         if let Err(rollback_error) =
-                            remove_owned_macos_resolver_file(installed_path)
+                            remove_owned_macos_resolver_file(installed_path, "")
                         {
                             rollback_failures.push(format!(
                                 "remove {}: {rollback_error}",
@@ -633,7 +632,9 @@ impl SystemDnsGuard {
                 let install_error = anyhow!(error).context("failed to install macOS secure DNS");
                 let mut rollback_failures = Vec::new();
                 for installed_path in &resolver_paths {
-                    if let Err(rollback_error) = remove_owned_macos_resolver_file(installed_path) {
+                    if let Err(rollback_error) =
+                        remove_owned_macos_resolver_file(installed_path, "")
+                    {
                         rollback_failures.push(format!(
                             "remove {}: {rollback_error}",
                             installed_path.display()
@@ -760,7 +761,7 @@ impl SystemDnsGuard {
             }
             let mut remaining = Vec::new();
             for resolver_path in std::mem::take(&mut self.resolver_paths) {
-                match remove_owned_macos_resolver_file(&resolver_path) {
+                match remove_owned_macos_resolver_file(&resolver_path, "") {
                     Ok(_) => {}
                     Err(error) => {
                         failures.push(format!("remove {}: {error}", resolver_path.display()));
