@@ -412,4 +412,142 @@ mod tests {
 
         assert_eq!(actual_reply, expected_reply);
     }
+
+    fn data_packet(receiver_idx: u32) -> Vec<u8> {
+        let mut packet = vec![0u8; 32];
+        packet[0..4].copy_from_slice(&4u32.to_le_bytes());
+        packet[4..8].copy_from_slice(&receiver_idx.to_le_bytes());
+        packet
+    }
+
+    /// Start the runtime against a bound socket that never answers, so
+    /// every WG datagram it receives is observable test stimulus.
+    async fn start_runtime_against_silent_provider() -> (WgUpstreamRuntime, Arc<UdpSocket>) {
+        let (_, _, client_priv_b64, _) = random_keypair();
+        let (_, _, _, server_pub_b64) = random_keypair();
+        let provider = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let provider_addr = provider.local_addr().unwrap();
+        let cfg_text = format!(
+            "[Interface]\nPrivateKey = {client_priv_b64}\nAddress = 10.99.99.2/32\n\n[Peer]\nPublicKey = {server_pub_b64}\nEndpoint = {provider_addr}\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 1\n"
+        );
+        let cfg = parse_wireguard_exit_config(&cfg_text).expect("parse WG config");
+        let runtime = WgUpstreamRuntime::start_handshake_only(&cfg)
+            .await
+            .expect("start runtime");
+        (runtime, provider)
+    }
+
+    async fn recv_datagram(
+        socket: &Arc<UdpSocket>,
+        timeout: Duration,
+    ) -> Option<(Vec<u8>, SocketAddr)> {
+        let mut buf = vec![0u8; MAX_WG_PACKET];
+        let (n, src) = tokio::time::timeout(timeout, socket.recv_from(&mut buf))
+            .await
+            .ok()?
+            .ok()?;
+        Some((buf[..n].to_vec(), src))
+    }
+
+    /// Receive until `window` elapses, then return everything that arrived.
+    async fn collect_datagrams(socket: &Arc<UdpSocket>, window: Duration) -> Vec<Vec<u8>> {
+        let deadline = tokio::time::Instant::now() + window;
+        let mut datagrams = Vec::new();
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return datagrams;
+            }
+            let mut buf = vec![0u8; MAX_WG_PACKET];
+            match tokio::time::timeout(remaining, socket.recv_from(&mut buf)).await {
+                Ok(Ok((n, _))) => datagrams.push(buf[..n].to_vec()),
+                _ => return datagrams,
+            }
+        }
+    }
+
+    /// Off-path junk (parse failures and init-shaped garbage that fails the
+    /// MAC check) must never push the decap-error counter into a forced
+    /// handshake initiation toward the provider.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn malformed_packets_do_not_force_handshake_initiations() {
+        let (runtime, provider) = start_runtime_against_silent_provider().await;
+        let (initial, client) = recv_datagram(&provider, Duration::from_secs(2))
+            .await
+            .expect("initial handshake initiation");
+        assert_eq!(initial.len(), 148, "handshake initiation size");
+        assert_eq!(
+            u32::from_le_bytes(initial[0..4].try_into().unwrap()),
+            1,
+            "handshake initiation type"
+        );
+
+        let mut init_shaped = vec![0u8; 148];
+        init_shaped[0..4].copy_from_slice(&1u32.to_le_bytes());
+        init_shaped[4..8].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+        let junk = [
+            vec![9u8; 64],
+            init_shaped,
+            vec![9u8; 64],
+            vec![9u8; 64],
+            vec![9u8; 64],
+        ];
+        for datagram in &junk {
+            provider.send_to(datagram, client).await.unwrap();
+        }
+
+        // Old behavior forced an initiation right here; the retransmit
+        // timer leaves at least 5s of quiet after the initial initiation.
+        let forced = collect_datagrams(&provider, Duration::from_millis(2500)).await;
+        assert!(
+            forced.is_empty(),
+            "malformed packets must not force handshake initiations"
+        );
+        assert!(runtime.is_running());
+        runtime.shutdown().await;
+    }
+
+    /// Five data packets for a session that does not exist are the one
+    /// error class that still forces an initiation; a second burst inside
+    /// the rate-limit window must not send another one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn forced_rehandshake_sends_at_most_once_per_window() {
+        let (runtime, provider) = start_runtime_against_silent_provider().await;
+        let (initial, client) = recv_datagram(&provider, Duration::from_secs(2))
+            .await
+            .expect("initial handshake initiation");
+        assert_eq!(
+            u32::from_le_bytes(initial[0..4].try_into().unwrap()),
+            1,
+            "handshake initiation type"
+        );
+
+        for receiver_idx in 0..5u32 {
+            provider
+                .send_to(&data_packet(receiver_idx), client)
+                .await
+                .unwrap();
+        }
+        let (forced, _) = recv_datagram(&provider, Duration::from_secs(2))
+            .await
+            .expect("forced initiation after five missing-session errors");
+        assert_eq!(
+            u32::from_le_bytes(forced[0..4].try_into().unwrap()),
+            1,
+            "forced initiation type"
+        );
+
+        for receiver_idx in 5..10u32 {
+            provider
+                .send_to(&data_packet(receiver_idx), client)
+                .await
+                .unwrap();
+        }
+        let extra = collect_datagrams(&provider, Duration::from_millis(2500)).await;
+        assert!(
+            extra.is_empty(),
+            "a second forced initiation inside the rate-limit window must not be sent"
+        );
+        runtime.shutdown().await;
+    }
 }
