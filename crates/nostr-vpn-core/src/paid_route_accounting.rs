@@ -873,4 +873,169 @@ mod tests {
         tcp[13] = flags;
         tcp[14..16].copy_from_slice(&65535u16.to_be_bytes());
     }
+
+    fn exit_flow_udp_packet(src_port: u16) -> Vec<u8> {
+        ipv4_udp_packet_with([10, 8, 0, 2], [198, 51, 100, 1], src_port, 443, 60)
+    }
+
+    fn exit_flow_udp_reply(src_port: u16) -> Vec<u8> {
+        ipv4_udp_packet_with([198, 51, 100, 1], [10, 8, 0, 2], 443, src_port, 60)
+    }
+
+    fn exit_flow_icmp_echo(token: u32) -> Vec<u8> {
+        let mut packet = vec![0u8; 28];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&28_u16.to_be_bytes());
+        packet[8] = 64;
+        packet[9] = IPPROTO_ICMP;
+        packet[12..16].copy_from_slice(&[10, 8, 0, 2]);
+        packet[16..20].copy_from_slice(&[198, 51, 100, 1]);
+        packet[20] = 8;
+        packet[24..28].copy_from_slice(&token.to_be_bytes());
+        packet
+    }
+
+    fn exit_flow_icmp_reply(token: u32) -> Vec<u8> {
+        let mut packet = exit_flow_icmp_echo(token);
+        packet[12..16].copy_from_slice(&[198, 51, 100, 1]);
+        packet[16..20].copy_from_slice(&[10, 8, 0, 2]);
+        packet[20] = 0;
+        packet
+    }
+
+    #[test]
+    fn exit_flow_refresh_survives_eviction_storm_of_newer_flows() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        let local_port = 40_000u16;
+        filter.note_outbound(peer, &exit_flow_udp_packet(local_port));
+        for port in 40_001..40_001 + MAX_TRACKED_EXIT_FLOWS as u16 - 1 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        filter.note_outbound(peer, &exit_flow_udp_packet(local_port));
+        for port in 20_000..20_064 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(local_port)));
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(40_001)));
+    }
+
+    #[test]
+    fn exit_flow_eviction_removes_idle_flow_before_active_ones() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        let survivor_token = 1u32;
+        let idle_token = 2u32;
+        filter.note_outbound(peer, &exit_flow_icmp_echo(survivor_token));
+        filter.note_outbound(peer, &exit_flow_icmp_echo(idle_token));
+        make_exit_flow_idle(&mut filter, idle_token);
+        for token in 100..100 + MAX_TRACKED_EXIT_FLOWS as u32 - 2 {
+            filter.note_outbound(peer, &exit_flow_icmp_echo(token));
+        }
+        let fresh_token = 100 + MAX_TRACKED_EXIT_FLOWS as u32 - 2;
+        filter.note_outbound(peer, &exit_flow_icmp_echo(fresh_token));
+
+        assert!(!filter.admits_inbound(peer, &exit_flow_icmp_reply(idle_token)));
+        assert!(filter.admits_inbound(peer, &exit_flow_icmp_reply(survivor_token)));
+        assert!(filter.admits_inbound(peer, &exit_flow_icmp_reply(fresh_token)));
+    }
+
+    // Backdate one tracked flow past its idle timeout and move it to the front
+    // of its refresh group, where a flow that stopped being refreshed belongs.
+    fn make_exit_flow_idle(filter: &mut ExitFlowFilter, token: u32) {
+        let key = *filter
+            .flows
+            .keys()
+            .find(|key| key.token == token)
+            .expect("flow is tracked");
+        let stamp = filter.flows[&key].1;
+        filter.flows.get_mut(&key).expect("flow is tracked").0 = Instant::now()
+            .checked_sub(exit_flow_timeout(key.protocol) + Duration::from_secs(1))
+            .expect("monotonic clock older than the flow idle timeout");
+        let group = exit_flow_group(key.protocol);
+        let queue = &mut filter.refresh_order[group];
+        let position = queue
+            .iter()
+            .position(|entry| entry == &(key, stamp))
+            .expect("entry is queued");
+        let entry = queue.remove(position).expect("position is valid");
+        queue.push_front(entry);
+    }
+
+    #[test]
+    fn exit_flow_eviction_stays_idle_first_after_full_table_churn() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        for port in 0..MAX_TRACKED_EXIT_FLOWS as u16 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        for port in 20_000..21_024u16 {
+            filter.note_outbound(peer, &exit_flow_udp_packet(port));
+        }
+        assert_eq!(filter.flows.len(), MAX_TRACKED_EXIT_FLOWS);
+        // The churn evicted the least recently refreshed fill flows in order.
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(0)));
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(1_023)));
+
+        // Nothing is idle yet, so the next insert evicts the least recently
+        // refreshed live flow.
+        filter.note_outbound(peer, &exit_flow_icmp_echo(7));
+        assert!(!filter.admits_inbound(peer, &exit_flow_udp_reply(1_024)));
+
+        // A flow gone idle during the churn is still evicted before live ones.
+        make_exit_flow_idle(&mut filter, 7);
+        filter.note_outbound(peer, &exit_flow_udp_packet(21_024));
+        assert!(!filter.admits_inbound(peer, &exit_flow_icmp_reply(7)));
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(1_025)));
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(21_024)));
+    }
+
+    #[test]
+    fn exit_flow_tcp_and_udp_round_trips_are_admitted() {
+        let mut filter = ExitFlowFilter::default();
+        let peer = [9u8; 16];
+        filter.note_outbound(peer, &exit_flow_udp_packet(40_000));
+        assert!(filter.admits_inbound(peer, &exit_flow_udp_reply(40_000)));
+
+        filter.note_outbound(
+            peer,
+            &ipv4_tcp_packet(TcpPacketSpec {
+                src: [10, 8, 0, 2],
+                dst: [198, 51, 100, 1],
+                src_port: 40_001,
+                dst_port: 443,
+                seq: 1,
+                ack: 0,
+                flags: 0x02,
+                payload_len: 0,
+            }),
+        );
+        assert!(filter.admits_inbound(
+            peer,
+            &ipv4_tcp_packet(TcpPacketSpec {
+                src: [198, 51, 100, 1],
+                dst: [10, 8, 0, 2],
+                src_port: 443,
+                dst_port: 40_001,
+                seq: 2,
+                ack: 2,
+                flags: 0x12,
+                payload_len: 0,
+            }),
+        ));
+        assert!(!filter.admits_inbound(
+            peer,
+            &ipv4_tcp_packet(TcpPacketSpec {
+                src: [198, 51, 100, 1],
+                dst: [10, 8, 0, 2],
+                src_port: 443,
+                dst_port: 40_002,
+                seq: 9,
+                ack: 0,
+                flags: 0x02,
+                payload_len: 0,
+            }),
+        ));
+    }
 }
