@@ -57,8 +57,6 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 #[cfg(not(target_os = "macos"))]
 use std::fs;
-#[cfg(any(target_os = "macos", test))]
-use std::hash::{Hash, Hasher};
 #[cfg(feature = "paid-exit")]
 use std::io::Read;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};

@@ -170,6 +170,104 @@ fn macos_service_identity_scopes_non_default_configs() {
 }
 
 #[test]
+fn macos_service_config_suffix_is_stable_sha256_hex() {
+    let config = Path::new("/nvpn-service-suffix-stability/config.toml");
+    let suffix = crate::macos_service::macos_service_config_suffix(config);
+
+    assert_eq!(suffix, "98fad7f11f0c39f6");
+    assert_eq!(
+        suffix,
+        crate::macos_service::macos_service_config_suffix(config)
+    );
+    assert_eq!(suffix.len(), 16);
+    assert!(
+        suffix
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+    );
+}
+
+#[test]
+fn macos_service_legacy_identity_targets_pre_sha256_installations() {
+    let config = Path::new("/nvpn-service-suffix-stability/config.toml");
+    let legacy = crate::macos_service::macos_service_legacy_identity(config)
+        .expect("non-default config resolves a legacy service identity");
+    let current_label = crate::macos_service::macos_service_label(config);
+
+    assert!(legacy.label.starts_with("to.nostrvpn.nvpn."));
+    assert_ne!(legacy.label, current_label);
+    assert_eq!(legacy.target(), format!("system/{}", legacy.label));
+    assert_eq!(
+        legacy.plist_path,
+        PathBuf::from(format!("/Library/LaunchDaemons/{}.plist", legacy.label))
+    );
+    assert_eq!(
+        legacy.binary_path,
+        PathBuf::from(format!("/Library/PrivilegedHelperTools/{}", legacy.label))
+    );
+    assert_eq!(
+        crate::macos_service::macos_service_legacy_identity(config)
+            .expect("legacy identity is deterministic")
+            .label,
+        legacy.label
+    );
+    assert!(
+        crate::macos_service::macos_service_legacy_identity(&crate::default_config_path())
+            .is_none(),
+        "default-config installs kept the fixed label across both schemes"
+    );
+}
+
+#[test]
+fn macos_service_upgrade_removes_legacy_artifacts_and_keeps_current() {
+    // install-old: a pre-SHA-256 install left artifacts under the legacy
+    // identity. upgrade then stop/uninstall must remove exactly those, even
+    // after the service was reinstalled under the current identity.
+    let config = Path::new("/nvpn-service-upgrade/config.toml");
+    let legacy = crate::macos_service::macos_service_legacy_identity(config)
+        .expect("legacy identity exists for a non-default config");
+    let current_label = crate::macos_service::macos_service_label(config);
+    assert_ne!(legacy.target(), format!("system/{current_label}"));
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("nvpn-macos-legacy-upgrade-{nonce}"));
+    fs::create_dir(&root).expect("create fixture directory");
+    let legacy_artifacts = [
+        root.join(format!("{}.plist", legacy.label)),
+        root.join(&legacy.label),
+    ];
+    let current_artifacts = [
+        root.join(format!("{current_label}.plist")),
+        root.join(&current_label),
+    ];
+    let unrelated = root.join("to.nostrvpn.nvpn.other");
+    for path in legacy_artifacts
+        .iter()
+        .chain(&current_artifacts)
+        .chain(std::iter::once(&unrelated))
+    {
+        fs::write(path, "fixture").expect("write artifact fixture");
+    }
+
+    crate::macos_service::macos_remove_service_artifacts(
+        &legacy_artifacts[0],
+        &legacy_artifacts[1],
+    )
+    .expect("cleanup of the legacy identity removes its artifacts");
+
+    assert!(legacy_artifacts.iter().all(|path| !path.exists()));
+    assert!(
+        current_artifacts.iter().all(|path| path.exists()),
+        "reinstalling under the current identity must not strand or clobber it"
+    );
+    assert!(unrelated.exists());
+    fs::remove_dir_all(root).expect("remove fixture directory");
+}
+
+#[test]
 fn macos_service_uninstall_removes_only_selected_artifacts() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
