@@ -201,10 +201,16 @@ impl AppConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
+        Self::load_from_str(&raw, path)
+    }
+
+    // Parse bytes that were read from an already-validated handle. Secret
+    // hydration still resolves sidecar files relative to `secrets_path`.
+    pub fn load_from_str(raw: &str, secrets_path: &Path) -> Result<Self> {
         let mut config: AppConfig =
-            toml::from_str(&raw).with_context(|| "failed to parse config TOML")?;
+            toml::from_str(raw).with_context(|| "failed to parse config TOML")?;
         config.apply_load_migrations();
-        hydrate_config_secrets(path, &mut config)?;
+        hydrate_config_secrets(secrets_path, &mut config)?;
         config.ensure_defaults();
         Ok(config)
     }
