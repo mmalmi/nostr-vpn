@@ -245,6 +245,7 @@ pub async fn fetch_and_cache_keysets_with_client(
 ///
 /// Wraps a shared [`ConfigurableHost`] and provides:
 /// - `call_mint_swap` — POST to `/v1/swap`
+/// - `call_mint_restore` — POST to `/v1/restore` (NUT-09)
 /// - `refresh_all_keysets` — re-fetches and caches all keysets
 ///
 /// # Example
@@ -318,6 +319,33 @@ impl SpilmanAsyncNetworking for ReqwestNetworking {
         resp.text()
             .await
             .map_err(|e| format!("Failed to read swap response: {e}"))
+    }
+
+    async fn call_mint_restore(
+        &self,
+        mint_url: &str,
+        restore_request_json: &str,
+    ) -> Result<String, String> {
+        let url = format!("{mint_url}/v1/restore");
+
+        let resp = crate::mint_http::send_mint_request(
+            self.client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .body(restore_request_json.to_string()),
+        )
+        .await
+        .map_err(|e| format!("Restore request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Restore failed: {status} - {body}"));
+        }
+
+        resp.text()
+            .await
+            .map_err(|e| format!("Failed to read restore response: {e}"))
     }
 
     async fn refresh_all_keysets(&self, mint: &str) -> Result<(), String> {
