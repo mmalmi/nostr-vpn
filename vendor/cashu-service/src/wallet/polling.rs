@@ -46,7 +46,8 @@ impl CashuWalletService {
         let poll = polls.get_mut(&key).expect("poll was inserted");
         let result: Result<()> = async {
             report.finalized_melts = wallet.finalize_pending_melts().await?.len();
-            let recovery = wallet.recover_incomplete_sagas().await?;
+            let recovery = self.recover_wallet_sagas(wallet).await?;
+            if recovery.skipped > 0 { report.warnings.push("A reviewed payment is awaiting confirmation; its original reservation was preserved".into()); }
             report.recovered_sagas = recovery.recovered;
             report.compensated_sagas = recovery.compensated;
             report.pending_sagas = recovery.skipped;

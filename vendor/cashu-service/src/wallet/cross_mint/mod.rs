@@ -119,6 +119,7 @@ impl CashuWalletService {
         allow_new: bool,
     ) -> Result<CashuCrossMintTransfer> {
         let _guard = self.lock_operation().await;
+        self.require_restored_review()?;
         let request = normalize_cross_mint_transfer_request(request)?;
         let source_mint = MintUrl::from_str(&request.source_mint_url)
             .context("Failed to parse normalized source mint URL")?;
@@ -127,6 +128,15 @@ impl CashuWalletService {
         let source_wallet = ensure_sat_wallet(self.repository(), &source_mint).await?;
         let destination_wallet = ensure_sat_wallet(self.repository(), &destination_mint).await?;
 
+        anyhow::ensure!(
+            self.recover_wallet_sagas(&source_wallet).await?.skipped == 0
+                && self
+                    .recover_wallet_sagas(&destination_wallet)
+                    .await?
+                    .skipped
+                    == 0,
+            "Finish the reviewed payment before transferring between mints"
+        );
         transfer_between_wallets_with_start(&source_wallet, &destination_wallet, request, allow_new)
             .await
     }

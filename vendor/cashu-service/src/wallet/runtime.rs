@@ -91,6 +91,10 @@ impl CashuWalletService {
         fs::create_dir_all(cashu_wallet_dir(data_dir))
             .context("failed to create the Cashu wallet directory")?;
         let writer_lock = acquire_wallet_writer_lock(data_dir)?;
+        anyhow::ensure!(
+            !super::database_backup::restore_pending(data_dir),
+            "A wallet restore is pending; resume it with the same encrypted backup"
+        );
         let resolved = resolve_wallet_seed(data_dir, seed_store, migrate_legacy_seed)?;
         let localstore = Arc::new(
             WalletSqliteDatabase::new(cashu_wallet_db_path(data_dir))

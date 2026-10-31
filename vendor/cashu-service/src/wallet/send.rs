@@ -76,13 +76,13 @@ impl CashuWalletService {
         }
 
         let _guard = self.lock_operation().await;
+        self.require_restored_review()?;
         let normalized_mint = normalize_mint_url(mint_url)?;
         let mint_url =
             MintUrl::from_str(&normalized_mint).context("Failed to parse normalized mint URL")?;
         let wallet = ensure_sat_wallet(self.repository(), &mint_url).await?;
 
-        wallet
-            .recover_incomplete_sagas()
+        self.recover_wallet_sagas(&wallet)
             .await
             .context("Failed to recover Cashu wallet state before sending payment")?;
         hold_legacy_refunds(&wallet).await?;

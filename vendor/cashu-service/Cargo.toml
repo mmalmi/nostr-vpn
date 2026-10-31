@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "nvpn-cashu-service"
-version = "0.4.10"
+version = "0.4.11"
 authors = ["Martti Malmi"]
 build = false
 autolib = false
@@ -82,7 +82,8 @@ spilman-wallet-http = [
     "cdk-spilman/mint-http",
 ]
 wallet = [
-    "dep:cdk",
+    "dep:rusqlite",
+    "dep:sha2",    "dep:cdk",
     "dep:cdk-sqlite",
     "dep:fs2",
     "dep:rand",
@@ -266,4 +267,13 @@ path = "tests/spilman_channel_capacity.rs"
 [[test]]
 name = "mint_request_budget"
 path = "tests/mint_request_budget.rs"
+required-features = ["wallet"]
+
+[dependencies.sha2]
+version = "=0.10.9"
+optional = true
+
+[[test]]
+name = "reviewed_wallet_local"
+path = "tests/reviewed_wallet_local.rs"
 required-features = ["wallet"]
