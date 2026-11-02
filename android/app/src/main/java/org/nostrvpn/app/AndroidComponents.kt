@@ -253,7 +253,7 @@ private fun DeviceDetailDialog(
 @Composable
 internal fun AddParticipantForm(
     network: NetworkState,
-    dispatchSucceeded: (JSONObject) -> Boolean,
+    dispatchSucceeded: (JSONObject, () -> Unit) -> Unit,
     onAdded: () -> Unit,
 ) {
     var deviceId by remember(network.id) { mutableStateOf("") }
@@ -290,14 +290,13 @@ internal fun AddParticipantForm(
         Button(
             enabled = trimmedDeviceId.isNotEmpty() && !showError,
             onClick = {
-                val added = dispatchSucceeded(
+                dispatchSucceeded(
                     NativeActions.addParticipant(
                         network.id,
                         trimmedDeviceId,
                         alias.trim().ifBlank { null },
                     ),
-                )
-                if (added) {
+                ) {
                     deviceId = ""
                     alias = ""
                     onAdded()

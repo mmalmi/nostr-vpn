@@ -28,7 +28,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppCoreClient
 import org.nostrvpn.app.core.AppState
@@ -47,6 +50,11 @@ class MainActivity : ComponentActivity() {
     private var releaseJoinImageImportEnabled by mutableStateOf(false)
     private var legacyPackageToRemove by mutableStateOf<String?>(null)
     private lateinit var selfUpdateManager: AndroidSelfUpdateManager
+
+    // Single background lane for core FFI: dispatches keep issue order and
+    // never block the main thread.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val coreIo = Dispatchers.IO.limitedParallelism(1)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,7 +84,9 @@ class MainActivity : ComponentActivity() {
                 tunnelOwnedInProcess = tunnelOwnedInProcess,
             ) == TunnelServiceCommand.DISCONNECT
         ) {
-            core.dispatch(NativeActions.disconnectVpn())
+            lifecycleScope.launch(coreIo) {
+                core.dispatch(NativeActions.disconnectVpn())
+            }
         }
         selfUpdateManager =
             AndroidSelfUpdateManager(
@@ -129,10 +139,16 @@ class MainActivity : ComponentActivity() {
                 if (result.resultCode == RESULT_OK && state.vpnEnabled) {
                     startVpnTunnel()
                 } else if (pendingVpnStart && state.vpnEnabled) {
-                    try {
-                        applyUserActionState(core.dispatch(NativeActions.disconnectVpn()))
-                    } catch (error: Exception) {
-                        showAndroidError(error, "Android action failed")
+                    lifecycleScope.launch {
+                        try {
+                            applyUserActionState(
+                                withContext(coreIo) {
+                                    core.dispatch(NativeActions.disconnectVpn())
+                                },
+                            )
+                        } catch (error: Exception) {
+                            showAndroidError(error, "Android action failed")
+                        }
                     }
                 }
                 pendingVpnStart = false
@@ -151,10 +167,14 @@ class MainActivity : ComponentActivity() {
                 )
                 return true
             }
-            fun requestVpnTunnel() {
+            suspend fun requestVpnTunnel() {
                 if (vpnStartBlockedByRetiredPackage()) {
                     if (state.vpnEnabled) {
-                        applyUserActionState(core.dispatch(NativeActions.disconnectVpn()))
+                        applyUserActionState(
+                            withContext(coreIo) {
+                                core.dispatch(NativeActions.disconnectVpn())
+                            },
+                        )
                     }
                     return
                 }
@@ -171,7 +191,11 @@ class MainActivity : ComponentActivity() {
                     VpnStartState.alwaysOnActiveForThisApp(this) &&
                     !AndroidVpnRoutingPolicy.supportsAlwaysOn(routeTargets)
                 ) {
-                    applyUserActionState(core.dispatch(NativeActions.disconnectVpn()))
+                    applyUserActionState(
+                        withContext(coreIo) {
+                            core.dispatch(NativeActions.disconnectVpn())
+                        },
+                    )
                     showAndroidError(
                         "Always-on VPN cannot be used with split tunneling. " +
                             "Turn it off in Android VPN settings or select an Internet exit.",
@@ -198,44 +222,47 @@ class MainActivity : ComponentActivity() {
                 return TunnelRefreshPolicy.requiresTunnelRefresh(type, patchKeys)
             }
 
-            fun dispatchNow(action: JSONObject): Boolean {
+            fun dispatchNow(action: JSONObject, onSucceeded: () -> Unit = {}) {
                 val actionType = action.optString("type")
                 if (
                     actionType == "connect_vpn" &&
                     vpnStartBlockedByRetiredPackage()
                 ) {
-                    return false
+                    return
                 }
                 val wasEnabled = state.vpnEnabled
-                var actionSucceeded = false
-                try {
-                    val nextState = core.dispatch(action)
-                    actionSucceeded = nextState.error.isBlank()
-                    applyUserActionState(nextState)
-                } catch (error: Exception) {
-                    showAndroidError(error, "Android action failed")
-                }
-                if (!actionSucceeded) {
-                    return false
-                }
-                when (
-                    TunnelServiceCommandPolicy.commandAfterAction(
-                        actionType = actionType,
-                        wasEnabled = wasEnabled,
-                        isEnabled = state.vpnEnabled,
-                        requiresRefresh = actionRequiresTunnelRefresh(action),
-                    )
-                ) {
-                    TunnelServiceCommand.CONNECT -> requestVpnTunnel()
-                    TunnelServiceCommand.DISCONNECT -> {
-                        startVpnService(
-                            Intent(this, NostrVpnService::class.java)
-                                .setAction(NostrVpnService.ACTION_DISCONNECT),
-                        )
+                lifecycleScope.launch {
+                    val nextState = try {
+                        // Core dispatch can block on network round trips; keep
+                        // it off the main thread and resume on main for state.
+                        withContext(coreIo) { core.dispatch(action) }
+                    } catch (error: Exception) {
+                        showAndroidError(error, "Android action failed")
+                        return@launch
                     }
-                    TunnelServiceCommand.NONE -> Unit
+                    applyUserActionState(nextState)
+                    if (nextState.error.isNotBlank()) {
+                        return@launch
+                    }
+                    when (
+                        TunnelServiceCommandPolicy.commandAfterAction(
+                            actionType = actionType,
+                            wasEnabled = wasEnabled,
+                            isEnabled = state.vpnEnabled,
+                            requiresRefresh = actionRequiresTunnelRefresh(action),
+                        )
+                    ) {
+                        TunnelServiceCommand.CONNECT -> requestVpnTunnel()
+                        TunnelServiceCommand.DISCONNECT -> {
+                            startVpnService(
+                                Intent(this@MainActivity, NostrVpnService::class.java)
+                                    .setAction(NostrVpnService.ACTION_DISCONNECT),
+                            )
+                        }
+                        TunnelServiceCommand.NONE -> Unit
+                    }
+                    onSucceeded()
                 }
-                return true
             }
             fun requiredLocalNetworkPermission(): String? =
                 when {
@@ -281,18 +308,18 @@ class MainActivity : ComponentActivity() {
                     dispatchNow(action)
                 }
             }
-            val dispatchSucceeded: (JSONObject) -> Boolean = { action ->
-                val succeeded = dispatchNow(action)
-                if (
-                    succeeded &&
-                    TunnelRefreshPolicy.shouldStartTunnelAfterAction(
-                        action.optString("type"),
-                        state.vpnEnabled,
-                    )
-                ) {
-                    dispatch(NativeActions.connectVpn())
+            val dispatchSucceeded: (JSONObject, () -> Unit) -> Unit = { action, onSuccess ->
+                dispatchNow(action) {
+                    if (
+                        TunnelRefreshPolicy.shouldStartTunnelAfterAction(
+                            action.optString("type"),
+                            state.vpnEnabled,
+                        )
+                    ) {
+                        dispatch(NativeActions.connectVpn())
+                    }
+                    onSuccess()
                 }
-                succeeded
             }
             val wireGuardConfigFileLauncher = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenDocument(),
@@ -344,10 +371,12 @@ class MainActivity : ComponentActivity() {
                 observer.start()
                 onDispose { observer.stop() }
             }
-            fun refreshFromCore(trigger: AndroidRefreshTrigger) {
+            suspend fun refreshFromCore(trigger: AndroidRefreshTrigger) {
                 vpnLockdownActive = VpnStartState.refreshLockdownActive(this@MainActivity)
                 try {
-                    val nextState = core.refresh()
+                    // Core refresh can block on network rebinds; keep it off
+                    // the main thread and resume on main for state.
+                    val nextState = withContext(coreIo) { core.refresh() }
                     if (nextState.error.isNotBlank()) {
                         androidError = ""
                     }
@@ -393,7 +422,7 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(deepLink, debugRequest) {
                 val request = deepLink
                 if (!request.isNullOrBlank() && looksLikeJoinRequestQrOrLink(request)) {
-                    dispatchSucceeded(NativeActions.importJoinRequest(request))
+                    dispatchSucceeded(NativeActions.importJoinRequest(request)) {}
                     deepLink = null
                 }
                 val automation = debugRequest
@@ -450,13 +479,13 @@ class MainActivity : ComponentActivity() {
                                     "Not a Nostr VPN joiner QR."
                                 } else {
                                     showQrScanner = false
-                                    if (dispatchSucceeded(
+                                    dispatchSucceeded(
                                         NativeActions.addParticipant(
                                             qrScanNetworkId,
                                             scanned.deviceId,
                                             scanned.alias,
                                         ),
-                                    )) {
+                                    ) {
                                         deviceAddCompletionNonce += 1
                                     }
                                     null
@@ -478,7 +507,7 @@ class MainActivity : ComponentActivity() {
                         confirmButton = {
                             Button(
                                 onClick = {
-                                    if (dispatchSucceeded(NativeActions.importJoinRequest(request))) {
+                                    dispatchSucceeded(NativeActions.importJoinRequest(request)) {
                                         pendingScannedJoinRequest = null
                                         deviceAddCompletionNonce += 1
                                     }

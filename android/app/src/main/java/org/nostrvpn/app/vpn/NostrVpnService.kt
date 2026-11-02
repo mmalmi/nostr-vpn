@@ -693,31 +693,52 @@ class NostrVpnService : VpnService() {
             }
         }
 
-        if (!physicalNetworkChanged) {
-            if (!NativeCore.mobileTunnelWireGuardUnderlayReady(handle)) {
-                Log.w(
-                    "NostrVpnService",
-                    "Initial WireGuard underlay handshake refresh failed",
-                )
-                scheduleNativeNetworkPathRetry(fingerprint)
-                return
+        // Both native refreshes block on socket rebinds and peer-path
+        // refreshes, so they run on the tunnel executor; the fingerprint
+        // and retry bookkeeping stays on the main looper.
+        tunnelStartExecutor.execute {
+            val refreshed = synchronized(this@NostrVpnService) {
+                // Serializes with stopTunnel's mobileTunnelFree on the
+                // service monitor so the handle cannot be freed mid-call.
+                if (tunnelHandle != handle) {
+                    false
+                } else if (physicalNetworkChanged) {
+                    NativeCore.mobileTunnelNetworkChanged(handle)
+                } else {
+                    NativeCore.mobileTunnelWireGuardUnderlayReady(handle)
+                }
             }
-            markUnderlyingNetworkApplied(fingerprint)
-            return
+            underlyingNetworkHandler.post {
+                if (!running.get() || tunnelHandle != handle) {
+                    return@post
+                }
+                if (!refreshed) {
+                    if (physicalNetworkChanged) {
+                        Log.w(
+                            "NostrVpnService",
+                            "Physical network changed; live network-path refresh failed",
+                        )
+                        if (wireGuardNetwork != null) scheduleNativeNetworkPathRetry(fingerprint)
+                    } else {
+                        Log.w(
+                            "NostrVpnService",
+                            "Initial WireGuard underlay handshake refresh failed",
+                        )
+                        scheduleNativeNetworkPathRetry(fingerprint)
+                    }
+                    return@post
+                }
+                markUnderlyingNetworkApplied(fingerprint)
+                if (physicalNetworkChanged) {
+                    val wg =
+                        if (wireGuardSocketFd >= 0) "; WireGuard refreshed fd=$wireGuardSocketFd" else ""
+                    Log.i(
+                        "NostrVpnService",
+                        "Physical network changed; live FIPS carriers refreshed$wg",
+                    )
+                }
+            }
         }
-
-        if (!NativeCore.mobileTunnelNetworkChanged(handle)) {
-            Log.w("NostrVpnService", "Physical network changed; live network-path refresh failed")
-            if (wireGuardNetwork != null) scheduleNativeNetworkPathRetry(fingerprint)
-            return
-        }
-
-        markUnderlyingNetworkApplied(fingerprint)
-        val wg = if (wireGuardSocketFd >= 0) "; WireGuard refreshed fd=$wireGuardSocketFd" else ""
-        Log.i(
-            "NostrVpnService",
-            "Physical network changed; live FIPS carriers refreshed$wg",
-        )
     }
 
     private fun markUnderlyingNetworkApplied(fingerprint: String) {
@@ -874,9 +895,11 @@ class NostrVpnService : VpnService() {
         running.set(false)
         releaseMulticastLock()
         val handle = tunnelHandle
-        tunnelHandle = 0
-        if (handle != 0L) {
-            NativeCore.mobileTunnelFree(handle)
+        synchronized(this) {
+            tunnelHandle = 0
+            if (handle != 0L) {
+                NativeCore.mobileTunnelFree(handle)
+            }
         }
     }
 
