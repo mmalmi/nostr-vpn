@@ -58,6 +58,9 @@ final class AppManager: ObservableObject {
     var startupUrlsDrained = false
     @Published var pendingPaidExitLink: String?
     @Published var openingPaidExitLink: String?
+    // Deep-link payloads waiting for the user to confirm them in the UI.
+    @Published var deepLinkJoinRequest: String?
+    @Published var deepLinkPaidExit: String?
     var startupUpdateCheckDone = false
     let updateManifestUrls: [URL] = {
         if let overrideUrl = ProcessInfo.processInfo.environment["NVPN_UPDATE_MANIFEST_URL"]
