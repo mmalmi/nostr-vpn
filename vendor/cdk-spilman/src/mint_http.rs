@@ -95,6 +95,18 @@ impl std::fmt::Display for MintRetryAfter {
 
 impl std::error::Error for MintRetryAfter {}
 
+/// The mint answered but rejected this particular request.
+#[derive(Debug)]
+pub struct MintRequestRejected(pub u16);
+
+impl std::fmt::Display for MintRequestRejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cashu mint rejected the request (HTTP {})", self.0)
+    }
+}
+
+impl std::error::Error for MintRequestRejected {}
+
 /// Reject unsuccessful mint responses while retaining the server retry delay.
 pub fn check_mint_response(response: reqwest::Response) -> anyhow::Result<reqwest::Response> {
     if response.status().is_success() {
@@ -103,6 +115,9 @@ pub fn check_mint_response(response: reqwest::Response) -> anyhow::Result<reqwes
     let message = format!("Cashu mint request failed with {}", response.status());
     match retry_after(&response) {
         Some(seconds) => Err(anyhow::Error::new(MintRetryAfter(seconds)).context(message)),
+        None if matches!(response.status().as_u16(), 400 | 422) => {
+            Err(MintRequestRejected(response.status().as_u16()).into())
+        }
         None => Err(anyhow::anyhow!(message)),
     }
 }

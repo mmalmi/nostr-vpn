@@ -108,6 +108,8 @@ struct DaemonCashuWalletResponse {
     retry_after_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     insufficient_funds: Option<cashu_service::CashuInsufficientFunds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rejected_request_status: Option<u16>,
 }
 
 pub(crate) fn mint_http_client() -> Result<reqwest::Client> {
@@ -225,6 +227,7 @@ impl DaemonCashuWallet {
                     error: None,
                     retry_after_secs: None,
                     insufficient_funds: None,
+                    rejected_request_status: None,
                 },
                 Err(error) => DaemonCashuWalletResponse {
                     id: request.id.clone(),
@@ -233,6 +236,7 @@ impl DaemonCashuWallet {
                     retry_after_secs: error
                         .downcast_ref::<cashu_service::MintRetryAfter>()
                         .map(|delay| delay.0),
+                    rejected_request_status: error.downcast_ref::<cashu_service::MintRequestRejected>().map(|rejection| rejection.0),
                     insufficient_funds: error
                         .downcast_ref::<cashu_service::CashuInsufficientFunds>()
                         .cloned(),
@@ -790,6 +794,9 @@ pub(crate) async fn request_daemon_cashu_wallet_worker(
                 (_, Some(error)) if response.insufficient_funds.is_some() => Err(
                     anyhow::Error::new(response.insufficient_funds.expect("checked shortfall"))
                         .context(error),
+                ),
+                (_, Some(error)) if response.rejected_request_status.is_some() => Err(
+                    anyhow::Error::new(cashu_service::MintRequestRejected(response.rejected_request_status.expect("checked rejection"))).context(error)
                 ),
                 (_, Some(error)) => Err(match response.retry_after_secs {
                     Some(seconds) => {

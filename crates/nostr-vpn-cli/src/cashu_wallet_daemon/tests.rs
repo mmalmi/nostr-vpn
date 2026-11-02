@@ -416,6 +416,7 @@
                             ),
                             retry_after_secs: Some(1800),
                             insufficient_funds: None,
+                            rejected_request_status: None,
                         },
                     )
                     .unwrap();
