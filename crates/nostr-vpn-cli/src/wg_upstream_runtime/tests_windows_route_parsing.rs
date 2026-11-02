@@ -563,6 +563,62 @@ Idx     Met         MTU          State                Name
     }
 
     #[test]
+    fn windows_native_service_ownership_script_quotes_paths_exactly() {
+        let script = windows_native_wireguard_service_ownership_script(
+            "WireGuardTunnel$nvpn-wg-exit",
+            r#""C:\Program Files\O'Brien Tools\wireguard.exe" /tunnelservice "C:\ProgramData\nostr-vpn\wireguard\nvpn-owner-token\nvpn-wg-exit.conf""#,
+            "nvpn-owner-token",
+        );
+        assert_eq!(
+            script,
+            r#"$ErrorActionPreference = 'Stop'; $expectedPath = '"C:\Program Files\O''Brien Tools\wireguard.exe" /tunnelservice "C:\ProgramData\nostr-vpn\wireguard\nvpn-owner-token\nvpn-wg-exit.conf"'; $service = Get-CimInstance Win32_Service -Filter 'Name=''WireGuardTunnel$nvpn-wg-exit'''; if ($null -eq $service) { 'absent' } elseif ($service.PathName -cne $expectedPath) { 'foreign' } elseif ($service.Description -ceq 'nvpn-owner-token') { 'owned' } elseif ([string]::IsNullOrEmpty($service.Description)) { 'path-owned' } else { 'foreign' }"#
+        );
+        assert!(
+            script.contains(" -cne $expectedPath") && script.contains(" -ceq "),
+            "binary path and owner token comparisons must stay case-sensitive"
+        );
+    }
+
+    #[test]
+    fn classifies_windows_native_service_ownership_audit_output() {
+        use WindowsNativeWireGuardServiceOwnership as Ownership;
+        assert_eq!(
+            classify_windows_native_service_ownership_output("owned\n"),
+            Ownership::Owned
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output("  OWNED\r\n"),
+            Ownership::Owned,
+            "the audit output is classified case-insensitively"
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output("Path-Owned"),
+            Ownership::PathOwned
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output("absent"),
+            Ownership::Absent
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output("FOREIGN"),
+            Ownership::Foreign
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output(""),
+            Ownership::Undetermined
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output("#< CLIXML <Objs/>"),
+            Ownership::Undetermined,
+            "malformed or CLIXML output must stay undetermined"
+        );
+        assert_eq!(
+            classify_windows_native_service_ownership_output("owned foreign"),
+            Ownership::Undetermined
+        );
+    }
+
+    #[test]
     fn prior_release_native_wireguard_config_layout_remains_auditable() {
         let root = std::path::Path::new("/ProgramData/nostr-vpn/wireguard");
         let owner_token = "nvpn-owner-token";

@@ -559,6 +559,23 @@ fn windows_native_wireguard_config_is_owned(path: &Path, owner_token: &str) -> R
 }
 
 #[cfg(target_os = "windows")]
+fn windows_native_wireguard_config_unmarked_in_owner_dir(
+    path: &Path,
+    owner_token: &str,
+) -> Result<bool> {
+    if !matches!(
+        windows_native_wireguard_config_layout(path, owner_token)?,
+        WindowsNativeWireGuardConfigLayout::OwnerDirectory(_)
+    ) {
+        return Ok(false);
+    }
+    if std::fs::symlink_metadata(path).is_err() {
+        return Ok(false);
+    }
+    Ok(!windows_native_wireguard_owner_marker_is_owned(path, owner_token)?)
+}
+
+#[cfg(target_os = "windows")]
 fn pending_windows_native_cleanup()
 -> &'static std::sync::Mutex<Vec<WindowsNativeWireGuardCleanupState>> {
     static PENDING: std::sync::OnceLock<std::sync::Mutex<Vec<WindowsNativeWireGuardCleanupState>>> =

@@ -42,17 +42,39 @@ fn stop_and_delete_windows_native_wireguard_service(service_name: &str) -> Resul
         .with_context(|| format!("delete stopped native WireGuard service {service_name}"))
 }
 
-#[cfg(target_os = "windows")]
-fn windows_native_wireguard_service_is_owned(
-    cleanup: &WindowsNativeWireGuardCleanupState,
-) -> Result<bool> {
-    let service_name = format!("WireGuardTunnel${}", cleanup.name);
+#[cfg(any(test, target_os = "windows"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsNativeWireGuardServiceOwnership {
+    Owned,
+    PathOwned,
+    Absent,
+    Foreign,
+    Undetermined,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn classify_windows_native_service_ownership_output(
+    output: &str,
+) -> WindowsNativeWireGuardServiceOwnership {
+    match output.trim().to_ascii_lowercase().as_str() {
+        "owned" => WindowsNativeWireGuardServiceOwnership::Owned,
+        "path-owned" => WindowsNativeWireGuardServiceOwnership::PathOwned,
+        "absent" => WindowsNativeWireGuardServiceOwnership::Absent,
+        "foreign" => WindowsNativeWireGuardServiceOwnership::Foreign,
+        _ => WindowsNativeWireGuardServiceOwnership::Undetermined,
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn windows_native_wireguard_service_ownership_script(
+    service_name: &str,
+    expected_binary_path: &str,
+    owner_token: &str,
+) -> String {
     let escaped_service_name = service_name.replace('\'', "''");
     let service_filter =
         windows_powershell_literal(&format!("Name='{escaped_service_name}'"));
-    let expected_binary_path =
-        windows_native_wireguard_service_binary_path(&cleanup.wireguard_exe, &cleanup.config_path);
-    let script = format!(
+    format!(
         "$ErrorActionPreference = 'Stop'; \
          $expectedPath = {}; \
          $service = Get-CimInstance Win32_Service \
@@ -62,8 +84,22 @@ fn windows_native_wireguard_service_is_owned(
          elseif ($service.Description -ceq {}) {{ 'owned' }} \
          elseif ([string]::IsNullOrEmpty($service.Description)) {{ 'path-owned' }} \
          else {{ 'foreign' }}",
-        windows_powershell_literal(&expected_binary_path),
-        windows_powershell_literal(&cleanup.owner_token),
+        windows_powershell_literal(expected_binary_path),
+        windows_powershell_literal(owner_token),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn windows_native_wireguard_service_is_owned(
+    cleanup: &WindowsNativeWireGuardCleanupState,
+) -> Result<bool> {
+    let service_name = format!("WireGuardTunnel${}", cleanup.name);
+    let expected_binary_path =
+        windows_native_wireguard_service_binary_path(&cleanup.wireguard_exe, &cleanup.config_path);
+    let script = windows_native_wireguard_service_ownership_script(
+        &service_name,
+        &expected_binary_path,
+        &cleanup.owner_token,
     );
     let output = ProcessCommand::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -76,14 +112,19 @@ fn windows_native_wireguard_service_is_owned(
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    match String::from_utf8_lossy(&output.stdout)
+    let state = String::from_utf8_lossy(&output.stdout)
         .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "owned" => Ok(true),
-        "path-owned" => {
-            if windows_native_wireguard_config_is_owned(&cleanup.config_path, &cleanup.owner_token)?
+        .to_ascii_lowercase();
+    match classify_windows_native_service_ownership_output(&state) {
+        WindowsNativeWireGuardServiceOwnership::Owned => Ok(true),
+        WindowsNativeWireGuardServiceOwnership::PathOwned => {
+            if windows_native_wireguard_config_unmarked_in_owner_dir(
+                &cleanup.config_path,
+                &cleanup.owner_token,
+            )? || windows_native_wireguard_config_is_owned(
+                &cleanup.config_path,
+                &cleanup.owner_token,
+            )?
             {
                 Ok(true)
             } else {
@@ -93,11 +134,11 @@ fn windows_native_wireguard_service_is_owned(
                 ))
             }
         }
-        "absent" => Ok(false),
-        "foreign" => Err(anyhow!(
+        WindowsNativeWireGuardServiceOwnership::Absent => Ok(false),
+        WindowsNativeWireGuardServiceOwnership::Foreign => Err(anyhow!(
             "refusing to remove foreign same-name native WireGuard service {service_name}"
         )),
-        state => Err(anyhow!(
+        WindowsNativeWireGuardServiceOwnership::Undetermined => Err(anyhow!(
             "unexpected ownership state {state:?} for native WireGuard service {service_name}"
         )),
     }
@@ -172,8 +213,27 @@ pub(crate) fn cleanup_windows_native_wireguard_state(
         }
     }
     if cleanup.config_owned && !cleanup.service_owned {
-        match cleanup_windows_native_wireguard_config(&cleanup.config_path, &cleanup.owner_token) {
-            Ok(()) => cleanup.config_owned = false,
+        match windows_native_wireguard_config_unmarked_in_owner_dir(
+            &cleanup.config_path,
+            &cleanup.owner_token,
+        ) {
+            // The token-named owner directory already proves ownership, so a missing marker must not brick startup.
+            Ok(true) => {
+                eprintln!(
+                    "wg-upstream: WARNING — owned native WireGuard config {} retained \
+                     without its owner marker; deletion obligation stays journaled",
+                    cleanup.config_path.display()
+                );
+            }
+            Ok(false) => {
+                match cleanup_windows_native_wireguard_config(
+                    &cleanup.config_path,
+                    &cleanup.owner_token,
+                ) {
+                    Ok(()) => cleanup.config_owned = false,
+                    Err(error) => failures.push(format!("{error:#}")),
+                }
+            }
             Err(error) => failures.push(format!("{error:#}")),
         }
     } else if cleanup.config_owned {

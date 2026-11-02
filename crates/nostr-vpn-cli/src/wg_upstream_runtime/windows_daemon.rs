@@ -844,7 +844,7 @@ fn ensure_windows_native_wireguard_service_absent(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(test, target_os = "windows"))]
 fn windows_powershell_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }

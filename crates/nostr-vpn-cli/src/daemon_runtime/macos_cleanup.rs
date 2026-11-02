@@ -254,7 +254,12 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
                 .with_context(|| format!("failed to repair saved state {}", path.display())),
             };
         }
-        remove_runtime_file_if_exists(&path)?;
+        // Retained obligations stay journaled instead of blocking the next startup.
+        if state.is_empty() {
+            remove_runtime_file_if_exists(&path)?;
+        } else {
+            write_daemon_network_cleanup_state(&path, &state)?;
+        }
         Ok(true)
     }
 
