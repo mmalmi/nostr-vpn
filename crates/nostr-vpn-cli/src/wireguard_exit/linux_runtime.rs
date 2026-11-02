@@ -35,6 +35,9 @@ pub(crate) struct LinuxWireGuardExitRuntime {
     main_defaults_owned: bool,
     previous_table_routes: Vec<String>,
     policy_rule_owned: bool,
+    // Legacy cleanup journals predate scoping the rule to the mesh interface.
+    #[serde(default)]
+    policy_rule_iif: Option<String>,
     interface_restore: LinuxInterfaceRestore,
 }
 
@@ -107,6 +110,8 @@ impl LinuxWireGuardExitCleanupObligation {
 pub(crate) struct LinuxWireGuardExitRollbackObligation {
     interface: String,
     source_cidr: String,
+    #[serde(default)]
+    policy_rule_iif: Option<String>,
     snapshot: ApplySnapshot,
     progress: ApplyProgress,
     created_interface: bool,
@@ -197,9 +202,14 @@ fn apply_linux_wireguard_exit_upstream_with_journal(
         previous_default_route_hint,
     } = context;
     let iface = super::validate_linux_wireguard_exit_config(config).map_err(apply_failure)?;
-    if previous_runtime
-        .is_some_and(|runtime| runtime.interface != iface || runtime.source_cidr != source_cidr)
-    {
+    if previous_runtime.is_some_and(|runtime| {
+        runtime.interface != iface
+            || runtime.source_cidr != source_cidr
+            || runtime
+                .policy_rule_iif
+                .as_deref()
+                .is_some_and(|rule_iif| rule_iif != mesh_iface)
+    }) {
         return Err(apply_failure(anyhow!(
             "WireGuard exit runtime identity changed without cleanup"
         )));
@@ -260,6 +270,7 @@ fn apply_linux_wireguard_exit_upstream_with_journal(
         config,
         &iface,
         source_cidr,
+        mesh_iface,
         &initial_endpoint_specs,
         previous_runtime,
     ) {
@@ -312,6 +323,7 @@ fn apply_linux_wireguard_exit_upstream_with_journal(
         LinuxWireGuardExitRollbackObligation {
             interface: iface.clone(),
             source_cidr: source_cidr.to_string(),
+            policy_rule_iif: Some(mesh_iface.to_string()),
             snapshot: snapshot.clone(),
             progress: conservative_progress,
             created_interface,
@@ -352,6 +364,7 @@ fn apply_linux_wireguard_exit_upstream_with_journal(
             LinuxWireGuardExitRollbackObligation {
                 interface: iface,
                 source_cidr: source_cidr.to_string(),
+                policy_rule_iif: Some(mesh_iface.to_string()),
                 snapshot,
                 progress,
                 created_interface,
@@ -370,6 +383,7 @@ fn apply_linux_wireguard_exit_upstream_with_journal(
         LinuxWireGuardExitRollbackObligation {
             interface: iface,
             source_cidr: source_cidr.to_string(),
+            policy_rule_iif: Some(mesh_iface.to_string()),
             snapshot,
             progress,
             created_interface,
@@ -431,6 +445,7 @@ fn build_runtime(
     let LinuxWireGuardExitRollbackObligation {
         interface: iface,
         source_cidr,
+        policy_rule_iif,
         snapshot,
         progress,
         created_interface,
@@ -499,6 +514,7 @@ fn build_runtime(
         ),
         policy_rule_owned: progress.policy_rule_added
             || previous_runtime.is_some_and(|runtime| runtime.policy_rule_owned),
+        policy_rule_iif,
         interface_restore,
     }
 }
@@ -600,6 +616,7 @@ fn capture_apply_snapshot(
     config: &WireGuardExitConfig,
     iface: &str,
     source_cidr: &str,
+    mesh_iface: &str,
     endpoint_specs: &[crate::LinuxEndpointBypassRoute],
     previous_runtime: Option<&LinuxWireGuardExitRuntime>,
 ) -> Result<ApplySnapshot> {
@@ -652,6 +669,7 @@ fn capture_apply_snapshot(
     let policy_rule_existed = linux_wireguard_exit_policy_rule_exists(
         &rules,
         source_cidr,
+        mesh_iface,
         WIREGUARD_EXIT_TABLE,
         WIREGUARD_EXIT_RULE_PRIORITY,
     );
@@ -710,7 +728,7 @@ fn apply_snapshot_mutations(
 
     if !snapshot.policy_rule_existed {
         progress.policy_rule_added = true;
-        add_linux_wireguard_exit_policy_rule(runner, source_cidr)?;
+        add_linux_wireguard_exit_policy_rule(runner, source_cidr, mesh_iface)?;
     }
 
     flush_linux_route_cache(runner)
@@ -720,6 +738,7 @@ fn rollback_apply(
     runner: &mut impl LinuxCommandRunner,
     iface: &str,
     source_cidr: &str,
+    policy_rule_iif: Option<&str>,
     snapshot: &ApplySnapshot,
     progress: &ApplyProgress,
 ) -> Result<()> {
@@ -765,6 +784,7 @@ fn rollback_apply(
             delete_linux_wireguard_exit_policy_rule(
                 runner,
                 source_cidr,
+                policy_rule_iif,
                 WIREGUARD_EXIT_TABLE,
                 WIREGUARD_EXIT_RULE_PRIORITY,
             ),
@@ -804,6 +824,7 @@ fn cleanup_linux_wireguard_exit_obligation_with(
                     runner,
                     &rollback.interface,
                     &rollback.source_cidr,
+                    rollback.policy_rule_iif.as_deref(),
                     &rollback.snapshot,
                     &rollback.progress,
                 )
@@ -877,6 +898,7 @@ fn cleanup_linux_wireguard_exit_upstream_with(
             delete_linux_wireguard_exit_policy_rule(
                 runner,
                 &runtime.source_cidr,
+                runtime.policy_rule_iif.as_deref(),
                 runtime.table,
                 runtime.priority,
             ),
