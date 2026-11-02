@@ -57,7 +57,10 @@ impl LightningMockMintConnector {
     fn rotate_keyset(&self, keyset: KeySet) {
         let mut current = self.keyset.lock().unwrap();
         current.active = Some(false);
-        self.additional_keysets.lock().unwrap().push(current.clone());
+        self.additional_keysets
+            .lock()
+            .unwrap()
+            .push(current.clone());
         *current = keyset;
     }
 
@@ -206,19 +209,29 @@ impl MintConnector for LightningMockMintConnector {
         let fee = (request.inputs().len() as u64 * self.keyset_info().input_fee_ppk).div_ceil(1000);
         let input: u64 = request.inputs().iter().map(|p| p.amount.to_u64()).sum();
         let output: u64 = request.outputs().iter().map(|p| p.amount.to_u64()).sum();
-        assert_eq!(input - fee, output, "mint swap must cover its actual input fees");
-        let signatures = request.outputs().iter().map(|message| {
-            let index = message.amount.to_u64().trailing_zeros() as u8 + 1;
-            let secret = SecretKey::from_slice(&[index; 32]).unwrap();
-            let mut signature = cdk::nuts::BlindSignature {
-                amount: message.amount,
-                keyset_id: message.keyset_id,
-                c: cdk::dhke::sign_message(&secret, &message.blinded_secret).unwrap(),
-                dleq: None,
-            };
-            signature.add_dleq_proof(&message.blinded_secret, &secret).unwrap();
-            signature
-        }).collect();
+        assert_eq!(
+            input - fee,
+            output,
+            "mint swap must cover its actual input fees"
+        );
+        let signatures = request
+            .outputs()
+            .iter()
+            .map(|message| {
+                let index = message.amount.to_u64().trailing_zeros() as u8 + 1;
+                let secret = SecretKey::from_slice(&[index; 32]).unwrap();
+                let mut signature = cdk::nuts::BlindSignature {
+                    amount: message.amount,
+                    keyset_id: message.keyset_id,
+                    c: cdk::dhke::sign_message(&secret, &message.blinded_secret).unwrap(),
+                    dleq: None,
+                };
+                signature
+                    .add_dleq_proof(&message.blinded_secret, &secret)
+                    .unwrap();
+                signature
+            })
+            .collect();
         Ok(SwapResponse { signatures })
     }
 
@@ -418,7 +431,11 @@ async fn refresh_active_keyset_ignores_cheaper_inactive_keysets_and_rejects_none
     let active_id = active.id;
     let mut inactive = build_test_keyset(32);
     inactive.active = Some(false);
-    let mock = Arc::new(LightningMockMintConnector::new(active.clone(), "quote", "00ff"));
+    let mock = Arc::new(LightningMockMintConnector::new(
+        active.clone(),
+        "quote",
+        "00ff",
+    ));
     mock.add_keyset(inactive);
     let wallet = WalletBuilder::new()
         .mint_url("https://mint.example".parse().unwrap())
@@ -472,7 +489,10 @@ async fn failed_cdk_preparation_preserves_file_backed_proofs_across_reopen() {
         .await;
     assert!(prepared.is_err());
     assert_eq!(
-        wallet.get_proofs_with(Some(vec![State::Unspent]), None).await.unwrap(),
+        wallet
+            .get_proofs_with(Some(vec![State::Unspent]), None)
+            .await
+            .unwrap(),
         vec![proof.clone()]
     );
     assert_eq!(wallet.total_balance().await.unwrap().to_u64(), 16);
@@ -487,7 +507,10 @@ async fn failed_cdk_preparation_preserves_file_backed_proofs_across_reopen() {
         .await
         .unwrap();
     assert_eq!(
-        wallet.get_proofs_with(Some(vec![State::Unspent]), None).await.unwrap(),
+        wallet
+            .get_proofs_with(Some(vec![State::Unspent]), None)
+            .await
+            .unwrap(),
         vec![proof]
     );
     assert_eq!(wallet.total_balance().await.unwrap().to_u64(), 16);

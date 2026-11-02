@@ -27,6 +27,11 @@ pub use crate::network_routes::{
     route_is_ipv6,
 };
 
+pub use crate::config_defaults::{
+    ResolvedParticipant, maybe_autoconfigure_node, needs_endpoint_autoconfig,
+    needs_tunnel_ip_autoconfig, normalize_nostr_pubkey, normalize_runtime_network_id,
+    npub_for_pubkey_hex, resolve_participant_string,
+};
 use crate::config_defaults::{
     current_unix_timestamp, default_autoconnect, default_close_to_tray_on_close,
     default_connect_to_non_roster_fips_peers, default_endpoint,
@@ -37,10 +42,6 @@ use crate::config_defaults::{
     default_nat_discovery_timeout_secs, default_nat_enabled, default_nat_stun_servers,
     default_network_enabled, default_network_id, default_node_id, default_relays,
     default_tunnel_ip, generate_nostr_identity, is_true, is_zero, needs_generated_network_id,
-};
-pub use crate::config_defaults::{
-    maybe_autoconfigure_node, needs_endpoint_autoconfig, needs_tunnel_ip_autoconfig,
-    normalize_nostr_pubkey, normalize_runtime_network_id, npub_for_pubkey_hex,
 };
 use crate::config_magic_dns::{
     default_magic_dns_suffix, default_network_entry_id, default_network_name, default_node_name,

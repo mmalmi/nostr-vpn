@@ -4,6 +4,7 @@ members = [
   "crates/nostr-vpn-app-core/uniffi-bindgen",
   "crates/nostr-vpn-core",
   "crates/nostr-vpn-cli",
+  "crates/nostr-vpn-namecoin",
   "crates/nostr-vpn-sim",
   "crates/nostr-vpn-web",
   "crates/nostr-vpn-wintun",
@@ -75,6 +76,7 @@ nostr-social-graph = "0.1.4"
 nostr-social-memory = "0.1.1"
 nostr-identity = "0.4.0"
 nostr-vpn-core = { version = "=4.1.19", path = "crates/nostr-vpn-core", default-features = false }
+nostr-vpn-namecoin = { version = "=4.1.19", path = "crates/nostr-vpn-namecoin" }
 nostr-vpn-wintun = { version = "=4.1.19", path = "crates/nostr-vpn-wintun" }
 
 [workspace.lints.clippy]

@@ -437,6 +437,7 @@ impl AppConfig {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: Default::default(),
         });
         let _ = self.note_network_roster_local_change(&id);
         id

@@ -4068,6 +4068,7 @@ dependencies = [
  "nostr-sdk",
  "nostr-social-graph",
  "nostr-social-memory",
+ "nostr-vpn-namecoin",
  "nvpn-cashu-service",
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
@@ -4089,6 +4090,23 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nostr-vpn-namecoin"
+version = "4.1.19"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -4260,6 +4278,7 @@ dependencies = [
  "nostr-social-graph",
  "nostr-social-memory",
  "nostr-vpn-core",
+ "nostr-vpn-namecoin",
  "nostr-vpn-wintun",
  "nvpn-cashu-service",
  "nvpn-cdk-spilman",

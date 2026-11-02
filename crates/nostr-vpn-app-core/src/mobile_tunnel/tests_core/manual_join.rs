@@ -41,7 +41,7 @@
                 network_name: "Manual mesh".to_string(),
                 devices: Vec::new(),
                 admins: vec![admin.clone()],
-                aliases: HashMap::new(),
+                aliases: Default::default(),
                 signed_at: unix_timestamp(),
             },
             &admin_keys,
@@ -88,6 +88,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: Default::default(),
         }];
         // Isolate the admin-listener behavior from the built-in bootstrap nodes,
         // which would otherwise populate config.peers as fallback transit.

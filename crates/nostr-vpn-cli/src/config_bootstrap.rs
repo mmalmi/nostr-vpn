@@ -171,7 +171,7 @@ fn uninstall_cli_path(destination: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn init_config(path: &Path, force: bool, devices: Vec<String>) -> Result<()> {
+pub(crate) async fn init_config(path: &Path, force: bool, devices: Vec<String>) -> Result<()> {
     if path.exists() && !force {
         return Err(anyhow!(
             "config already exists at {} (pass --force to overwrite)",
@@ -180,7 +180,8 @@ pub(crate) fn init_config(path: &Path, force: bool, devices: Vec<String>) -> Res
     }
 
     let mut config = AppConfig::generated();
-    apply_devices_override(&mut config, devices)?;
+    let resolver = crate::namecoin_resolver::ResolverHandle::from_config(&config)?;
+    apply_devices_override_async(&mut config, devices, resolver.as_ref()).await?;
     maybe_autoconfigure_node(&mut config);
     config.save(path)?;
 
@@ -355,6 +356,14 @@ pub(crate) fn apply_devices_override(config: &mut AppConfig, devices: Vec<String
         return Ok(());
     }
 
+    for device in &devices {
+        if nostr_vpn_namecoin::parse_bit_alias(device).is_some() {
+            return Err(anyhow!(
+                "'{device}' is a '.bit' alias; use the async device override with a resolver"
+            ));
+        }
+    }
+
     let mut normalized = devices
         .iter()
         .map(|device| normalize_nostr_pubkey(device))
@@ -389,4 +398,50 @@ pub(crate) fn apply_participants_override(
     participants: Vec<String>,
 ) -> Result<()> {
     apply_devices_override(config, participants)
+}
+
+pub(crate) async fn apply_devices_override_async(
+    config: &mut AppConfig,
+    devices: Vec<String>,
+    resolver: Option<&crate::namecoin_resolver::ResolverHandle>,
+) -> Result<()> {
+    if devices.is_empty() {
+        return Ok(());
+    }
+
+    let mut normalized = Vec::with_capacity(devices.len());
+    let mut alias_pairs = Vec::new();
+    for device in &devices {
+        let resolved = crate::namecoin_resolver::resolve_with_handle(device, resolver).await?;
+        if let Some(alias) = resolved.alias {
+            alias_pairs.push((resolved.hex_pubkey.clone(), alias));
+        }
+        normalized.push(resolved.hex_pubkey);
+    }
+
+    normalized.sort();
+    normalized.dedup();
+    let pending_exit_node = normalize_nostr_pubkey(&config.exit_node).ok();
+    config.ensure_defaults();
+    if config.active_network_opt().is_none() {
+        let network_id = config
+            .networks
+            .first()
+            .map(|network| network.id.clone())
+            .unwrap_or_else(|| config.add_network(""));
+        config.set_network_enabled(&network_id, true)?;
+    }
+    config.active_network_mut().devices = normalized.clone();
+    for (hex, alias) in alias_pairs {
+        config.active_network_mut().aliases.insert(hex, alias);
+    }
+    if let Some(exit_node) = pending_exit_node
+        && normalized.iter().any(|device| device == &exit_node)
+    {
+        config.select_private_exit_node(&exit_node)?;
+    }
+    let _ = config.note_active_network_roster_local_change();
+    config.ensure_defaults();
+
+    Ok(())
 }

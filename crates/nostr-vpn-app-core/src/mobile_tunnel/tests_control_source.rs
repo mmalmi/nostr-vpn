@@ -30,7 +30,7 @@
                 network_name: "Home".to_string(),
                 devices: vec![Keys::generate().public_key().to_hex()],
                 admins: vec![admin.public_key().to_hex()],
-                aliases: HashMap::new(),
+                aliases: Default::default(),
                 signed_at: 2,
             },
             &admin,

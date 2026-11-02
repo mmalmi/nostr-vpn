@@ -146,7 +146,7 @@ mod tests {
                 network_name: "Home".to_string(),
                 devices: vec![device.clone()],
                 admins: vec![admin.public_key().to_hex()],
-                aliases: HashMap::new(),
+                aliases: Default::default(),
                 signed_at: 123,
             },
             &admin,
@@ -191,7 +191,7 @@ mod tests {
             network_name: "Home".to_string(),
             devices: vec![member],
             admins: vec![admin.public_key().to_hex()],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: 123,
         };
         let signed = SignedRoster::sign("mesh", roster, &admin).expect("sign roster");

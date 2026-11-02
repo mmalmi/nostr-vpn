@@ -35,6 +35,7 @@ fn participants_override_targets_the_active_network() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         },
         NetworkConfig {
             id: "work".to_string(),
@@ -52,6 +53,7 @@ fn participants_override_targets_the_active_network() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         },
     ];
     config.ensure_defaults();
@@ -281,7 +283,7 @@ fn join_roster_receipt_requires_exact_durable_config_and_roster_artifact() {
             network_name: "Durable Home".to_string(),
             devices: vec![joiner.own_nostr_pubkey_hex().expect("joiner pubkey")],
             admins: vec![admin.public_key().to_hex()],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: now,
         },
         &admin,
@@ -323,7 +325,7 @@ fn join_roster_receipt_requires_exact_durable_config_and_roster_artifact() {
                 network_name: "Other".to_string(),
                 devices: vec![joiner.own_nostr_pubkey_hex().expect("joiner pubkey")],
                 admins: vec![admin.public_key().to_hex()],
-                aliases: HashMap::new(),
+                aliases: Default::default(),
                 signed_at: now.saturating_add(1),
             },
             &admin,
@@ -365,7 +367,7 @@ fn inbound_fips_roster_accepts_admin_signed_event() {
             network_name: "Home".to_string(),
             devices: vec![member_hex.clone()],
             admins: vec![admin_hex.clone()],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: 1_726_000_000,
         },
         &admin,
@@ -411,7 +413,7 @@ fn inbound_fips_roster_rejects_tampered_signed_event() {
             network_name: "Home".to_string(),
             devices: vec![member_hex],
             admins: vec![admin_hex],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: 1_726_000_000,
         },
         &admin,
@@ -465,7 +467,7 @@ fn inbound_fips_roster_ignores_signed_event_from_non_admin_author() {
             network_name: "Home".to_string(),
             devices: vec![member_hex],
             admins: vec![known_admin_hex, outsider_hex],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: 1_726_000_000,
         },
         &outsider,
@@ -508,6 +510,7 @@ fn config_overrides_set_the_active_network_mesh_id() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         },
         NetworkConfig {
             id: "work".to_string(),
@@ -525,6 +528,7 @@ fn config_overrides_set_the_active_network_mesh_id() {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            aliases: std::collections::HashMap::new(),
         },
     ];
     config.ensure_defaults();

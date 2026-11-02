@@ -220,7 +220,7 @@ mod tests {
             network_name: "Home".to_string(),
             devices: vec![member],
             admins: vec![admin.public_key().to_hex()],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at,
         };
         SignedRoster::sign("mesh", roster, &admin).expect("sign roster")
@@ -273,7 +273,7 @@ mod tests {
                     network_name: "Home".into(),
                     devices,
                     admins: vec![admin.public_key().to_hex()],
-                    aliases: HashMap::new(),
+                    aliases: Default::default(),
                     signed_at,
                 },
                 &admin,

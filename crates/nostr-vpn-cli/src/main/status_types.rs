@@ -543,3 +543,29 @@ struct MacosManagedRoute {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     interface: Option<String>,
 }
+
+
+async fn load_config_with_overrides_async(
+    path: &Path,
+    network_id: Option<String>,
+    devices: Vec<String>,
+    mode: ConfigLoadMode,
+) -> Result<(AppConfig, String)> {
+    let mut app = if mode == ConfigLoadMode::ReadOnly {
+        load_config_read_only(path)?
+    } else {
+        load_or_default_config(path)?
+    };
+    if apply_cached_active_network_roster(&mut app, path)? && mode == ConfigLoadMode::Persist {
+        app.save(path)?;
+    }
+    let resolver = namecoin_resolver::ResolverHandle::from_config(&app)?;
+    config_bootstrap::apply_devices_override_async(&mut app, devices, resolver.as_ref()).await?;
+    if let Some(network_id) = network_id {
+        app.set_active_network_id(&network_id)?;
+    }
+    maybe_autoconfigure_node(&mut app);
+
+    let network_id = app.effective_network_id();
+    Ok((app, network_id))
+}

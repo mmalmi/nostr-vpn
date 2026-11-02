@@ -31,7 +31,7 @@ fn signed_roster_persistence_avoids_preexisting_temporary_symlinks() {
             network_name: "Private network".to_string(),
             devices: Vec::new(),
             admins: vec![admin.public_key().to_hex()],
-            aliases: HashMap::new(),
+            aliases: Default::default(),
             signed_at: 1,
         },
         &admin,

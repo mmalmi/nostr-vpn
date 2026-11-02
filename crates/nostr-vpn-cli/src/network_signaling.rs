@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
-use nostr_vpn_core::config::{AppConfig, maybe_autoconfigure_node, normalize_nostr_pubkey};
+use nostr_vpn_core::config::{AppConfig, maybe_autoconfigure_node};
 use nostr_vpn_core::join_delivery::queue_join_roster;
 use nostr_vpn_core::join_requests::prepare_manual_join_delivery;
 use serde_json::json;
@@ -113,22 +113,44 @@ pub(crate) async fn update_active_network_roster(
         .id
         .clone();
 
+    let resolver = crate::namecoin_resolver::ResolverHandle::from_config(&app)?;
+
     let mut changed = Vec::new();
     for device in &args.devices {
+        let resolved =
+            crate::namecoin_resolver::resolve_with_handle(device, resolver.as_ref()).await?;
+        let canonical = resolved.hex_pubkey.clone();
         let normalized = match action {
-            RosterEditAction::AddDevice => app.add_device_to_network(&active_network_id, device)?,
-            RosterEditAction::RemoveDevice => {
-                let normalized = normalize_nostr_pubkey(device)?;
-                app.remove_device_from_network(&active_network_id, device)?;
-                normalized
+            RosterEditAction::AddDevice => {
+                app.add_device_to_network(&active_network_id, &canonical)?
             }
-            RosterEditAction::AddAdmin => app.add_admin_to_network(&active_network_id, device)?,
+            RosterEditAction::RemoveDevice => {
+                app.remove_device_from_network(&active_network_id, &canonical)?;
+                canonical.clone()
+            }
+            RosterEditAction::AddAdmin => {
+                app.add_admin_to_network(&active_network_id, &canonical)?
+            }
             RosterEditAction::RemoveAdmin => {
-                let normalized = normalize_nostr_pubkey(device)?;
-                app.remove_admin_from_network(&active_network_id, device)?;
-                normalized
+                app.remove_admin_from_network(&active_network_id, &canonical)?;
+                canonical.clone()
             }
         };
+        if let Some(alias) = resolved.alias
+            && matches!(
+                action,
+                RosterEditAction::AddDevice | RosterEditAction::AddAdmin
+            )
+            && let Some(network) = app.network_by_id_mut(&active_network_id)
+        {
+            network.aliases.insert(normalized.clone(), alias);
+        } else if matches!(
+            action,
+            RosterEditAction::RemoveDevice | RosterEditAction::RemoveAdmin
+        ) && let Some(network) = app.network_by_id_mut(&active_network_id)
+        {
+            network.aliases.remove(&normalized);
+        }
         changed.push(normalized);
     }
 
