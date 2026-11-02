@@ -735,5 +735,6 @@ async fn test_create_topup_quote_against_configured_mint() {
 }
 
 mod activity;
+mod reservations;
 #[path = "tests_send_fees.rs"]
 mod tests_send_fees;

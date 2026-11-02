@@ -143,6 +143,9 @@ impl DaemonCashuWallet {
         let service = CashuWalletService::open_with_seed_store(&data_dir, seed_store).await;
         let service = service.context("failed to open the daemon-owned CDK SQLite Cashu wallet")?;
         let recovery = service.recover_startup_state().await;
+        for (unit, amount) in recovery.recovered_reserved_amounts {
+            eprintln!("cashu-wallet: recovered {amount} {unit} from abandoned reservations");
+        }
         for warning in recovery.warnings {
             eprintln!("cashu-wallet: startup recovery incomplete: {warning}");
         }

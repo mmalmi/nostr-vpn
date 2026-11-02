@@ -27,6 +27,7 @@ use legacy_refunds::{hold_legacy_refunds, is_legacy_refund};
 
 mod persistence;
 mod polling;
+mod reservations;
 pub use persistence::*;
 
 mod runtime;

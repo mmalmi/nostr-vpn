@@ -46,6 +46,7 @@ pub struct CashuWalletStartupRecoveryReport {
     pub pending_sagas: usize,
     pub failed_sagas: usize,
     pub minted_amount: u64,
+    pub recovered_reserved_amounts: std::collections::BTreeMap<String, u64>,
     pub warnings: Vec<String>,
 }
 
@@ -157,6 +158,10 @@ impl CashuWalletService {
                     report.pending_sagas += recovery.pending_sagas;
                     report.failed_sagas += recovery.failed_sagas;
                     report.minted_amount += recovery.minted_amount;
+                    for (unit, amount) in recovery.recovered_reserved_amounts {
+                        let total = report.recovered_reserved_amounts.entry(unit).or_default();
+                        *total = total.saturating_add(amount);
+                    }
                     report.warnings.extend(recovery.warnings);
                 }
                 Err(error) => report

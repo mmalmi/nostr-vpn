@@ -56,6 +56,12 @@ impl CashuWalletService {
                 recovery.failed == 0,
                 "Cashu wallet recovery has pending failures"
             );
+            let recovered = super::reservations::recover_orphaned_reservations(wallet).await?;
+            if recovered > 0 {
+                report
+                    .recovered_reserved_amounts
+                    .insert(wallet.unit.to_string(), recovered);
+            }
 
             let quotes = wallet.get_unissued_mint_quotes().await?;
             poll.quote_checks

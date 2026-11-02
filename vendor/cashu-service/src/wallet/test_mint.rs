@@ -35,6 +35,9 @@ struct LightningMockMintConnector {
     melt_inputs: Arc<Mutex<Vec<Proof>>>,
     spent: Arc<Mutex<std::collections::HashSet<cdk::nuts::PublicKey>>>,
     swap_calls: Arc<std::sync::atomic::AtomicUsize>,
+    check_requests: Arc<Mutex<Vec<Vec<cdk::nuts::PublicKey>>>>,
+    check_response: Arc<Mutex<Option<Vec<cdk::nuts::ProofState>>>>,
+    fail_check_state: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl LightningMockMintConnector {
@@ -50,6 +53,9 @@ impl LightningMockMintConnector {
             melt_inputs: Default::default(),
             spent: Default::default(),
             swap_calls: Default::default(),
+            check_requests: Default::default(),
+            check_response: Default::default(),
+            fail_check_state: Default::default(),
         }
     }
 
@@ -291,6 +297,16 @@ impl MintConnector for LightningMockMintConnector {
         &self,
         request: CheckStateRequest,
     ) -> Result<CheckStateResponse, Error> {
+        self.check_requests.lock().unwrap().push(request.ys.clone());
+        if self
+            .fail_check_state
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(Error::Custom("mint check unavailable".to_string()));
+        }
+        if let Some(states) = self.check_response.lock().unwrap().clone() {
+            return Ok(CheckStateResponse { states });
+        }
         let spent = self.spent.lock().unwrap();
         Ok(CheckStateResponse {
             states: request
