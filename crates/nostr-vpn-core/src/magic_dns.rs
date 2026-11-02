@@ -19,6 +19,7 @@ use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::rdata::A;
 use hickory_proto::rr::{RData, Record, RecordType};
 use hickory_proto::serialize::binary::{BinEncodable, BinEncoder};
+use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
 use crate::network_routes::derive_mesh_tunnel_ip;
@@ -32,6 +33,14 @@ pub struct MagicDnsResolverConfig {
     pub nameserver: Ipv4Addr,
     pub port: u16,
     pub records: HashMap<String, Ipv4Addr>,
+}
+
+impl MagicDnsResolverConfig {
+    /// The recorded identity that teardown and crash repair use to remove
+    /// exactly what this install wrote.
+    pub fn ownership(&self) -> MagicDnsResolverOwnership {
+        MagicDnsResolverOwnership::new(&self.suffix, self.nameserver, self.port)
+    }
 }
 
 pub struct MagicDnsServer {
@@ -283,6 +292,27 @@ fn resolver_suffixes(suffix: &str) -> Vec<String> {
     suffixes
 }
 
+/// The system resolver settings one configuration installed. Shutdown
+/// teardown and crash repair remove only artifacts that still carry this
+/// exact identity, so a concurrently running configuration keeps its own
+/// resolver state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MagicDnsResolverOwnership {
+    pub suffix: String,
+    pub nameserver: Ipv4Addr,
+    pub port: u16,
+}
+
+impl MagicDnsResolverOwnership {
+    pub fn new(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Self {
+        Self {
+            suffix: suffix.trim().trim_matches('.').to_ascii_lowercase(),
+            nameserver,
+            port,
+        }
+    }
+}
+
 pub fn install_system_resolver(config: &MagicDnsResolverConfig) -> Result<()> {
     let suffix = config.suffix.trim().trim_matches('.').to_ascii_lowercase();
 
@@ -293,11 +323,12 @@ pub fn install_system_resolver(config: &MagicDnsResolverConfig) -> Result<()> {
 
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
+        let ownership = config.ownership();
         let suffixes = resolver_suffixes(&suffix);
         for (index, suffix) in suffixes.iter().enumerate() {
             if let Err(error) = install(suffix, config.nameserver, config.port) {
                 for installed in &suffixes[..index] {
-                    if let Err(cleanup) = uninstall(installed) {
+                    if let Err(cleanup) = uninstall(installed, &ownership) {
                         eprintln!("magicdns: failed to roll back .{installed}: {cleanup}");
                     }
                 }
@@ -321,18 +352,20 @@ pub fn install_system_resolver(config: &MagicDnsResolverConfig) -> Result<()> {
     }
 }
 
-pub fn uninstall_system_resolver(suffix: &str) -> Result<()> {
-    let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
-
+/// Remove the system resolver settings `owned` recorded at install time.
+/// Shutdown teardown and crash repair share this one path; artifacts that no
+/// longer match the recorded identity were taken over by another running
+/// configuration and are left untouched.
+pub fn uninstall_system_resolver(owned: &MagicDnsResolverOwnership) -> Result<()> {
     #[cfg(target_os = "macos")]
     let uninstall = uninstall_macos_resolver;
     #[cfg(target_os = "windows")]
     let uninstall = uninstall_windows_resolver;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        let failures: Vec<_> = resolver_suffixes(&suffix)
+        let failures: Vec<_> = resolver_suffixes(&owned.suffix)
             .iter()
-            .filter_map(|suffix| uninstall(suffix).err())
+            .filter_map(|suffix| uninstall(suffix, owned).err())
             .map(|error| error.to_string())
             .collect();
         if failures.is_empty() {
@@ -344,20 +377,27 @@ pub fn uninstall_system_resolver(suffix: &str) -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        uninstall_linux_resolver(&suffix)
+        uninstall_linux_resolver(owned)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         Err(anyhow!(
             "system magic dns uninstall is unsupported on this platform (suffix '{}')",
-            suffix
+            owned.suffix
         ))
     }
 }
 
 #[cfg(target_os = "macos")]
 const MACOS_MAGIC_DNS_MARKER: &str = "# Managed by nvpn MagicDNS\n";
+
+#[cfg(target_os = "macos")]
+fn macos_resolver_body(nameserver: Ipv4Addr, port: u16) -> String {
+    format!(
+        "{MACOS_MAGIC_DNS_MARKER}nameserver {nameserver}\nport {port}\noptions timeout:1 attempts:1\n"
+    )
+}
 
 #[cfg(target_os = "macos")]
 fn install_macos_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Result<()> {
@@ -383,8 +423,7 @@ fn write_macos_resolver(resolver_path: &Path, nameserver: Ipv4Addr, port: u16) -
         })?;
     }
 
-    let legacy_body =
-        format!("nameserver {nameserver}\nport {port}\noptions timeout:1 attempts:1\n");
+    let body = macos_resolver_body(nameserver, port);
     match fs::symlink_metadata(resolver_path) {
         Ok(metadata) => {
             if !metadata.file_type().is_file() {
@@ -394,7 +433,7 @@ fn write_macos_resolver(resolver_path: &Path, nameserver: Ipv4Addr, port: u16) -
                 ));
             }
             let current = fs::read_to_string(resolver_path)?;
-            if current != legacy_body && !current.starts_with(MACOS_MAGIC_DNS_MARKER) {
+            if current != body && !current.starts_with(MACOS_MAGIC_DNS_MARKER) {
                 return Err(anyhow!(
                     "refusing to replace foreign resolver {}",
                     resolver_path.display()
@@ -404,7 +443,6 @@ fn write_macos_resolver(resolver_path: &Path, nameserver: Ipv4Addr, port: u16) -
         Err(error) if error.kind() == ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let body = format!("{MACOS_MAGIC_DNS_MARKER}{legacy_body}");
     fs::write(resolver_path, body).map_err(|error| {
         if error.kind() == ErrorKind::PermissionDenied {
             anyhow!(
@@ -423,20 +461,25 @@ fn write_macos_resolver(resolver_path: &Path, nameserver: Ipv4Addr, port: u16) -
 }
 
 #[cfg(target_os = "macos")]
-fn uninstall_macos_resolver(suffix: &str) -> Result<()> {
+fn uninstall_macos_resolver(suffix: &str, owned: &MagicDnsResolverOwnership) -> Result<()> {
     let resolver_path = macos_resolver_path(suffix);
-    remove_macos_resolver(&resolver_path)
+    remove_owned_macos_resolver(&resolver_path, owned)
 }
 
 #[cfg(target_os = "macos")]
-fn remove_macos_resolver(resolver_path: &Path) -> Result<()> {
+fn remove_owned_macos_resolver(
+    resolver_path: &Path,
+    owned: &MagicDnsResolverOwnership,
+) -> Result<()> {
     match fs::symlink_metadata(resolver_path) {
         Ok(metadata) if !metadata.file_type().is_file() => return Ok(()),
         Ok(_) => {}
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error.into()),
     }
-    if !fs::read_to_string(resolver_path)?.starts_with(MACOS_MAGIC_DNS_MARKER) {
+    // A resolver file whose nameserver or port no longer matches the
+    // recorded install now belongs to another running configuration.
+    if fs::read_to_string(resolver_path)? != macos_resolver_body(owned.nameserver, owned.port) {
         return Ok(());
     }
 
@@ -475,11 +518,7 @@ fn install_linux_resolver(
     port: u16,
     records: &HashMap<String, Ipv4Addr>,
 ) -> Result<()> {
-    let resolver = if port == 53 {
-        nameserver.to_string()
-    } else {
-        format!("{nameserver}:{port}")
-    };
+    let resolver = linux_resolver_argument(nameserver, port);
 
     let resolved_install = (|| -> Result<()> {
         run_linux_resolvectl(&["dns", "lo", &resolver])?;
@@ -506,9 +545,92 @@ fn install_linux_resolver(
 }
 
 #[cfg(target_os = "linux")]
-fn uninstall_linux_resolver(_suffix: &str) -> Result<()> {
-    let resolved_uninstall = run_linux_resolvectl(&["revert", "lo"]);
-    let hosts_uninstall = uninstall_linux_hosts_fallback();
+fn linux_resolver_argument(nameserver: Ipv4Addr, port: u16) -> String {
+    if port == 53 {
+        nameserver.to_string()
+    } else {
+        format!("{nameserver}:{port}")
+    }
+}
+
+/// The per-link settings `resolvectl <subcommand> <link>` reports: the
+/// whitespace-separated values printed after the `Link <index> (<link>):`
+/// prefix.
+#[cfg(target_os = "linux")]
+fn linux_resolved_link_values(subcommand: &str, link: &str) -> Result<Vec<String>> {
+    let output = Command::new("resolvectl")
+        .args([subcommand, link])
+        .output()
+        .map_err(|error| anyhow!("failed to execute resolvectl: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let details = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        return Err(anyhow!("resolvectl {subcommand} {link} failed: {details}"));
+    }
+    let mut values = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((label, settings)) = line.split_once(':') else {
+            continue;
+        };
+        if !label.trim_start().starts_with("Link") {
+            continue;
+        }
+        values.extend(settings.split_ascii_whitespace().map(str::to_string));
+    }
+    Ok(values)
+}
+
+/// Report whether the link still carries exactly the settings
+/// `install_linux_resolver` wrote for `owned`: its one resolver and its
+/// routing domains, and nothing else. `resolvectl revert` resets every
+/// per-link setting, so a mixed link — our resolver still present next to
+/// another configuration's server or domain — is reported as not owned and
+/// left alone with one log line instead of deleting the foreign state.
+#[cfg(target_os = "linux")]
+fn linux_resolved_link_owned(link: &str, owned: &MagicDnsResolverOwnership) -> Result<bool> {
+    let resolver = linux_resolver_argument(owned.nameserver, owned.port);
+    let mut expected_domains: Vec<_> = resolver_suffixes(&owned.suffix)
+        .iter()
+        .map(|suffix| format!("~{suffix}"))
+        .collect();
+    expected_domains.sort_unstable();
+
+    let mut servers = linux_resolved_link_values("dns", link)?;
+    let mut domains = linux_resolved_link_values("domain", link)?;
+    servers.sort_unstable();
+    domains.sort_unstable();
+    if servers.as_slice() == [resolver.as_str()] && domains == expected_domains {
+        return Ok(true);
+    }
+    if servers.iter().any(|server| *server == resolver)
+        || domains
+            .iter()
+            .any(|domain| expected_domains.contains(domain))
+    {
+        eprintln!(
+            "magicdns: {link} DNS settings changed since this install; leaving them to the current owner"
+        );
+    }
+    Ok(false)
+}
+
+#[cfg(target_os = "linux")]
+fn uninstall_linux_resolver(owned: &MagicDnsResolverOwnership) -> Result<()> {
+    // The per-link DNS settings are shared by every configuration on the
+    // host. Revert only while the link still carries exactly the settings
+    // this configuration installed; otherwise the link is mixed or another
+    // configuration owns it now and its state must survive.
+    let resolved_uninstall = match linux_resolved_link_owned("lo", owned) {
+        Ok(true) => run_linux_resolvectl(&["revert", "lo"]),
+        Ok(false) => Ok(()),
+        Err(error) => Err(error),
+    };
+    let hosts_uninstall = uninstall_owned_linux_hosts_fallback(owned);
 
     match (resolved_uninstall, hosts_uninstall) {
         (Ok(()), Ok(_)) => Ok(()),
@@ -620,6 +742,57 @@ fn uninstall_linux_hosts_fallback() -> Result<bool> {
     Ok(true)
 }
 
+/// Remove the `/etc/hosts` MagicDNS block only while every record in it
+/// belongs to this configuration's suffix. A block rewritten by another
+/// running configuration carries that configuration's records and must
+/// survive this teardown.
+#[cfg(target_os = "linux")]
+fn uninstall_owned_linux_hosts_fallback(owned: &MagicDnsResolverOwnership) -> Result<bool> {
+    let current = read_linux_hosts_file()?;
+    if !current.contains(LINUX_HOSTS_BEGIN) {
+        return Ok(false);
+    }
+    if !linux_hosts_block_is_owned(&current, &owned.suffix) {
+        return Ok(false);
+    }
+    let next = remove_linux_hosts_magic_dns_block(&current);
+    if next == current {
+        return Ok(false);
+    }
+    write_linux_hosts_file(&next)?;
+    Ok(true)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_hosts_block_is_owned(contents: &str, suffix: &str) -> bool {
+    let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
+    if suffix.is_empty() {
+        // Installs without a config suffix never write a hosts block.
+        return false;
+    }
+    let owned_tail = format!(".{suffix}");
+    let mut in_block = false;
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed == LINUX_HOSTS_BEGIN {
+            in_block = true;
+            continue;
+        }
+        if trimmed == LINUX_HOSTS_END {
+            in_block = false;
+            continue;
+        }
+        if !in_block || trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        match line.split_whitespace().nth(1) {
+            Some(domain) if domain.to_ascii_lowercase().ends_with(&owned_tail) => {}
+            _ => return false,
+        }
+    }
+    true
+}
+
 #[cfg(target_os = "linux")]
 fn read_linux_hosts_file() -> Result<String> {
     match fs::read_to_string(LINUX_HOSTS_PATH) {
@@ -720,19 +893,24 @@ fn windows_install_nrpt_script(suffix: &str, nameserver: Ipv4Addr, port: u16) ->
 }
 
 #[cfg(any(target_os = "windows", test))]
-fn windows_uninstall_nrpt_script(suffix: &str) -> String {
-    let namespace = suffix.trim().trim_matches('.').to_ascii_lowercase();
+fn windows_uninstall_nrpt_script(owned: &MagicDnsResolverOwnership) -> String {
+    let namespace = owned.suffix.trim().trim_matches('.').to_ascii_lowercase();
     let display_name = windows_nrpt_display_name(&namespace);
     let comment = windows_nrpt_comment(&namespace);
+    // NRPT rules carry no port; the exact nameserver distinguishes this
+    // configuration's rule from one a second configuration reinstalled for
+    // the same namespace.
+    let name_servers = owned.nameserver.to_string();
 
     format!(
         concat!(
             "$namespace = {}\n",
             "$displayName = {}\n",
             "$comment = {}\n",
+            "$nameServers = {}\n",
             "Get-DnsClientNrptRule -ErrorAction SilentlyContinue |\n",
             "  Where-Object {{\n",
-            "    $_.DisplayName -eq $displayName -or $_.Comment -eq $comment -or $_.Namespace -contains $namespace\n",
+            "    ($_.DisplayName -eq $displayName -or $_.Comment -eq $comment -or $_.Namespace -contains $namespace) -and $_.NameServers -contains $nameServers\n",
             "  }} |\n",
             "  ForEach-Object {{\n",
             "    $_ | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue | Out-Null\n",
@@ -741,6 +919,7 @@ fn windows_uninstall_nrpt_script(suffix: &str) -> String {
         windows_powershell_quote(&namespace),
         windows_powershell_quote(&display_name),
         windows_powershell_quote(&comment),
+        windows_powershell_quote(&name_servers),
     )
 }
 
@@ -751,8 +930,13 @@ fn install_windows_resolver(suffix: &str, nameserver: Ipv4Addr, port: u16) -> Re
 }
 
 #[cfg(target_os = "windows")]
-fn uninstall_windows_resolver(suffix: &str) -> Result<()> {
-    run_windows_powershell(&windows_uninstall_nrpt_script(suffix))
+fn uninstall_windows_resolver(_suffix: &str, owned: &MagicDnsResolverOwnership) -> Result<()> {
+    if windows_nameserver(owned.nameserver, owned.port).is_err() {
+        // Install rejects non-53 ports before creating any rule, so this
+        // configuration cannot own NRPT rules.
+        return Ok(());
+    }
+    run_windows_powershell(&windows_uninstall_nrpt_script(owned))
 }
 
 #[cfg(target_os = "windows")]
@@ -793,8 +977,8 @@ fn strip_cidr(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_magic_dns_response_if_handled, windows_install_nrpt_script, windows_nameserver,
-        windows_uninstall_nrpt_script,
+        MagicDnsResolverOwnership, build_magic_dns_response_if_handled,
+        windows_install_nrpt_script, windows_nameserver, windows_uninstall_nrpt_script,
     };
     use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
     use hickory_proto::rr::{Name, RecordType};
@@ -902,11 +1086,90 @@ mod tests {
     }
 
     #[test]
-    fn windows_nrpt_uninstall_script_matches_suffix() {
-        let script = windows_uninstall_nrpt_script("mesh.example");
-        assert!(script.contains("Get-DnsClientNrptRule"));
-        assert!(script.contains("Remove-DnsClientNrptRule"));
-        assert!(script.contains("mesh.example"));
+    fn windows_nrpt_uninstall_targets_only_the_owned_namespace_and_nameserver() {
+        let owned = MagicDnsResolverOwnership::new("Mesh.Example", Ipv4Addr::LOCALHOST, 53);
+        assert_eq!(owned.suffix, "mesh.example");
+        let script = windows_uninstall_nrpt_script(&owned);
+        assert!(script.contains("$displayName = 'nostr-vpn MagicDNS (mesh.example)'"));
+        assert!(script.contains("$comment = 'nostr-vpn split DNS for mesh.example'"));
+        assert!(script.contains("$nameServers = '127.0.0.1'"));
+        assert!(script.contains("-and $_.NameServers -contains $nameServers"));
+        assert!(
+            !script.contains("-like"),
+            "uninstall must match exact rule identity, not a prefix sweep"
+        );
+
+        // A second configuration with a different namespace keeps its rule.
+        let other = windows_uninstall_nrpt_script(&MagicDnsResolverOwnership::new(
+            "other.example",
+            Ipv4Addr::LOCALHOST,
+            53,
+        ));
+        assert!(other.contains("other.example"));
+        assert!(!other.contains("mesh.example"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn magic_dns_uninstall_removes_only_the_owned_resolver_files() {
+        use std::fs;
+
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-magicdns-repair-{}", uuid::Uuid::new_v4()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir(&directory).expect("temporary resolver directory");
+        let owned = directory.join("mesh.example");
+        super::write_macos_resolver(&owned, Ipv4Addr::LOCALHOST, 1053).expect("owned resolver");
+        // A second configuration reinstalling a shared path leaves different
+        // nameserver or port bytes behind.
+        let second_config = directory.join("fips");
+        super::write_macos_resolver(&second_config, Ipv4Addr::new(127, 0, 0, 1), 2049)
+            .expect("second configuration resolver");
+        let foreign = directory.join("example.com");
+        fs::write(&foreign, "nameserver 192.0.2.53\n").expect("foreign resolver");
+
+        let ownership = MagicDnsResolverOwnership::new("mesh.example", Ipv4Addr::LOCALHOST, 1053);
+        super::remove_owned_macos_resolver(&owned, &ownership).expect("own uninstall");
+        super::remove_owned_macos_resolver(&second_config, &ownership)
+            .expect("shared path uninstall");
+        super::remove_owned_macos_resolver(&foreign, &ownership).expect("foreign uninstall");
+
+        assert!(!owned.exists(), "owned resolver file must be removed");
+        assert!(
+            second_config.exists(),
+            "a second configuration's resolver file must survive"
+        );
+        assert_eq!(
+            fs::read_to_string(&foreign).expect("foreign resolver preserved"),
+            "nameserver 192.0.2.53\n"
+        );
+        fs::remove_dir_all(&directory).expect("remove temporary resolver directory");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_hosts_block_removal_keeps_other_configurations_records() {
+        let render = |suffix: &str, host: &str, ip: &str| {
+            format!(
+                "# BEGIN nostr-vpn MagicDNS\n# Managed by nostr-vpn. Changes inside this block will be overwritten.\n{ip}\t{host}.{suffix}\n# END nostr-vpn MagicDNS\n"
+            )
+        };
+        let ours = render("mesh.example", "alice", "10.6.0.2");
+        let second_config = render("other.example", "alice", "10.7.0.2");
+        let mixed = format!(
+            "{}\n{}",
+            render("mesh.example", "alice", "10.6.0.2"),
+            render("other.example", "bob", "10.7.0.3")
+        );
+
+        assert!(super::linux_hosts_block_is_owned(&ours, "mesh.example"));
+        assert!(super::linux_hosts_block_is_owned(&ours, "Mesh.Example."));
+        assert!(
+            !super::linux_hosts_block_is_owned(&second_config, "mesh.example"),
+            "a second configuration's block must survive this configuration's repair"
+        );
+        assert!(!super::linux_hosts_block_is_owned(&mixed, "mesh.example"));
+        assert!(!super::linux_hosts_block_is_owned(&ours, ""));
     }
 
     #[test]

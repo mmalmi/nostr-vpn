@@ -142,6 +142,21 @@ struct MacosNetworkCleanupState {
     pf_was_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "is_false")]
     secure_dns_resolver_files: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    magic_dns_resolver_files: Option<MagicDnsResolverOwnership>,
+}
+
+#[cfg(target_os = "macos")]
+impl MacosNetworkCleanupState {
+    fn is_empty(&self) -> bool {
+        self.endpoint_bypass_routes.is_empty()
+            && self.managed_routes.is_empty()
+            && self.original_default_route.is_none()
+            && self.ipv4_forward_was_enabled.is_none()
+            && self.pf_was_enabled.is_none()
+            && !self.secure_dns_resolver_files
+            && self.magic_dns_resolver_files.is_none()
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -285,7 +300,9 @@ fn build_daemon_reload_config(app: AppConfig, network_id: String) -> DaemonReloa
 
 struct ConnectMagicDnsRuntime {
     suffix: String,
-    resolver_installed: bool,
+    /// Set only while this runtime owns the installed system resolver.
+    resolver_ownership: Option<MagicDnsResolverOwnership>,
+    journal: Option<PathBuf>,
     server: MagicDnsServer,
 }
 
@@ -304,11 +321,15 @@ fn split_magic_dns_bind_fallback_port() -> Option<u16> {
 }
 
 impl ConnectMagicDnsRuntime {
-    fn start(app: &AppConfig) -> Option<Self> {
-        Self::start_records(&app.magic_dns_suffix, build_magic_dns_records(app))
+    fn start(app: &AppConfig, journal: Option<&Path>) -> Option<Self> {
+        Self::start_records(journal, &app.magic_dns_suffix, build_magic_dns_records(app))
     }
 
-    fn start_records(suffix: &str, records: HashMap<String, Ipv4Addr>) -> Option<Self> {
+    fn start_records(
+        journal: Option<&Path>,
+        suffix: &str,
+        records: HashMap<String, Ipv4Addr>,
+    ) -> Option<Self> {
         let server = match MagicDnsServer::start(
             SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MAGIC_DNS_PORT)),
             records.clone(),
@@ -345,7 +366,8 @@ impl ConnectMagicDnsRuntime {
                 eprintln!("magicdns: local dns unexpectedly bound to IPv6; split-dns disabled");
                 return Some(Self {
                     suffix,
-                    resolver_installed: false,
+                    resolver_ownership: None,
+                    journal: None,
                     server,
                 });
             }
@@ -357,6 +379,43 @@ impl ConnectMagicDnsRuntime {
             port: local_addr.port(),
             records,
         };
+        let ownership = resolver_config.ownership();
+
+        let journal = match journal {
+            Some(path) => {
+                match crate::daemon_runtime::persist_fips_magic_dns_cleanup_intent(
+                    path,
+                    Some(&ownership),
+                ) {
+                    Ok(()) => Some(path.to_path_buf()),
+                    Err(error) => {
+                        // Without a journaled intent a SIGKILL could not be
+                        // repaired, so the system resolver stays untouched.
+                        #[cfg(target_os = "windows")]
+                        {
+                            eprintln!(
+                                "magicdns: failed to journal split DNS cleanup intent ({error:#}); split DNS not started"
+                            );
+                            drop(server);
+                            return None;
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            eprintln!(
+                                "magicdns: failed to journal split DNS cleanup intent ({error:#}); local dns remains on {local_addr}"
+                            );
+                            return Some(Self {
+                                suffix,
+                                resolver_ownership: None,
+                                journal: None,
+                                server,
+                            });
+                        }
+                    }
+                }
+            }
+            None => None,
+        };
 
         match install_system_resolver(&resolver_config) {
             Ok(()) => {
@@ -366,11 +425,30 @@ impl ConnectMagicDnsRuntime {
                 );
                 Some(Self {
                     suffix,
-                    resolver_installed: true,
+                    resolver_ownership: Some(ownership),
+                    journal,
                     server,
                 })
             }
             Err(error) => {
+                if let Some(path) = journal.as_ref() {
+                    // The install rolls back its own partial writes; sweep any
+                    // residue and keep the journal only if the sweep failed.
+                    match uninstall_system_resolver(&ownership) {
+                        Ok(()) => {
+                            if let Err(clear_error) = crate::daemon_runtime::
+                                persist_fips_magic_dns_cleanup_intent(path, None)
+                            {
+                                eprintln!(
+                                    "magicdns: failed to clear split DNS cleanup intent ({clear_error:#})"
+                                );
+                            }
+                        }
+                        Err(sweep_error) => eprintln!(
+                            "magicdns: cleanup after failed install left residue ({sweep_error:#}); keeping cleanup intent"
+                        ),
+                    }
+                }
                 #[cfg(target_os = "windows")]
                 {
                     eprintln!(
@@ -386,7 +464,8 @@ impl ConnectMagicDnsRuntime {
                     );
                     Some(Self {
                         suffix,
-                        resolver_installed: false,
+                        resolver_ownership: None,
+                        journal: None,
                         server,
                     })
                 }
@@ -426,15 +505,19 @@ fn split_magic_dns_should_start(app: &AppConfig, runtime_present: bool) -> bool 
     !secure_exit_dns_required(app) && !runtime_present
 }
 
-fn start_split_magic_dns(app: &AppConfig) -> Option<ConnectMagicDnsRuntime> {
+fn start_split_magic_dns(app: &AppConfig, config_path: &Path) -> Option<ConnectMagicDnsRuntime> {
     if !split_magic_dns_should_start(app, false) {
         None
     } else {
-        ConnectMagicDnsRuntime::start(app)
+        ConnectMagicDnsRuntime::start(app, Some(config_path))
     }
 }
 
-fn refresh_or_start_split_magic_dns(runtime: &mut Option<ConnectMagicDnsRuntime>, app: &AppConfig) {
+fn refresh_or_start_split_magic_dns(
+    runtime: &mut Option<ConnectMagicDnsRuntime>,
+    app: &AppConfig,
+    config_path: &Path,
+) {
     if secure_exit_dns_required(app) {
         runtime.take();
         return;
@@ -442,19 +525,25 @@ fn refresh_or_start_split_magic_dns(runtime: &mut Option<ConnectMagicDnsRuntime>
     if let Some(runtime) = runtime.as_ref() {
         runtime.refresh_records(app);
     } else {
-        *runtime = start_split_magic_dns(app);
+        *runtime = start_split_magic_dns(app, config_path);
     }
 }
 
 impl Drop for ConnectMagicDnsRuntime {
     fn drop(&mut self) {
-        if self.resolver_installed
-            && let Err(error) = uninstall_system_resolver(&self.suffix)
-        {
-            eprintln!(
-                "magicdns: failed to remove system resolver for .{}: {error}",
-                self.suffix
-            );
+        if let Some(ownership) = self.resolver_ownership.take() {
+            if let Err(error) = uninstall_system_resolver(&ownership) {
+                // Keep the journal so the next startup repairs the residue.
+                eprintln!(
+                    "magicdns: failed to remove system resolver for .{}: {error}",
+                    ownership.suffix
+                );
+            } else if let Some(journal) = self.journal.take()
+                && let Err(error) =
+                    crate::daemon_runtime::persist_fips_magic_dns_cleanup_intent(&journal, None)
+            {
+                eprintln!("magicdns: failed to clear split DNS cleanup intent ({error:#})");
+            }
         }
 
         self.server.stop();
@@ -499,6 +588,8 @@ struct LinuxNetworkCleanupState {
     exit_node_runtime: LinuxExitNodeRuntime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     secure_dns: Option<crate::secure_dns_runtime::LinuxSecureDnsCleanupState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    magic_dns_split_dns: Option<MagicDnsResolverOwnership>,
 }
 
 #[cfg(target_os = "linux")]
@@ -513,6 +604,8 @@ struct WindowsNetworkCleanupState {
     native_wireguard: Vec<crate::wg_upstream_runtime::WindowsNativeWireGuardCleanupState>,
     #[serde(default)]
     secure_dns_interface_indexes: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    magic_dns_nrpt_rules: Option<MagicDnsResolverOwnership>,
 }
 
 #[cfg(target_os = "windows")]

@@ -11,7 +11,7 @@ fn paid_exit_offer_refresh_secs() -> u64 {
 
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let startup = initialize_daemon_vpn(&args).await?;
-    let mut magic_dns_runtime = start_split_magic_dns(&startup.app);
+    let mut magic_dns_runtime = start_split_magic_dns(&startup.app, &startup.config_path);
     let (mut announce_interval, mut recent_peer_refresh_interval) = daemon_refresh_intervals(&args);
     let mut intervals = daemon_vpn_intervals();
     #[cfg(feature = "paid-exit")]
@@ -261,7 +261,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     "fips: capabilities broadcast failed after roster apply: {error}"
                                 );
                             }
-                            refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
+                            refresh_or_start_split_magic_dns(
+                                &mut magic_dns_runtime,
+                                &app,
+                                &config_path,
+                            );
                         }
                         if !drained.endpoint_hint_participants.is_empty()
                             && let Err(error) =
@@ -480,6 +484,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     refresh_or_start_split_magic_dns(
                                         &mut magic_dns_runtime,
                                         &app,
+                                        &config_path,
                                     );
                                 }
                             }
@@ -755,7 +760,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     // A newly started endpoint has no usage from its offline interval.
                     last_paid_exit_usage_flush_at = Instant::now();
                 }
-                refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
+                refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app, &config_path);
                 if publish_fips_roster_after_control
                     && let Some(runtime) = fips_tunnel_runtime.as_ref()
                 {
