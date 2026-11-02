@@ -374,6 +374,12 @@ fn macos_ipconfig_router_from_output_parses_ip_and_ip_mult_formats() {
         ),
         Some("192.168.64.1".parse().unwrap())
     );
+    assert_eq!(
+        crate::macos_network::macos_ipconfig_router_from_output(
+            "router (ip_mult): {192.168.64.1, 192.168.64.2}\n"
+        ),
+        Some("192.168.64.1".parse().unwrap())
+    );
 }
 
 #[test]
