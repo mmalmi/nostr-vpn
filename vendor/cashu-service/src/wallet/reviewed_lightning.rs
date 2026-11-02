@@ -36,6 +36,8 @@ struct Intent {
     input_fee_without_swap: Amount,
     swap_fee: u64,
     #[serde(default)]
+    skip_swap: bool,
+    #[serde(default)]
     fee_schedule: Option<super::reviewed::FeeSchedule>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -124,7 +126,7 @@ impl CashuWalletService {
         let fee = quote
             .fee_reserve
             .to_u64()
-            .checked_add(prepared.total_fee().to_u64())
+            .checked_add(prepared.input_fee_without_swap().to_u64())
             .context("Lightning fee overflow")?;
         prepared.cancel().await?;
         let review = CashuLightningReview {
@@ -188,13 +190,15 @@ impl CashuWalletService {
                 .quote()
                 .fee_reserve
                 .to_u64()
-                .checked_add(prepared.total_fee().to_u64())
+                .checked_add(prepared.input_fee_without_swap().to_u64())
                 .context("Lightning fee overflow")?;
             if fee > max_fee {
                 prepared.cancel().await?;
                 anyhow::bail!("The Lightning fee changed; review the invoice again");
             }
-            let schedule = match super::reviewed::fee_schedule(&wallet, &prepared.proofs()).await {
+            let mut inputs = prepared.proofs().clone();
+            inputs.extend_from_slice(prepared.proofs_to_swap());
+            let schedule = match super::reviewed::fee_schedule(&wallet, &inputs).await {
                 Ok(value) => value,
                 Err(error) => {
                     prepared.cancel().await?;
@@ -208,7 +212,8 @@ impl CashuWalletService {
                 proofs_to_swap: prepared.proofs_to_swap().clone(),
                 input_fee: prepared.input_fee(),
                 input_fee_without_swap: prepared.input_fee_without_swap(),
-                swap_fee: prepared.swap_fee().to_u64(),
+                swap_fee: 0,
+                skip_swap: true,
                 fee_schedule: Some(schedule),
             };
             record.intent = Some(intent);
@@ -268,7 +273,7 @@ impl CashuWalletService {
                 match saga.state {
                     WalletSagaState::Melt(MeltSagaState::ProofsReserved) => {
                         wallet
-                            .confirm_prepared_melt(
+                            .confirm_prepared_melt_with_options(
                                 intent.operation_id,
                                 intent.quote.clone(),
                                 intent.proofs.clone(),
@@ -276,6 +281,9 @@ impl CashuWalletService {
                                 intent.input_fee,
                                 intent.input_fee_without_swap,
                                 HashMap::new(),
+                                cdk::wallet::MeltConfirmOptions {
+                                    skip_swap: intent.skip_swap,
+                                },
                             )
                             .await
                     }

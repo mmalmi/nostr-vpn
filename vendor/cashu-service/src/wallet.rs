@@ -907,7 +907,10 @@ async fn send_lightning_payment_with_wallet(
         .await
         .context("Failed to prepare Cashu Lightning payment")?;
     let finalized = prepared
-        .confirm()
+        // CDK's pre-melt swap estimates input fees before adding the fee to
+        // the output amount. That addition can need another proof and fee.
+        // Direct melting selects fee-covered inputs and returns mint change.
+        .confirm_with_options(cdk::wallet::MeltConfirmOptions::skip_swap())
         .await
         .context("Failed to execute Cashu Lightning payment")?;
 

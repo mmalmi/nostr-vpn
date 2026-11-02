@@ -398,7 +398,7 @@ async fn transfer_between_wallets_with_start(
                     .prepare_melt(&source_quote_id, HashMap::new())
                     .await
                     .context("Failed to prepare source mint payment")?;
-                let wallet_fee_sat = prepared.total_fee_with_swap().to_u64();
+                let wallet_fee_sat = prepared.input_fee_without_swap().to_u64();
                 let preflight_fee_sat = source_quote
                     .fee_reserve
                     .to_u64()
@@ -417,7 +417,7 @@ async fn transfer_between_wallets_with_start(
                 saga.wallet_fee_sat = Some(wallet_fee_sat);
                 save_cross_mint_transfer_saga(source_wallet, &saga).await?;
                 let finalized = prepared
-                    .confirm()
+                    .confirm_with_options(cdk::wallet::MeltConfirmOptions::skip_swap())
                     .await
                     .context("Failed to execute source mint payment")?;
                 if finalized.state() != MeltQuoteState::Paid {
