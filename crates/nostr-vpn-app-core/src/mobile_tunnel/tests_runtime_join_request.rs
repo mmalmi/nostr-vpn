@@ -27,6 +27,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            chain_quarantine_reason: String::new(),
         }];
         let requester = Keys::generate().public_key().to_hex();
         let app_config = Arc::new(RwLock::new(app));

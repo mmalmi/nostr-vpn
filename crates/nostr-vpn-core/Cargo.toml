@@ -62,6 +62,11 @@ hickory-proto.workspace = true
 hostname.workspace = true
 hashtree-updater = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
+netdev.workspace = true
+socket2.workspace = true
+tokio-rustls.workspace = true
+rustls.workspace = true
+webpki-roots.workspace = true
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 security-framework = "2"
@@ -84,7 +89,6 @@ windows-sys = { version = "0.61", features = [
   "Win32_Security_Cryptography",
   "Win32_Storage_FileSystem",
 ] }
-
 [dev-dependencies]
 futures-util = "0.3"
 nostr-social-graph.workspace = true

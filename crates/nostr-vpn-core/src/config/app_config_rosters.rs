@@ -65,6 +65,14 @@ impl AppConfig {
         &mut self,
         update: AdminSignedSharedRosterUpdate,
     ) -> Result<bool> {
+        self.apply_admin_signed_shared_roster_with_chain(update, None)
+    }
+
+    pub fn apply_admin_signed_shared_roster_with_chain(
+        &mut self,
+        update: AdminSignedSharedRosterUpdate,
+        chain: Option<&crate::namecoin_name_verify::ChainNetworkRecord>,
+    ) -> Result<bool> {
         let AdminSignedSharedRosterUpdate {
             network_id,
             network_name,
@@ -74,6 +82,27 @@ impl AppConfig {
             signed_at,
             signed_by,
         } = update;
+
+        if let Some(namecoin_id) =
+            crate::namecoin_name_verify::parse_namecoin_network_id(&network_id)
+        {
+            let chain = chain.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "refusing to apply roster for chain-anchored network {} without a chain record",
+                    namecoin_id.display()
+                )
+            })?;
+            if let Err(error) =
+                crate::namecoin_name_verify::verify_admins_against_chain(&admins, chain)
+            {
+                let reason = format!(
+                    "admin set diverged from chain anchor {}: {error}",
+                    namecoin_id.display()
+                );
+                self.quarantine_network(&network_id, &reason);
+                return Ok(false);
+            }
+        }
 
         let normalized_network_id = normalize_runtime_network_id(&network_id);
         if normalized_network_id.is_empty() {
@@ -229,15 +258,50 @@ impl AppConfig {
         Ok(true)
     }
 
+    pub fn quarantine_network(&mut self, network_id: &str, reason: &str) -> bool {
+        let normalized = normalize_runtime_network_id(network_id);
+        let Some(network) = self
+            .networks
+            .iter_mut()
+            .find(|network| normalize_runtime_network_id(&network.network_id) == normalized)
+        else {
+            return false;
+        };
+        network.chain_quarantine_reason = reason.trim().to_string();
+        true
+    }
+
+    pub fn clear_network_chain_quarantine(&mut self, network_id: &str) -> bool {
+        let normalized = normalize_runtime_network_id(network_id);
+        let Some(network) = self
+            .networks
+            .iter_mut()
+            .find(|network| normalize_runtime_network_id(&network.network_id) == normalized)
+        else {
+            return false;
+        };
+        let was_set = !network.chain_quarantine_reason.is_empty();
+        network.chain_quarantine_reason.clear();
+        was_set
+    }
+
     pub fn apply_verified_admin_signed_shared_roster(
         &mut self,
         signed_roster: &SignedRoster,
+    ) -> Result<bool> {
+        self.apply_verified_admin_signed_shared_roster_with_chain(signed_roster, None)
+    }
+
+    pub fn apply_verified_admin_signed_shared_roster_with_chain(
+        &mut self,
+        signed_roster: &SignedRoster,
+        chain: Option<&crate::namecoin_name_verify::ChainNetworkRecord>,
     ) -> Result<bool> {
         signed_roster.verify()?;
         let network_id = signed_roster.network_id()?;
         let roster = signed_roster.roster()?;
         let signed_by = signed_roster.signer_pubkey_hex()?;
-        self.apply_admin_signed_shared_roster(AdminSignedSharedRosterUpdate {
+        self.apply_admin_signed_shared_roster_with_chain(AdminSignedSharedRosterUpdate {
             network_id,
             network_name: roster.network_name,
             devices: roster.devices,
@@ -245,7 +309,7 @@ impl AppConfig {
             aliases: roster.aliases,
             signed_at: roster.signed_at,
             signed_by,
-        })
+        }, chain)
     }
 
 }

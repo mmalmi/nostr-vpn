@@ -339,7 +339,8 @@ async fn apply_mobile_roster_frame(
         control.app_config_dirty,
         control.config_path,
         signed_roster,
-    )?
+    )
+    .await?
     else {
         return Ok(());
     };

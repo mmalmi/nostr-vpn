@@ -87,6 +87,8 @@ enum Command {
     JoinManual(ManualJoinArgs),
     /// Show daemon status, or configured peers when no live daemon state is available.
     Status(StatusArgs),
+    /// Verify a Namecoin-anchored network id against its chain record.
+    VerifyNetworkName(VerifyNetworkNameArgs),
     /// Update persisted node/network settings.
     Set(SetArgs),
     /// Add one or more devices to the active network roster.
@@ -468,6 +470,17 @@ struct ReloadArgs {
 struct ControlArgs {
     #[arg(long)]
     config: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct VerifyNetworkNameArgs {
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Network id to verify. Defaults to the active network's id.
+    #[arg(long)]
+    network_id: Option<String>,
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]

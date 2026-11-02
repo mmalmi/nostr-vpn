@@ -53,5 +53,7 @@ mod defaults;
 mod exit_dns;
 #[path = "config_tests/magic_dns.rs"]
 mod magic_dns;
+#[path = "config_tests/namecoin.rs"]
+mod namecoin;
 #[path = "config_tests/network.rs"]
 mod network;

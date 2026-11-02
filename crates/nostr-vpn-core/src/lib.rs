@@ -21,6 +21,7 @@ pub mod join_roster_persistence;
 #[cfg(target_os = "macos")]
 pub mod macos_file_io;
 pub mod magic_dns;
+pub mod namecoin_name_verify;
 mod network_roster;
 mod network_routes;
 pub mod packet_checksums;
