@@ -29,8 +29,8 @@ impl PaidRouteStore {
         let capacity_sat = requested_channel_capacity(
             &offer,
             request.channel_capacity_sat.or_else(|| {
-                automatic_selection::recommended_capacity_sat(&offer, balance)
-                    .or_else(|| automatic_selection::recommended_capacity_sat(&offer, None))
+                self.recommended_capacity_sat(&offer, balance, request.now_unix)
+                    .or_else(|| self.recommended_capacity_sat(&offer, None, request.now_unix))
             }),
         )?;
         let now_unix = request.now_unix;
@@ -358,6 +358,33 @@ impl PaidRouteStore {
         let before = record.session.usage.clone();
         apply_usage_delta(&mut record.session.usage, &request.usage_delta);
         let changed = record.session.usage != before;
+        if record.session.usage.billable_bytes > before.billable_bytes {
+            if record.last_usage_at_unix == 0 {
+                // A renewal can be funded long before it carries traffic.
+                // Freeze the accounting start before later acknowledgments
+                // or reconnects can move the admission timestamp.
+                record.usage_started_at_unix = if before.billable_bytes > 0 {
+                    // Legacy counters predate the measurement window. Keep
+                    // their full lifetime instead of attributing old traffic
+                    // to a recent reconnect's admission time.
+                    record.created_at_unix
+                } else {
+                    self.buyer_session_renewal_starts
+                        .iter()
+                        .find_map(|(previous, started)| {
+                            (self.buyer_session_renewals.get(previous) == Some(&target.session_id))
+                                .then_some(*started)
+                        })
+                        .or_else(|| {
+                            self.buyer_session_admissions
+                                .get(&record.session.lease_id)
+                                .copied()
+                        })
+                        .unwrap_or(record.created_at_unix)
+                };
+            }
+            record.last_usage_at_unix = record.last_usage_at_unix.max(request.now_unix);
+        }
         if changed {
             record.updated_at_unix = request.now_unix;
         }

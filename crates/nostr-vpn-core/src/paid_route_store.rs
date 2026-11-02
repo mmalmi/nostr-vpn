@@ -221,6 +221,11 @@ pub struct PaidRouteSessionRecord {
     pub funding_started_unix: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub last_successful_probe_unix: u64,
+    /// Last local traffic observation; payment retries must not change its rate.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub last_usage_at_unix: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub usage_started_at_unix: u64,
     pub session: PaidRouteSession,
     pub created_at_unix: u64,
     #[serde(default, skip_serializing_if = "is_zero")]

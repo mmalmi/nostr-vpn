@@ -9,6 +9,7 @@ pub const PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
 
 const FUTURE_CLOCK_SKEW_SECS: u64 = 5 * 60;
 const CHANNEL_TARGET_BYTES: u64 = 100 * 1024 * 1024;
+const CHANNEL_TARGET_SECS: u64 = 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Candidate {
@@ -183,19 +184,21 @@ impl PaidRouteStore {
             return Some((existing.1, existing.2, true));
         }
         let default = self.wallet.default_mint.trim();
+        let target = self.recommended_capacity_sat(offer, None, now_unix)?;
         let mut wallet_mints = self
             .wallet
             .mints
             .iter()
             .filter(|mint| accepted.iter().any(|url| url == mint.url.trim()))
+            .filter_map(|mint| {
+                let capacity =
+                    target.min(mint.balance_msat.map_or(target, |balance| balance / 1_000));
+                (capacity > 0).then_some((mint, capacity))
+            })
             .collect::<Vec<_>>();
-        let target = recommended_capacity_sat(offer, None)?;
-        wallet_mints.sort_by_key(|mint| {
+        wallet_mints.sort_by_key(|(mint, capacity)| {
             (
-                self.buyer_mint_needs_funds(
-                    &mint.url,
-                    recommended_capacity_sat(offer, mint.balance_msat).unwrap_or(target),
-                ),
+                self.buyer_mint_needs_funds(&mint.url, *capacity),
                 self.buyer_mint_failure_retry_at(&mint.url) > now_unix,
                 mint.balance_msat
                     .is_none_or(|balance| balance / 1_000 < target),
@@ -203,10 +206,10 @@ impl PaidRouteStore {
                 mint.url.trim(),
             )
         });
-        wallet_mints.into_iter().find_map(|mint| {
-            recommended_capacity_sat(offer, mint.balance_msat)
-                .map(|capacity| (mint.url.trim().to_string(), capacity, false))
-        })
+        wallet_mints
+            .into_iter()
+            .next()
+            .map(|(mint, capacity)| (mint.url.trim().to_string(), capacity, false))
     }
 
     fn local_probe_history(
@@ -304,25 +307,79 @@ fn probe_rank(quality: &PaidRouteQualityMetrics) -> Option<LocalProbeRank> {
     })
 }
 
-pub(super) fn recommended_capacity_sat(
-    offer: &PaidRouteOffer,
-    balance_msat: Option<u64>,
-) -> Option<u64> {
-    let traffic_msat = u64::try_from(
-        u128::from(offer.pricing.price_msat_per_gb)
-            .saturating_mul(u128::from(CHANNEL_TARGET_BYTES))
-            .div_ceil(u128::from(PAID_ROUTE_PRICE_BYTES_PER_GB)),
-    )
-    .ok()?;
-    let target_sat = traffic_msat
-        .saturating_add(999)
-        .saturating_div(1_000)
-        .max(1);
-    let mut capacity = target_sat
-        .min(offer.channel.max_channel_capacity_sat)
-        .min(PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT);
-    if let Some(balance_msat) = balance_msat {
-        capacity = capacity.min(balance_msat / 1_000);
+impl PaidRouteStore {
+    pub(super) fn recommended_capacity_sat(
+        &self,
+        offer: &PaidRouteOffer,
+        balance_msat: Option<u64>,
+        now_unix: u64,
+    ) -> Option<u64> {
+        let matches_offer = |channel: &PaidRouteChannelRecord| {
+            channel.role == PaidRouteChannelRole::Buyer
+                && channel.offer_id == offer.offer_id
+                && channel.counterparty_npub == offer.seller_npub
+        };
+        // Start small. Once traffic has been observed locally, budget an hour
+        // at the most recently used channel's average rate, bounded by its
+        // usable lifetime. A one-minute denominator limits short probe bursts.
+        let horizon = CHANNEL_TARGET_SECS.min(
+            crate::paid_routes::paid_route_collection_after_secs(offer.channel.channel_expiry_secs),
+        );
+        let measured = self.sessions.values().filter(|session| {
+            session.usage_started_at_unix >= session.created_at_unix
+                && session.last_usage_at_unix >= session.usage_started_at_unix
+                && session.last_usage_at_unix > 0
+                && session.last_usage_at_unix <= now_unix
+                && session.session.usage.billable_bytes > 0
+                && self
+                    .channels
+                    .get(&session.session.payment.channel_id)
+                    .is_some_and(matches_offer)
+        });
+        let newest_used_channel = measured
+            .clone()
+            .map(|session| session.created_at_unix)
+            .max()
+            .unwrap_or(0);
+        let traffic_bytes = measured
+            .filter(|session| now_unix - session.last_usage_at_unix <= CHANNEL_TARGET_SECS)
+            .max_by_key(|session| session.last_usage_at_unix)
+            .map_or(0, |session| {
+                u128::from(session.session.usage.billable_bytes) * u128::from(horizon)
+                    / u128::from(
+                        (session.last_usage_at_unix - session.usage_started_at_unix).max(60),
+                    )
+            })
+            .max(u128::from(CHANNEL_TARGET_BYTES));
+        let target_sat = u128::from(offer.pricing.price_msat_per_gb)
+            .saturating_mul(traffic_bytes)
+            .div_ceil(u128::from(PAID_ROUTE_PRICE_BYTES_PER_GB) * 1_000)
+            .max(1);
+        // The prepared quote survives wallet failures and process restarts.
+        // Retain that target when reselection must open a replacement, even
+        // after the traffic sample ages out during a mint outage.
+        let pending_capacity = self
+            .buyer_session_renewals
+            .values()
+            .filter_map(|id| self.sessions.get(id))
+            .filter_map(|session| {
+                let channel = self.channels.get(&session.session.payment.channel_id)?;
+                (matches_offer(channel)
+                    && session.created_at_unix <= now_unix
+                    && session.created_at_unix >= newest_used_channel
+                    && !paid_route_session_has_payment_material(&session.session, channel))
+                .then_some(channel.payment.capacity_sat)
+            })
+            .max()
+            .unwrap_or(0);
+        let mut capacity = target_sat
+            .max(u128::from(pending_capacity))
+            .min(u128::from(offer.channel.max_channel_capacity_sat))
+            .min(u128::from(PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT))
+            as u64;
+        if let Some(balance_msat) = balance_msat {
+            capacity = capacity.min(balance_msat / 1_000);
+        }
+        (capacity > 0).then_some(capacity)
     }
-    (capacity > 0).then_some(capacity)
 }

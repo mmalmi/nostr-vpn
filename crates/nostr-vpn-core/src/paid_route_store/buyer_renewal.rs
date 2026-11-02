@@ -112,11 +112,21 @@ impl PaidRouteStore {
             .ok_or_else(|| anyhow!("missing buyer lease"))?;
         ensure_open_buyer_channel(channel, lease)?;
         let offer_key = paid_route_offer_store_key(&channel.counterparty_npub, &channel.offer_id);
+        let offer = &self.resolve_offer(&offer_key, now_unix)?.1.offer;
+        let balance = self
+            .wallet
+            .mints
+            .iter()
+            .find(|mint| mint.url == channel.mint_url)
+            .and_then(|mint| mint.balance_msat);
+        let capacity = self
+            .recommended_capacity_sat(offer, balance, now_unix)
+            .ok_or_else(|| anyhow!("More funds needed before renewing the payment channel"))?;
         let next = self.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector: offer_key,
             buyer_npub: lease.lease.buyer_npub.clone(),
             mint_url: Some(channel.mint_url.clone()),
-            channel_capacity_sat: Some(channel.payment.capacity_sat),
+            channel_capacity_sat: Some(capacity),
             initial_paid_msat: 0,
             now_unix: now_unix.max(channel.created_at_unix.saturating_add(1)),
         })?;
