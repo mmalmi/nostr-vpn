@@ -14,12 +14,14 @@ mod platform {
     use security_framework::passwords::{
         delete_generic_password, get_generic_password, set_generic_password,
     };
-    use security_framework_sys::base::{errSecItemNotFound, errSecSuccess};
+    use security_framework_sys::base::{errSecDuplicateItem, errSecItemNotFound, errSecSuccess};
     use security_framework_sys::item::{
-        kSecAttrAccount, kSecAttrService, kSecClass, kSecClassGenericPassword, kSecMatchLimit,
-        kSecMatchLimitAll, kSecReturnAttributes, kSecReturnData, kSecValueData,
+        kSecAttrAccessGroup, kSecAttrAccount, kSecAttrService, kSecClass, kSecClassGenericPassword,
+        kSecMatchLimit, kSecMatchLimitAll, kSecReturnAttributes, kSecReturnData, kSecValueData,
     };
-    use security_framework_sys::keychain_item::SecItemCopyMatching;
+    use security_framework_sys::keychain_item::{
+        SecItemAdd, SecItemCopyMatching, SecItemDelete, SecItemUpdate,
+    };
 
     use super::{
         ConfigSecret, SERVICE, hydrate_config_secret_fields, scoped_account_name,
@@ -35,6 +37,13 @@ mod platform {
 
     pub(super) fn allows_plaintext_fallback() -> bool {
         false
+    }
+
+    /// Shared access group baked in via NVPN_IOS_KEYCHAIN_ACCESS_GROUP ("<team id>.<bundle id>").
+    fn keychain_access_group() -> Option<&'static str> {
+        super::normalize_keychain_access_group(option_env!(
+            "NVPN_IOS_KEYCHAIN_ACCESS_GROUP"
+        ))
     }
 
     pub(super) fn hydrate_config_secrets(
@@ -61,14 +70,7 @@ mod platform {
 
     pub(super) fn write_secret(_path: &Path, kind: ConfigSecret, value: &str) -> Result<()> {
         let account = stable_account_name(kind);
-        set_generic_password(SERVICE, &account, value.as_bytes())
-            .map_err(anyhow::Error::from)
-            .with_context(|| {
-                format!(
-                    "failed to write {} to the iOS Keychain",
-                    kind.display_name()
-                )
-            })
+        write_account(&account, kind, value)
     }
 
     pub(super) fn delete_secret(path: &Path, kind: ConfigSecret) -> Result<()> {
@@ -105,15 +107,30 @@ mod platform {
     }
 
     fn read_account(account: &str, kind: ConfigSecret) -> Result<Option<String>> {
+        let Some(group) = keychain_access_group() else {
+            return read_ungrouped_account(account, kind);
+        };
+        if let Some(value) = read_grouped_account(account, group, kind)? {
+            return Ok(Some(value));
+        }
+        if let Some(value) = read_ungrouped_account(account, kind)? {
+            // Existing installs keep secrets under the default access group;
+            // copy them into the shared group on first read.
+            if let Err(error) = write_account(account, kind, &value) {
+                tracing::warn!(
+                    error = ?error,
+                    secret = kind.account_suffix(),
+                    "failed to adopt an iOS Keychain config secret into the shared access group"
+                );
+            }
+            return Ok(Some(value));
+        }
+        Ok(None)
+    }
+
+    fn read_ungrouped_account(account: &str, kind: ConfigSecret) -> Result<Option<String>> {
         match get_generic_password(SERVICE, account) {
-            Ok(bytes) => String::from_utf8(bytes)
-                .with_context(|| {
-                    format!(
-                        "{} in the iOS Keychain is not valid UTF-8",
-                        kind.display_name()
-                    )
-                })
-                .map(Some),
+            Ok(bytes) => decode_secret(kind, bytes).map(Some),
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
             Err(error) => Err(anyhow!(error)).with_context(|| {
                 format!(
@@ -122,6 +139,41 @@ mod platform {
                 )
             }),
         }
+    }
+
+    fn read_grouped_account(
+        account: &str,
+        group: &str,
+        kind: ConfigSecret,
+    ) -> Result<Option<String>> {
+        let mut query = grouped_password_query(account, group);
+        query.push((
+            unsafe { CFString::wrap_under_get_rule(kSecReturnData) },
+            CFBoolean::true_value().into_CFType(),
+        ));
+        let mut ret: CFTypeRef = std::ptr::null();
+        let status = unsafe {
+            SecItemCopyMatching(
+                CFDictionary::from_CFType_pairs(&query).as_concrete_TypeRef(),
+                &mut ret,
+            )
+        };
+        if status == errSecItemNotFound {
+            return Ok(None);
+        }
+        keychain_result(status)?;
+        if ret.is_null() {
+            return Ok(None);
+        }
+        if unsafe { CFGetTypeID(ret) } != CFData::type_id() {
+            unsafe { CFRelease(ret) };
+            return Err(anyhow!(
+                "the iOS Keychain returned an unexpected type for {}",
+                kind.display_name()
+            ));
+        }
+        let data = unsafe { CFData::wrap_under_create_rule(ret.cast()) };
+        decode_secret(kind, data.bytes().to_vec()).map(Some)
     }
 
     fn delete_account(account: &str, kind: ConfigSecret) -> Result<()> {
@@ -134,7 +186,101 @@ mod platform {
                     kind.display_name()
                 )
             }),
+        }?;
+        // Also clear any default-group copy written before the shared group existed.
+        if let Some(group) = keychain_access_group() {
+            let query = grouped_password_query(account, group);
+            let status =
+                unsafe { SecItemDelete(CFDictionary::from_CFType_pairs(&query).as_concrete_TypeRef()) };
+            if status != errSecSuccess && status != errSecItemNotFound {
+                return Err(anyhow!(security_framework::base::Error::from_code(status)))
+                    .with_context(|| {
+                        format!(
+                            "failed to delete {} from the iOS Keychain",
+                            kind.display_name()
+                        )
+                    });
+            }
         }
+        Ok(())
+    }
+
+    fn write_account(account: &str, kind: ConfigSecret, value: &str) -> Result<()> {
+        let result = match keychain_access_group() {
+            Some(group) => set_grouped_password(account, group, value),
+            None => set_generic_password(SERVICE, account, value.as_bytes())
+                .map_err(anyhow::Error::from),
+        };
+        result.with_context(|| {
+            format!(
+                "failed to write {} to the iOS Keychain",
+                kind.display_name()
+            )
+        })
+    }
+
+    fn grouped_password_query(account: &str, group: &str) -> Vec<(CFString, CFType)> {
+        vec![
+            (
+                unsafe { CFString::wrap_under_get_rule(kSecClass) },
+                unsafe { CFString::wrap_under_get_rule(kSecClassGenericPassword) }.into_CFType(),
+            ),
+            (
+                unsafe { CFString::wrap_under_get_rule(kSecAttrService) },
+                CFString::new(SERVICE).into_CFType(),
+            ),
+            (
+                unsafe { CFString::wrap_under_get_rule(kSecAttrAccount) },
+                CFString::new(account).into_CFType(),
+            ),
+            (
+                unsafe { CFString::wrap_under_get_rule(kSecAttrAccessGroup) },
+                CFString::new(group).into_CFType(),
+            ),
+        ]
+    }
+
+    fn set_grouped_password(account: &str, group: &str, value: &str) -> Result<()> {
+        let mut add_params = grouped_password_query(account, group);
+        let value_pair = (
+            unsafe { CFString::wrap_under_get_rule(kSecValueData) },
+            CFData::from_buffer(value.as_bytes()).into_CFType(),
+        );
+        add_params.push(value_pair.clone());
+        let status = unsafe {
+            SecItemAdd(
+                CFDictionary::from_CFType_pairs(&add_params).as_concrete_TypeRef(),
+                std::ptr::null_mut(),
+            )
+        };
+        if status != errSecDuplicateItem {
+            return keychain_result(status);
+        }
+        let search_params = CFDictionary::from_CFType_pairs(&add_params[..add_params.len() - 1]);
+        let update_params = CFDictionary::from_CFType_pairs(std::slice::from_ref(&value_pair));
+        let status = unsafe {
+            SecItemUpdate(
+                search_params.as_concrete_TypeRef(),
+                update_params.as_concrete_TypeRef(),
+            )
+        };
+        keychain_result(status)
+    }
+
+    fn keychain_result(status: i32) -> Result<()> {
+        if status == errSecSuccess {
+            return Ok(());
+        }
+        Err(anyhow!(security_framework::base::Error::from_code(status)))
+    }
+
+    fn decode_secret(kind: ConfigSecret, bytes: Vec<u8>) -> Result<String> {
+        String::from_utf8(bytes).with_context(|| {
+            format!(
+                "{} in the iOS Keychain is not valid UTF-8",
+                kind.display_name()
+            )
+        })
     }
 
     fn recover_legacy_secret(kind: ConfigSecret) -> Result<Option<String>> {
@@ -187,7 +333,7 @@ mod platform {
     }
 
     fn migrate_legacy_secret(stable_account: &str, kind: ConfigSecret, value: &str) {
-        if let Err(error) = set_generic_password(SERVICE, stable_account, value.as_bytes()) {
+        if let Err(error) = write_account(stable_account, kind, value) {
             tracing::warn!(
                 error = ?error,
                 secret = kind.account_suffix(),
