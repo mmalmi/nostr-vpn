@@ -372,6 +372,8 @@ export function validateLinuxArm64CliReceipt({
     || !/^\d+\.\d+\.\d+$/.test(String(receipt.fipsVersion ?? ''))
     || !String(receipt.verboseVersion).startsWith(`${expectedVersion}\n`)
     || !String(receipt.verboseVersion).includes(receipt.fipsVersion)
+    || !/^rustc \d+\.\d+\.\d+ /.test(String(receipt.rustcVersion ?? ''))
+    || !/^cargo \d+\.\d+\.\d+ /.test(String(receipt.cargoVersion ?? ''))
   ) {
     throw new Error('Linux ARM64 CLI receipt is incomplete or differs from its native artifact.')
   }

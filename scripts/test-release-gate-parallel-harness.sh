@@ -498,7 +498,7 @@ for base_image in \
   debian:bookworm-slim \
   ubuntu:24.04 \
   node:24-bookworm \
-  rust:1.94-bookworm \
+  rust:1.95.0-bookworm \
   docker/dockerfile:1.7
 do
   grep -Fq "$base_image" <<<"$docker_prerequisite_body" \

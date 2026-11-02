@@ -89,20 +89,6 @@ jobs:
           cache-bin: false
           save-if: true
 
-      - name: Use the contention-safe release scripts for v4.1.3 retries
-        if: ${{ github.event.inputs.tag == 'v4.1.3' }}
-        run: |
-          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
-          for script in \
-            scripts/release-gate.sh \
-            scripts/test-release-gate-parallel-harness.sh \
-            scripts/e2e-fips-roaming-docker.sh
-          do
-            git show "${GITHUB_SHA}:${script}" > "${script}.next"
-            chmod --reference="${script}" "${script}.next"
-            mv "${script}.next" "${script}"
-          done
-
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
