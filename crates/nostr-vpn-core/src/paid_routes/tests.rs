@@ -3,11 +3,26 @@ use super::*;
 
 #[test]
 fn paid_exit_mint_notices_distinguish_test_local_and_http_offers() {
-    assert_eq!(paid_exit_mint_notice("https://testnut.cashu.space"), Some("test mint"));
-    assert_eq!(paid_exit_mint_notice("http://172.17.0.1:3341"), Some("local network address"));
-    assert_eq!(paid_exit_mint_notice("https://[::1]/mint"), Some("local network address"));
-    assert_eq!(paid_exit_mint_notice("http://mint.example"), Some("unencrypted HTTP"));
-    assert_eq!(paid_exit_mint_notice("https://mint.example/testnut.cashu.space"), None);
+    assert_eq!(
+        paid_exit_mint_notice("https://testnut.cashu.space"),
+        Some("test mint")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("http://172.17.0.1:3341"),
+        Some("local network address")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("https://[::1]/mint"),
+        Some("local network address")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("http://mint.example"),
+        Some("unencrypted HTTP")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("https://mint.example/testnut.cashu.space"),
+        None
+    );
 }
 
 #[test]

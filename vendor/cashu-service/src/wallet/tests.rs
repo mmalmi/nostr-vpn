@@ -158,7 +158,11 @@ async fn refresh_active_keyset_ignores_cheaper_inactive_keysets_and_rejects_none
     let active_id = active.id;
     let mut inactive = build_test_keyset(32);
     inactive.active = Some(false);
-    let mock = Arc::new(LightningMockMintConnector::new(active.clone(), "quote", "00ff"));
+    let mock = Arc::new(LightningMockMintConnector::new(
+        active.clone(),
+        "quote",
+        "00ff",
+    ));
     mock.add_keyset(inactive);
     let wallet = WalletBuilder::new()
         .mint_url("https://mint.example".parse().unwrap())
@@ -212,7 +216,10 @@ async fn failed_cdk_preparation_preserves_file_backed_proofs_across_reopen() {
         .await;
     assert!(prepared.is_err());
     assert_eq!(
-        wallet.get_proofs_with(Some(vec![State::Unspent]), None).await.unwrap(),
+        wallet
+            .get_proofs_with(Some(vec![State::Unspent]), None)
+            .await
+            .unwrap(),
         vec![proof.clone()]
     );
     assert_eq!(wallet.total_balance().await.unwrap().to_u64(), 16);
@@ -227,7 +234,10 @@ async fn failed_cdk_preparation_preserves_file_backed_proofs_across_reopen() {
         .await
         .unwrap();
     assert_eq!(
-        wallet.get_proofs_with(Some(vec![State::Unspent]), None).await.unwrap(),
+        wallet
+            .get_proofs_with(Some(vec![State::Unspent]), None)
+            .await
+            .unwrap(),
         vec![proof]
     );
     assert_eq!(wallet.total_balance().await.unwrap().to_u64(), 16);
@@ -341,9 +351,11 @@ fn legacy_seed_is_retained_when_secure_store_roundtrip_changes_bytes() {
 
     let error = resolve_wallet_seed(temp_dir.path(), &store, true).unwrap_err();
 
-    assert!(error
-        .to_string()
-        .contains("did not preserve the wallet seed"));
+    assert!(
+        error
+            .to_string()
+            .contains("did not preserve the wallet seed")
+    );
     assert!(legacy_path.exists());
 }
 
@@ -456,9 +468,11 @@ fn corrupted_wallet_database_family_is_preserved_together() {
 fn preserving_an_absent_wallet_database_is_a_noop() {
     let temp_dir = tempfile::tempdir().unwrap();
 
-    assert!(preserve_cashu_wallet_database(temp_dir.path())
-        .unwrap()
-        .is_none());
+    assert!(
+        preserve_cashu_wallet_database(temp_dir.path())
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]
