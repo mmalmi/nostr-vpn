@@ -401,6 +401,7 @@ fn paid_route_offer_row(
             label.set_hexpand(true);
             row.append(&label);
             let trust = gtk::Button::with_label("Trust mint");
+            trust.update_property(&[gtk::accessible::Property::Label(&format!("Trust mint {mint}"))]);
             trust.set_tooltip_text(Some(&format!("Allow this wallet to hold funds at {mint}")));
             {
                 let app = app.clone();

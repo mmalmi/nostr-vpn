@@ -246,11 +246,11 @@ try:
     for mint in ["https://first-mint.invalid", "http://second-mint.invalid"]:
         wait_until(lambda: named(mint), "accepted mint URL " + mint)
     wait_until(lambda: named("http://second-mint.invalid · unencrypted HTTP"), "unsecured mint warning")
-    assert len(buttons("Trust mint")) == 2
+    assert all(len(buttons(f"Trust mint {url}")) == 1 for url in ["https://first-mint.invalid", "http://second-mint.invalid"])
     snapshot("accepted-mints")
     checks.append("Both accepted mint URLs and Trust mint actions displayed; free offer needs no trusted mint")
 
-    click("Trust mint", row_label="https://first-mint.invalid")
+    click("Trust mint https://first-mint.invalid")
     wait_until(lambda: named("Working…"), "queued action visible while refresh blocked")
     assert not json.loads(store_path.read_text())["wallet"].get("mints")
     snapshot("trust-queued")
@@ -268,7 +268,7 @@ try:
     block_next_refresh()
     browse_sellers()
     wait_until(lambda: connect_states() == [True, True], "trusted mint survives restart")
-    assert not buttons("Trust mint")
+    assert not buttons("Trust mint https://first-mint.invalid") and not buttons("Trust mint http://second-mint.invalid")
     snapshot("restart")
     calls = [json.loads(line) for line in (output / "cli-calls.jsonl").read_text().splitlines()]
     assert calls and all(call[0] in ("status", "service", "version") for call in calls)
