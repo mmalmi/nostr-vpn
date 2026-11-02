@@ -203,6 +203,10 @@ impl AppConfig {
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let mut config: AppConfig =
             toml::from_str(&raw).with_context(|| "failed to parse config TOML")?;
+        if config.paid_exit.ip_support.ipv6 || !config.paid_exit.ip_support.ipv4 {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| eprintln!("nvpn: paid exit sellers currently support IPv4 only; ignoring unsupported paid_exit.ip_support settings"));
+        }
         config.apply_load_migrations();
         hydrate_config_secrets(path, &mut config)?;
         config.ensure_defaults();

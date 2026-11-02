@@ -1,4 +1,17 @@
     #[test]
+    fn unsupported_paid_exit_ipv6_is_explained_before_settings_change() {
+        let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test runtime"));
+        let before = serde_json::to_vec(&runtime.config).unwrap();
+        let error = runtime.apply_settings_patch(SettingsPatch {
+            paid_exit_enabled: Some(true),
+            paid_exit_ipv6: Some(true),
+            ..Default::default()
+        }).unwrap_err();
+        assert!(error.to_string().contains("IPv4 only"));
+        assert_eq!(serde_json::to_vec(&runtime.config).unwrap(), before);
+    }
+
+    #[test]
     fn settings_patch_rejects_an_impossible_trial_without_mutating_the_runtime() {
         let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test runtime"));
         let before = serde_json::to_vec(&runtime.config).unwrap();
@@ -41,8 +54,8 @@
                 paid_exit_country_code: Some("fi".to_string()),
                 paid_exit_network_class: Some("residential".to_string()),
                 paid_exit_asn: Some("AS12345".to_string()),
-                paid_exit_ipv4: Some(false),
-                paid_exit_ipv6: Some(true),
+                paid_exit_ipv4: Some(true),
+                paid_exit_ipv6: Some(false),
                 paid_exit_rating_file: Some(" ratings.json ".to_string()),
                 paid_exit_rating_relays: Some(vec![
                     " wss://ratings-b.example ".to_string(),

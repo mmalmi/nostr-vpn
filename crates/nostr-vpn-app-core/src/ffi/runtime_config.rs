@@ -1,6 +1,9 @@
 impl NativeAppRuntime {
     #[allow(clippy::too_many_lines)]
     fn apply_settings_patch(&mut self, patch: SettingsPatch) -> Result<()> {
+        if patch.paid_exit_ipv6 == Some(true) || patch.paid_exit_ipv4 == Some(false) {
+            return Err(anyhow!("Paid exit sellers currently support IPv4 only"));
+        }
         let parsed_wireguard_exit_config = patch
             .wireguard_exit_config
             .as_deref()
