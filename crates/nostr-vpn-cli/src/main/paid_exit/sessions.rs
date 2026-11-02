@@ -41,6 +41,7 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
     let store_path = paid_route_store_file_path(&config_path);
     let no_select_exit_node = args.no_select_exit_node;
     let no_reload_daemon = args.no_reload_daemon;
+    let now_unix = unix_timestamp();
     let result = update_paid_route_store(&store_path, |store| {
         let offer_selector = paid_exit_buy_offer_selector(&args, store)?;
         let session = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
@@ -49,9 +50,10 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
             mint_url: args.mint,
             channel_capacity_sat: args.channel_capacity_sat,
             initial_paid_msat: args.initial_paid_msat,
-            now_unix: unix_timestamp(),
+            now_unix,
         })?;
         if !no_select_exit_node {
+            store.begin_buyer_session_open_attempt(&session.session_id, now_unix)?;
             store.manual_renewal_session_id = if args.auto_renew {
                 session.session_id.clone()
             } else {

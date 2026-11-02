@@ -18,7 +18,7 @@ const PAID_EXIT_OFFER_EVENT_CACHE_LIMIT: usize = 512;
 enum PaidExitCommand {
     /// Show paid-exit seller config, wallet, offers, channels, and sessions.
     Status(PaidExitStatusArgs),
-    /// Rate a previously used provider; down stops and avoids it. Ratings publish automatically.
+    /// Publish a public rating with --publish. A downvote also avoids the provider.
     Rate(PaidExitRateArgs),
     /// Ask Automatic mode to try another eligible provider without casting a vote.
     Reselect(PaidExitStatusArgs),
@@ -35,6 +35,8 @@ enum PaidExitCommand {
     Buy(PaidExitBuyArgs),
     /// Select an existing buyer session as the active public exit route.
     Use(PaidExitUseArgs),
+    /// Turn off future manual channel purchases, including while disconnected.
+    StopRenewal(PaidExitStatusArgs),
     /// Measure the realized public exit IP and quality for a paid-exit session.
     Probe(PaidExitProbeArgs),
     /// Record realized exit IP and quality measurements for a paid-exit session.

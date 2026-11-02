@@ -543,6 +543,7 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
             .manual_renewal_session_id,
         buy.session.session_id
     );
+    assert_eq!(load_paid_route_store(&store_path).unwrap().selected_buyer_session_id, buy.session.session_id);
     assert_eq!(buy.session.seller_npub, offer.seller_npub);
     let seller_hex = seller.public_key().to_hex();
     assert_eq!(buy.selected_exit_node.as_deref(), Some(seller_hex.as_str()));

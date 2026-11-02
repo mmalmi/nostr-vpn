@@ -9,10 +9,41 @@ use nostr_vpn_core::paid_routes::{ExitNetworkClass, SignedPaidRouteOffer};
 use serde_json::Value;
 
 #[test]
+fn paid_exit_stop_renewal_works_offline_without_reselecting_a_channel() {
+    let dir = TestDir::new("nvpn-stop-renewal");
+    let config = dir.path().join("config.toml");
+    let store_path = dir.path().join("paid-routes.json");
+    nostr_vpn_core::paid_route_store::update_paid_route_store(&store_path, |store| {
+        store.selected_buyer_session_id = "old-session".into();
+        store.manual_renewal_session_id = "old-session".into();
+        Ok(())
+    })
+    .unwrap();
+    for _ in 0..2 {
+        assert_success(&run_nvpn([
+            "paid-exit",
+            "stop-renewal",
+            "--config",
+            config.to_str().unwrap(),
+        ]));
+        let store = load_paid_route_store(&store_path).unwrap();
+        assert!(store.manual_renewal_session_id.is_empty());
+        assert_eq!(store.selected_buyer_session_id, "old-session");
+        assert!(!config.exists());
+    }
+}
+
+#[test]
 fn paid_exit_rating_requires_publication_consent_before_changing_state() {
     let dir = TestDir::new("nvpn-public-rating");
     let path = dir.path().join("config.toml");
-    let output = run_nvpn(["paid-exit", "rate", "down", "--config", path.to_str().unwrap()]);
+    let output = run_nvpn([
+        "paid-exit",
+        "rate",
+        "down",
+        "--config",
+        path.to_str().unwrap(),
+    ]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("--publish to confirm"));
     assert!(!path.exists());
