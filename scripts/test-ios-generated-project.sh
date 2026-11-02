@@ -27,6 +27,8 @@ cp "$ROOT/ios/project.yml" "$TMP_DIR/ios/project.yml"
 cp -R \
   "$ROOT/ios/Sources" \
   "$ROOT/ios/PacketTunnel" \
+  "$ROOT/ios/Shared" \
+  "$ROOT/ios/ShareFiles" \
   "$ROOT/ios/UITests" \
   "$ROOT/ios/Resources" \
   "$TMP_DIR/ios/"

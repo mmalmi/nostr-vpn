@@ -42,6 +42,8 @@ import org.nostrvpn.app.vpn.AndroidVpnRoutingPolicy
 import org.nostrvpn.app.vpn.VpnStartState
 
 class MainActivity : ComponentActivity() {
+    private var sharedUris by mutableStateOf<List<android.net.Uri>>(emptyList())
+    private var focusedFileTransfer by mutableStateOf<String?>(null)
     private var deepLink by mutableStateOf<String?>(null)
     private var debugRequest by mutableStateOf(AndroidDebugRequest())
     private var releaseJoinImageImportEnabled by mutableStateOf(false)
@@ -52,6 +54,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         legacyPackageToRemove = AndroidLegacyPackageMigration.packageToRemove(this)
         deepLink = intent?.dataString
+        sharedUris = sharedFileUris(intent)
+        focusedFileTransfer = intent?.getStringExtra(AndroidFileNotifications.EXTRA_TRANSFER_ID)
         debugRequest = AndroidDebugRequest.from(intent)
         releaseJoinImageImportEnabled =
             intent?.getBooleanExtra(EXTRA_RELEASE_JOIN_IMAGE_IMPORT, false) == true
@@ -420,6 +424,18 @@ class MainActivity : ComponentActivity() {
 
             NostrVpnTheme {
                 val displayState = state.withAndroidNotice(androidError, vpnLockdownActive)
+                if (sharedUris.isNotEmpty()) {
+                    SharedFilesDialog(displayState, sharedUris, onDismiss = { sharedUris = emptyList() },
+                        connect = { if (!state.vpnEnabled) dispatch(NativeActions.connectVpn()) }, dispatch = dispatchSucceeded)
+                }
+                if (focusedFileTransfer != null) {
+                    val transferState = displayState.copy(fileTransfers = displayState.fileTransfers.sortedBy { it.id != focusedFileTransfer })
+                    AlertDialog(onDismissRequest = { focusedFileTransfer = null }, title = { Text("Files") },
+                        text = {
+                            if (transferState.fileTransfers.isEmpty()) Text("No files to show yet.")
+                            else FileTransfersCard(transferState, dispatch)
+                        }, confirmButton = { TextButton(onClick = { focusedFileTransfer = null }) { Text("Done") } })
+                }
                 NostrVpnApp(
                     state = displayState,
                     qrJson = { text -> core.qrMatrix(text) },
@@ -531,6 +547,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        AndroidFileNotifications.refreshActive()
         legacyPackageToRemove = AndroidLegacyPackageMigration.packageToRemove(this)
     }
 
@@ -539,6 +556,8 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         writeAndroidBuildMetadata(appCoreDataDir(this))
         deepLink = intent.dataString
+        sharedUris = sharedFileUris(intent)
+        focusedFileTransfer = intent.getStringExtra(AndroidFileNotifications.EXTRA_TRANSFER_ID)
         debugRequest = AndroidDebugRequest.from(intent)
         releaseJoinImageImportEnabled =
             intent.getBooleanExtra(EXTRA_RELEASE_JOIN_IMAGE_IMPORT, false)

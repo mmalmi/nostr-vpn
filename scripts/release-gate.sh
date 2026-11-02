@@ -479,6 +479,7 @@ run_release_gate_static_preflight() {
     ./scripts/test-ios-generated-project.sh
     ./scripts/test-ios-rust-build-workspace.sh
     ./scripts/test-ios-qr-image-import-launch-environment.sh
+    ./scripts/test-ios-file-share-storage.sh
     NVPN_IOS_RUST_PROFILE=release ./tools/run-ios xcframework
     ./scripts/test-ios-appstore-policy.sh
   else

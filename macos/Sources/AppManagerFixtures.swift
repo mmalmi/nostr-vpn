@@ -272,6 +272,7 @@ extension AppManager {
         let sellerScreenshot = CommandLine.arguments.contains("--nvpn-screenshot-paid-seller")
 
         return NativeAppState(
+            fileTransfers: [],
             rev: 1,
             platform: "macos",
             mobile: false,

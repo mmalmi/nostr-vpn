@@ -55,6 +55,7 @@ fn run_command_with_runtime(command: Command) -> Result<()> {
 
 async fn run_command(command: Command) -> Result<()> {
     match command {
+        Command::File(args) => run_file_command(args)?,
         #[cfg(target_os = "linux")]
         Command::EgressGuard { config } => crate::linux_exit_intent::restore_at_boot(&config)?,
         Command::Init {

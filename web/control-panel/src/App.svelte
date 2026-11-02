@@ -5,6 +5,8 @@
   import CopyButton from './lib/CopyButton.svelte';
   import Modal from './lib/Modal.svelte';
   import QRCode from './lib/QRCode.svelte';
+  import FileSend from './lib/FileSend.svelte';
+  import FileTransfers from './lib/FileTransfers.svelte';
   import { formatBytes, nonEmpty, shortMiddle } from './lib/format';
   import nostrVpnIcon from './lib/nostr-vpn-icon.svg';
   import type {
@@ -1196,6 +1198,7 @@
       {/if}
 
       {#if tab === 'devices'}
+        <FileTransfers connected={state.vpnActive} transfers={state.fileTransfers ?? []} onChanged={() => refresh(false)} />
         <section
           class="devices-layout"
           class:showing-detail={devicePane === 'detail' && Boolean(selectedParticipant)}
@@ -1337,6 +1340,11 @@
                     <span>{deviceDetailStatusText(selectedParticipant)}</span>
                   </div>
                 </header>
+
+                {#if !isSelf(selectedParticipant)}
+                  {#if !state.vpnActive}<p class="muted-copy">Connect VPN to send files.</p>{/if}
+                  <FileSend npub={selectedParticipant.npub} disabled={!state.vpnActive || !shownNetwork.enabled || !selectedParticipant.reachable} onChanged={() => refresh(false)} />
+                {/if}
 
                 {#if shownNetwork.localIsAdmin}
                   <div class="detail-surface">

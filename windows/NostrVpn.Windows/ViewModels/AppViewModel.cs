@@ -903,6 +903,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        CancelFilePreparation();
         _refreshTimer.Stop();
         _updateTimer.Stop();
         _themeService.Dispose();

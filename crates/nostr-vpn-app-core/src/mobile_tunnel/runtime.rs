@@ -191,6 +191,15 @@ impl MobileTunnel {
         // the OS tun.
         let mesh_ipv4 = parse_ipv4(&config.local_address);
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
+        if let Some(path) = private_state_config_path.as_ref() {
+            tasks.push(
+                nostr_vpn_core::file_transfers::FileTransferService::start(
+                    Arc::clone(&endpoint),
+                    path.clone(),
+                )
+                .into_task(),
+            );
+        }
 
         #[cfg(feature = "paid-exit")]
         if let Some(pubsub) = control_pubsub.as_ref()
