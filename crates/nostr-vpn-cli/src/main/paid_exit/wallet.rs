@@ -20,6 +20,7 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
 
     match args.command {
         PaidExitWalletCommand::Show(show) => {
+            let wallet_before = load_paid_route_store(&store_path)?.wallet;
             let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
                 crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
                 &config_path,
@@ -29,11 +30,11 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
             )
             .await?,
             )?;
-            let (changed, store) = update_paid_route_store(&store_path, |store| {
-                let changed =
-                    sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
-                Ok((changed, store.clone()))
-            })?;
+            // The wallet worker synchronizes balances at startup and after
+            // mutations, including an explicit refresh. Viewing its cached
+            // overview must not rewrite the last-check time in the route store.
+            let store = load_paid_route_store(&store_path)?;
+            let changed = store.wallet != wallet_before;
             let activity = if show.activity {
                 Some(
                     daemon_cashu_wallet_request::<Vec<cashu_service::CashuWalletActivityEntry>>(

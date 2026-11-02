@@ -17,6 +17,8 @@ fn paid_exit_status_snapshot_json(
                 "relays": record.relay_urls,
                 "first_seen_unix": record.first_seen_unix,
                 "last_seen_unix": record.last_seen_unix,
+                "personal_rating": store.personal_exit_rating(&record.offer.seller_npub),
+                "avoided": store.exit_provider_is_avoided(&record.offer.seller_npub),
             });
             if let Some(score) = record.rating_score {
                 value["rating_score"] = json!(score);
@@ -376,14 +378,20 @@ fn print_paid_exit_status_snapshot(
                 .rating_score
                 .map(|score| format!(" rating_score={score:+}"))
                 .unwrap_or_default();
+            let personal_text = match store.personal_exit_rating(&offer.seller_npub) {
+                -1 => " your_rating=down avoided=true",
+                1 => " your_rating=up",
+                _ => "",
+            };
             println!(
-                "  {key} price={} country={} upstream={} live={} last_seen={}{}",
+                "  {key} price={} country={} upstream={} live={} last_seen={}{}{}",
                 paid_exit_price_text(offer.pricing.price_msat_per_gb),
                 display_or_none(&offer.location.country_code),
                 offer.access.upstream.as_str(),
                 record.signed_offer.is_live_at(now_unix),
                 record.last_seen_unix,
-                rating_text
+                rating_text,
+                personal_text
             );
         }
     }

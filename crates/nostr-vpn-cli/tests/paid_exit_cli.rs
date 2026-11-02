@@ -9,6 +9,28 @@ use nostr_vpn_core::paid_routes::{ExitNetworkClass, SignedPaidRouteOffer};
 use serde_json::Value;
 
 #[test]
+fn paid_exit_wallet_accepts_config_after_its_subcommand() {
+    let dir = TestDir::new("nvpn-wallet-global-config");
+    let config = dir.path().join("config.toml");
+    for command in ["show", "topup", "receive", "send", "withdraw", "add-mint"] {
+        // Help parses the same CLI arguments without starting a daemon or
+        // performing a wallet operation.
+        let output = run_nvpn([
+            "paid-exit",
+            "wallet",
+            command,
+            "--config",
+            config.to_str().unwrap(),
+            "--help",
+        ]);
+        assert_success(&output);
+        let help = String::from_utf8_lossy(&output.stdout);
+        assert!(help.contains("--config <CONFIG>"), "{help}");
+        assert!(!config.exists(), "parsing help must not create a config");
+    }
+}
+
+#[test]
 fn paid_exit_run_persists_custom_offer_identity_across_processes() {
     let dir = TestDir::new("nvpn-custom-offer-id");
     let path = dir.path().join("config.toml");

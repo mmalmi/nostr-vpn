@@ -281,6 +281,7 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("device_id={}", app.nostr.public_key);
                 println!("magic_dns_suffix: {}", app.magic_dns_suffix);
                 println!("autoconnect: {}", app.autoconnect);
+                println!("internet_source: {}", app.internet_source.as_str());
                 println!("node: {}", app.node.id);
                 println!("tunnel_ip: {}", runtime_local_tunnel_ip(&app, &network_id));
                 println!("endpoint: {endpoint}");
@@ -294,7 +295,11 @@ async fn run_command(command: Command) -> Result<()> {
                 if app.exit_node.is_empty() {
                     println!("exit_node: none");
                 } else {
-                    println!("exit_node: {}", app.exit_node);
+                    let exit_node = PublicKey::parse(&app.exit_node)
+                        .ok()
+                        .and_then(|key| key.to_bech32().ok())
+                        .unwrap_or_else(|| app.exit_node.clone());
+                    println!("exit_node: {exit_node}");
                 }
                 println!(
                     "exit_node_leak_protection: {}",

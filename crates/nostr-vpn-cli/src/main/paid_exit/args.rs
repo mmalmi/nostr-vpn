@@ -549,7 +549,7 @@ struct PaidExitCollectDueArgs {
 
 #[derive(Debug, Args)]
 struct PaidExitWalletArgs {
-    #[arg(long)]
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[arg(long)]
     json: bool,

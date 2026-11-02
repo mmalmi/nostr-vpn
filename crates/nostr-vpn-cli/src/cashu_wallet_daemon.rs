@@ -741,7 +741,7 @@ pub(crate) async fn request_daemon_cashu_wallet(
     let status = daemon_status(config_path)?;
     if !status.running {
         return Err(anyhow!(
-            "Cashu wallet requires the nvpn daemon; start or reinstall the Nostr VPN service"
+            "Cashu wallet requires a running nvpn daemon for this config; start the installed Nostr VPN service, or run `nvpn daemon --config <same config path>`"
         ));
     }
     wait_for_running_daemon_control_ready(config_path, &status)?;
