@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- Install the macOS background service successfully on stock Macs again: the
+  launchd artifact check rejected group-writable `/Library` ancestors that
+  stock macOS ships by default, so the GUI reported the service as installed
+  and then flipped to "not installed". Ancestor directories now only need to
+  be root-owned and not world-writable, with write ACLs limited to the
+  built-in admin group; the artifact directories themselves keep the strict
+  policy. The GUI also surfaces the captured root-side output when a service
+  install does not take effect instead of flashing success.
+- Make the macOS "Install CLI" app action work for non-administrators: the
+  install now runs through the administrator prompt and places a symlink at
+  `/usr/local/bin/nvpn` that tracks every app update, so the `nvpn` command
+  keeps working in Terminal without editing PATH or reinstalling after
+  updates. `nvpn update` refuses to replace an app-managed CLI.
+
+### Added
+
+- Gate macOS service installation in CI on a real launchd install/uninstall
+  cycle under `/Library` plus root-gated protected-filesystem fixtures.
+
 ## 4.1.19 - 2026-10-23
 
 ### Improved

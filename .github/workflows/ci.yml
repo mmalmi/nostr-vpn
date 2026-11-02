@@ -165,3 +165,44 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
         run: ./scripts/check-macos-swift-sdk-compat.sh
+
+  # Installs a real launchd daemon under /Library so ancestor-protection
+  # changes (root-owned system directories are group-writable by admin on
+  # stock macOS) can never again ship without exercising the live path.
+  macos-service-gates:
+    name: macOS service install gates
+    runs-on: macos-14
+    env:
+      NVPN_RUN_MACOS_SERVICE_E2E: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+
+      # Warm the registry so the fixture project can resolve --offline.
+      - name: Fetch workspace dependencies
+        run: cargo fetch --locked
+
+      - name: Protected filesystem fixtures (root)
+        run: ./scripts/test-macos-privileged-files.sh --root
+
+      # The CLI symlink install tests are unix-gated and the service install
+      # post-condition tests are macOS-gated; this is where they execute.
+      - name: Rust install and service gates
+        run: |
+          cargo test --locked -p nvpn install_cli
+          cargo test --locked -p nvpn app_bundle_detection
+          cargo test --locked -p nostr-vpn-app-core --lib macos_service_install
+
+      - name: Real launchd service install e2e
+        run: ./scripts/e2e-macos-service.sh
