@@ -293,6 +293,55 @@ fn mint_failover_waits_without_rejecting_seller_when_all_mints_cooling_down() {
 }
 
 #[test]
+fn automatic_selection_waits_for_a_payable_mint_before_starting_after_restart() {
+    let (dir, mut app, _, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let store_path = paid_route_store_file_path(&path);
+    update_paid_route_store(&store_path, |store| {
+        store.defer_buyer_mint_retry(ALTERNATIVE, now, Some("Mint unavailable"), Some(600))
+    })
+    .unwrap();
+    let before = load_paid_route_store(&store_path).unwrap();
+    assert!(before.select_automatic_offer(now + 1).is_err());
+    let mut automatic = PaidExitAutomaticBuyer::default();
+    assert!(
+        !reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 1).unwrap()
+    );
+    assert!(automatic.candidate.is_none());
+    assert!(automatic.rejected_offers.is_empty());
+    let after = load_paid_route_store(&store_path).unwrap();
+    assert_eq!(after.sessions, before.sessions);
+    assert_eq!(after.channels, before.channels);
+    assert_eq!(
+        after.selected_buyer_session_id,
+        before.selected_buyer_session_id
+    );
+
+    reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 601).unwrap();
+    assert!(automatic.candidate.is_some());
+    assert!(automatic.rejected_offers.is_empty());
+}
+
+#[test]
+fn automatic_selection_waits_for_observed_funding_shortfall_to_clear() {
+    let (dir, _, automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let mut store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    let session_id = automatic.candidate.unwrap().session_id;
+    store.buyer_mint_retries.clear();
+    store.upsert_wallet_mint(ALTERNATIVE, "alternative", Some(0), now);
+    store
+        .record_buyer_session_funding_shortfall(&session_id, 17)
+        .unwrap();
+    assert!(store.select_automatic_offer(now + 1).is_err());
+    store.upsert_wallet_mint(PRIMARY, "primary", Some(17_000), now + 2);
+    assert_eq!(
+        store.select_automatic_offer(now + 2).unwrap().mint_url,
+        PRIMARY
+    );
+}
+
+#[test]
 fn mint_fee_shortfall_selects_other_funds_and_preserves_existing_credit() {
     let (dir, mut app, mut automatic, now) = fixture();
     let path = dir.path().join("config.toml");

@@ -699,6 +699,25 @@ fn automatic_offer_selection_requires_safe_fresh_terms_and_a_wallet_mint() {
 }
 
 #[test]
+fn automatic_offer_selection_explains_its_price_limit() {
+    let seller = Keys::generate();
+    let mut config = automatic_offer_config();
+    config.pricing.price_msat_per_gb = 250_000;
+    let signed =
+        signed_paid_exit_offer_from_config("expensive", &seller, &config, None, 120).unwrap();
+    let mut store = PaidRouteStore::default();
+    store.upsert_signed_offer(signed, vec![], 120).unwrap();
+    store.upsert_wallet_mint(
+        &config.channel.accepted_mints[0],
+        "Mint",
+        Some(1_000_000),
+        120,
+    );
+    let error = store.select_automatic_offer(120).unwrap_err().to_string();
+    assert!(error.contains("100 sat/GB"), "{error}");
+}
+
+#[test]
 fn automatic_offer_selection_prefers_local_probe_history_before_rating() {
     let now_unix = 100_000;
     let good_seller = Keys::generate();

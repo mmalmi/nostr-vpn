@@ -204,14 +204,7 @@ impl PaidExitAutomaticBuyer {
             selected
                 .offers
                 .retain(|key, _| *key == current.selection.offer_key);
-            if let Ok(selection) = selected.select_automatic_offer(now_unix)
-                && (selection.funded
-                    || (store.buyer_mint_failure_retry_at(&selection.mint_url) <= now_unix
-                        && !store.buyer_mint_needs_funds(
-                            &selection.mint_url,
-                            selection.channel_capacity_sat,
-                        )))
-            {
+            if let Ok(selection) = selected.select_automatic_offer(now_unix) {
                 return Ok(selection);
             }
         }

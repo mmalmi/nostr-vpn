@@ -41,20 +41,46 @@ impl PaidRouteStore {
         &self,
         now_unix: u64,
     ) -> Result<PaidRouteAutomaticOfferSelection> {
-        self.offers
+        let candidate = self
+            .offers
             .iter()
             .filter_map(|(key, record)| self.candidate(key, record, now_unix))
             .max_by(compare_candidates)
-            .map(|candidate| PaidRouteAutomaticOfferSelection {
-                funded: candidate.funded,
-                previously_verified: candidate.previously_verified,
-                offer_key: candidate.offer_key,
-                mint_url: candidate.mint_url,
-                channel_capacity_sat: candidate.capacity_sat,
-            })
             .ok_or_else(|| {
-                anyhow!("no eligible paid route offer is available for automatic selection")
-            })
+                anyhow!(
+                    "No eligible automatic exit at or below {} sat/GB",
+                    PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GB / 1_000
+                )
+            })?;
+        // Keep blocked candidates in the ranking to explain why selection is
+        // waiting, but never return one as a new purchase. Existing funded
+        // channels remain usable without reaching their mint.
+        if !candidate.payment_available {
+            let mint = Url::parse(&candidate.mint_url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_string))
+                .unwrap_or_else(|| candidate.mint_url.clone());
+            if self.buyer_mint_needs_funds(&candidate.mint_url, candidate.capacity_sat) {
+                return Err(anyhow!("More funds needed · {mint}"));
+            }
+            let cause = normalize_paid_route_mint_url(&candidate.mint_url)
+                .ok()
+                .and_then(|url| self.buyer_mint_retries.get(&url))
+                .filter(|retry| !retry.error.is_empty())
+                .map_or_else(String::new, |retry| format!(" · {}", retry.error));
+            return Err(anyhow!(
+                "Payment unavailable · {mint}{cause} · No payable alternative · Retrying in {} s",
+                self.buyer_mint_failure_retry_at(&candidate.mint_url)
+                    .saturating_sub(now_unix)
+            ));
+        }
+        Ok(PaidRouteAutomaticOfferSelection {
+            funded: candidate.funded,
+            previously_verified: candidate.previously_verified,
+            offer_key: candidate.offer_key,
+            mint_url: candidate.mint_url,
+            channel_capacity_sat: candidate.capacity_sat,
+        })
     }
 
     fn candidate(

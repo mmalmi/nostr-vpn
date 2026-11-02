@@ -147,19 +147,8 @@ impl NativeAppRuntime {
         // Selection and recovery can temporarily leave no pending session
         // selected. Derive the blocker from the same mint choice as the buyer,
         // rather than losing it whenever the route changes.
-        let selection = store.select_automatic_offer(now).ok();
-        if let Some(selection) = selection.as_ref().filter(|selection| !selection.funded)
-            && store.buyer_mint_needs_funds(&selection.mint_url, selection.channel_capacity_sat)
-        {
-            return Some((
-                format!(
-                    "More funds needed · {}",
-                    paid_route_mint_host(&selection.mint_url)
-                ),
-                true,
-            ));
-        }
-        if selection.is_none()
+        let selection = store.select_automatic_offer(now);
+        if selection.is_err()
             && !store.wallet.mints.is_empty()
             && store
                 .wallet
@@ -169,20 +158,10 @@ impl NativeAppRuntime {
         {
             return Some(("More funds needed · Wallet empty".to_string(), true));
         }
-        if let Some(selection) = selection.as_ref().filter(|selection| !selection.funded)
-            && store.buyer_mint_failure_retry_at(&selection.mint_url) > now
+        if !store.offers.is_empty()
+            && let Err(error) = selection
         {
-            let retry = &store.buyer_mint_retries[&selection.mint_url];
-            let mint = paid_route_mint_host(&selection.mint_url);
-            let cause = if retry.error.is_empty() {
-                String::new()
-            } else {
-                format!(" · {}", retry.error)
-            };
-            return Some((
-                format!("Payment unavailable · {mint}{cause} · No payable alternative · Retrying in {} s", retry.retry_at_unix - now),
-                true,
-            ));
+            return Some((error.to_string(), true));
         }
         let session = store.sessions.get(&store.selected_buyer_session_id)?;
         let channel = store.channels.get(&session.session.payment.channel_id)?;

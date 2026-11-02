@@ -56,7 +56,11 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         Ok(selection) => selection,
         Err(_) => {
             if let Some(candidate) = automatic.candidate.as_mut() {
-                candidate.failed = true;
+                // A mint outage or fee shortfall must not turn a waiting
+                // session into a provider failure when no alternative can pay.
+                if store.buyer_session_funding_retry_at(&candidate.session_id) <= now_unix {
+                    candidate.failed = true;
+                }
             }
             return Ok(false);
         }
