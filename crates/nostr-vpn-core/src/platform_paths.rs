@@ -170,8 +170,8 @@ fn windows_command_line_program(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        legacy_config_path_from_dirs_config_dir, windows_default_config_path_for_state,
-        windows_machine_config_path_from_program_data_dir,
+        legacy_config_path_from_dirs_config_dir, linux_user_config_for_paths,
+        windows_default_config_path_for_state, windows_machine_config_path_from_program_data_dir,
         windows_service_binary_path_from_sc_qc_output,
         windows_service_config_path_from_sc_qc_output,
     };

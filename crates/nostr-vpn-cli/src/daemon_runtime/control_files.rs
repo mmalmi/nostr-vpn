@@ -762,13 +762,11 @@ pub(crate) fn wait_for_daemon_control_result(
     request: DaemonControlRequest,
     timeout: Duration,
 ) -> Result<()> {
-    let result_file = daemon_control_result_file_path(config_path);
     let started = Instant::now();
     while started.elapsed() < timeout {
         if let Some(result) = read_daemon_control_result(config_path)?
             && result.request == request.as_str()
         {
-            let _ = fs::remove_file(&result_file);
             return if result.ok {
                 Ok(())
             } else {

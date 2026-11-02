@@ -8,7 +8,7 @@
             ..Default::default()
         }).unwrap_err();
         assert!(error.to_string().contains("IPv4 only"));
-        assert_eq!(serde_json::to_vec(&runtime.config).unwrap(), before);
+        assert!(serde_json::to_vec(&runtime.config).unwrap() == before);
     }
 
     #[test]

@@ -446,6 +446,7 @@ fn daemon_control_result_preserves_the_full_error_chain() {
         "the control result must retain the actionable inner failure"
     );
 
+    assert!(crate::read_daemon_control_result(&config).unwrap().is_some(), "keep the last outcome visible until the next request");
     let _ = fs::remove_dir_all(&dir);
 }
 
