@@ -401,8 +401,10 @@ fn paid_route_offer_row(
             label.set_hexpand(true);
             row.append(&label);
             let trust = gtk::Button::with_label("Trust mint");
-            trust.update_property(&[gtk::accessible::Property::Label(&format!("Trust mint {mint}"))]);
             trust.set_tooltip_text(Some(&format!("Allow this wallet to hold funds at {mint}")));
+            // GtkButton links its child label by default, overriding a custom name.
+            trust.reset_relation(gtk::AccessibleRelation::LabelledBy);
+            trust.update_property(&[gtk::accessible::Property::Label(&format!("Trust mint {mint}"))]);
             {
                 let app = app.clone();
                 let url = mint.clone();
