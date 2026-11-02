@@ -99,13 +99,18 @@ pub(crate) async fn update_automatic_paid_exit(
             feedback_generation: feedback.generation(),
             generation: automatic.generation,
             task: tokio::spawn(async move {
-                paid_exit_route_probe_measurement(
-                    &dns_health,
-                    &probe_app,
-                    now_unix,
-                    &bind_interface,
-                )
-                .await
+                let measure = |now| {
+                    paid_exit_route_probe_measurement(&dns_health, &probe_app, now, &bind_interface)
+                };
+                match measure(now_unix).await {
+                    Ok(measurement) => Ok(measurement),
+                    Err(first) => {
+                        eprintln!("paid-exit: retrying seller Internet check after {first:#}");
+                        tokio::time::sleep(Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS))
+                            .await;
+                        measure(unix_timestamp()).await
+                    }
+                }
             }),
         });
     }

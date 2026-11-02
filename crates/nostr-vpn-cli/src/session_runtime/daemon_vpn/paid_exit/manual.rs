@@ -3,7 +3,7 @@ use super::*;
 const PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS: u64 = 30;
 const PAID_EXIT_MANUAL_HEALTH_RETRY_SECS: u64 = 2;
 const PAID_EXIT_MANUAL_HEALTH_MONITOR_SECS: u64 = 5 * 60;
-const PAID_EXIT_MANUAL_HEALTH_FAILURE_LIMIT: u8 = 2;
+const PAID_EXIT_MANUAL_HEALTH_LOSS_SECS: u64 = 90;
 const PAID_EXIT_MANUAL_FUNDING_RETRY_SECS: u64 = 5;
 
 #[derive(Default)]
@@ -14,7 +14,7 @@ pub(crate) struct PaidExitManualBuyer {
     probe_succeeded: bool,
     probe_retry_after: u64,
     last_probe_error: String,
-    consecutive_probe_failures: u8,
+    health_failure_since: Option<u64>,
     probe: Option<PaidExitManualProbe>,
     funding_satisfied: bool,
     funding_retry_after: u64,
@@ -52,7 +52,7 @@ impl PaidExitManualBuyer {
         self.probe_succeeded = false;
         self.probe_retry_after = 0;
         self.last_probe_error.clear();
-        self.consecutive_probe_failures = 0;
+        self.health_failure_since = None;
         self.funding_satisfied = false;
         self.funding_retry_after = 0;
     }
@@ -72,7 +72,7 @@ impl PaidExitManualBuyer {
         self.probe_succeeded = true;
         self.probe_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_HEALTH_MONITOR_SECS);
         self.last_probe_error.clear();
-        self.consecutive_probe_failures = 0;
+        self.health_failure_since = None;
     }
 
     fn require_fresh_probe_if_evidence_missing(
@@ -90,17 +90,18 @@ impl PaidExitManualBuyer {
         self.probe_succeeded = false;
         self.probe_retry_after = now_unix;
         self.last_probe_error.clear();
-        self.consecutive_probe_failures = 0;
+        self.health_failure_since = None;
         self.selected_at = now_unix;
     }
 
     fn record_probe_failure(&mut self, error: &str, now_unix: u64) -> bool {
-        if self.probe_succeeded {
-            self.consecutive_probe_failures = self.consecutive_probe_failures.saturating_add(1);
-        }
         self.schedule_probe_retry(error, now_unix);
-        self.probe_succeeded
-            && self.consecutive_probe_failures >= PAID_EXIT_MANUAL_HEALTH_FAILURE_LIMIT
+        if !self.probe_succeeded {
+            return false;
+        }
+        let first_failure = *self.health_failure_since.get_or_insert(now_unix);
+        self.probe_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS);
+        now_unix.saturating_sub(first_failure) >= PAID_EXIT_MANUAL_HEALTH_LOSS_SECS
     }
 
     fn timeout_reason(&self) -> String {
@@ -370,8 +371,8 @@ pub(crate) async fn update_manual_paid_exit(
                             manual,
                             config_path,
                             &format!(
-                                "Seller Internet failed {} consecutive health checks: {error}",
-                                PAID_EXIT_MANUAL_HEALTH_FAILURE_LIMIT
+                                "Seller Internet health checks have failed for at least {} seconds: {error}",
+                                PAID_EXIT_MANUAL_HEALTH_LOSS_SECS
                             ),
                             now_unix,
                         );
@@ -435,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn healthy_manual_exit_is_rechecked_and_two_failures_force_rollback() {
+    fn healthy_manual_exit_only_fails_after_sustained_loss() {
         let mut manual = PaidExitManualBuyer::default();
         manual.select("funded-session", 100);
         manual.record_probe_success(105);
@@ -444,9 +445,12 @@ mod tests {
         assert_eq!(manual.probe_retry_after, 405);
         assert!(!manual.health_deadline_expired(200));
         assert!(!manual.record_probe_failure("DNS failed", 405));
-        assert_eq!(manual.consecutive_probe_failures, 1);
-        assert_eq!(manual.probe_retry_after, 407);
-        assert!(manual.record_probe_failure("DNS still failed", 407));
+        assert_eq!(manual.probe_retry_after, 435);
+        assert!(!manual.record_probe_failure("HTTPS failed", 450));
+        manual.record_probe_success(470);
+        assert!(!manual.record_probe_failure("DNS failed again", 770));
+        assert!(!manual.record_probe_failure("DNS still failed", 830));
+        assert!(manual.record_probe_failure("DNS still failed", 860));
     }
 
     #[test]
@@ -460,7 +464,7 @@ mod tests {
         assert!(!manual.probe_succeeded);
         assert_eq!(manual.probe_retry_after, 200);
         assert_eq!(manual.selected_at, 200);
-        assert_eq!(manual.consecutive_probe_failures, 0);
+        assert_eq!(manual.health_failure_since, None);
         assert!(manual.last_probe_error.is_empty());
     }
 
