@@ -1,4 +1,3 @@
-
 #[cfg(all(test, feature = "paid-exit"))]
 mod paid_exit_rating_tests {
     use super::*;
@@ -525,19 +524,23 @@ mod paid_exit_rating_tests {
         );
 
         args.offer = Some("manual-offer".to_string());
-        assert!(paid_exit_buy_offer_selector(&args, &store)
-            .unwrap_err()
-            .to_string()
-            .contains("cannot be combined"));
+        assert!(
+            paid_exit_buy_offer_selector(&args, &store)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be combined")
+        );
         assert_eq!(
             paid_exit_buy_offer_selector(&sample_buy_args(Some("manual-offer"), false), &store)
                 .unwrap(),
             "manual-offer"
         );
-        assert!(paid_exit_buy_offer_selector(&sample_buy_args(None, false), &store)
-            .unwrap_err()
-            .to_string()
-            .contains("required unless --best-rated"));
+        assert!(
+            paid_exit_buy_offer_selector(&sample_buy_args(None, false), &store)
+                .unwrap_err()
+                .to_string()
+                .contains("required unless --best-rated")
+        );
     }
 
     #[test]
@@ -654,7 +657,8 @@ mod paid_exit_rating_tests {
 
     #[test]
     fn rating_retention_policy_matches_scope_and_uses_lookup_cap() {
-        let event_value = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
+        let event_value =
+            sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
         let event: Event = serde_json::from_value(event_value).unwrap();
         let verified = nostr_pubsub::VerifiedEvent::try_from(event).unwrap();
 
@@ -708,10 +712,7 @@ mod paid_exit_rating_tests {
             paid_exit_rating_from_session_probe(&degraded, 999).unwrap(),
             (0, 124)
         );
-        assert_eq!(
-            paid_exit_normalized_rating_score(0, 0, 100).unwrap(),
-            -100
-        );
+        assert_eq!(paid_exit_normalized_rating_score(0, 0, 100).unwrap(), -100);
     }
 
     #[test]
@@ -743,13 +744,12 @@ mod paid_exit_rating_tests {
                 == Some("context")
         }));
 
-        let scores =
-            paid_exit_rating_scores_from_value(
-                &json!({"events": [value]}),
-                "fips.peer",
-                &HashSet::new(),
-            )
-            .unwrap();
+        let scores = paid_exit_rating_scores_from_value(
+            &json!({"events": [value]}),
+            "fips.peer",
+            &HashSet::new(),
+        )
+        .unwrap();
         assert_eq!(
             scores.get(&seller_npub),
             Some(&PaidExitRatingScore {
@@ -806,13 +806,12 @@ mod paid_exit_rating_tests {
             "fips.peer"
         ));
 
-        let scores =
-            paid_exit_rating_scores_from_value(
-                &json!({"events": [event_value]}),
-                "fips.peer",
-                &HashSet::new(),
-            )
-            .unwrap();
+        let scores = paid_exit_rating_scores_from_value(
+            &json!({"events": [event_value]}),
+            "fips.peer",
+            &HashSet::new(),
+        )
+        .unwrap();
         assert_eq!(
             scores.get(&degraded_offer.seller_npub),
             Some(&PaidExitRatingScore {
@@ -875,6 +874,7 @@ mod paid_exit_rating_tests {
 
     fn sample_buy_args(offer: Option<&str>, best_rated: bool) -> PaidExitBuyArgs {
         PaidExitBuyArgs {
+            auto_renew: false,
             config: None,
             offer: offer.map(ToOwned::to_owned),
             best_rated,

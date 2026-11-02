@@ -18,6 +18,7 @@ pub(crate) struct PaidExitManualBuyer {
     probe: Option<PaidExitManualProbe>,
     funding_satisfied: bool,
     funding_retry_after: u64,
+    renewal_retry_at: u64,
     funding: Option<PaidExitManualFunding>,
 }
 
@@ -28,6 +29,7 @@ struct PaidExitManualProbe {
 }
 
 struct PaidExitManualFunding {
+    session_id: String,
     generation: u64,
     task: tokio::task::JoinHandle<Result<PaidExitManualFundingOutcome>>,
 }
@@ -55,6 +57,7 @@ impl PaidExitManualBuyer {
         self.health_failure_since = None;
         self.funding_satisfied = false;
         self.funding_retry_after = 0;
+        self.renewal_retry_at = 0;
     }
 
     fn select(&mut self, session_id: &str, now_unix: u64) {
@@ -115,6 +118,31 @@ impl PaidExitManualBuyer {
         }
     }
 
+    fn start_funding(
+        &mut self,
+        app: &AppConfig,
+        config_path: &Path,
+        session_id: &str,
+        now_unix: u64,
+    ) {
+        let funding_app = app.clone();
+        let funding_config_path = config_path.to_path_buf();
+        let funding_session_id = session_id.to_owned();
+        self.funding = Some(PaidExitManualFunding {
+            generation: self.generation,
+            session_id: session_id.to_owned(),
+            task: tokio::spawn(async move {
+                fund_manual_paid_exit_if_available(
+                    &funding_app,
+                    &funding_config_path,
+                    &funding_session_id,
+                    now_unix,
+                )
+                .await
+            }),
+        });
+    }
+
     fn schedule_funding_retry(&mut self, now_unix: u64) {
         self.funding_retry_after = now_unix.saturating_add(PAID_EXIT_MANUAL_FUNDING_RETRY_SECS);
     }
@@ -132,7 +160,21 @@ async fn fund_manual_paid_exit_if_available(
     session_id: &str,
     now_unix: u64,
 ) -> Result<PaidExitManualFundingOutcome> {
-    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    let mut store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    if session_id != store.selected_buyer_session_id {
+        let selected = store.selected_buyer_session_id.clone();
+        if store
+            .buyer_session_renewals
+            .get(&selected)
+            .map(String::as_str)
+            != Some(session_id)
+            || store.prepare_manual_buyer_session_renewal(&selected, now_unix)? != session_id
+        {
+            return Err(anyhow!(
+                "Manual payment is no longer authorized for this session"
+            ));
+        }
+    }
     let session = store
         .sessions
         .get(session_id)
@@ -208,21 +250,7 @@ pub(crate) async fn update_manual_paid_exit(
         && now_unix >= manual.funding_retry_after
         && now_unix >= store.buyer_session_funding_retry_at(&session_id)
     {
-        let funding_app = app.clone();
-        let funding_config_path = config_path.to_path_buf();
-        let funding_session_id = session_id.clone();
-        manual.funding = Some(PaidExitManualFunding {
-            generation: manual.generation,
-            task: tokio::spawn(async move {
-                fund_manual_paid_exit_if_available(
-                    &funding_app,
-                    &funding_config_path,
-                    &funding_session_id,
-                    now_unix,
-                )
-                .await
-            }),
-        });
+        manual.start_funding(app, config_path, &session_id, now_unix);
     }
     if manual
         .funding
@@ -237,34 +265,28 @@ pub(crate) async fn update_manual_paid_exit(
         let result = funding.task.await;
         if generation == manual.generation {
             match result {
-                Ok(Ok(PaidExitManualFundingOutcome::Funded(envelope))) => {
-                    update_paid_route_store(&store_path, |store| {
-                        begin_or_retry_funded_manual_session(store, &session_id, now_unix)
-                    })?;
-                    queue_paid_exit_payment(app, config_path, &envelope)?;
-                    manual.funding_satisfied = true;
-                    manual.selected_at = now_unix;
-                    eprintln!(
-                        "paid-exit: funded selected manual session {session_id}; retrying seller admission"
-                    );
-                }
-                Ok(Ok(PaidExitManualFundingOutcome::AlreadyFunded)) => {
-                    // Signing a channel-open replay requires an open local
-                    // contract. Restore the funded session before queuing it.
-                    update_paid_route_store(&store_path, |store| {
-                        begin_or_retry_funded_manual_session(store, &session_id, now_unix)
-                    })?;
-                    queue_recovered_paid_exit_channel_open(
-                        app,
-                        config_path,
-                        &session_id,
-                        now_unix,
-                    )?;
-                    manual.funding_satisfied = true;
-                    manual.selected_at = now_unix;
-                    eprintln!(
-                        "paid-exit: recovered selected manual channel open for {session_id}; retrying seller admission"
-                    );
+                Ok(Ok(outcome)) => {
+                    let target = &funding.session_id;
+                    if target == &session_id {
+                        update_paid_route_store(&store_path, |store| {
+                            begin_or_retry_funded_manual_session(store, target, now_unix)
+                        })?;
+                        manual.funding_satisfied = true;
+                        manual.selected_at = now_unix;
+                    }
+                    match outcome {
+                        PaidExitManualFundingOutcome::Funded(envelope) => {
+                            queue_paid_exit_payment(app, config_path, &envelope)?;
+                        }
+                        PaidExitManualFundingOutcome::AlreadyFunded => {
+                            queue_recovered_paid_exit_channel_open(
+                                app,
+                                config_path,
+                                target,
+                                now_unix,
+                            )?
+                        }
+                    }
                 }
                 Ok(Err(error)) => {
                     manual.schedule_funding_retry(now_unix);
@@ -385,6 +407,47 @@ pub(crate) async fn update_manual_paid_exit(
         }
     }
 
+    if manual.probe_succeeded
+        && manual.funding_satisfied
+        && store.manual_renewal_session_id == session_id
+        && store
+            .buyer_session_seller_npub(&session_id)
+            .and_then(|seller| normalize_nostr_pubkey(&seller))?
+            == seller_pubkey
+        && now_unix >= manual.renewal_retry_at
+    {
+        match renew_selected_paid_exit(
+            runtime,
+            app,
+            config_path,
+            &session_id,
+            &seller_pubkey,
+            now_unix,
+            &mut manual.renewal_retry_at,
+        )
+        .await
+        {
+            Ok(RenewalStep::Fund(next))
+                if manual.funding.is_none()
+                    && now_unix >= manual.funding_retry_after
+                    && now_unix >= store.buyer_session_funding_retry_at(&next) =>
+            {
+                let changed = update_paid_route_store(&store_path, |store| {
+                    store.begin_buyer_session_funding(&next, now_unix)
+                })?;
+                if !changed {
+                    manual.start_funding(app, config_path, &next, now_unix);
+                }
+            }
+            Ok(RenewalStep::Activated(_)) => return Ok(true),
+            Ok(_) => {}
+            Err(error) => {
+                manual.renewal_retry_at =
+                    now_unix.saturating_add(PAID_EXIT_MANUAL_HEALTH_TIMEOUT_SECS);
+                eprintln!("paid-exit: could not renew the selected manual channel: {error:#}");
+            }
+        }
+    }
     // The health deadline starts after funding completes. The daemon wallet
     // owns the mint operation independently, so aborting this task at the
     // seller-health deadline could otherwise strand a successfully opened
@@ -487,6 +550,7 @@ mod tests {
             let (release, waiting) = tokio::sync::oneshot::channel();
             let (persisted, result) = tokio::sync::oneshot::channel();
             manual.funding = Some(PaidExitManualFunding {
+                session_id: manual.session_id.clone(),
                 generation: manual.generation,
                 task: tokio::spawn(async move {
                     waiting.await.unwrap();
@@ -519,6 +583,7 @@ mod tests {
         let mut manual = PaidExitManualBuyer::default();
         manual.select("funding-session", 100);
         manual.funding = Some(PaidExitManualFunding {
+            session_id: manual.session_id.clone(),
             generation: manual.generation,
             task: tokio::spawn(std::future::pending()),
         });

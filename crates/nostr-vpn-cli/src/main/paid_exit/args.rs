@@ -221,6 +221,9 @@ struct PaidExitBuyArgs {
     /// Do not ask a running daemon to reload after selecting the paid exit.
     #[arg(long)]
     no_reload_daemon: bool,
+    /// Renew this session at the same seller, mint and price, up to its original channel capacity.
+    #[arg(long, conflicts_with = "no_select_exit_node")]
+    auto_renew: bool,
     #[arg(long)]
     json: bool,
 }
@@ -234,6 +237,9 @@ struct PaidExitUseArgs {
     /// Do not ask a running daemon to reload after selecting the paid exit.
     #[arg(long)]
     no_reload_daemon: bool,
+    /// Renew this session at the same seller, mint and price, up to its original channel capacity.
+    #[arg(long)]
+    auto_renew: bool,
     #[arg(long)]
     json: bool,
 }

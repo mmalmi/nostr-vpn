@@ -62,6 +62,9 @@ pub struct PaidRouteStore {
     pub buyer_session_renewal_starts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub selected_buyer_session_id: String,
+    /// Only this selected manual purchase may renew at its accepted price.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub manual_renewal_session_id: String,
     /// Local request to choose a different seller once, without publishing a rating.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub automatic_reselect_from: String,
@@ -90,6 +93,7 @@ impl Default for PaidRouteStore {
             buyer_session_renewals: BTreeMap::new(),
             buyer_session_renewal_starts: BTreeMap::new(),
             selected_buyer_session_id: String::new(),
+            manual_renewal_session_id: String::new(),
             buyer_session_open_attempts: BTreeMap::new(),
             seller_session_tunnel_ips: BTreeMap::new(),
             seller_free_probe_sources: BTreeMap::new(),

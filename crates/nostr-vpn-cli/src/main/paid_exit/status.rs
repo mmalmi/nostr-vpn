@@ -1,4 +1,3 @@
-
 fn paid_exit_status_snapshot_json(
     app: &AppConfig,
     store_path: &Path,
@@ -192,6 +191,7 @@ fn paid_exit_session_status_json(
 
     json!({
         "session_id": session.session_id,
+        "manual_auto_renew": store.manual_renewal_session_id == session.session_id,
         "lease_id": session.lease_id,
         "channel_id": session.payment.channel_id,
         "created_at_unix": record.created_at_unix,
@@ -456,8 +456,13 @@ fn print_paid_exit_status_snapshot(
                 },
             );
             let bytes = session.usage.total_bytes();
+            let renewal = if store.manual_renewal_session_id == session.session_id {
+                " manual_auto_renew=true"
+            } else {
+                ""
+            };
             println!(
-                "  {} shared_internet=\"{}\" state={} allow={} collection={} mode={} paid={} due={} unpaid={} usage={} exit_ip={} country={} claimed_country={} country_claim={} quality={}",
+                "  {} shared_internet=\"{}\" state={} allow={} collection={} mode={} paid={} due={} unpaid={} usage={} exit_ip={} country={} claimed_country={} country_claim={} quality={}{renewal}",
                 session.session_id,
                 shared_internet,
                 state,

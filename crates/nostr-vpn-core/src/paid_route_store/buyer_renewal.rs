@@ -92,9 +92,28 @@ impl PaidRouteStore {
         session_id: &str,
         now_unix: u64,
     ) -> Result<String> {
-        if let Some(next) = self.buyer_session_renewals.get(session_id) {
-            return Ok(next.clone());
+        self.prepare_selected_renewal(session_id, now_unix, false)
+    }
+
+    pub fn prepare_manual_buyer_session_renewal(
+        &mut self,
+        session_id: &str,
+        now_unix: u64,
+    ) -> Result<String> {
+        if self.manual_renewal_session_id != session_id || session_id.is_empty() {
+            return Err(anyhow!(
+                "Manual renewal requires explicit approval for this session"
+            ));
         }
+        self.prepare_selected_renewal(session_id, now_unix, true)
+    }
+
+    fn prepare_selected_renewal(
+        &mut self,
+        session_id: &str,
+        now_unix: u64,
+        manual: bool,
+    ) -> Result<String> {
         if self.selected_buyer_session_id != session_id {
             return Err(anyhow!("only the selected buyer session can renew"));
         }
@@ -110,18 +129,60 @@ impl PaidRouteStore {
             .leases
             .get(&session.session.lease_id)
             .ok_or_else(|| anyhow!("missing buyer lease"))?;
+        if let Some(next) = self.buyer_session_renewals.get(session_id) {
+            // An automatic replacement prepared before the user selected Manual
+            // must satisfy the same authorization as a newly prepared replacement.
+            if manual {
+                let replacement = self
+                    .sessions
+                    .get(next)
+                    .and_then(|record| self.channels.get(&record.session.payment.channel_id))
+                    .ok_or_else(|| anyhow!("missing replacement buyer channel"))?;
+                if replacement.counterparty_npub != channel.counterparty_npub
+                    || replacement.mint_url != channel.mint_url
+                    || replacement.payment.capacity_sat > channel.payment.capacity_sat
+                    || accepted_channel_terms(replacement, PaidRouteChannelRole::Buyer)?.pricing
+                        != accepted_channel_terms(channel, PaidRouteChannelRole::Buyer)?.pricing
+                {
+                    return Err(anyhow!(
+                        "Replacement differs from the approved manual channel"
+                    ));
+                }
+            }
+            return Ok(next.clone());
+        }
         ensure_open_buyer_channel(channel, lease)?;
         let offer_key = paid_route_offer_store_key(&channel.counterparty_npub, &channel.offer_id);
         let offer = &self.resolve_offer(&offer_key, now_unix)?.1.offer;
+        if manual
+            && accepted_channel_terms(channel, PaidRouteChannelRole::Buyer)?.pricing
+                != offer.pricing
+        {
+            return Err(anyhow!(
+                "Seller price changed; a new manual purchase is required"
+            ));
+        }
         let balance = self
             .wallet
             .mints
             .iter()
             .find(|mint| mint.url == channel.mint_url)
             .and_then(|mint| mint.balance_msat);
-        let capacity = self
-            .recommended_capacity_sat(offer, balance, now_unix)
-            .ok_or_else(|| anyhow!("More funds needed before renewing the payment channel"))?;
+        let capacity = if manual {
+            channel
+                .payment
+                .capacity_sat
+                .min(offer.channel.max_channel_capacity_sat)
+                .min(balance.map_or(u64::MAX, |msat| msat / 1_000))
+        } else {
+            self.recommended_capacity_sat(offer, balance, now_unix)
+                .unwrap_or(0)
+        };
+        if capacity == 0 {
+            return Err(anyhow!(
+                "More funds needed before renewing the payment channel"
+            ));
+        }
         let next = self.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector: offer_key,
             buyer_npub: lease.lease.buyer_npub.clone(),
@@ -167,6 +228,9 @@ impl PaidRouteStore {
         replacement.session.quality = previous.session.quality;
         replacement.session.realized_exit_ip = previous.session.realized_exit_ip;
         replacement.updated_at_unix = now_unix;
+        if self.manual_renewal_session_id == session_id {
+            self.manual_renewal_session_id.clear();
+        }
         self.selected_buyer_session_id = next.clone();
         self.buyer_session_renewal_starts.remove(session_id);
         Ok(next)

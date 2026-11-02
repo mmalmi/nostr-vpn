@@ -33,6 +33,57 @@ fn fixture(
 }
 
 #[test]
+fn manual_renewal_requires_consent_to_the_same_seller_price_and_channel_limit() {
+    let (mut store, session, seller, mut config) = fixture(1_000, Some(500_000), 100_000_000);
+    assert!(
+        store
+            .prepare_manual_buyer_session_renewal(&session, 725)
+            .is_err()
+    );
+    store.manual_renewal_session_id = session.clone();
+    let count = store.sessions.len();
+    config.pricing.price_msat_per_gb += 1;
+    let signed =
+        signed_paid_exit_offer_from_config("internet-exit", &seller, &config, None, 721).unwrap();
+    store.upsert_signed_offer(signed, vec![], 721).unwrap();
+    assert!(
+        store
+            .prepare_manual_buyer_session_renewal(&session, 725)
+            .unwrap_err()
+            .to_string()
+            .contains("price changed")
+    );
+    assert_eq!(store.sessions.len(), count);
+    config.pricing.price_msat_per_gb -= 1;
+    let signed =
+        signed_paid_exit_offer_from_config("internet-exit", &seller, &config, None, 726).unwrap();
+    store.upsert_signed_offer(signed, vec![], 726).unwrap();
+    let next = store
+        .prepare_manual_buyer_session_renewal(&session, 727)
+        .unwrap();
+    let original = &store.channels[&store.sessions[&session].session.payment.channel_id];
+    let replacement = &store.channels[&store.sessions[&next].session.payment.channel_id];
+    assert_eq!(replacement.mint_url, original.mint_url);
+    assert_eq!(replacement.counterparty_npub, original.counterparty_npub);
+    assert!(replacement.payment.capacity_sat <= original.payment.capacity_sat);
+    assert_eq!(store.selected_buyer_session_id, session);
+    let mut restarted: PaidRouteStore =
+        serde_json::from_slice(&serde_json::to_vec(&store).unwrap()).unwrap();
+    assert_eq!(
+        restarted
+            .prepare_manual_buyer_session_renewal(&session, 730)
+            .unwrap(),
+        next
+    );
+    restarted.manual_renewal_session_id.clear();
+    assert!(
+        restarted
+            .prepare_manual_buyer_session_renewal(&session, 730)
+            .is_err()
+    );
+}
+
+#[test]
 fn expired_offer_cannot_start_an_adaptive_renewal() {
     let (mut store, session, _, _) = fixture(1_000, Some(100_000), 50_000_000);
     let before = store.sessions.len();

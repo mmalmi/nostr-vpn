@@ -43,14 +43,22 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
     let no_reload_daemon = args.no_reload_daemon;
     let result = update_paid_route_store(&store_path, |store| {
         let offer_selector = paid_exit_buy_offer_selector(&args, store)?;
-        store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+        let session = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector,
             buyer_npub,
             mint_url: args.mint,
             channel_capacity_sat: args.channel_capacity_sat,
             initial_paid_msat: args.initial_paid_msat,
             now_unix: unix_timestamp(),
-        })
+        })?;
+        if !no_select_exit_node {
+            store.manual_renewal_session_id = if args.auto_renew {
+                session.session_id.clone()
+            } else {
+                String::new()
+            };
+        }
+        Ok(session)
     })?;
 
     let (selected_exit_node, daemon_reload_attempted) = if no_select_exit_node {
@@ -130,6 +138,11 @@ fn paid_exit_use_once(args: PaidExitUseArgs) -> Result<PaidExitUseResult> {
             ));
         }
         store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+        store.manual_renewal_session_id = if args.auto_renew {
+            session_id.clone()
+        } else {
+            String::new()
+        };
         let seller_npub = store.buyer_session_seller_npub(&session_id)?;
         let endpoint_hints = store.buyer_session_seller_fips_endpoints(&session_id)?;
         Ok((seller_npub, endpoint_hints))

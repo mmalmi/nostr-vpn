@@ -7,6 +7,7 @@ mod funding;
 mod payments;
 #[path = "automatic/renewal.rs"]
 mod renewal;
+pub(crate) use renewal::{RenewalStep, renew_selected_paid_exit};
 #[path = "automatic/runtime.rs"]
 mod runtime;
 #[path = "automatic/selection.rs"]
