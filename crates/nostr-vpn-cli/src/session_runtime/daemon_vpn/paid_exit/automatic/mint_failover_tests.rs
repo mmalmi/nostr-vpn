@@ -276,6 +276,24 @@ fn mint_failover_keeps_existing_funded_channel_during_cooldown() {
         store.select_automatic_offer(now + 1).unwrap().mint_url,
         PRIMARY
     );
+    let expected = store.select_automatic_offer(now + 1).unwrap().offer_key;
+    // The purchased contract remains authoritative during discovery after a
+    // restart. Missing adverts and a busy mint must not strand existing credit.
+    store.offers.clear();
+    let mut restarted = PaidExitAutomaticBuyer::default();
+    let recovered = restarted.selection(&store, now + 1).unwrap();
+    assert_eq!(recovered.offer_key, expected);
+    assert!(recovered.funded);
+    assert_eq!(recovered.mint_url, PRIMARY);
+    let selected = store.selected_buyer_session_id.clone();
+    let seller = store.channels[&store.sessions[&selected].session.payment.channel_id]
+        .counterparty_npub
+        .clone();
+    store.automatic_reselect_from = seller;
+    assert!(
+        restarted.selection(&store, now + 2).is_err(),
+        "respect an explicit request to leave this provider"
+    );
 }
 
 #[test]

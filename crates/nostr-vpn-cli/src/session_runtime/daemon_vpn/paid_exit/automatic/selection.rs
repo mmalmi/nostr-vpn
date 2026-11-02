@@ -227,8 +227,6 @@ fn recover_automatic_paid_exit_session(
     selection: &nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection,
     now_unix: u64,
 ) -> Option<(String, String, bool)> {
-    let offer = &store.offers.get(&selection.offer_key)?.offer;
-    let seller_pubkey = normalize_nostr_pubkey(&offer.seller_npub).ok()?;
     store
         .sessions
         .values()
@@ -236,8 +234,10 @@ fn recover_automatic_paid_exit_session(
             let channel = store.channels.get(&session.session.payment.channel_id)?;
             let lease = store.leases.get(&session.session.lease_id)?;
             (channel.role == PaidRouteChannelRole::Buyer
-                && channel.offer_id == offer.offer_id
-                && channel.counterparty_npub == offer.seller_npub
+                && nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+                    &channel.counterparty_npub,
+                    &channel.offer_id,
+                ) == selection.offer_key
                 && channel.mint_url == selection.mint_url
                 && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                 && store
@@ -258,16 +258,98 @@ fn recover_automatic_paid_exit_session(
                         | PaidRouteLifecycleStatus::Paused
                 ))
             .then_some((
+                session.session.session_id == store.selected_buyer_session_id,
                 session.updated_at_unix,
+                normalize_nostr_pubkey(&channel.counterparty_npub).ok()?,
                 session.session.session_id.clone(),
-                session
-                    .session
-                    .payment
-                    .cashu_spilman_payment
-                    .as_ref()
-                    .is_some_and(CashuSpilmanPayment::has_funding),
+                store
+                    .funded_buyer_session_selection(&session.session.session_id, now_unix)
+                    .is_some(),
             ))
         })
-        .max_by_key(|candidate| candidate.0)
-        .map(|(_, session_id, funded)| (seller_pubkey, session_id, funded))
+        .filter(|candidate| !selection.funded || candidate.4)
+        .max_by_key(|candidate| (candidate.0, candidate.1))
+        .map(|(_, _, seller_pubkey, session_id, funded)| (seller_pubkey, session_id, funded))
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn recovery_prefers_selected_credit_over_a_newer_pending_renewal_without_an_advert() {
+        let seller = Keys::generate();
+        let buyer = Keys::generate();
+        let mut config = PaidExitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        config.channel.accepted_mints = vec!["https://mint.example".into()];
+        let mut store = PaidRouteStore::default();
+        store.upsert_wallet_mint("https://mint.example", "Mint", Some(100_000), 100);
+        store
+            .upsert_signed_offer(
+                nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config(
+                    "exit", &seller, &config, None, 100,
+                )
+                .unwrap(),
+                vec![],
+                100,
+            )
+            .unwrap();
+        let original = store
+            .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+                offer_selector: "exit".into(),
+                buyer_npub: buyer.public_key().to_bech32().unwrap(),
+                mint_url: None,
+                channel_capacity_sat: Some(10),
+                initial_paid_msat: 0,
+                now_unix: 100,
+            })
+            .unwrap();
+        store
+            .begin_buyer_session_open_attempt(&original.session_id, 100)
+            .unwrap();
+        let payment = CashuSpilmanPayment {
+            channel_id: original.channel_id.clone(),
+            balance: 1,
+            signature: "signed".into(),
+            params: Some(serde_json::json!({"unit": "sat"})),
+            funding_proofs: Some(serde_json::json!({"proofs": []})),
+        };
+        store
+            .sessions
+            .get_mut(&original.session_id)
+            .unwrap()
+            .session
+            .payment
+            .cashu_spilman_payment = Some(payment.clone());
+        store
+            .channels
+            .get_mut(&original.channel_id)
+            .unwrap()
+            .payment
+            .cashu_spilman_payment = Some(payment);
+        let next = store
+            .prepare_buyer_session_renewal(&original.session_id, 110)
+            .unwrap();
+        store.offers.clear();
+        let selection = store
+            .funded_buyer_session_selection(&original.session_id, 120)
+            .unwrap();
+        let (_, recovered, funded) =
+            recover_automatic_paid_exit_session(&store, &selection, 120).unwrap();
+        assert_eq!(recovered, original.session_id);
+        assert_ne!(recovered, next);
+        assert!(funded);
+        assert_eq!(store.sessions.len(), 2);
+
+        // Even without a durable selection, an existing purchase must not
+        // recover as the newer, unfunded renewal for the same seller/mint.
+        store.selected_buyer_session_id.clear();
+        let (_, recovered, funded) =
+            recover_automatic_paid_exit_session(&store, &selection, 120).unwrap();
+        assert_eq!(recovered, original.session_id);
+        assert!(funded);
+    }
 }

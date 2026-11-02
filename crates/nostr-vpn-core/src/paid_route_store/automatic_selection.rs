@@ -38,10 +38,46 @@ struct LocalProbeRank {
 }
 
 impl PaidRouteStore {
+    /// Reuse the saved purchase independently of current adverts or wallet
+    /// availability. Recovery still has to establish fresh route health.
+    pub fn funded_buyer_session_selection(
+        &self,
+        session_id: &str,
+        now_unix: u64,
+    ) -> Option<PaidRouteAutomaticOfferSelection> {
+        let session = self.sessions.get(session_id)?;
+        let channel = self.channels.get(&session.session.payment.channel_id)?;
+        let lease = self.leases.get(&session.session.lease_id)?;
+        let terms = accepted_channel_terms(channel, PaidRouteChannelRole::Buyer).ok()?;
+        if !terms.ip_support.ipv4
+            || self.exit_provider_is_avoided(&channel.counterparty_npub)
+            || channel.counterparty_npub == self.automatic_reselect_from
+            || channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix
+            || !paid_route_lifecycle_allows_routing(channel.status)
+            || !paid_route_lifecycle_allows_routing(lease.status)
+            || !self.buyer_session_has_remaining_capacity(session_id).ok()?
+            || !paid_route_session_has_payment_material(&session.session, channel)
+        {
+            return None;
+        }
+        Some(PaidRouteAutomaticOfferSelection {
+            funded: true,
+            previously_verified: session.successful_probe_unix() > 0,
+            offer_key: paid_route_offer_store_key(&channel.counterparty_npub, &channel.offer_id),
+            mint_url: channel.mint_url.trim().to_string(),
+            channel_capacity_sat: session.session.payment.capacity_sat,
+        })
+    }
+
     pub fn select_automatic_offer(
         &self,
         now_unix: u64,
     ) -> Result<PaidRouteAutomaticOfferSelection> {
+        if let Some(selected) =
+            self.funded_buyer_session_selection(&self.selected_buyer_session_id, now_unix)
+        {
+            return Ok(selected);
+        }
         let candidate = self
             .offers
             .iter()
@@ -159,24 +195,15 @@ impl PaidRouteStore {
             .sessions
             .values()
             .filter_map(|session| {
-                let lease = self.leases.get(&session.session.lease_id)?;
-                let channel = self.channels.get(&session.session.payment.channel_id)?;
-                let mint = channel.mint_url.trim();
-                (channel.role == PaidRouteChannelRole::Buyer
-                    && channel.offer_id == offer.offer_id
-                    && channel.counterparty_npub == offer.seller_npub
-                    && accepted.iter().any(|url| url == mint)
-                    && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
-                    && paid_route_lifecycle_allows_routing(lease.status)
-                    && paid_route_lifecycle_allows_routing(channel.status)
-                    && self
-                        .buyer_session_has_remaining_capacity(&session.session.session_id)
-                        .ok()?
-                    && paid_route_session_has_payment_material(&session.session, channel))
+                let selected =
+                    self.funded_buyer_session_selection(&session.session.session_id, now_unix)?;
+                (selected.offer_key
+                    == paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id)
+                    && accepted.iter().any(|url| url == &selected.mint_url))
                 .then_some((
                     session.updated_at_unix,
-                    mint.to_string(),
-                    session.session.payment.capacity_sat,
+                    selected.mint_url,
+                    selected.channel_capacity_sat,
                 ))
             })
             .max_by_key(|(updated_at, _, _)| *updated_at)

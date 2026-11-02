@@ -28,25 +28,39 @@ impl NativeAppRuntime {
     fn select_mobile_automatic_paid_exit(&mut self) -> Result<()> {
         let path = self.paid_route_store_path();
         let store = load_paid_route_store(&path)?;
-        let Ok(selection) = store.select_automatic_offer(unix_timestamp()) else {
+        let now_unix = unix_timestamp();
+        let Ok(selection) = store.select_automatic_offer(now_unix) else {
             return Ok(());
         };
         // Reuse a paid session when possible; never discard its channel funds.
         let existing = store
             .sessions
             .values()
-            .find(|record| {
+            .filter(|record| {
                 let Some(channel) = store.channels.get(&record.session.payment.channel_id) else {
                     return false;
                 };
                 channel.role == PaidRouteChannelRole::Buyer
+                    && channel.mint_url == selection.mint_url
                     && nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
                         &channel.counterparty_npub,
                         &channel.offer_id,
                     ) == selection.offer_key
-                    && store
-                        .buyer_session_allows_routing(&record.session.session_id, unix_timestamp())
-                        .unwrap_or(false)
+                    && if selection.funded {
+                        store
+                            .funded_buyer_session_selection(&record.session.session_id, now_unix)
+                            .is_some()
+                    } else {
+                        store
+                            .buyer_session_allows_routing(&record.session.session_id, now_unix)
+                            .unwrap_or(false)
+                    }
+            })
+            .max_by_key(|record| {
+                (
+                    record.session.session_id == store.selected_buyer_session_id,
+                    record.updated_at_unix,
+                )
             })
             .map(|record| record.session.session_id.clone());
         if let Some(session) = existing {
@@ -595,5 +609,123 @@ impl NativeAppRuntime {
         child
             .wait_with_output()
             .with_context(|| format!("failed to wait for {}", nvpn_bin.display()))
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+    use nostr_sdk::prelude::{Keys, ToBech32};
+    use std::fs;
+
+    #[test]
+    fn mobile_automatic_reuses_saved_credit_before_a_pending_renewal_without_an_advert() {
+        use nostr_vpn_core::paid_route_store::{
+            OpenPaidRouteBuyerSessionRequest, load_paid_route_store, paid_route_store_file_path,
+            update_paid_route_store,
+        };
+        use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-mobile-funded-recovery-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test runtime"));
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.vpn_enabled = true;
+        runtime.config_path = dir.join("config.toml");
+        runtime.config.add_network("Funded recovery test");
+        runtime.config.internet_source = InternetSource::PaidAutomatic;
+        runtime.config.save(&runtime.config_path).unwrap();
+
+        let seller = Keys::generate();
+        let buyer_npub = runtime
+            .config
+            .nostr_keys()
+            .unwrap()
+            .public_key()
+            .to_bech32()
+            .unwrap();
+        let now = unix_timestamp();
+        let mint = "https://mint.example";
+        let mut terms = PaidExitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        terms.pricing.price_msat_per_gb = 25_000;
+        terms.channel.accepted_mints = vec![mint.into()];
+        let path = paid_route_store_file_path(&runtime.config_path);
+        let (session_id, pending) = update_paid_route_store(&path, |store| {
+            store.upsert_wallet_mint(mint, "Mint", Some(100_000), now - 20);
+            store.upsert_signed_offer(
+                signed_paid_exit_offer_from_config("exit", &seller, &terms, None, now - 20)?,
+                vec![],
+                now - 20,
+            )?;
+            let opened = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+                offer_selector: "exit".into(),
+                buyer_npub,
+                mint_url: Some(mint.into()),
+                channel_capacity_sat: Some(10),
+                initial_paid_msat: 0,
+                now_unix: now - 20,
+            })?;
+            let payment = cashu_service::CashuSpilmanPayment {
+                channel_id: opened.channel_id.clone(),
+                balance: 1,
+                signature: "signed".into(),
+                params: Some(serde_json::json!({"unit": "sat"})),
+                funding_proofs: Some(serde_json::json!({"proofs": []})),
+            };
+            store
+                .sessions
+                .get_mut(&opened.session_id)
+                .unwrap()
+                .session
+                .payment
+                .cashu_spilman_payment = Some(payment.clone());
+            store
+                .channels
+                .get_mut(&opened.channel_id)
+                .unwrap()
+                .payment
+                .cashu_spilman_payment = Some(payment);
+            store.begin_buyer_session_open_attempt(&opened.session_id, now - 20)?;
+            let pending = store.prepare_buyer_session_renewal(&opened.session_id, now - 10)?;
+            store.upsert_wallet_mint(mint, "Mint", Some(0), now);
+            store.offers.clear();
+            Ok((opened.session_id, pending))
+        })
+        .unwrap();
+        let before = load_paid_route_store(&path).unwrap();
+
+        runtime.select_mobile_automatic_paid_exit().unwrap();
+
+        let after = load_paid_route_store(&path).unwrap();
+        assert_eq!(after.selected_buyer_session_id, session_id);
+        assert_ne!(after.selected_buyer_session_id, pending);
+        assert_eq!(runtime.config.exit_node, seller.public_key().to_hex());
+        assert_eq!(
+            runtime.config.internet_source,
+            InternetSource::PaidAutomatic
+        );
+        assert_eq!(
+            after.sessions.len(),
+            2,
+            "recovery cannot create a new purchase"
+        );
+        assert_eq!(after.channels, before.channels);
+        assert_eq!(after.quotes, before.quotes);
+        assert_eq!(after.wallet, before.wallet);
+        assert!(
+            after.sessions[&session_id]
+                .session
+                .realized_exit_ip
+                .is_none()
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -192,6 +192,18 @@ impl PaidExitAutomaticBuyer {
     ) -> Result<nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection> {
         self.expire_rejected_offers(now_unix);
         let mut candidates = store.clone();
+        // An explicit in-memory rejection still takes precedence over saved
+        // credit. Ordinary restarts preserve the durable selection.
+        if self
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.failed)
+            || store
+                .funded_buyer_session_selection(&store.selected_buyer_session_id, now_unix)
+                .is_some_and(|selected| self.rejected_offers.contains_key(&selected.offer_key))
+        {
+            candidates.selected_buyer_session_id.clear();
+        }
         for offer in self.rejected_offers.keys() {
             candidates.offers.remove(offer);
         }

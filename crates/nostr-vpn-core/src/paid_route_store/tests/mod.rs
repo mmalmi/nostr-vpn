@@ -44,6 +44,7 @@ impl Drop for ScratchDir {
 }
 
 mod adaptive_capacity;
+mod automatic_selection;
 mod buyer;
 mod buyer_funding;
 mod closing_store;
