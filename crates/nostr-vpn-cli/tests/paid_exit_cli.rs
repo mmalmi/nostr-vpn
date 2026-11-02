@@ -51,6 +51,41 @@ fn paid_exit_rating_requires_publication_consent_before_changing_state() {
 }
 
 #[test]
+fn paid_exit_wallet_shows_recorded_balances_offline_without_writing() {
+    use nostr_vpn_core::paid_route_store::{PaidRouteWalletMint, update_paid_route_store};
+    let dir = TestDir::new("nvpn-wallet-offline");
+    let config = dir.path().join("config.toml");
+    let store_path = dir.path().join("paid-routes.json");
+    let config = config.to_str().unwrap();
+    let read = || run_nvpn(["paid-exit", "wallet", "--json", "show", "--config", config]);
+
+    assert_success(&read());
+    assert!(!store_path.exists());
+    update_paid_route_store(&store_path, |store| {
+        store.wallet.mints.push(PaidRouteWalletMint {
+            url: "https://mint.invalid".into(),
+            label: String::new(),
+            balance_msat: Some(12_000),
+            last_checked_unix: 1234,
+        });
+        Ok(())
+    })
+    .unwrap();
+    let before = std::fs::read(&store_path).unwrap();
+    let result = read();
+    assert_success(&result);
+    let json: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["offline"], true);
+    assert_eq!(json["changed"], false);
+    assert_eq!(json["wallet"]["mints"][0]["balance_msat"], 12000);
+    assert_eq!(json["wallet"]["mints"][0]["last_checked_unix"], 1234);
+    assert!(json["cashu"].is_null());
+    let refresh = run_nvpn(["paid-exit", "wallet", "show", "--refresh", "--config", config]);
+    assert!(!refresh.status.success());
+    assert_eq!(std::fs::read(&store_path).unwrap(), before);
+}
+
+#[test]
 fn paid_exit_wallet_accepts_config_after_its_subcommand() {
     let dir = TestDir::new("nvpn-wallet-global-config");
     let config = dir.path().join("config.toml");
