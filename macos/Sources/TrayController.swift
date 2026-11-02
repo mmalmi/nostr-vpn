@@ -206,7 +206,11 @@ final class TrayController: NSObject {
     // MARK: - Update from state
 
     private func refreshFromState() {
-        let snapshot = MenuSnapshot.capture(from: manager)
+        guard let state = manager.state else {
+            // The core is still initializing; keep the skeleton menu.
+            return
+        }
+        let snapshot = MenuSnapshot.capture(from: manager, state: state)
         if snapshot == lastSnapshot {
             return
         }
@@ -308,12 +312,16 @@ final class TrayController: NSObject {
     }
 
     @objc private func handleToggleOfferExit() {
-        manager.setAdvertiseExitNode(!manager.state.advertiseExitNode)
+        guard let state = manager.state else {
+            return
+        }
+        manager.setAdvertiseExitNode(!state.advertiseExitNode)
     }
 
     @objc private func handleCopyDeviceId() {
-        let value = manager.state.ownNpub
-        guard !value.isEmpty else { return }
+        guard let value = manager.state?.ownNpub, !value.isEmpty else {
+            return
+        }
         manager.copy(value, as: .pubkey)
     }
 
@@ -385,8 +393,7 @@ private struct MenuSnapshot: Equatable {
     let tooltip: String
 
     @MainActor
-    static func capture(from manager: AppManager) -> MenuSnapshot {
-        let state = manager.state
+    static func capture(from manager: AppManager, state: NativeAppState) -> MenuSnapshot {
         let activeNetwork = manager.activeNetwork
 
         var networkTitle: String? = nil

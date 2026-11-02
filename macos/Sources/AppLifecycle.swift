@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        guard sender.title == "Nostr VPN", manager?.state.closeToTrayOnClose == true else {
+        guard sender.title == "Nostr VPN", manager?.state?.closeToTrayOnClose == true else {
             return true
         }
         sender.orderOut(nil)

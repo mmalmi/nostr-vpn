@@ -228,8 +228,9 @@ extension AppManager {
     }
 
     func installService() {
-        let installing = serviceUpdateRecommended ? "Updating service" : state.serviceInstalled ? "Reinstalling service" : "Installing service"
-        let installed = serviceUpdateRecommended ? "Service updated" : state.serviceInstalled ? "Service reinstalled" : "Service installed"
+        let installedAlready = state?.serviceInstalled ?? false
+        let installing = serviceUpdateRecommended ? "Updating service" : installedAlready ? "Reinstalling service" : "Installing service"
+        let installed = serviceUpdateRecommended ? "Service updated" : installedAlready ? "Service reinstalled" : "Service installed"
         dispatch(.installSystemService, status: installing, successStatus: installed, settleService: true)
     }
 

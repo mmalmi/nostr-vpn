@@ -10,6 +10,12 @@ public sealed partial class AppViewModel
 {
     public void HandleDeepLink(string url)
     {
+        if (_core is null)
+        {
+            // The core is still initializing; replay the link once it exists.
+            _pendingDeepLinks.Add(url);
+            return;
+        }
 #if DEBUG
         DebugRosterE2eTrace($"received {url}");
 #endif

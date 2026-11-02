@@ -13,7 +13,10 @@ let defaultUpdatePollIntervalNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000
 
 @MainActor
 final class AppManager: ObservableObject {
-    @Published var state: NativeAppState
+    /// nil until the core finishes constructing off the main thread; the UI
+    /// renders explicit loading placeholders while it is nil. Set once, never
+    /// cleared.
+    @Published var state: NativeAppState?
     @Published var paidExitChooserRequested = false
     @Published var sellingSettingsRequested = false
     @Published var actionInFlight = false
@@ -44,7 +47,7 @@ final class AppManager: ObservableObject {
             UserDefaults.standard.set(autoInstallUpdates, forKey: "updates.autoInstall")
         }
     }
-    let app: FfiApp?
+    var app: FfiApp?
     let fixtureMode: Bool
     var refreshTask: Task<Void, Never>?
     var copyClearTask: Task<Void, Never>?
@@ -56,6 +59,8 @@ final class AppManager: ObservableObject {
     var refreshInFlight = false
     var refreshPending = false
     var startupUrlsDrained = false
+    var startupSetupDone = false
+    var pendingStartupUrls: [URL] = []
     @Published var pendingPaidExitLink: String?
     @Published var openingPaidExitLink: String?
     var startupUpdateCheckDone = false
@@ -89,13 +94,31 @@ final class AppManager: ObservableObject {
         }
 
         let dataDir = Self.appDataDir()
-        // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
-        // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
-        // xcodeproj and the bundled nvpn binary.
-        let app = FfiApp(dataDir: dataDir, appVersion: "")
-        app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
-        self.app = app
-        self.state = app.state()
+        self.app = nil
+        self.state = nil
+        // Construction shells out to `nvpn status` and the first state() can
+        // wait on the CLI too, so both run off the main thread and the window
+        // draws the loading placeholder first.
+        Task { @MainActor [weak self] in
+            let core = await Task.detached(priority: .userInitiated) {
+                // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
+                // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
+                // xcodeproj and the bundled nvpn binary.
+                let app = FfiApp(dataDir: dataDir, appVersion: "")
+                app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
+                return (app: app, state: app.state())
+            }.value
+            guard let self, self.app == nil else {
+                return
+            }
+            self.app = core.app
+            self.state = core.state
+            self.finishStartupSetup()
+            for url in self.pendingStartupUrls {
+                self.handle(url: url)
+            }
+            self.pendingStartupUrls.removeAll()
+        }
     }
 
     private static func appDataDir() -> String {
@@ -112,19 +135,19 @@ final class AppManager: ObservableObject {
     }
 
     var activeNetwork: NativeNetworkState? {
-        state.networks.first(where: { $0.enabled })
+        state?.networks.first(where: { $0.enabled })
     }
 
     var inactiveNetworks: [NativeNetworkState] {
-        state.networks.filter { !$0.enabled }
+        state?.networks.filter { !$0.enabled } ?? []
     }
 
     var serviceUpdateRecommended: Bool {
-        Self.serviceUpdateRecommended(in: state)
+        state.map(Self.serviceUpdateRecommended(in:)) ?? false
     }
 
     var vpnSwitchEnabled: Bool {
-        state.vpnEnabled
+        state?.vpnEnabled ?? false
     }
 
     /// Status line shown next to the VPN switch in the header and the tray.
@@ -132,6 +155,9 @@ final class AppManager: ObservableObject {
     var vpnStatusText: String {
         if !actionStatus.isEmpty {
             return actionStatus
+        }
+        guard let state else {
+            return "Starting"
         }
         if state.exitNodeBlocked {
             return state.exitNodeStatusText.isEmpty ? "Internet blocked" : state.exitNodeStatusText
@@ -165,11 +191,10 @@ final class AppManager: ObservableObject {
             _ = FileManager.default.createFile(atPath: path, contents: Data())
         }
         #endif
-        drainStartupUrls()
         guard !fixtureMode else {
+            drainStartupUrls()
             return
         }
-        syncLaunchAgentWithSettings()
         startAutomaticUpdateChecks()
         refresh()
         guard refreshTask == nil else {
@@ -182,6 +207,23 @@ final class AppManager: ObservableObject {
                 try? await Task.sleep(nanoseconds: interval)
             }
         }
+        if app != nil {
+            // The core finished initializing before start(); run the
+            // state-dependent setup now instead of waiting for the init task.
+            finishStartupSetup()
+        }
+    }
+
+    /// Startup steps that need the real core and state. They wait for the
+    /// first snapshot so the launch agent sync never runs against a nil
+    /// state.
+    func finishStartupSetup() {
+        guard !startupSetupDone else {
+            return
+        }
+        startupSetupDone = true
+        drainStartupUrls()
+        syncLaunchAgentWithSettings()
     }
 
     deinit {
@@ -237,6 +279,9 @@ final class AppManager: ObservableObject {
         if actionInFlight || serviceSettling || updateChecking || updateInstalling {
             return 1_000_000_000
         }
+        guard let state else {
+            return Self.idleRefreshIntervalNanoseconds
+        }
         if state.vpnEnabled,
            activeNetwork?.participants.contains(where: { !$0.rosterAccepted }) == true {
             // Approval arrives asynchronously; keep the pending join responsive.
@@ -252,6 +297,9 @@ final class AppManager: ObservableObject {
     }
 
     var paidRouteLiveRefreshWanted: Bool {
+        guard let state else {
+            return false
+        }
         if state.paidRouteMarket.wallet.lastAction.kind == "topup" {
             return true
         }
@@ -318,6 +366,9 @@ final class AppManager: ObservableObject {
     }
 
     func toggleVpn() {
+        guard let state else {
+            return
+        }
         let enabled = !state.vpnEnabled
         if enabled, state.serviceSupported, !state.serviceInstalled {
             installService()

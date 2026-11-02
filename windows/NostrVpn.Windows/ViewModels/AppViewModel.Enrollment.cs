@@ -93,7 +93,12 @@ public sealed partial class AppViewModel
         {
             return;
         }
-        var result = await Task.Run(() => _core.DecodeQrImage(dialog.FileName));
+        var core = _core;
+        if (core is null)
+        {
+            return;
+        }
+        var result = await Task.Run(() => core.DecodeQrImage(dialog.FileName));
         if (!string.IsNullOrWhiteSpace(result.Error))
         {
             Notice = result.Error;
