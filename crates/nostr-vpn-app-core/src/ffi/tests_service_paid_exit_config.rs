@@ -1,4 +1,20 @@
     #[test]
+    fn settings_patch_rejects_an_impossible_trial_without_mutating_the_runtime() {
+        let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test runtime"));
+        let before = serde_json::to_vec(&runtime.config).unwrap();
+        let error = runtime
+            .apply_settings_patch(SettingsPatch {
+                paid_exit_enabled: Some(true),
+                paid_exit_free_probe_units: Some(10 * 1024 * 1024),
+                paid_exit_grace_units: Some(20 * 1024 * 1024),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert!(error.to_string().contains("at most 8 MiB"), "{error}");
+        assert!(serde_json::to_vec(&runtime.config).unwrap() == before);
+    }
+
+    #[test]
     fn settings_patch_persists_paid_exit_seller_config() {
         let dir = unique_service_test_dir("nvpn-app-core-paid-exit");
         let error = anyhow!("boom");

@@ -31,6 +31,46 @@ fn paid_exit_wallet_accepts_config_after_its_subcommand() {
 }
 
 #[test]
+fn paid_exit_rejects_impossible_free_probe_before_saving_settings() {
+    let dir = TestDir::new("nvpn-probe-budget-config");
+    let path = dir.path().join("config.toml");
+    let config = path.to_str().unwrap();
+    assert_success(&run_paid_exit_with_network_class(config, None));
+    let config_before = std::fs::read(&path).unwrap();
+    let store_path = dir.path().join("paid-routes.json");
+    let store_before = std::fs::read(&store_path).ok();
+    for args in [
+        vec![
+            "paid-exit",
+            "run",
+            "--config",
+            config,
+            "--no-reload-daemon",
+            "--free-probe-units",
+            "10 MB",
+            "--grace-units",
+            "20 MB",
+        ],
+        vec![
+            "set",
+            "--config",
+            config,
+            "--paid-exit-free-probe-units",
+            "10 MB",
+            "--paid-exit-grace-units",
+            "20 MB",
+        ],
+    ] {
+        let output = run_nvpn(args);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("at most 8 MiB"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), config_before);
+        assert_eq!(std::fs::read(&store_path).ok(), store_before);
+    }
+}
+
+#[test]
 fn paid_exit_run_persists_custom_offer_identity_across_processes() {
     let dir = TestDir::new("nvpn-custom-offer-id");
     let path = dir.path().join("config.toml");

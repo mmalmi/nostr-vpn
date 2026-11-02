@@ -1,10 +1,10 @@
 use super::*;
+use crate::paid_routes::MAX_SOURCE_FREE_PROBE_BYTES;
 use std::net::{IpAddr, Ipv6Addr};
 
 const FREE_PROBE_WINDOW_SECS: u64 = 24 * 60 * 60;
 const MAX_FREE_PROBE_SOURCES: usize = 256;
 const MAX_FREE_PROBE_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_SOURCE_FREE_PROBE_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRouteFreeProbeSource {

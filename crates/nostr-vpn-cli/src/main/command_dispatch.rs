@@ -508,6 +508,9 @@ async fn run_command(command: Command) -> Result<()> {
                     app.paid_exit.channel.grace_units =
                         paid_exit_parse_traffic_units_arg(value, "--paid-exit-grace-units")?;
                 }
+                if app.paid_exit.enabled && app.paid_exit != previous_app.paid_exit {
+                    app.paid_exit.channel.validate_seller_free_probe_budget()?;
+                }
             }
             if let Some(value) = args.wireguard_exit_enabled {
                 if value {

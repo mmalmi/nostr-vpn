@@ -629,6 +629,45 @@ fn signed_offer_builder_requires_enabled_paid_exit_with_mint_for_nonzero_price()
 }
 
 #[test]
+fn local_seller_cannot_advertise_a_trial_larger_than_its_source_budget() {
+    let seller = Keys::generate();
+    let mut config = sample_paid_exit_config();
+    for (probe, grace) in [
+        (10 * 1024 * 1024, 20 * 1024 * 1024),
+        (8 * 1024 * 1024, 1),
+        (1, u64::MAX),
+    ] {
+        config.channel.free_probe_units = probe;
+        config.channel.grace_units = grace;
+        let error =
+            signed_paid_exit_offer_from_config("exit", &seller, &config, None, 100).unwrap_err();
+        assert!(error.to_string().contains("at most 8 MiB"), "{error}");
+    }
+    config.channel.free_probe_units = 7 * 1024 * 1024;
+    config.channel.grace_units = 1024 * 1024;
+    assert!(signed_paid_exit_offer_from_config("exit", &seller, &config, None, 100).is_ok());
+    config.channel.free_probe_units = 0;
+    config.channel.grace_units = 20 * 1024 * 1024;
+    assert!(signed_paid_exit_offer_from_config("exit", &seller, &config, None, 100).is_ok());
+
+    // Other implementations may serve larger trials. The local abuse budget
+    // must not become a new wire validity rule or invalidate their signatures.
+    config.channel.free_probe_units = 10 * 1024 * 1024;
+    let foreign = SignedPaidRouteOffer::sign(
+        PaidRouteOffer::from_paid_exit_config(
+            "foreign",
+            seller.public_key().to_bech32().unwrap(),
+            &config,
+            None,
+        ),
+        &seller,
+        100,
+    )
+    .unwrap();
+    assert!(foreign.verify().is_ok());
+}
+
+#[test]
 fn paid_route_offer_filter_targets_offer_kind() {
     let filter = paid_route_offer_filter(25, Some(100));
     let json = serde_json::to_value(&filter).expect("filter json");

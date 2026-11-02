@@ -133,6 +133,7 @@ pub fn signed_paid_exit_offer_from_config_with_receiver_and_fips_endpoints(
     if !config.enabled {
         return Err(anyhow!("paid exit selling is disabled"));
     }
+    config.channel.validate_seller_free_probe_budget()?;
     let mut normalized_config = config.clone();
     normalized_config.normalize();
     if normalized_config.pricing.price_msat_per_gb > 0

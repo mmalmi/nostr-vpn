@@ -13,6 +13,21 @@ impl NativeAppRuntime {
             .transpose()?;
         let internet_source_in_patch = patch.internet_source.is_some();
 
+        if patch.paid_exit_enabled.unwrap_or(self.config.paid_exit.enabled)
+            && (patch.paid_exit_enabled.is_some()
+                || patch.paid_exit_free_probe_units.is_some()
+                || patch.paid_exit_grace_units.is_some())
+        {
+            let mut channel = self.config.paid_exit.channel.clone();
+            if let Some(value) = patch.paid_exit_free_probe_units {
+                channel.free_probe_units = value;
+            }
+            if let Some(value) = patch.paid_exit_grace_units {
+                channel.grace_units = value;
+            }
+            channel.validate_seller_free_probe_budget()?;
+        }
+
         if let Some(value) = patch.node_name {
             self.config.node_name = value.trim().to_string();
         }
