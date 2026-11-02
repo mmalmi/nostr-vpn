@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 use crate::macos_file_io as fs;
+use std::collections::BTreeMap;
 #[cfg(not(target_os = "macos"))]
 use std::fs;
 use std::path::Path;
@@ -42,6 +43,7 @@ pub(crate) fn prepare_config_secrets_for_save(
         ConfigSecret::WireGuardExitPeerPreshared,
         &mut config.wireguard_exit.peer_preshared_key,
     )?;
+    persist_network_join_secrets(path, config)?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         config.pending_nostr_join_request = None;
@@ -57,6 +59,7 @@ pub(crate) fn delete_config_secrets(path: &Path) -> Result<()> {
         ConfigSecret::Nostr,
         ConfigSecret::WireGuardExitPrivate,
         ConfigSecret::WireGuardExitPeerPreshared,
+        ConfigSecret::JoinSecret,
         ConfigSecret::PendingJoinRequest,
     ] {
         if let Err(error) = platform::delete_secret(path, kind) {
@@ -81,6 +84,10 @@ pub(crate) fn config_file_needs_secret_migration(path: &Path) -> Result<bool> {
         }
     }
 
+    if plaintext_network_join_secret(&value) {
+        return Ok(true);
+    }
+
     if plaintext_pending_join_request(&value) {
         return Ok(true);
     }
@@ -93,6 +100,7 @@ enum ConfigSecret {
     Nostr,
     WireGuardExitPrivate,
     WireGuardExitPeerPreshared,
+    JoinSecret,
     PendingJoinRequest,
     #[cfg(feature = "cashu-wallet")]
     CashuWalletSeed,
@@ -104,6 +112,7 @@ impl ConfigSecret {
             Self::Nostr => "nostr-secret-key",
             Self::WireGuardExitPrivate => "wireguard-exit-private-key",
             Self::WireGuardExitPeerPreshared => "wireguard-exit-peer-preshared-key",
+            Self::JoinSecret => "network-join-secrets",
             Self::PendingJoinRequest => "pending-join-request",
             #[cfg(feature = "cashu-wallet")]
             Self::CashuWalletSeed => "cashu-wallet-seed",
@@ -115,6 +124,7 @@ impl ConfigSecret {
             Self::Nostr => "Nostr secret key",
             Self::WireGuardExitPrivate => "WireGuard exit private key",
             Self::WireGuardExitPeerPreshared => "WireGuard exit peer preshared key",
+            Self::JoinSecret => "Network join secret",
             Self::PendingJoinRequest => "pending Nostr join request",
             #[cfg(feature = "cashu-wallet")]
             Self::CashuWalletSeed => "Cashu wallet seed",
@@ -212,6 +222,7 @@ fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<(
         config.wireguard_exit.peer_preshared_key =
             read_required_secret(path, ConfigSecret::WireGuardExitPeerPreshared)?;
     }
+    hydrate_network_join_secrets(path, config)?;
     hydrate_pending_join_request(path, config)?;
 
     if config.nostr.secret_key.trim().is_empty()
@@ -314,6 +325,70 @@ fn persist_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<(
     }
     pending.request.request_secret = platform::REDACTED_SECRET_MARKER.to_string();
     pending.request_private_key = platform::REDACTED_SECRET_MARKER.to_string();
+    Ok(())
+}
+
+// One storage slot maps every network entry id to its join secret, since a
+// config can hold several networks with distinct secrets.
+fn hydrate_network_join_secrets(path: &Path, config: &mut AppConfig) -> Result<()> {
+    if !config
+        .networks
+        .iter()
+        .any(|network| is_redacted_secret(&network.join_secret))
+    {
+        return Ok(());
+    }
+    let raw = read_required_secret(path, ConfigSecret::JoinSecret)?;
+    let stored: BTreeMap<String, String> =
+        serde_json::from_str(&raw).context("failed to parse stored network join secrets")?;
+    for network in &mut config.networks {
+        if !is_redacted_secret(&network.join_secret) {
+            continue;
+        }
+        network.join_secret = stored.get(&network.id).cloned().ok_or_else(|| {
+            anyhow!(
+                "{} for network {} is marked as stored in {}, but no matching secret exists",
+                ConfigSecret::JoinSecret.display_name(),
+                network.id,
+                platform::store_name()
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn persist_network_join_secrets(path: &Path, config: &mut AppConfig) -> Result<()> {
+    let mut stored: BTreeMap<String, String> =
+        platform::read_secret(path, ConfigSecret::JoinSecret)?
+            .map(|raw| {
+                serde_json::from_str(&raw).context("failed to parse stored network join secrets")
+            })
+            .transpose()?
+            .unwrap_or_default();
+    let mut stored_ids = Vec::new();
+    for network in &mut config.networks {
+        let value = network.join_secret.trim();
+        if is_redacted_secret(value) {
+            continue;
+        }
+        if value.is_empty() {
+            stored.remove(&network.id);
+            continue;
+        }
+        stored.insert(network.id.clone(), value.to_string());
+        stored_ids.push(network.id.clone());
+    }
+    let mut encoded = if stored.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(&stored).context("failed to encode network join secrets")?
+    };
+    persist_field(path, ConfigSecret::JoinSecret, &mut encoded)?;
+    for id in stored_ids {
+        if let Some(network) = config.networks.iter_mut().find(|network| network.id == id) {
+            network.join_secret = platform::REDACTED_SECRET_MARKER.to_string();
+        }
+    }
     Ok(())
 }
 
@@ -536,6 +611,23 @@ fn plaintext_secret_field(value: &toml::Value, table: &str, field: &str) -> bool
         .is_some_and(|value| {
             let value = value.trim();
             !value.is_empty() && !is_redacted_secret(value)
+        })
+}
+
+fn plaintext_network_join_secret(value: &toml::Value) -> bool {
+    value
+        .get("networks")
+        .and_then(toml::Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|network| {
+            network
+                .get("join_secret")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|secret| {
+                    let secret = secret.trim();
+                    !secret.is_empty() && !is_redacted_secret(secret)
+                })
         })
 }
 

@@ -12,6 +12,7 @@ mod tests {
     const TEST_WG_PRIVATE_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
     const TEST_WG_PUBLIC_KEY: &str = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
     const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
+    const TEST_JOIN_SECRET: &str = "home-mesh-join-secret";
 
     fn temp_path(name: &str) -> std::path::PathBuf {
         let nonce = std::time::SystemTime::now()
@@ -481,6 +482,7 @@ mod tests {
         config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
         config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
         config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+        config.networks[0].join_secret = TEST_JOIN_SECRET.to_string();
         let nostr_secret = config.nostr.secret_key.clone();
         let raw = config.plaintext_toml().expect("encode plaintext config");
         std::fs::write(&path, raw).expect("write plaintext config");
@@ -500,6 +502,7 @@ mod tests {
         assert!(!migrated.contains(&nostr_secret));
         assert!(!migrated.contains(TEST_WG_PRIVATE_KEY));
         assert!(!migrated.contains(TEST_WG_PRESHARED_KEY));
+        assert!(!migrated.contains(TEST_JOIN_SECRET));
         assert!(migrated.contains("stored-in-"));
         assert_eq!(loaded.nostr.secret_key, nostr_secret);
         assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
@@ -507,6 +510,36 @@ mod tests {
             loaded.wireguard_exit.peer_preshared_key,
             TEST_WG_PRESHARED_KEY
         );
+        assert_eq!(loaded.networks[0].join_secret, TEST_JOIN_SECRET);
+    }
+
+    #[test]
+    fn saved_config_stores_network_join_secrets_outside_toml() {
+        let path = temp_path("join-secret-storage").with_extension("toml");
+        let mut config = AppConfig::generated();
+        config.networks[0].join_secret = TEST_JOIN_SECRET.to_string();
+        config.add_network("work");
+        let work_id = config.networks[1].id.clone();
+        config.networks[1].join_secret = format!("{TEST_JOIN_SECRET}-work");
+
+        config.save(&path).expect("save config");
+
+        let raw = std::fs::read_to_string(&path).expect("read saved config");
+        assert!(!raw.contains(TEST_JOIN_SECRET));
+        assert!(!raw.contains(&format!("{TEST_JOIN_SECRET}-work")));
+        assert!(raw.contains("stored-in-"));
+        assert!(
+            !AppConfig::config_file_needs_secret_migration(&path)
+                .expect("inspect saved config")
+        );
+
+        let loaded = AppConfig::load(&path).expect("load saved config");
+        assert_eq!(loaded.networks[0].join_secret, TEST_JOIN_SECRET);
+        assert_eq!(loaded.networks[1].join_secret, format!("{TEST_JOIN_SECRET}-work"));
+        assert_eq!(loaded.networks[1].id, work_id);
+
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
