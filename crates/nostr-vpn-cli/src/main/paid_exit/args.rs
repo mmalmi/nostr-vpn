@@ -84,6 +84,9 @@ struct PaidExitRateArgs {
     provider: Option<String>,
     #[arg(value_enum)]
     opinion: PaidExitOpinion,
+    /// Confirm publication of this rating under your public identity.
+    #[arg(long)]
+    publish: bool,
     #[arg(long)]
     json: bool,
 }

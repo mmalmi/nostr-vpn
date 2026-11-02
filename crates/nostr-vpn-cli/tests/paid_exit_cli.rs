@@ -9,6 +9,17 @@ use nostr_vpn_core::paid_routes::{ExitNetworkClass, SignedPaidRouteOffer};
 use serde_json::Value;
 
 #[test]
+fn paid_exit_rating_requires_publication_consent_before_changing_state() {
+    let dir = TestDir::new("nvpn-public-rating");
+    let path = dir.path().join("config.toml");
+    let output = run_nvpn(["paid-exit", "rate", "down", "--config", path.to_str().unwrap()]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--publish to confirm"));
+    assert!(!path.exists());
+    assert!(!dir.path().join("paid-routes.json").exists());
+}
+
+#[test]
 fn paid_exit_wallet_accepts_config_after_its_subcommand() {
     let dir = TestDir::new("nvpn-wallet-global-config");
     let config = dir.path().join("config.toml");

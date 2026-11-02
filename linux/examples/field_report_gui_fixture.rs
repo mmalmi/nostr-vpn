@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let store_path = paid_route_store_file_path(&config_path);
-    let mints = ["https://first-mint.invalid", "https://second-mint.invalid"];
+    let mints = ["https://first-mint.invalid", "http://second-mint.invalid"];
     for (id, price) in [
         ("paid-desktop-regression", 25_000),
         ("free-desktop-regression", 0),

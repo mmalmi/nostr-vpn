@@ -47,6 +47,9 @@ fn paid_exit_status_command(args: PaidExitStatusArgs) -> Result<()> {
 }
 
 fn paid_exit_rate_command(args: PaidExitRateArgs) -> Result<()> {
+    if !args.publish {
+        return Err(anyhow!("Ratings are public and signed with your identity. Add --publish to confirm."));
+    }
     let path = args.config.unwrap_or_else(default_config_path);
     let mut app = load_config_read_only(&path)?;
     let seller = args.provider.unwrap_or_else(|| app.exit_node.clone());

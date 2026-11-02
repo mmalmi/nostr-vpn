@@ -331,7 +331,7 @@ pub(crate) async fn update_manual_paid_exit(
                 .await
             }),
         });
-        eprintln!("paid-exit: checking selected manual seller Internet egress");
+        eprintln!("[{now_unix}] paid-exit: checking selected manual seller Internet egress");
     }
 
     if manual.probe.is_none()
@@ -347,7 +347,7 @@ pub(crate) async fn update_manual_paid_exit(
         if manual.record_probe_failure(reason, now_unix) {
             return fail_manual_paid_exit(manual, config_path, reason, now_unix);
         }
-        eprintln!("paid-exit: selected seller health check failed: {reason}; retrying");
+        eprintln!("[{now_unix}] paid-exit: selected seller health check failed: {reason}; retrying");
     }
 
     if manual
@@ -375,7 +375,7 @@ pub(crate) async fn update_manual_paid_exit(
                         probe.feedback_generation,
                     );
                     manual.record_probe_success(now_unix);
-                    eprintln!("paid-exit: selected manual seller Internet egress is healthy");
+                    eprintln!("[{now_unix}] paid-exit: selected manual seller Internet egress is healthy");
                     return Ok(false);
                 }
                 Err(error) => {
@@ -400,7 +400,7 @@ pub(crate) async fn update_manual_paid_exit(
                         );
                     }
                     eprintln!(
-                        "paid-exit: selected seller Internet health probe failed: {error}; retrying"
+                        "[{now_unix}] paid-exit: selected seller Internet health probe failed: {error}; retrying"
                     );
                 }
             }
@@ -474,7 +474,7 @@ pub(super) fn fail_manual_paid_exit(
         store.fail_selected_buyer_session(reason, now_unix)?;
         Ok(())
     })?;
-    eprintln!("paid-exit: {reason}; retaining the selected paid exit");
+    eprintln!("[{now_unix}] paid-exit: {reason}; retaining the selected paid exit");
     manual.cancel();
     Ok(true)
 }

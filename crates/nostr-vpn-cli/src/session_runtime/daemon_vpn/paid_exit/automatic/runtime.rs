@@ -105,7 +105,7 @@ pub(crate) async fn update_automatic_paid_exit(
                 match measure(now_unix).await {
                     Ok(measurement) => Ok(measurement),
                     Err(first) => {
-                        eprintln!("paid-exit: retrying seller Internet check after {first:#}");
+                        eprintln!("[{now_unix}] paid-exit: retrying seller Internet check after {first:#}");
                         tokio::time::sleep(Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS))
                             .await;
                         measure(unix_timestamp()).await
@@ -148,7 +148,7 @@ pub(crate) async fn update_automatic_paid_exit(
                     }
                 }
                 Err(error) => {
-                    eprintln!("paid-exit: automatic free probe failed: {error}");
+                    eprintln!("[{now_unix}] paid-exit: automatic free probe failed: {error}");
                     update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
                         store.fail_selected_buyer_session(
                             &format!("Provider internet check failed: {error:#}"),
@@ -209,6 +209,7 @@ pub(crate) async fn update_automatic_paid_exit(
         }
         app.set_internet_source(nostr_vpn_core::config::InternetSource::PaidAutomatic);
         app.save(config_path)?;
+        eprintln!("[{now_unix}] paid-exit: selected provider unavailable, looking for another provider");
         automatic.cancel_candidate(true, now_unix);
         return Ok(true);
     }

@@ -213,6 +213,8 @@ def browse_sellers():
     assert len(window) == 1
     subprocess.run(["xdotool", "windowsize", "--sync", window[0], "1040", "1120"], check=True, timeout=5)
     click("Internet")
+    click("Direct")
+    assert not named("Working…"), "Selecting the current Direct route queued an unnecessary change"
     click("Paid · Choose manually")
     wait_until(lambda: len(buttons("Connect")) == 2, "both signed offers rendered")
 
@@ -241,8 +243,9 @@ try:
     block_next_refresh()
     browse_sellers()
     wait_until(lambda: connect_states() == [False, True], "free offer enabled; paid offer gated")
-    for mint in ["https://first-mint.invalid", "https://second-mint.invalid"]:
+    for mint in ["https://first-mint.invalid", "http://second-mint.invalid"]:
         wait_until(lambda: named(mint), "accepted mint URL " + mint)
+    wait_until(lambda: named("http://second-mint.invalid · unencrypted HTTP"), "unsecured mint warning")
     assert len(buttons("Trust mint")) == 2
     snapshot("accepted-mints")
     checks.append("Both accepted mint URLs and Trust mint actions displayed; free offer needs no trusted mint")
