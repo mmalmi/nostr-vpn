@@ -191,7 +191,16 @@ pub(crate) fn init_config(path: &Path, force: bool, devices: Vec<String>) -> Res
 }
 
 pub(crate) fn apply_config_file(source_path: &Path, target_path: &Path) -> Result<()> {
-    let mut config = AppConfig::load(source_path)
+    let raw = fs::read_to_string(source_path)
+        .with_context(|| format!("failed to load source config {}", source_path.display()))?;
+    apply_config_bytes(&raw, source_path, target_path)
+}
+
+// Applies bytes that were read from an already-validated handle, so a file
+// swapped in behind the source path after validation cannot replace the
+// applied contents.
+pub(crate) fn apply_config_bytes(raw: &str, source_path: &Path, target_path: &Path) -> Result<()> {
+    let mut config = AppConfig::load_from_str(raw, source_path)
         .with_context(|| format!("failed to load source config {}", source_path.display()))?;
     config.ensure_defaults();
     maybe_autoconfigure_node(&mut config);
