@@ -63,6 +63,28 @@ impl PaidRouteStore {
         now_unix: u64,
     ) -> Result<Option<String>> {
         let seller_pubkey = normalize_nostr_pubkey(seller_pubkey)?;
+        // A transient failure does not discard prepaid credit. Recover the
+        // selected contract before ordinary reconciliation can clear it.
+        // Expired, exhausted, unfunded or settled contracts remain ineligible.
+        let retry = self
+            .sessions
+            .get(&self.selected_buyer_session_id)
+            .and_then(|session| {
+                let channel = self.channels.get(&session.session.payment.channel_id)?;
+                (channel.role == PaidRouteChannelRole::Buyer
+                    && normalize_nostr_pubkey(&channel.counterparty_npub)
+                        .ok()
+                        .as_deref()
+                        == Some(seller_pubkey.as_str()))
+                .then(|| session.session.session_id.clone())
+            });
+        if let Some(session_id) = retry
+            && self
+                .retry_failed_funded_buyer_session(&session_id, now_unix)
+                .unwrap_or(false)
+        {
+            self.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+        }
         let selected_is_current_seller = self
             .sessions
             .get(&self.selected_buyer_session_id)
@@ -292,6 +314,23 @@ impl PaidRouteStore {
         if !paid_route_session_has_payment_material(&session.session, channel) {
             return Err(anyhow!(
                 "paid route buyer session {session_id} cannot be retried without a funded channel"
+            ));
+        }
+        if [channel.status, lease.status].iter().any(|status| {
+            matches!(
+                status,
+                PaidRouteLifecycleStatus::Closing
+                    | PaidRouteLifecycleStatus::Closed
+                    | PaidRouteLifecycleStatus::Expired
+            )
+        }) {
+            return Err(anyhow!(
+                "paid route buyer session {session_id} is settling or closed"
+            ));
+        }
+        if !self.buyer_session_has_remaining_capacity(&session_id)? {
+            return Err(anyhow!(
+                "paid route buyer session {session_id} has no remaining credit"
             ));
         }
 

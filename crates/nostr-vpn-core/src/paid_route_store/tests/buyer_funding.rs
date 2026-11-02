@@ -1,6 +1,140 @@
 use super::*;
 
 #[test]
+fn daemon_reconciliation_reuses_a_failed_funded_session_without_a_new_purchase() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let (mut store, id, channel_id) = buyer_store_with_session(&seller, &buyer, &sample_config());
+    let lease_id = store.sessions[&id].session.lease_id.clone();
+    let payment = sample_spilman_payment(&channel_id, 1);
+    store
+        .sessions
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .payment
+        .cashu_spilman_payment = Some(payment.clone());
+    store
+        .channels
+        .get_mut(&channel_id)
+        .unwrap()
+        .payment
+        .cashu_spilman_payment = Some(payment.clone());
+    store.begin_buyer_session_open_attempt(&id, 130).unwrap();
+    store
+        .acknowledge_buyer_session_open(&seller.public_key().to_hex(), &lease_id, 140)
+        .unwrap();
+    store
+        .sessions
+        .get_mut(&id)
+        .unwrap()
+        .session
+        .realized_exit_ip = Some("203.0.113.1".into());
+    store
+        .fail_selected_buyer_session("Temporary exit failure", 145)
+        .unwrap();
+    let quotes = store.quotes.clone();
+    let wallet = store.wallet.clone();
+    assert_eq!(
+        store
+            .begin_latest_buyer_session_open_attempt_for_seller(&seller.public_key().to_hex(), 146)
+            .unwrap(),
+        Some(id.clone())
+    );
+    assert_eq!(store.selected_buyer_session_id, id);
+    assert_eq!(store.sessions.len(), 1);
+    assert_eq!(store.quotes, quotes);
+    assert_eq!(store.wallet, wallet);
+    assert_eq!(
+        store.channels[&channel_id].status,
+        PaidRouteLifecycleStatus::Active
+    );
+    assert_eq!(
+        store.channels[&channel_id].payment.cashu_spilman_payment,
+        Some(payment)
+    );
+    assert!(
+        store.sessions[&id].session.realized_exit_ip.is_none(),
+        "recovery requires fresh egress evidence"
+    );
+    assert!(
+        store
+            .buyer_payment_signing_plan(&BuildPaidRouteBuyerSignedPaymentEnvelopeRequest {
+                session_id: id,
+                buyer_npub: buyer.public_key().to_bech32().unwrap(),
+                kind: BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
+                delivered_units: None,
+                paid_msat: None,
+                now_unix: 146,
+            })
+            .is_ok(),
+        "restore the funded session before replaying its channel open"
+    );
+}
+
+#[test]
+fn funded_retry_never_revives_settled_expired_or_exhausted_credit() {
+    for (channel_status, lease_status, bytes, now) in [
+        (
+            PaidRouteLifecycleStatus::Closed,
+            PaidRouteLifecycleStatus::Failed,
+            0,
+            146,
+        ),
+        (
+            PaidRouteLifecycleStatus::Failed,
+            PaidRouteLifecycleStatus::Closing,
+            0,
+            146,
+        ),
+        (
+            PaidRouteLifecycleStatus::Failed,
+            PaidRouteLifecycleStatus::Failed,
+            1_000_000_000,
+            146,
+        ),
+        (
+            PaidRouteLifecycleStatus::Failed,
+            PaidRouteLifecycleStatus::Failed,
+            0,
+            421,
+        ),
+    ] {
+        let seller = Keys::generate();
+        let buyer = Keys::generate();
+        let (mut store, id, channel_id) =
+            buyer_store_with_session(&seller, &buyer, &sample_config());
+        let lease_id = store.sessions[&id].session.lease_id.clone();
+        let payment = sample_spilman_payment(&channel_id, 1);
+        store
+            .sessions
+            .get_mut(&id)
+            .unwrap()
+            .session
+            .payment
+            .cashu_spilman_payment = Some(payment.clone());
+        store
+            .channels
+            .get_mut(&channel_id)
+            .unwrap()
+            .payment
+            .cashu_spilman_payment = Some(payment);
+        store
+            .sessions
+            .get_mut(&id)
+            .unwrap()
+            .session
+            .usage
+            .billable_bytes = bytes;
+        store.channels.get_mut(&channel_id).unwrap().status = channel_status;
+        store.leases.get_mut(&lease_id).unwrap().status = lease_status;
+        let before = store.clone();
+        assert!(store.retry_failed_funded_buyer_session(&id, now).is_err());
+        assert_eq!(store, before);
+    }
+}
+
+#[test]
 fn funding_wait_survives_restart_without_trial_routes_or_seller_timeout() {
     let seller = Keys::generate();
     let buyer = Keys::generate();

@@ -137,6 +137,27 @@ fn manual_failures_preserve_explicit_exit_selection() {
     );
     assert_eq!(std::fs::read(&config_path).unwrap(), saved_selection);
 
+    // The daemon's next periodic open must retry existing credit instead of
+    // clearing the failed selection and waiting for another manual purchase.
+    let payment = CashuSpilmanPayment {
+        channel_id: session.channel_id.clone(),
+        balance: 1,
+        signature: "signed".into(),
+        params: Some(serde_json::json!({"unit": "sat"})),
+        funding_proofs: Some(serde_json::json!({"proofs": []})),
+    };
+    update_paid_route_store(&store_path, |store| {
+        store.sessions.get_mut(&session.session_id).unwrap().session.payment.cashu_spilman_payment = Some(payment.clone());
+        store.channels.get_mut(&session.channel_id).unwrap().payment.cashu_spilman_payment = Some(payment);
+        Ok(())
+    }).unwrap();
+    reconcile_selected_paid_exit_session(&mut app, &config_path, &seller.public_key().to_hex(), 132).unwrap();
+    let recovered = load_paid_route_store(&store_path).unwrap();
+    assert_eq!(recovered.selected_buyer_session_id, session.session_id);
+    assert_eq!(recovered.sessions.len(), 1);
+    assert_eq!(recovered.channels[&session.channel_id].status, PaidRouteLifecycleStatus::Opening);
+    assert_eq!(std::fs::read(&config_path).unwrap(), saved_selection);
+
     let _ = std::fs::remove_dir_all(directory);
 }
 

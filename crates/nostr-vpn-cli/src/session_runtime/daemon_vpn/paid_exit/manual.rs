@@ -237,10 +237,10 @@ pub(crate) async fn update_manual_paid_exit(
         if generation == manual.generation {
             match result {
                 Ok(Ok(PaidExitManualFundingOutcome::Funded(envelope))) => {
-                    queue_paid_exit_payment(app, config_path, &envelope)?;
                     update_paid_route_store(&store_path, |store| {
                         begin_or_retry_funded_manual_session(store, &session_id, now_unix)
                     })?;
+                    queue_paid_exit_payment(app, config_path, &envelope)?;
                     manual.funding_satisfied = true;
                     manual.selected_at = now_unix;
                     eprintln!(
@@ -248,15 +248,17 @@ pub(crate) async fn update_manual_paid_exit(
                     );
                 }
                 Ok(Ok(PaidExitManualFundingOutcome::AlreadyFunded)) => {
+                    // Signing a channel-open replay requires an open local
+                    // contract. Restore the funded session before queuing it.
+                    update_paid_route_store(&store_path, |store| {
+                        begin_or_retry_funded_manual_session(store, &session_id, now_unix)
+                    })?;
                     queue_recovered_paid_exit_channel_open(
                         app,
                         config_path,
                         &session_id,
                         now_unix,
                     )?;
-                    update_paid_route_store(&store_path, |store| {
-                        begin_or_retry_funded_manual_session(store, &session_id, now_unix)
-                    })?;
                     manual.funding_satisfied = true;
                     manual.selected_at = now_unix;
                     eprintln!(
