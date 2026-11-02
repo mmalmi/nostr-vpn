@@ -110,6 +110,179 @@ fn payment_outbox_recovery_coalesces_only_superseded_balances() {
     assert_eq!(load_paid_exit_payment_outbox(&outbox.config).len(), 1);
 }
 
+fn backdate_paid_exit_outbox_entry(config: &Path, envelope: &StreamingRoutePaymentEnvelope) {
+    let id = nostr_vpn_core::paid_route_store::paid_route_payment_id(envelope).unwrap();
+    let path = paid_exit_payment_outbox_directory(config).join(format!("{id}.json"));
+    let file = OpenOptions::new().write(true).open(path).unwrap();
+    let stale = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+    file.set_times(std::fs::FileTimes::new().set_modified(stale)).unwrap();
+}
+
+#[test]
+fn payment_outbox_recovery_keeps_old_unacknowledged_funding_and_close() {
+    let outbox = Outbox::new();
+    let balance = outbox.payment("channel", 5);
+    outbox.queue(&balance);
+    let StreamingRoutePaymentPayload::BalanceUpdate(update) = &balance.payload else {
+        unreachable!()
+    };
+    let mut open = balance.clone();
+    open.sent_at_unix = 90;
+    open.payload =
+        StreamingRoutePaymentPayload::ChannelOpen(cashu_service::StreamingRouteChannelOpen {
+            mint_url: "https://mint.example".into(),
+            unit: "sat".into(),
+            capacity: 10,
+            expires_unix: 500,
+            receiver_pubkey_hex: outbox.seller.clone(),
+            paid_msat: 0,
+            payment: CashuSpilmanPayment {
+                balance: 0,
+                ..update.payment.clone()
+            },
+        });
+    outbox.queue(&open);
+    let mut close = balance.clone();
+    close.sent_at_unix = 110;
+    close.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: update.paid_msat,
+            payment: update.payment.clone(),
+        },
+    );
+    outbox.queue(&close);
+
+    // Weeks offline is not evidence that the seller acknowledged or settled
+    // these obligations, so the files stay queued no matter how old they are.
+    backdate_paid_exit_outbox_entry(&outbox.config, &balance);
+    backdate_paid_exit_outbox_entry(&outbox.config, &open);
+    backdate_paid_exit_outbox_entry(&outbox.config, &close);
+    let directory = paid_exit_payment_outbox_directory(&outbox.config);
+    assert_eq!(fs::read_dir(&directory).unwrap().count(), 3);
+    for round in 0..2 {
+        let pending = load_paid_exit_payment_outbox(&outbox.config);
+        assert_eq!(pending.len(), 3, "round {round}");
+        for envelope in [&balance, &open, &close] {
+            assert!(
+                pending.iter().any(|entry| &entry.envelope == envelope),
+                "round {round}"
+            );
+        }
+        assert_eq!(
+            fs::read_dir(&directory).unwrap().count(),
+            3,
+            "old unacknowledged files are never pruned by age"
+        );
+    }
+}
+
+#[test]
+fn payment_outbox_recovery_collapses_repeated_funding_and_close_retries() {
+    let outbox = Outbox::new();
+    let balance = outbox.payment("channel", 5);
+    outbox.queue(&balance);
+    let StreamingRoutePaymentPayload::BalanceUpdate(update) = &balance.payload else {
+        unreachable!()
+    };
+    let mut open_old = balance.clone();
+    open_old.sent_at_unix = 90;
+    open_old.payload =
+        StreamingRoutePaymentPayload::ChannelOpen(cashu_service::StreamingRouteChannelOpen {
+            mint_url: "https://mint.example".into(),
+            unit: "sat".into(),
+            capacity: 10,
+            expires_unix: 500,
+            receiver_pubkey_hex: outbox.seller.clone(),
+            paid_msat: 0,
+            payment: CashuSpilmanPayment {
+                balance: 0,
+                ..update.payment.clone()
+            },
+        });
+    let mut open_new = open_old.clone();
+    open_new.sent_at_unix = 100;
+    let mut close_old = balance.clone();
+    close_old.sent_at_unix = 110;
+    close_old.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: update.paid_msat,
+            payment: update.payment.clone(),
+        },
+    );
+    let mut close_new = close_old.clone();
+    close_new.sent_at_unix = 120;
+    for envelope in [&open_old, &open_new, &close_old, &close_new] {
+        outbox.queue(envelope);
+    }
+
+    let pending = load_paid_exit_payment_outbox(&outbox.config);
+    assert_eq!(pending.len(), 3);
+    assert!(pending.iter().any(|entry| entry.envelope == open_new));
+    assert!(pending.iter().any(|entry| entry.envelope == close_new));
+    assert!(pending.iter().any(|entry| entry.envelope == balance));
+    assert_eq!(
+        fs::read_dir(paid_exit_payment_outbox_directory(&outbox.config))
+            .unwrap()
+            .count(),
+        3,
+        "only the newest retry of each obligation stays queued"
+    );
+    assert_eq!(
+        load_paid_exit_payment_outbox(&outbox.config).len(),
+        3,
+        "survives restart"
+    );
+}
+
+#[test]
+fn payment_outbox_recovery_keeps_close_payloads_that_differ() {
+    let outbox = Outbox::new();
+    let balance = outbox.payment("channel", 5);
+    outbox.queue(&balance);
+    let StreamingRoutePaymentPayload::BalanceUpdate(update) = &balance.payload else {
+        unreachable!()
+    };
+    let mut close_low = balance.clone();
+    close_low.sent_at_unix = 110;
+    close_low.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: update.paid_msat,
+            payment: update.payment.clone(),
+        },
+    );
+    // A close at a higher final balance is a distinct obligation. A clock
+    // rollback gives it an older timestamp, which must not discard it.
+    let mut close_high = close_low.clone();
+    close_high.sent_at_unix = 105;
+    close_high.payload = StreamingRoutePaymentPayload::CooperativeClose(
+        cashu_service::StreamingRouteCooperativeClose {
+            final_paid_msat: update.paid_msat + 1000,
+            payment: update.payment.clone(),
+        },
+    );
+    outbox.queue(&close_low);
+    outbox.queue(&close_high);
+
+    let directory = paid_exit_payment_outbox_directory(&outbox.config);
+    for round in 0..2 {
+        let pending = load_paid_exit_payment_outbox(&outbox.config);
+        assert_eq!(pending.len(), 3, "round {round}");
+        assert!(
+            pending.iter().any(|entry| entry.envelope == close_low),
+            "round {round}"
+        );
+        assert!(
+            pending.iter().any(|entry| entry.envelope == close_high),
+            "round {round}"
+        );
+        assert_eq!(
+            fs::read_dir(&directory).unwrap().count(),
+            3,
+            "round {round}: neither close is pruned"
+        );
+    }
+}
+
 #[test]
 fn payment_outbox_recovery_preserves_funding_close_and_other_bindings() {
     let outbox = Outbox::new();

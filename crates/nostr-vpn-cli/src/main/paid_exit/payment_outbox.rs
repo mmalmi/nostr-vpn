@@ -208,7 +208,13 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
         .collect();
     // A balance update is cumulative. Recover legacy backlogs as well as new
     // queues, retaining the strongest durable update for each exact binding.
-    // Funding and cooperative close records must remain until acknowledged.
+    // Funding and cooperative close records stay until the seller
+    // acknowledges them; file age proves nothing about settlement. The only
+    // pruning beyond acknowledgments drops duplicate retries: a retry repeats
+    // the exact payload of its obligation, so an older copy is redundant only
+    // when a retry carries an equal payload. Same-kind payloads that differ,
+    // like closes at different final balances, are distinct obligations and
+    // all stay queued no matter what the clocks say.
     let binding = |envelope: &StreamingRoutePaymentEnvelope| {
         (
             envelope.version,
@@ -221,11 +227,28 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
     };
     let mut newest = std::collections::HashMap::new();
     let mut strongest = std::collections::HashMap::new();
+    let mut retry_groups = std::collections::HashMap::new();
     for queued in &pending {
         let key = binding(&queued.envelope);
         let sent_at = newest.entry(key.clone()).or_insert(0);
         *sent_at = (*sent_at).max(queued.envelope.sent_at_unix);
         let StreamingRoutePaymentPayload::BalanceUpdate(update) = &queued.envelope.payload else {
+            let group = retry_groups
+                .entry((key, std::mem::discriminant(&queued.envelope.payload)))
+                .or_insert_with(Vec::new);
+            let retry = (queued.envelope.sent_at_unix, queued.id.clone());
+            match group
+                .iter()
+                .position(|(payload, _)| *payload == queued.envelope.payload)
+            {
+                Some(index) => {
+                    let (_, record) = &mut group[index];
+                    if retry > *record {
+                        *record = retry;
+                    }
+                }
+                None => group.push((queued.envelope.payload.clone(), retry)),
+            }
             continue;
         };
         let candidate = (update.paid_msat, update.payment.balance, queued.id.clone());
@@ -234,18 +257,31 @@ fn load_paid_exit_payment_outbox(config_path: &Path) -> Vec<QueuedPaidExitPaymen
             *current = candidate;
         }
     }
+    let remove_superseded = |queued: &QueuedPaidExitPayment| {
+        let path = directory.join(format!("{}.json", queued.id));
+        if let Err(error) = fs::remove_file(path) {
+            eprintln!("paid-exit: failed to remove superseded payment: {error}");
+        }
+    };
     pending.retain(|queued| {
+        let key = binding(&queued.envelope);
         let StreamingRoutePaymentPayload::BalanceUpdate(update) = &queued.envelope.payload else {
+            let group = &retry_groups[&(key, std::mem::discriminant(&queued.envelope.payload))];
+            let id = group
+                .iter()
+                .find(|(payload, _)| *payload == queued.envelope.payload)
+                .map(|(_, (_, id))| id)
+                .expect("retry grouped in the first pass");
+            if id != &queued.id {
+                remove_superseded(queued);
+                return false;
+            }
             return true;
         };
-        let key = binding(&queued.envelope);
         let (paid_msat, balance, id) = &strongest[&key];
         if id != &queued.id && *paid_msat >= update.paid_msat && *balance >= update.payment.balance
         {
-            let path = directory.join(format!("{}.json", queued.id));
-            if let Err(error) = fs::remove_file(path) {
-                eprintln!("paid-exit: failed to remove superseded payment: {error}");
-            }
+            remove_superseded(queued);
             return false;
         }
         true
