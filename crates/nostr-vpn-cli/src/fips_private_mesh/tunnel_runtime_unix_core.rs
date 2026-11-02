@@ -119,6 +119,8 @@ impl FipsPrivateTunnelRuntime {
             #[cfg(target_os = "linux")]
             linux_network_state_initialized: false,
             #[cfg(target_os = "linux")]
+            mesh_fd00_main_rule: false,
+            #[cfg(target_os = "linux")]
             exit_node_runtime: crate::LinuxExitNodeRuntime::default(),
             #[cfg(target_os = "macos")]
             exit_node_runtime: crate::MacosExitNodeRuntime::default(),
