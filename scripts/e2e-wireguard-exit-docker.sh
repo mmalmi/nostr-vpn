@@ -325,16 +325,13 @@ fi
 # ordinary routes instead of the WG exit table.
 LOCAL_NET_ROUTES="$("${COMPOSE[@]}" exec -T node-a sh -lc '
   set -e
-  forward="$(sysctl -n net.ipv4.ip_forward)"
-  sysctl -qw net.ipv4.ip_forward=1
   ip link add nvpn-e2e-lan type veth peer name nvpn-e2e-lanp
   ip addr add 10.44.0.1/24 dev nvpn-e2e-lan
   ip link set nvpn-e2e-lanp up
   ip link set nvpn-e2e-lan up
   echo "reply: $(ip -4 -o route get 10.44.0.5 from 10.44.0.1 || true)"
   echo "forward: $(ip -4 -o route get '"$TARGET_IP"' from 10.44.0.5 iif nvpn-e2e-lan || true)"
-  ip link del nvpn-e2e-lan
-  sysctl -qw net.ipv4.ip_forward="$forward"' | tr -d '\r')"
+  ip link del nvpn-e2e-lan' | tr -d '\r')"
 LOCAL_REPLY_ROUTE="$(sed -n 's/^reply: //p' <<<"$LOCAL_NET_ROUTES")"
 LOCAL_FORWARD_ROUTE="$(sed -n 's/^forward: //p' <<<"$LOCAL_NET_ROUTES")"
 LOCAL_REPLY_IFACE="$(awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$LOCAL_REPLY_ROUTE")"
