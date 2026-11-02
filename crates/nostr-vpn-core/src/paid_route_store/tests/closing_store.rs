@@ -965,17 +965,6 @@ fn add_local_offer_quality(
 }
 
 #[test]
-fn unreadable_paid_route_store_is_discarded() {
-    let scratch = ScratchDir::new("unreadable");
-    let store_path = scratch.path().join("paid-routes.json");
-    fs::write(&store_path, "not json").expect("write junk");
-
-    let store = load_paid_route_store(&store_path).expect("load default");
-
-    assert_eq!(store, PaidRouteStore::default());
-}
-
-#[test]
 fn paid_route_store_without_seller_tunnel_map_keeps_existing_state() {
     let scratch = ScratchDir::new("missing-seller-tunnel-map");
     let store_path = scratch.path().join("paid-routes.json");

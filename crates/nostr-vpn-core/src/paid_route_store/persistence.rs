@@ -39,16 +39,10 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
         }
     };
 
-    let mut value = match serde_json::from_str::<serde_json::Value>(&raw) {
-        Ok(value) => value,
-        Err(error) => {
-            eprintln!(
-                "discarding unreadable paid route store {}: {error}",
-                path.display()
-            );
-            return Ok(PaidRouteStore::default());
-        }
-    };
+    // The bytes stay in place, so every load fails until the file is fixed
+    // or removed; an empty store is never silently substituted for them.
+    let mut value = serde_json::from_str::<serde_json::Value>(&raw)
+        .with_context(|| format!("paid route store {} is unreadable", path.display()))?;
     let stored_version = value
         .get("version")
         .and_then(serde_json::Value::as_u64)
@@ -72,16 +66,8 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
         // and persists rolling free-probe grants across daemon restarts.
         object.insert("version".to_string(), CURRENT_VERSION.into());
     }
-    let mut store = match serde_json::from_value::<PaidRouteStore>(value) {
-        Ok(store) => store,
-        Err(error) => {
-            eprintln!(
-                "discarding unreadable paid route store {}: {error}",
-                path.display()
-            );
-            return Ok(PaidRouteStore::default());
-        }
-    };
+    let mut store = serde_json::from_value::<PaidRouteStore>(value)
+        .with_context(|| format!("paid route store {} is unreadable", path.display()))?;
     store.retain_valid();
     Ok(store)
 }
