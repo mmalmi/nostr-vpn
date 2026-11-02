@@ -639,6 +639,32 @@ impl NativeAppRuntime {
         }
     }
 
+    /// Daemon reload and status refresh for a config this process already
+    /// persisted; must run without the cross-process config lock so daemon
+    /// round trips cannot block a concurrent approval's durable writes.
+    fn reload_and_refresh_saved_config(&mut self) -> Result<()> {
+        if self.mobile_runtime {
+            return self.refresh_mobile_status();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            // A running service already applied the saved config through
+            // apply-config-daemon; a second reload would reconfigure the
+            // peer set twice.
+            if self.service_running || self.daemon_running {
+                return self.refresh_status();
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if self.daemon_running {
+                let output = self.run_nvpn(["reload", "--config", self.config_path_str()?])?;
+                ensure_success("nvpn reload", &output)?;
+            }
+        }
+        self.refresh_status()
+    }
+
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn restore_desktop_config_after_failed_apply(
         &mut self,

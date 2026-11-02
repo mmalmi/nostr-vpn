@@ -1,3 +1,8 @@
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt as _;
+use std::path::Path;
+
 use crate::config::{AppConfig, SharedNetworkRoster, normalize_nostr_pubkey};
 use crate::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use crate::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
@@ -77,4 +82,61 @@ fn stage_approved_config(
     }
     let shared = updated.shared_network_roster(network_entry_id)?;
     Ok((updated, shared))
+}
+
+/// Serializes one approval read-modify-write across processes: the on-disk
+/// roster freshness check and the durable writes hold the same exclusive lock
+/// beside the config, so two writers that loaded the same roster snapshot can
+/// no longer both pass the check and overwrite each other. `apply` queues the
+/// durable outbox entry and saves the approved config while the lock is held;
+/// nothing is written when the snapshot no longer matches disk, because saving
+/// a stale snapshot would revert a concurrently approved device and kick it on
+/// missing-self. The check spans every network's roster because the save
+/// overwrites the whole config: an approval for one network must not silently
+/// revert an approval another writer committed for a different network.
+pub fn commit_join_approval(
+    config_path: &Path,
+    snapshot: &AppConfig,
+    network_entry_id: &str,
+    apply: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let _config_lock = exclusive_config_lock(config_path)?;
+    if snapshot.network_by_id(network_entry_id).is_none() {
+        return Err(anyhow!("network not found"));
+    }
+    if roster_state(&AppConfig::load(config_path)?) != roster_state(snapshot) {
+        return Err(anyhow!(
+            "config roster changed on disk while this approval was prepared; reload the network and approve again"
+        ));
+    }
+    apply()
+}
+
+/// Roster entry identity and version for every network. The approval save
+/// overwrites the whole config, so this state must still match disk when the
+/// save runs.
+fn roster_state(config: &AppConfig) -> Vec<(&str, u64)> {
+    config
+        .networks
+        .iter()
+        .map(|network| (network.id.as_str(), network.shared_roster_updated_at))
+        .collect()
+}
+
+/// Same cross-process convention as the paid-route store: a private sidecar
+/// lock file guarded by a blocking exclusive `File` lock.
+fn exclusive_config_lock(config_path: &Path) -> Result<fs::File> {
+    let lock_path = config_path.with_extension("toml.lock");
+    let mut options = fs::OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    options.custom_flags(libc::O_NOFOLLOW);
+    let lock = options
+        .open(&lock_path)
+        .with_context(|| format!("failed to open config lock {}", lock_path.display()))?;
+    lock.lock()
+        .with_context(|| format!("failed to lock {}", config_path.display()))?;
+    Ok(lock)
 }

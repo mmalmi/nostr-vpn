@@ -5,15 +5,18 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr_sdk::prelude::Keys;
-use nostr_vpn_core::config::{AppConfig, InternetSource};
+use nostr_vpn_core::config::{AppConfig, InternetSource, normalize_nostr_pubkey};
 use nostr_vpn_core::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
+use nostr_vpn_core::identity_bridge::{
+    NostrIdentityDeviceApprovalBootstrap, nostr_identity_device_approval_bootstrap,
+};
 use nostr_vpn_core::join_delivery::{
     complete_join_roster_delivery, join_roster_outbox_directory, load_join_rosters,
     queue_join_roster,
 };
 use nostr_vpn_core::join_requests::{
     MAX_NOSTR_JOIN_ROSTER_AGE_SECS, MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS,
-    MAX_NOSTR_JOIN_ROSTER_PAST_SECS,
+    MAX_NOSTR_JOIN_ROSTER_PAST_SECS, commit_join_approval, prepare_join_approval,
 };
 
 const REQUESTED_AT: u64 = 1_778_998_000;
@@ -57,6 +60,244 @@ fn unique_temp_config_path(name: &str) -> std::path::PathBuf {
             .expect("system time")
             .as_nanos()
     ))
+}
+
+fn approval_admin() -> (AppConfig, String) {
+    let keys = Keys::generate();
+    let mut admin = AppConfig::generated();
+    admin.nostr.secret_key = keys.secret_key().to_secret_hex();
+    admin.nostr.public_key = keys.public_key().to_hex();
+    admin.networks[0].name = "Home Mesh".to_string();
+    admin.networks[0].enabled = true;
+    admin.networks[0].network_id = "8d4f34f5425bc50e".to_string();
+    admin.networks[0].devices = vec![keys.public_key().to_hex()];
+    admin.networks[0].admins = vec![keys.public_key().to_hex()];
+    admin.ensure_defaults();
+    admin.networks[0].shared_roster_updated_at = REQUESTED_AT;
+    admin.networks[0].shared_roster_signed_by = keys.public_key().to_hex();
+    let network_entry_id = admin.networks[0].id.clone();
+    (admin, network_entry_id)
+}
+
+fn admin_with_second_network() -> (AppConfig, String, String) {
+    let (mut admin, first_entry) = approval_admin();
+    let admin_pubkey = admin.own_nostr_pubkey_hex().expect("admin pubkey");
+    let second_entry = admin.add_network("Second Mesh");
+    {
+        let network = admin
+            .network_by_id_mut(&second_entry)
+            .expect("second network entry");
+        network.network_id = "second-mesh".to_string();
+        network.devices = vec![admin_pubkey.clone()];
+        network.admins = vec![admin_pubkey.clone()];
+    }
+    admin.ensure_defaults();
+    let network = admin
+        .network_by_id_mut(&second_entry)
+        .expect("second network entry");
+    network.shared_roster_updated_at = REQUESTED_AT;
+    network.shared_roster_signed_by = admin_pubkey;
+    (admin, first_entry, second_entry)
+}
+
+fn pending_bootstrap(config: &AppConfig) -> NostrIdentityDeviceApprovalBootstrap {
+    let pending = config
+        .pending_nostr_join_request
+        .as_ref()
+        .expect("pending request");
+    nostr_identity_device_approval_bootstrap(&pending.request).expect("request bootstrap")
+}
+
+fn approved_device_pubkey(config: &AppConfig) -> String {
+    normalize_nostr_pubkey(&pending_bootstrap(config).device_app_key_npub).expect("device pubkey")
+}
+
+/// Both writers load the same on-disk roster snapshot, then race the commit.
+/// The barrier holds both writers at the lock boundary so the interleaving is
+/// deterministic: exactly one commit passes the freshness check and saves.
+fn stage_and_commit(
+    config_path: &std::path::Path,
+    network_entry_id: &str,
+    joiner: &AppConfig,
+    approved_at: u64,
+    both_loaded: &std::sync::Barrier,
+) -> anyhow::Result<String> {
+    let snapshot = AppConfig::load(config_path)?;
+    both_loaded.wait();
+    let prepared = prepare_join_approval(
+        &snapshot,
+        network_entry_id,
+        &pending_bootstrap(joiner),
+        approved_at,
+    )?;
+    commit_join_approval(config_path, &snapshot, network_entry_id, || {
+        queue_join_roster(
+            config_path,
+            &approved_device_pubkey(joiner),
+            &prepared.join_roster,
+        )?;
+        prepared.updated_config.save(config_path)
+    })?;
+    Ok(approved_device_pubkey(joiner))
+}
+
+#[test]
+fn two_concurrent_approvals_serialize_into_exactly_one_durable_save() {
+    let (admin, network_entry_id) = approval_admin();
+    let config_path = unique_temp_config_path("approval-two-writers");
+    admin.save(&config_path).expect("persist admin config");
+
+    let first_joiner = pending_joiner();
+    let second_joiner = pending_joiner();
+    let first_pubkey = approved_device_pubkey(&first_joiner);
+    let second_pubkey = approved_device_pubkey(&second_joiner);
+    let both_loaded = std::sync::Barrier::new(2);
+
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            stage_and_commit(
+                &config_path,
+                &network_entry_id,
+                &first_joiner,
+                SIGNED_AT + 1,
+                &both_loaded,
+            )
+        });
+        let second = scope.spawn(|| {
+            stage_and_commit(
+                &config_path,
+                &network_entry_id,
+                &second_joiner,
+                SIGNED_AT + 2,
+                &both_loaded,
+            )
+        });
+        (
+            first.join().expect("first writer"),
+            second.join().expect("second writer"),
+        )
+    });
+
+    let (winner, error) = match (first, second) {
+        (Ok(winner), Err(error)) | (Err(error), Ok(winner)) => (winner, error),
+        _ => panic!("the config lock must admit exactly one of two concurrent approvals"),
+    };
+    assert!(
+        error.to_string().contains("changed on disk"),
+        "the losing writer must report the stale snapshot: {error:#}"
+    );
+
+    let on_disk = AppConfig::load(&config_path).expect("reload config");
+    let devices = &on_disk
+        .network_by_id(&network_entry_id)
+        .expect("network")
+        .devices;
+    assert!(devices.contains(&winner), "winning approval stays durable");
+    let loser = if winner == first_pubkey {
+        &second_pubkey
+    } else {
+        &first_pubkey
+    };
+    assert!(!devices.contains(loser), "losing approval wrote nothing");
+
+    let queued = load_join_rosters(&config_path);
+    assert_eq!(queued.len(), 1, "only the winning approval queues delivery");
+    assert_eq!(queued[0].1.recipient_npub, winner);
+
+    let _ = fs::remove_dir_all(join_roster_outbox_directory(&config_path));
+    let _ = fs::remove_file(config_path.with_extension("toml.lock"));
+    fs::remove_file(&config_path).expect("remove temp config");
+}
+
+/// The save overwrites the whole config, so two writers that loaded the same
+/// snapshot must not both commit approvals for DIFFERENT networks: the second
+/// save would revert the first winner's device and kick it on missing-self.
+/// Exactly one commit may pass, and it must leave the other network untouched.
+#[test]
+fn concurrent_approvals_for_different_networks_admit_exactly_one_save() {
+    let (admin, first_entry, second_entry) = admin_with_second_network();
+    let config_path = unique_temp_config_path("approval-two-networks");
+    admin.save(&config_path).expect("persist admin config");
+
+    let first_joiner = pending_joiner();
+    let second_joiner = pending_joiner();
+    let first_pubkey = approved_device_pubkey(&first_joiner);
+    let second_pubkey = approved_device_pubkey(&second_joiner);
+    let both_loaded = std::sync::Barrier::new(2);
+
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            stage_and_commit(
+                &config_path,
+                &first_entry,
+                &first_joiner,
+                SIGNED_AT + 1,
+                &both_loaded,
+            )
+        });
+        let second = scope.spawn(|| {
+            stage_and_commit(
+                &config_path,
+                &second_entry,
+                &second_joiner,
+                SIGNED_AT + 2,
+                &both_loaded,
+            )
+        });
+        (
+            first.join().expect("first writer"),
+            second.join().expect("second writer"),
+        )
+    });
+
+    let (winner, error) = match (first, second) {
+        (Ok(winner), Err(error)) | (Err(error), Ok(winner)) => (winner, error),
+        _ => panic!("the config lock must admit exactly one of two concurrent approvals"),
+    };
+    assert!(
+        error.to_string().contains("changed on disk"),
+        "the losing writer must report the stale snapshot: {error:#}"
+    );
+    let (winner_entry, loser_entry) = if winner == first_pubkey {
+        (&first_entry, &second_entry)
+    } else {
+        (&second_entry, &first_entry)
+    };
+    let loser = if winner == first_pubkey {
+        &second_pubkey
+    } else {
+        &first_pubkey
+    };
+
+    let on_disk = AppConfig::load(&config_path).expect("reload config");
+    let winning_network = on_disk
+        .network_by_id(winner_entry)
+        .expect("winning network");
+    assert!(
+        winning_network.devices.contains(&winner),
+        "winning approval stays durable"
+    );
+    assert!(
+        winning_network.shared_roster_updated_at > REQUESTED_AT,
+        "the winner bumps only its own network roster"
+    );
+    let losing_network = on_disk.network_by_id(loser_entry).expect("losing network");
+    assert!(
+        !losing_network.devices.contains(loser),
+        "the losing approval must not add its device"
+    );
+    assert_eq!(
+        losing_network.shared_roster_updated_at, REQUESTED_AT,
+        "the winner's save must not touch the loser's network"
+    );
+
+    let queued = load_join_rosters(&config_path);
+    assert_eq!(queued.len(), 1, "only the winning approval queues delivery");
+    assert_eq!(queued[0].1.recipient_npub, winner);
+
+    let _ = fs::remove_dir_all(join_roster_outbox_directory(&config_path));
+    let _ = fs::remove_file(config_path.with_extension("toml.lock"));
+    fs::remove_file(&config_path).expect("remove temp config");
 }
 
 #[test]
