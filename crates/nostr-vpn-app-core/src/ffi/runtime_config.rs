@@ -70,6 +70,7 @@ impl NativeAppRuntime {
                 if store_file.exists() {
                     nostr_vpn_core::paid_route_store::update_paid_route_store(&store_file, |store| {
                         store.automatic_reselect_from.clear();
+                        store.automatic_reselect_session_id.clear();
                         Ok(())
                     })?;
                 }

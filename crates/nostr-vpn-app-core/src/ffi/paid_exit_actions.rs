@@ -648,6 +648,7 @@ impl NativeAppRuntime {
             }
             if source != InternetSource::PaidAutomatic {
                 store.automatic_reselect_from.clear();
+                store.automatic_reselect_session_id.clear();
             }
             store.begin_buyer_session_open_attempt(session_id, now_unix)?;
             let endpoint_hints = store.buyer_session_seller_fips_endpoints(session_id)?;

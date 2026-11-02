@@ -39,12 +39,15 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         Ok(())
     })?;
     store = load_paid_route_store(&store_path)?;
-    let reselect_from = store.automatic_reselect_from.clone();
-    if automatic.candidate.as_ref().is_some_and(|candidate| {
-        store.exit_provider_is_avoided(&candidate.seller_pubkey)
-            || normalize_nostr_pubkey(&reselect_from).ok().as_deref()
-                == Some(candidate.seller_pubkey.as_str())
-    }) {
+    if !store.automatic_reselect_from.is_empty() {
+        return reselection::stage(automatic, app, config_path, &store, now_unix);
+    }
+    automatic.reselection.take();
+    if automatic
+        .candidate
+        .as_ref()
+        .is_some_and(|candidate| store.exit_provider_is_avoided(&candidate.seller_pubkey))
+    {
         // Finish any wallet operation before replacing its candidate. The
         // routing gate already rejects the downvoted provider immediately.
         if automatic.funding.is_some() {
@@ -135,7 +138,6 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 .expect("recovered candidate")
                 .funding_attempted = true;
         }
-        finish_automatic_reselection(&store_path, &reselect_from)?;
         return Ok(replacing_unfunded || exhausted || route_changed);
     }
 
@@ -180,15 +182,15 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         false,
         now_unix,
     );
-    finish_automatic_reselection(&store_path, &reselect_from)?;
     Ok(true)
 }
 
-fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()> {
+pub(super) fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()> {
     if !requested.is_empty() {
         update_paid_route_store(store_path, |store| {
             if store.automatic_reselect_from == requested {
                 store.automatic_reselect_from.clear();
+                store.automatic_reselect_session_id.clear();
             }
             Ok(())
         })?;
@@ -197,7 +199,7 @@ fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()
 }
 
 /// Keep configuration in sync even when Automatic already has a candidate.
-fn select_automatic_paid_exit_route(
+pub(super) fn select_automatic_paid_exit_route(
     app: &mut AppConfig,
     config_path: &Path,
     store: &PaidRouteStore,
@@ -222,7 +224,7 @@ fn select_automatic_paid_exit_route(
     Ok(changed)
 }
 
-fn recover_automatic_paid_exit_session(
+pub(super) fn recover_automatic_paid_exit_session(
     store: &PaidRouteStore,
     selection: &nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection,
     now_unix: u64,

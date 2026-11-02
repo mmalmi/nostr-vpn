@@ -68,6 +68,8 @@ pub struct PaidRouteStore {
     /// Local request to choose a different seller once, without publishing a rating.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub automatic_reselect_from: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub automatic_reselect_session_id: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_open_attempts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -81,6 +83,7 @@ impl Default for PaidRouteStore {
         Self {
             exit_ratings: BTreeMap::new(),
             automatic_reselect_from: String::new(),
+            automatic_reselect_session_id: String::new(),
             version: CURRENT_VERSION,
             wallet: PaidRouteWalletState::default(),
             buyer_mint_retries: BTreeMap::new(),

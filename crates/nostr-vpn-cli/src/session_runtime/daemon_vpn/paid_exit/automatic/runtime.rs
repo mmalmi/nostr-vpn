@@ -63,6 +63,11 @@ pub(crate) async fn update_automatic_paid_exit(
         return Ok(false);
     }
 
+    if automatic.reselection.is_some()
+        && reselection::advance(automatic, runtime, app, config_path, now_unix).await?
+    {
+        return Ok(true);
+    }
     if let Some(candidate) = automatic.candidate.as_mut() {
         candidate.observe_presence(&runtime.peer_statuses(), now_unix);
         candidate.observe_usage(buyer_delta, now_unix);

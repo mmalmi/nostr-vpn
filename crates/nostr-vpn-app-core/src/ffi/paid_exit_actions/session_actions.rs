@@ -1,13 +1,14 @@
 impl NativeAppRuntime {
     pub(super) fn reselect_paid_exit(&mut self) -> Result<()> {
+        if self.mobile_runtime && self.config.public_paid_exit_node_pubkey_hex().is_some() {
+            anyhow::bail!(
+                "This device cannot test a second provider while connected. Your current provider is still selected."
+            );
+        }
         update_paid_route_store(&self.paid_route_store_path(), |store| {
             store.request_exit_reselection(&self.config, unix_timestamp())
         })?;
-        self.save_reload_and_refresh()?;
-        if self.mobile_runtime {
-            self.select_mobile_automatic_paid_exit()?;
-        }
-        Ok(())
+        self.save_reload_and_refresh()
     }
 
     pub(super) fn rate_paid_exit(&mut self, seller_npub: &str, rating: i64) -> Result<()> {
@@ -76,6 +77,7 @@ impl NativeAppRuntime {
         update_paid_route_store(&path, |current| {
             if current.automatic_reselect_from == store.automatic_reselect_from {
                 current.automatic_reselect_from.clear();
+                current.automatic_reselect_session_id.clear();
             }
             Ok(())
         })

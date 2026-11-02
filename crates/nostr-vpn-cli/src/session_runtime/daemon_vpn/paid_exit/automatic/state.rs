@@ -8,6 +8,7 @@ const PAID_EXIT_AUTO_FAILOVER_SECS: u64 = 60;
 #[derive(Default)]
 pub(crate) struct PaidExitAutomaticBuyer {
     pub(super) generation: u64,
+    pub(super) reselection: Option<reselection::Reselection>,
     pub(super) candidate: Option<PaidExitAutomaticCandidate>,
     pub(super) rejected_offers: HashMap<String, u64>,
     pub(super) probe: Option<PaidExitAutomaticProbe>,
@@ -172,6 +173,7 @@ impl PaidExitAutomaticBuyer {
         if Self::enabled(app) {
             return;
         }
+        self.reselection.take();
         if let Some(probe) = self.probe.take() {
             probe.task.abort();
         }

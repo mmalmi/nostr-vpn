@@ -320,7 +320,8 @@ async fn paid_probe_command_saves_only_current_bound_measurements() {
                 restored.probe_route_generation = current_daemon_probe_route_generation();
                 write_current_daemon_probe_state(&path, &restored).unwrap();
             }
-            let body = peer.ip().to_string();
+            assert_eq!(peer.ip(), address.ip(), "request must use the bound interface");
+            let body = "198.51.100.42";
             stream
                 .write_all(
                     format!(
@@ -348,7 +349,7 @@ async fn paid_probe_command_saves_only_current_bound_measurements() {
             );
         } else {
             result.unwrap();
-            assert_eq!(observed.as_deref(), Some(address.ip().to_string().as_str()));
+            assert_eq!(observed.as_deref(), Some("198.51.100.42"));
         }
         fs::remove_dir_all(directory).unwrap();
     }

@@ -391,6 +391,8 @@ impl FipsPrivateMeshRuntime {
         let enqueued_at_ms = run.enqueued_at_ms();
         let mut control_now = None;
         let mut control_error = None;
+        #[cfg(feature = "paid-exit")]
+        let probe = self.candidate_probe.load();
         run.retain_packets(|_index, packet| {
             if control_error.is_some() {
                 return false;
@@ -433,6 +435,13 @@ impl FipsPrivateMeshRuntime {
                 }
             }
 
+            #[cfg(feature = "paid-exit")]
+            if let Some(admit) = probe
+                .as_deref()
+                .and_then(|flow| flow.admit_reply(source_peer, packet))
+            {
+                return admit;
+            }
             let Some(admitter) = admitter else {
                 return false;
             };

@@ -67,6 +67,12 @@ fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'sta
                 .map(|queued| ("paid-exit", queued.envelope.seller)),
         );
         let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+        if !store.automatic_reselect_from.is_empty()
+            && let Ok(seller) =
+                store.buyer_session_seller_npub(&store.automatic_reselect_session_id)
+        {
+            recipients.push(("paid-exit Internet check", seller));
+        }
         recipients.extend(
             store
                 .channels

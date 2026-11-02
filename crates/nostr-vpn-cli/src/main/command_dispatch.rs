@@ -435,6 +435,7 @@ async fn run_command(command: Command) -> Result<()> {
                     if path.exists() {
                         update_paid_route_store(&path, |store| {
                             store.automatic_reselect_from.clear();
+                            store.automatic_reselect_session_id.clear();
                             Ok(())
                         })?;
                     }

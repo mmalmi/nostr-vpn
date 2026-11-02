@@ -160,6 +160,14 @@ impl PaidRouteStore {
             return None;
         }
         let (mint_url, capacity_sat, funded) = self.trusted_mint_and_capacity(&offer, now_unix)?;
+        // A requested replacement must demonstrate working Internet before
+        // moving the live route or opening a new paid channel.
+        if !self.automatic_reselect_from.is_empty()
+            && !funded
+            && offer.channel.free_probe_units < PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES
+        {
+            return None;
+        }
         if !funded
             && record.signed_offer.output_version().ok()?
                 != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION
