@@ -96,6 +96,8 @@ pub struct StreamingRouteRestoreCashuSpilmanRefundResult {
     pub recovered_amount_sat: u64,
     pub imported_amount_sat: u64,
     pub proof_count: usize,
+    /// Unix seconds when unspent channel funding expires; 0 when unknown.
+    pub funding_expires_at_unix: u64,
 }
 
 pub fn sign_restored_sender_proofs(
@@ -381,7 +383,12 @@ where
         state,
     )
     .await?;
-    let proofs = if let Some(proofs) = expired_refund {
+    let (expired_proofs, funding_expires_at_unix) = match expired_refund {
+        expiry::ExpiredFundingRecovery::Recovered(proofs) => (Some(proofs), 0),
+        expiry::ExpiredFundingRecovery::Unexpired(expires_at) => (None, expires_at),
+        expiry::ExpiredFundingRecovery::Unavailable => (None, 0),
+    };
+    let proofs = if let Some(proofs) = expired_proofs {
         proofs
     } else if state == cashu::nuts::State::Spent {
         let output_keyset_json =
@@ -414,6 +421,7 @@ where
             recovered_amount_sat: 0,
             imported_amount_sat: 0,
             proof_count: 0,
+            funding_expires_at_unix,
         });
     };
     let recovered_amount_sat = proofs
@@ -469,6 +477,7 @@ fn complete_result(
         recovered_amount_sat,
         imported_amount_sat,
         proof_count,
+        funding_expires_at_unix: 0,
     }
 }
 

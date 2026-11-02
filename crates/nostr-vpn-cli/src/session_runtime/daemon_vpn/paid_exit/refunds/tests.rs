@@ -683,3 +683,162 @@
         assert_eq!(store.channels["slow-healthy"].status, PaidRouteLifecycleStatus::Closed);
         assert_eq!(store.buyer_mint_failure_retry_at(&mint_url), 0);
     }
+
+    #[test]
+    fn refund_retry_delay_waits_for_funding_expiry_and_retries_otherwise() {
+        let interval = Duration::from_secs(60);
+        let now = 1_900_000_000;
+        assert_eq!(
+            paid_exit_buyer_refund_retry_delay(
+                &PaidExitBuyerRefundOutcome::Pending {
+                    wait_until_unix: now + 3600
+                },
+                interval,
+                now,
+            ),
+            Duration::from_secs(3600),
+            "an unexpired funding deadline must be honored"
+        );
+        assert_eq!(
+            paid_exit_buyer_refund_retry_delay(
+                &PaidExitBuyerRefundOutcome::Pending {
+                    wait_until_unix: now
+                },
+                interval,
+                now,
+            ),
+            interval,
+            "a lapsed deadline falls back to the retry interval"
+        );
+        assert_eq!(
+            paid_exit_buyer_refund_retry_delay(
+                &PaidExitBuyerRefundOutcome::Pending { wait_until_unix: 0 },
+                interval,
+                now,
+            ),
+            interval,
+            "a pending state without a deadline is a genuine retry"
+        );
+        assert_eq!(
+            paid_exit_buyer_refund_retry_delay(
+                &PaidExitBuyerRefundOutcome::Failed(anyhow!("mint unreachable")),
+                interval,
+                now,
+            ),
+            interval
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_channel_checks_once_and_waits_for_funding_expiry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let directory = TestDirectory::new();
+        let config_path = directory.0.join("config.toml");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mint_url = format!("http://{}", listener.local_addr().unwrap());
+        let checks = std::sync::Arc::new(AtomicUsize::new(0));
+        let serving = checks.clone();
+        let mint = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let (header_end, length) = loop {
+                    let mut chunk = [0; 4096];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    bytes.extend_from_slice(&chunk[..read]);
+                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let length = headers.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        }).unwrap_or(0);
+                        break (end + 4, length);
+                    }
+                };
+                while bytes.len() < header_end + length {
+                    let mut chunk = [0; 4096];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                let path = headers.split_whitespace().nth(1).unwrap().to_string();
+                assert_eq!(path, "/v1/checkstate", "unexpected mint request {path}");
+                serving.fetch_add(1, Ordering::SeqCst);
+                let body: serde_json::Value =
+                    serde_json::from_slice(&bytes[header_end..]).unwrap();
+                let states = body["Ys"].as_array().unwrap().iter()
+                    .map(|y| serde_json::json!({"Y": y, "state": "UNSPENT"}))
+                    .collect::<Vec<_>>();
+                let response = serde_json::json!({ "states": states }).to_string();
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).as_bytes()).await.unwrap();
+            }
+        });
+
+        // Routing already expired the channel, while the Spilman funding in
+        // the shared fixture does not expire until 2_000_000_000.
+        let (mut storage, errors) = FileSpilmanClientStorage::load(spilman_client_store_path(&directory.0))
+            .unwrap();
+        storage.save_funding("expired-early", test_spilman_funding(&directory.0, &mint_url));
+        errors.ensure_ok().unwrap();
+        drop(storage);
+        let mut record = channel(
+            "expired-early",
+            PaidRouteChannelRole::Buyer,
+            PaidRouteLifecycleStatus::Expired,
+        );
+        record.mint_url = mint_url.clone();
+        update_paid_route_store(&paid_route_store_file_path(&config_path), |store| {
+            store.upsert_channel(record);
+            Ok(())
+        })
+        .unwrap();
+
+        let retry_interval = Duration::from_secs(60);
+        let mut runtime = PaidExitBuyerRefundRuntime::with_timings(
+            Duration::from_secs(1),
+            retry_interval,
+        )
+        .unwrap();
+        let recovery = wait_for_recovery(&mut runtime, &config_path).await;
+        assert_eq!(recovery.pending_count, 1);
+        assert_eq!(recovery.error_count, 0);
+        assert_eq!(
+            checks.load(Ordering::SeqCst),
+            1,
+            "one mint check before the funding expiry"
+        );
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        for _ in 0..3 {
+            runtime.poll(&config_path, true).unwrap();
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(runtime.active_channel_id.is_none());
+        assert_eq!(
+            checks.load(Ordering::SeqCst),
+            1,
+            "the refund retried before the funding expiry"
+        );
+
+        let scheduled = runtime
+            .retry_after
+            .get("expired-early")
+            .expect("channel scheduled for a retry");
+        let wait = scheduled
+            .checked_duration_since(Instant::now())
+            .expect("retry scheduled in the past");
+        assert!(
+            wait > retry_interval,
+            "the funding expiry must outlast the 60s retry interval"
+        );
+        let expected = Duration::from_secs(2_000_000_000 - unix_timestamp());
+        assert!(
+            wait <= expected + Duration::from_secs(5),
+            "the retry was not scheduled at the funding expiry"
+        );
+        mint.abort();
+    }

@@ -25,7 +25,9 @@ enum PaidExitBuyerRefundOutcome {
         overview: Option<CashuWalletOverview>,
         wallet_error: Option<String>,
     },
-    Pending,
+    Pending {
+        wait_until_unix: u64,
+    },
     Failed(anyhow::Error),
 }
 
@@ -171,9 +173,17 @@ impl PaidExitBuyerRefundRuntime {
                 active_channel_id
             ));
         }
+        // An Expired channel already waits for its funding expiry, so a
+        // pending recovery that reported that deadline retries there instead
+        // of rechecking the mint every retry_interval.
         self.retry_after.insert(
             attempt.channel_id.clone(),
-            Instant::now() + self.retry_interval,
+            Instant::now()
+                + paid_exit_buyer_refund_retry_delay(
+                    &attempt.outcome,
+                    self.retry_interval,
+                    unix_timestamp(),
+                ),
         );
         self.update_wallet_sync_state(&attempt);
         apply_paid_exit_buyer_refund_attempt(config_path, attempt).map(Some)
@@ -191,7 +201,7 @@ impl PaidExitBuyerRefundRuntime {
             PaidExitBuyerRefundOutcome::Complete { .. } => {
                 self.wallet_sync_pending.remove(&attempt.channel_id);
             }
-            PaidExitBuyerRefundOutcome::Pending | PaidExitBuyerRefundOutcome::Failed(_) => {}
+            PaidExitBuyerRefundOutcome::Pending { .. } | PaidExitBuyerRefundOutcome::Failed(_) => {}
         }
     }
 
@@ -350,6 +360,19 @@ fn paid_exit_buyer_refund_channel_ids(store: &PaidRouteStore) -> Vec<String> {
         .collect()
 }
 
+fn paid_exit_buyer_refund_retry_delay(
+    outcome: &PaidExitBuyerRefundOutcome,
+    retry_interval: Duration,
+    now_unix: u64,
+) -> Duration {
+    match outcome {
+        PaidExitBuyerRefundOutcome::Pending { wait_until_unix } if *wait_until_unix > now_unix => {
+            Duration::from_secs(wait_until_unix - now_unix)
+        }
+        _ => retry_interval,
+    }
+}
+
 async fn attempt_paid_exit_buyer_refund(
     command: PaidExitBuyerRefundCommand,
 ) -> PaidExitBuyerRefundAttempt {
@@ -380,7 +403,9 @@ async fn attempt_paid_exit_buyer_refund(
     };
     let outcome = match restore {
         Err(error) => PaidExitBuyerRefundOutcome::Failed(error),
-        Ok(result) if !result.complete => PaidExitBuyerRefundOutcome::Pending,
+        Ok(result) if !result.complete => PaidExitBuyerRefundOutcome::Pending {
+            wait_until_unix: result.funding_expires_at_unix,
+        },
         Ok(result) => {
             let refresh_wallet = sync_wallet || result.imported_amount_sat > 0;
             let (overview, wallet_error) = if refresh_wallet {
@@ -513,7 +538,7 @@ fn apply_paid_exit_buyer_refund_attempt(
                     );
                 }
             }
-            PaidExitBuyerRefundOutcome::Pending => {
+            PaidExitBuyerRefundOutcome::Pending { .. } => {
                 recovery.pending_count = 1;
                 recovery.changed |= clear_paid_exit_buyer_refund_error(store, &attempt.channel_id);
             }
