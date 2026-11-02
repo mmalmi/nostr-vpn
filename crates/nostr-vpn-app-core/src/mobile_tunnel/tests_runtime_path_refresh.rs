@@ -34,7 +34,7 @@ fn mobile_path_refresh_apps() -> [AppConfig; 3] {
         app.nostr.secret_key = key.secret_key().to_bech32().expect("peer secret");
         // Derive each address only after assigning its identity.
         assert!(
-            app.apply_verified_admin_signed_shared_roster(&roster)
+            app.apply_verified_admin_signed_shared_roster(&roster, None)
                 .expect("apply roster")
         );
         app

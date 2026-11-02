@@ -169,6 +169,7 @@ impl AppConfig {
                 normalize_nostr_pubkey(&network.shared_roster_signed_by).unwrap_or_default();
             if network.shared_roster_signed_by.is_empty() {
                 network.shared_roster_updated_at = 0;
+                network.shared_roster_artifact_hash.clear();
             }
             if !network.local_identity_confirmation_pending
                 && network.outbound_join_request.is_none()
@@ -281,6 +282,7 @@ impl AppConfig {
                 canonical_npub_key(&network.shared_roster_signed_by).unwrap_or_default();
             if network.shared_roster_signed_by.is_empty() {
                 network.shared_roster_updated_at = 0;
+                network.shared_roster_artifact_hash.clear();
             }
         }
 
@@ -437,6 +439,7 @@ impl AppConfig {
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            shared_roster_artifact_hash: String::new(),
         });
         let _ = self.note_network_roster_local_change(&id);
         id

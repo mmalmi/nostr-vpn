@@ -17,13 +17,11 @@ fn apply_cached_active_network_roster(app: &mut AppConfig, path: &Path) -> Resul
         return Ok(false);
     };
     let network_id = network.network_id.clone();
-    let Some(signed_roster) = load_signed_rosters(&signed_rosters_file_path(path))?
-        .latest_for(&network_id)
-        .cloned()
-    else {
+    let store = load_signed_rosters(&signed_rosters_file_path(path))?;
+    let Some(signed_roster) = store.latest_for(&network_id).cloned() else {
         return Ok(false);
     };
-    app.apply_verified_admin_signed_shared_roster(&signed_roster)
+    app.apply_verified_admin_signed_shared_roster(&signed_roster, store.latest_for(&network_id))
 }
 
 fn runtime_local_tunnel_ip(app: &AppConfig, network_id: &str) -> String {

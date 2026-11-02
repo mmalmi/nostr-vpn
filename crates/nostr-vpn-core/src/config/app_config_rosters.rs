@@ -64,6 +64,7 @@ impl AppConfig {
     pub fn apply_admin_signed_shared_roster(
         &mut self,
         update: AdminSignedSharedRosterUpdate,
+        stored_latest: Option<&SignedRoster>,
     ) -> Result<bool> {
         let AdminSignedSharedRosterUpdate {
             network_id,
@@ -73,6 +74,7 @@ impl AppConfig {
             aliases,
             signed_at,
             signed_by,
+            artifact_hash,
         } = update;
 
         let normalized_network_id = normalize_runtime_network_id(&network_id);
@@ -89,10 +91,44 @@ impl AppConfig {
             ));
         }
 
-        let Some(network_index) = self.networks.iter().position(|network| {
+        let network_index = match self.networks.iter().position(|network| {
             normalize_runtime_network_id(&network.network_id) == normalized_network_id
-        }) else {
-            return Ok(false);
+        }) {
+            Some(network_index) => network_index,
+            None => {
+                // A roster that removed this device deleted the whole network
+                // entry, erasing the ordering state the gate compares against.
+                // The roster store still holds the converged winner, so the
+                // entry is re-created only from that exact winner and only
+                // when it retains this device; a store winner that excludes
+                // this device keeps the network removed.
+                let Some(stored) = stored_latest else {
+                    return Ok(false);
+                };
+                let Some(own_pubkey) = own_pubkey.as_deref() else {
+                    return Ok(false);
+                };
+                let own_retained = devices
+                    .iter()
+                    .chain(admins.iter())
+                    .filter_map(|member| normalize_nostr_pubkey(member).ok())
+                    .any(|member| member == own_pubkey);
+                if stored.artifact_hash() != artifact_hash || !own_retained {
+                    return Ok(false);
+                }
+                self.add_network(&network_name);
+                let network = self.networks.last_mut().expect("network just added");
+                network.enabled = true;
+                network.network_id = normalized_network_id.clone();
+                network.admins = vec![normalized_signed_by.clone()];
+                // Present the entry as previously confirmed for this device so
+                // the shared path below reproduces the applied-member state
+                // the other arrival order produced instead of a join-pending
+                // one.
+                network.shared_roster_updated_at = 1;
+                network.shared_roster_signed_by = normalized_signed_by.clone();
+                self.networks.len() - 1
+            }
         };
 
         {
@@ -104,7 +140,12 @@ impl AppConfig {
             {
                 return Ok(false);
             }
-            if signed_at <= network.shared_roster_updated_at {
+            if !signed_roster_artifact_wins(
+                network.shared_roster_updated_at,
+                &network.shared_roster_artifact_hash,
+                signed_at,
+                &artifact_hash,
+            ) {
                 return Ok(false);
             }
         }
@@ -173,6 +214,7 @@ impl AppConfig {
         }
         network.shared_roster_updated_at = signed_at;
         network.shared_roster_signed_by = normalized_signed_by;
+        network.shared_roster_artifact_hash = artifact_hash;
         if own_in_shared_roster {
             network.local_identity_confirmation_pending = false;
         }
@@ -184,6 +226,7 @@ impl AppConfig {
             network.shared_roster_updated_at =
                 next_shared_roster_updated_at(network.shared_roster_updated_at);
             network.shared_roster_signed_by = own_pubkey.clone().unwrap_or_default();
+            network.shared_roster_artifact_hash.clear();
         }
         network.outbound_join_request = if own_join_completed {
             None
@@ -232,20 +275,25 @@ impl AppConfig {
     pub fn apply_verified_admin_signed_shared_roster(
         &mut self,
         signed_roster: &SignedRoster,
+        stored_latest: Option<&SignedRoster>,
     ) -> Result<bool> {
         signed_roster.verify()?;
         let network_id = signed_roster.network_id()?;
         let roster = signed_roster.roster()?;
         let signed_by = signed_roster.signer_pubkey_hex()?;
-        self.apply_admin_signed_shared_roster(AdminSignedSharedRosterUpdate {
-            network_id,
-            network_name: roster.network_name,
-            devices: roster.devices,
-            admins: roster.admins,
-            aliases: roster.aliases,
-            signed_at: roster.signed_at,
-            signed_by,
-        })
+        self.apply_admin_signed_shared_roster(
+            AdminSignedSharedRosterUpdate {
+                network_id,
+                network_name: roster.network_name,
+                devices: roster.devices,
+                admins: roster.admins,
+                aliases: roster.aliases,
+                signed_at: roster.signed_at,
+                signed_by,
+                artifact_hash: signed_roster.artifact_hash(),
+            },
+            stored_latest,
+        )
     }
 
 }
