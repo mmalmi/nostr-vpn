@@ -1,6 +1,84 @@
 This maintained fork is published as `nvpn-cdk-spilman`; the Rust library name
 remains `cdk_spilman`. It is not an upstream Spilman release.
 
+## Opt-in payout format
+
+`ChannelParameters::output_version` distinguishes legacy output bytes from
+the NUT-10 list encoding (`ChannelOutputVersion::Nut10`, wire value `2`).
+Existing constructors and missing stored/wire values retain the legacy format;
+unknown or malformed versions are rejected. Version 2 adds a domain separator
+to the channel ID and emits `"tags":[]` for both parties' payout secrets.
+It is a local format extension, not an upstream Spilman version.
+
+Select it only **before funding**, after both peers have agreed to it. Never
+rewrite a funded channel's parameters or already signed coins. VPN signed
+listing/session version 5 commits new channels to output version 2. Version 4
+remains readable for saved agreements; the wallet recovers existing legacy
+channels but refuses fresh legacy funding. Both peers use the saved quote,
+not a later listing, and reject format changes before processing payment.
+The versioned local wallet command prevents older daemons from silently
+ignoring the selection. Tests retain a
+pre-change legacy derivation fingerprint, exercise peer/storage round trips,
+verify minted output signatures, and reject cross-version funding proofs.
+
+Strict NUT-10 mints reject legacy `tags:null` payouts. Already-issued legacy proofs cannot
+be converted by editing their secrets; the issuing mint must accept their
+original signed bytes for those funds to be redeemed.
+
+### Payout correction acceptance
+
+The source and test definitions below are a candidate, not a completed mint or
+platform qualification. Run on a native development host with measured capacity and Rust
+1.95.0, its platform C compiler and an existing compatible Cargo cache. Dependencies
+are fixed by the root lockfile. The Linux workspace has its own updated lockfile.
+No external mint, Lightning backend, user wallet or downloaded helper is needed.
+
+Keep one writer on the stable `CARGO_TARGET_DIR`, limit compilation to
+two jobs, and retain full command logs and exit statuses. Check free space before
+starting; the initial qualification budget is 20 minutes plus two minutes for
+closure, 4 GiB of growth in the owned Cargo target, 12.5 GiB free at entry and an
+8.5 GiB free-space floor. Stop and inspect on any failed phase
+or exceeded bound; do not start a second cache or retry unchanged failures.
+
+```sh
+# CARGO_TARGET_DIR and profile settings must match the shared cache.
+export NVPN_REFUND_EXPECTED_COMMIT="$(git rev-parse HEAD)"
+# Invoke under a controller locking that Cargo target, with the limits above.
+bash scripts/check-spilman-payouts work/refund-qualification
+```
+
+The script pins Cargo to 1.95.0, runs the seven selected test phases offline with
+the lockfile, stops on the first failure or zero-test selection, and saves full
+phase logs plus exit codes and passing test counts. The outer native controller
+owns time/disk monitoring and process-group closure. Independent work may run
+alongside these checks when measured CPU, memory, disk and I/O capacity permit;
+readiness checks do not reserve the whole host. Preserve existing active locks.
+After a corrected failure, a second argument selects the first remaining phase
+(for example, `payout-spend`). Reuse earlier evidence only when its tested source,
+dependencies, toolchain and profile inputs are unchanged; skipped phases are not
+reported as new passes.
+
+`spilman_payout_spend` runs actual CDK mint signature, spending-condition and
+double-spend validation behind a loopback boundary that additionally enforces
+NUT-10's tag arrays. Only Lightning is simulated. It funds 64 test sats, restarts
+the buyer without funding twice, pays 20, closes, restores 44 exactly once, and
+spends both parties' payouts into a separate wallet. Malformed tags, unsigned
+proofs and replayed tokens must fail; the recipient must finish with exactly 64.
+This is an offline CDK integration fixture, not a claim of independent Nutshell
+or live-mint acceptance.
+
+The other tests preserve the legacy derivation fingerprint and issued proofs,
+check wallet quarantine/restart, reject fresh legacy funding and unknown legacy
+seller admissions, retain existing version-4 agreements, bind version 5 to output
+version 2, and reject mismatches before wallet/receiver mutation. A new wallet
+command must fail on old daemons instead of silently funding the old format.
+
+After these checks pass, the release owner must integrate the exact commit,
+publish the changed maintained libraries under new versions, qualify affected
+desktop/Android and mobile build paths, and rebuild affected release artifacts.
+Existing device and binary receipts do not certify this payment change. FIPS
+dataplane message types, wire records and routing remain unchanged.
+
 # Spilman dependency review — 2026-09-11
 
 This directory contains the published `cdk-spilman` 0.17.6 source, with
@@ -72,5 +150,6 @@ Passed checks:
 | Shared mobile Rust kit | 228 app-core + 12 platform-routing |
 
 This is a focused source audit and regression suite, not a formal cryptographic
-audit or a live-mint/platform release certification. Channel IDs, key
-derivation, commitment encoding and FIPS protocol formats are unchanged.
+audit or a live-mint/platform release certification. Legacy channel IDs, key
+derivation and commitment encoding remain unchanged. The opt-in format above
+applies only to new contracts; FIPS protocol formats are unchanged.

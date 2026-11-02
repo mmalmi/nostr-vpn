@@ -452,7 +452,14 @@ impl PaidRouteStore {
             return Err(anyhow!("paid route session has expired"));
         }
         Ok(PaidRouteSessionOpen {
-            version: PAID_ROUTE_OFFER_VERSION.to_string(),
+            version: crate::paid_routes::paid_route_session_version(
+                self.quotes
+                    .get(&lease.lease.quote_id)
+                    .ok_or_else(|| anyhow!("paid route session has no quote"))?
+                    .quote
+                    .output_version,
+            )?
+            .to_string(),
             service_id: offer.offer_id,
             lease_id: lease.lease.lease_id.clone(),
             channel_id: channel.channel_id.clone(),
@@ -558,12 +565,16 @@ impl PaidRouteStore {
             return Err(anyhow!("paid exit selling is disabled"));
         }
         let open = request.open;
-        if open.version != PAID_ROUTE_OFFER_VERSION {
-            return Err(anyhow!(
-                "unsupported paid route session version {}",
-                open.version
-            ));
-        }
+        let output_version = match open.version.as_str() {
+            PAID_ROUTE_OFFER_VERSION => crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION,
+            crate::paid_routes::PAID_ROUTE_LEGACY_OFFER_VERSION => 1,
+            _ => {
+                return Err(anyhow!(
+                    "unsupported paid route session version {}",
+                    open.version
+                ));
+            }
+        };
         let seller_npub = normalize_paid_route_npub(&request.seller_npub, "seller")?;
         if normalize_paid_route_npub(&open.seller_npub, "seller")? != seller_npub {
             return Err(anyhow!("paid route session targets a different seller"));
@@ -602,6 +613,26 @@ impl PaidRouteStore {
             {
                 return Err(anyhow!(
                     "existing paid route session does not match authenticated probe request"
+                ));
+            }
+            let quote = self
+                .quotes
+                .get(&lease.lease.quote_id)
+                .ok_or_else(|| anyhow!("existing paid route session has no quote"))?;
+            if quote.quote.output_version != output_version {
+                return Err(anyhow!(
+                    "paid route session output format differs from its accepted agreement"
+                ));
+            }
+            if output_version != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION
+                && self.sessions[&session_id]
+                    .session
+                    .payment
+                    .cashu_spilman_payment
+                    .is_none()
+            {
+                return Err(anyhow!(
+                    "Upgrade the buyer before funding an existing unpaid route session"
                 ));
             }
             if self
@@ -651,6 +682,11 @@ impl PaidRouteStore {
             });
         }
 
+        if output_version != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION {
+            return Err(anyhow!(
+                "Upgrade the buyer before opening a new paid route session"
+            ));
+        }
         for existing in self.sessions.values() {
             let Some(existing_lease) = self.leases.get(&existing.session.lease_id) else {
                 continue;
@@ -699,6 +735,7 @@ impl PaidRouteStore {
         };
         self.upsert_quote(
             PaidRouteQuote {
+                output_version,
                 quote_id: quote_id.clone(),
                 offer_id: service_id.clone(),
                 payment_mode: PaidRoutePaymentMode::CashuSpilman,

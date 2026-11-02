@@ -49,7 +49,7 @@ fn cashu_top_up_activity_status(
         })
 }
 
-#[cfg(any(target_os = "ios", target_os = "android"))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 fn paid_route_wallet_channel_open_request(
     store: &PaidRouteStore,
     session_id: &str,
@@ -89,6 +89,11 @@ fn paid_route_wallet_channel_open_request(
 
     Ok(
         cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+            output_version: quote_record
+                .quote
+                .output_version
+                .try_into()
+                .map_err(|error: String| anyhow!(error))?,
             mint_url,
             receiver_pubkey_hex: quote_record.quote.receiver_pubkey_hex.clone(),
             capacity_sat: session_record.session.payment.capacity_sat,
@@ -137,4 +142,67 @@ fn inspect_paid_route_wallet_token(token_text: &str) -> Result<PaidRouteWalletTo
         status_text: "Mint will verify when redeemed".to_string(),
         redeemable: true,
     })
+}
+
+#[cfg(test)]
+#[test]
+fn mobile_wallet_request_preserves_saved_payment_format() {
+    use nostr_sdk::Keys;
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let mut config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
+    config.channel.accepted_mints = vec!["https://mint.example".into()];
+    let signed = nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config(
+        "internet-exit",
+        &seller,
+        &config,
+        None,
+        100,
+    )
+    .unwrap();
+    let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint("https://mint.example", "Test mint", Some(100_000), 99);
+    store.upsert_signed_offer(signed, vec![], 101).unwrap();
+    let opened = store
+        .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+            offer_selector: "internet-exit".into(),
+            buyer_npub: buyer.public_key().to_bech32().unwrap(),
+            mint_url: None,
+            channel_capacity_sat: Some(10),
+            initial_paid_msat: 0,
+            now_unix: 120,
+        })
+        .unwrap();
+    for version in [2, 1] {
+        for quote in store.quotes.values_mut() {
+            quote.quote.output_version = version;
+        }
+        let request = paid_route_wallet_channel_open_request(
+            &store,
+            &opened.session_id,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(u8::from(request.output_version), version);
+    }
+    for quote in store.quotes.values_mut() {
+        quote.quote.output_version = 99;
+    }
+    assert!(
+        paid_route_wallet_channel_open_request(
+            &store,
+            &opened.session_id,
+            None,
+            None,
+            None,
+            None
+        )
+        .is_err()
+    );
 }

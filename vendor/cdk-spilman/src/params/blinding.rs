@@ -401,12 +401,13 @@ impl ChannelParameters {
             // Each proof gets a UNIQUE blinded pubkey derived from (amount, index)
             let pubkey =
                 self.get_stage2_blinded_pubkey_for_stage1_output(context, amount, index)?;
-            DeterministicSecretWithBlinding::new_p2pk(
+            DeterministicSecretWithBlinding::new_p2pk_with_output_version(
                 &pubkey,
                 nonce,
                 blinding_factor,
                 amount,
                 index,
+                self.output_version,
             )
         }
     }

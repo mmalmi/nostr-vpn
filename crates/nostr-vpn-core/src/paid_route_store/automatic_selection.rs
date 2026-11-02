@@ -97,6 +97,12 @@ impl PaidRouteStore {
             return None;
         }
         let (mint_url, capacity_sat, funded) = self.trusted_mint_and_capacity(&offer, now_unix)?;
+        if !funded
+            && record.signed_offer.output_version().ok()?
+                != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION
+        {
+            return None;
+        }
         let (local_probe, local_probe_count) = self.local_probe_history(&offer, now_unix);
         Some(Candidate {
             offer_key: key.to_string(),

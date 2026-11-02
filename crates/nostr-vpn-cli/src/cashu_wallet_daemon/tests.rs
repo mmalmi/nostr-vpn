@@ -67,6 +67,7 @@
             "quote-1".to_string(),
             PaidRouteQuoteRecord {
                 quote: PaidRouteQuote {
+                    output_version: 1,
                     quote_id: "quote-1".to_string(),
                     offer_id: "offer".to_string(),
                     payment_mode: PaidRoutePaymentMode::CashuSpilman,
@@ -98,7 +99,7 @@
             "session-1".to_string(),
             PaidRouteSessionRecord {
                 funding_required_balance_sat: 0,
-            funding_started_unix: 0,
+                funding_started_unix: 0,
                 last_successful_probe_unix: 0,
                 session: PaidRouteSession {
                     session_id: "session-1".to_string(),
@@ -286,6 +287,47 @@
         .expect("decode in-process wallet overview");
         assert!(in_process_overview.entries.is_empty());
 
+        let request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest =
+            serde_json::from_value(serde_json::json!({
+                "mint_url": "https://mint.example", "receiver_pubkey_hex": "receiver",
+                "capacity_sat": 1, "expiry_unix": 2_000_000_000,
+                "keyset_info_json": "invalid", "client_request_id": "legacy-unfunded"
+            }))
+            .unwrap();
+        for command in [
+            DaemonCashuWalletCommand::OpenSpilmanChannel {
+                request: request.clone(),
+            },
+            DaemonCashuWalletCommand::OpenSpilmanChannelV2 {
+                request: request.clone(),
+            },
+        ] {
+            let error = request_daemon_cashu_wallet_worker(&config_path, command)
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("Choose an updated seller"),
+                "{error}"
+            );
+        }
+        let mut request = request;
+        request.output_version = cdk_spilman::ChannelOutputVersion::Nut10;
+        let error = request_daemon_cashu_wallet_worker(
+            &config_path,
+            DaemonCashuWalletCommand::OpenSpilmanChannel {
+                request: request.clone(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("versioned wallet command"),
+            "{error}"
+        );
+        let wire =
+            serde_json::to_value(DaemonCashuWalletCommand::OpenSpilmanChannelV2 { request }).unwrap();
+        assert_eq!(wire["action"], "open_spilman_channel_v2");
+
         let request = DaemonCashuWalletRequest {
             id: "00000000000000000000000000000042".to_string(),
             command: DaemonCashuWalletCommand::Overview {
@@ -429,7 +471,12 @@
     fn funded_channel_reconnect_ignores_mint_cooldown_but_new_funding_waits() {
         let mut store = recoverable_unfunded_route_store(10_000);
         store
-            .defer_buyer_mint_retry("https://mint.example/Bitcoin", 1000, Some("Mint unavailable"), Some(1800))
+            .defer_buyer_mint_retry(
+                "https://mint.example/Bitcoin",
+                1000,
+                Some("Mint unavailable"),
+                Some(1800),
+            )
             .unwrap();
         assert_eq!(store.buyer_session_funding_retry_at("session-1"), 2801);
         store

@@ -20,7 +20,9 @@ use crate::config::normalize_fips_peer_endpoint_hint;
 /// kind so market/payment terms do not overload endpoint discovery or require
 /// publishing raw transport endpoints.
 pub const PAID_ROUTE_OFFER_KIND: u16 = 37_196;
-pub const PAID_ROUTE_OFFER_VERSION: &str = "4";
+pub const PAID_ROUTE_OFFER_VERSION: &str = "5";
+pub const PAID_ROUTE_LEGACY_OFFER_VERSION: &str = "4";
+pub const PAID_ROUTE_OUTPUT_VERSION: u8 = 2;
 pub const PAID_ROUTE_OFFER_APP: &str = "fips/paid-route-offer";
 /// Signed seller listings expire if the seller stops refreshing them.
 pub const PAID_ROUTE_OFFER_TTL_SECS: u64 = 3_600;

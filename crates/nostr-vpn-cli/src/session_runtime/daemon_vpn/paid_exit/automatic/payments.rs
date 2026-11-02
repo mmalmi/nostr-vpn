@@ -57,8 +57,13 @@ pub(crate) async fn fund_paid_exit_session(
     let mint_url = channel.mint_url.clone();
     let result = crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
         config_path,
-        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
+        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannelV2 {
             request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                output_version: quote
+                    .quote
+                    .output_version
+                    .try_into()
+                    .map_err(|error: String| anyhow!(error))?,
                 mint_url: channel.mint_url,
                 receiver_pubkey_hex: quote.quote.receiver_pubkey_hex,
                 capacity_sat: session.session.payment.capacity_sat,

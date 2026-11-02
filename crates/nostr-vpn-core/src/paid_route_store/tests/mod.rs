@@ -47,6 +47,7 @@ mod buyer;
 mod buyer_funding;
 mod closing_store;
 mod credit_window;
+mod output_format;
 mod renewal;
 mod returning_and_trial_limits;
 mod seller_open;
@@ -192,7 +193,7 @@ fn sample_spilman_payment(channel_id: &str, balance: u64) -> CashuSpilmanPayment
         channel_id: channel_id.to_string(),
         balance,
         signature: format!("signature-{channel_id}-{balance}"),
-        params: Some(json!({"channel": channel_id, "unit": "sat"})),
+        params: Some(json!({"channel": channel_id, "unit": "sat", "output_version": 2})),
         funding_proofs: Some(json!({"proofs": []})),
     }
 }
@@ -213,7 +214,8 @@ impl CashuSpilmanPaymentSigner for FakePaymentSigner {
                 "signed-{channel_id}-{}",
                 if include_funding { "funding" } else { "update" }
             ),
-            params: include_funding.then(|| json!({"channel": channel_id, "unit": "sat"})),
+            params: include_funding
+                .then(|| json!({"channel": channel_id, "unit": "sat", "output_version": 2})),
             funding_proofs: include_funding.then(|| json!({"proofs": []})),
         })
     }

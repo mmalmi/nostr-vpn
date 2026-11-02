@@ -213,6 +213,9 @@ fn select_spilman_keyset<'a>(
 #[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+    /// Output format already agreed with the receiver before spending wallet funds.
+    #[serde(default)]
+    pub output_version: cdk_spilman::ChannelOutputVersion,
     pub mint_url: String,
     pub receiver_pubkey_hex: String,
     pub capacity_sat: u64,
@@ -246,6 +249,7 @@ fn wallet_open_recovery_request(
     unit: StreamingRouteCashuUnit,
 ) -> StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
     StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+        output_version: request.output_version,
         token: String::new(),
         receiver_pubkey_hex: request.receiver_pubkey_hex.clone(),
         sender_secret_hex: None,
@@ -355,6 +359,13 @@ impl crate::wallet::CashuWalletService {
                 channel,
             });
         }
+        // Issued legacy secrets cannot be rewritten. Recover their exact
+        // saved channel above, but never create more funds in that format.
+        if request.output_version == cdk_spilman::ChannelOutputVersion::Legacy {
+            anyhow::bail!(
+                "Choose an updated seller before funding a new payment channel; existing legacy channels remain recoverable"
+            );
+        }
         storage
             .begin_open_request(request.client_request_id.as_deref())
             .map_err(|error| anyhow::anyhow!(error))?;
@@ -390,6 +401,7 @@ impl crate::wallet::CashuWalletService {
             open_streaming_route_cashu_spilman_channel_from_token_with_networking_and_storage(
                 self.data_dir(),
                 StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+                    output_version: request.output_version,
                     token: wallet_send.token.clone(),
                     receiver_pubkey_hex: request.receiver_pubkey_hex,
                     sender_secret_hex: None,

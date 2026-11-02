@@ -94,6 +94,8 @@ async fn paid_exit_create_payment_command(args: PaidExitCreatePaymentArgs) -> Re
                 session_record.session.payment.cashu_unit.clone()
             };
             StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                output_version: quote_record.quote.output_version.try_into()
+                    .map_err(|error: String| anyhow!(error))?,
                 mint_url,
                 receiver_pubkey_hex: quote_record.quote.receiver_pubkey_hex,
                 capacity_sat: session_record.session.payment.capacity_sat,
@@ -112,7 +114,7 @@ async fn paid_exit_create_payment_command(args: PaidExitCreatePaymentArgs) -> Re
         let opened: cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletResult =
             daemon_cashu_wallet_request(
                 &config_path,
-                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannel {
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::OpenSpilmanChannelV2 {
                     request: open_request,
                 },
             )

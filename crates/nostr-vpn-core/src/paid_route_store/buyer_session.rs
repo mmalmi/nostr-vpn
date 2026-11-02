@@ -7,6 +7,13 @@ impl PaidRouteStore {
     ) -> Result<OpenPaidRouteBuyerSessionResult> {
         let (offer_key, record) = self.resolve_offer(&request.offer_selector, request.now_unix)?;
         let offer = record.offer.clone();
+        record.signed_offer.verify()?;
+        let output_version = record.signed_offer.output_version()?;
+        if output_version != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION {
+            return Err(anyhow!(
+                "This seller needs an upgrade before opening a new payment channel"
+            ));
+        }
         if self.exit_provider_is_avoided(&offer.seller_npub) {
             return Err(anyhow!("clear your downvote before using this provider"));
         }
@@ -51,6 +58,7 @@ impl PaidRouteStore {
 
         let mut changed = self.upsert_quote(
             PaidRouteQuote {
+                output_version,
                 quote_id: quote_id.clone(),
                 offer_id: offer.offer_id.clone(),
                 payment_mode: PaidRoutePaymentMode::CashuSpilman,

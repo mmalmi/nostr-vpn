@@ -58,9 +58,50 @@ impl Stage2Role {
     }
 }
 
+/// Nostr VPN's deterministic payout encoding, fixed before a channel is funded.
+/// This is not an upstream Spilman protocol version. Never change it on an
+/// existing channel: mint signatures commit to the exact secret bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub enum ChannelOutputVersion {
+    /// Original encoding; retained for existing funded channels and old peers.
+    #[default]
+    Legacy = 1,
+    /// NUT-10 list encoding, usable only after both peers explicitly agree.
+    Nut10 = 2,
+}
+
+impl ChannelOutputVersion {
+    fn is_legacy(&self) -> bool {
+        *self == Self::Legacy
+    }
+}
+
+impl TryFrom<u8> for ChannelOutputVersion {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Legacy),
+            2 => Ok(Self::Nut10),
+            _ => Err(format!("unsupported channel output version {value}")),
+        }
+    }
+}
+
+impl From<ChannelOutputVersion> for u8 {
+    fn from(value: ChannelOutputVersion) -> Self {
+        value as Self
+    }
+}
+
 /// Parameters for a Spilman payment channel
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelParameters {
+    /// Agreed payout encoding. Missing persisted/wire values mean legacy.
+    /// Set only before funding, after the counterparty advertises support.
+    #[serde(default, skip_serializing_if = "ChannelOutputVersion::is_legacy")]
+    pub output_version: ChannelOutputVersion,
     /// Alice's public key (sender)
     pub sender_pubkey: cashu::nuts::PublicKey,
     /// Charlie's public key (receiver)
@@ -248,6 +289,7 @@ impl ChannelParameters {
         }
 
         Ok(Self {
+            output_version: ChannelOutputVersion::Legacy,
             sender_pubkey,
             receiver_pubkey,
             mint,
@@ -380,6 +422,11 @@ impl ChannelParameters {
     ) -> anyhow::Result<Self> {
         let json: serde_json::Value =
             serde_json::from_str(json_str).map_err(|e| anyhow::anyhow!("Invalid JSON: {}", e))?;
+        let output_version = match json.get("output_version") {
+            None => ChannelOutputVersion::Legacy,
+            Some(value) => serde_json::from_value::<ChannelOutputVersion>(value.clone())
+                .map_err(|error| anyhow::anyhow!("Invalid channel output version: {error}"))?,
+        };
 
         // Parse keyset_id and input_fee_ppk first to validate against keyset_info
         let keyset_id_str = json["keyset_id"]
@@ -463,7 +510,7 @@ impl ChannelParameters {
             .as_u64()
             .ok_or_else(|| anyhow::anyhow!("Missing or invalid 'expiry_timestamp' field"))?;
 
-        Self::new(
+        let mut params = Self::new(
             sender_pubkey,
             receiver_pubkey,
             mint,
@@ -475,7 +522,9 @@ impl ChannelParameters {
             keyset_info,
             maximum_amount_for_one_output,
             channel_secret,
-        )
+        )?;
+        params.output_version = output_version;
+        Ok(params)
     }
 
     /// Get channel capacity
@@ -506,6 +555,13 @@ impl ChannelParameters {
             self.expiry_timestamp,
             hex::encode(self.channel_secret)
         );
+        // Keep the original preimage byte-for-byte for every legacy contract.
+        // A new format has a distinct identity so it cannot silently replace
+        // another format's funding, signatures or recovery records.
+        let params_string = match self.output_version {
+            ChannelOutputVersion::Legacy => params_string,
+            ChannelOutputVersion::Nut10 => format!("nvpn-spilman-output-v2|{params_string}"),
+        };
         sha256::Hash::hash(params_string.as_bytes()).to_byte_array()
     }
 
@@ -517,7 +573,7 @@ impl ChannelParameters {
     /// Get a JSON string representation of the data that contributes to the channel ID
     /// This includes all parameters that define the channel unique identity.
     pub fn get_channel_id_params_json(&self) -> String {
-        serde_json::json!({
+        let mut json = serde_json::json!({
             "mint": self.mint,
             "unit": self.unit_name(),
             "capacity": self.capacity,
@@ -529,8 +585,11 @@ impl ChannelParameters {
             "sender_pubkey": self.sender_pubkey.to_hex(),
             "receiver_pubkey": self.receiver_pubkey.to_hex(),
             "expiry_timestamp": self.expiry_timestamp
-        })
-        .to_string()
+        });
+        if !self.output_version.is_legacy() {
+            json["output_version"] = serde_json::json!(self.output_version);
+        }
+        json.to_string()
     }
 }
 

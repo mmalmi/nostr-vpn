@@ -5,6 +5,7 @@
         request_id: &str,
     ) -> StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
         StreamingRouteOpenCashuSpilmanChannelFromTokenRequest {
+            output_version: Default::default(),
             token: String::new(),
             receiver_pubkey_hex: format!("02{}", "22".repeat(32)),
             sender_secret_hex: None,
@@ -232,11 +233,39 @@
 
     #[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
     #[tokio::test]
+    async fn wallet_channel_open_never_spends_for_an_unfunded_legacy_agreement() {
+        let temp = tempfile::tempdir().unwrap();
+        // A missing format from an older client means recovery only. An
+        // invalid keyset makes any accidental progress toward spending fail
+        // differently; no live mint or real wallet funds are used.
+        let request = serde_json::from_value(serde_json::json!({
+            "mint_url": "https://mint.example",
+            "receiver_pubkey_hex": "receiver", "capacity_sat": 1,
+            "expiry_unix": 2_000_000_000, "keyset_info_json": "invalid",
+            "client_request_id": "legacy-unfunded"
+        }))
+        .unwrap();
+        let error = open_streaming_route_cashu_spilman_channel_from_wallet(temp.path(), request)
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("Choose an updated seller"),
+            "{error}"
+        );
+        let (storage, _) =
+            FileSpilmanClientStorage::load(spilman_client_store_path(temp.path())).unwrap();
+        assert!(storage.state.funding.is_empty());
+        assert!(storage.state.open_requests.is_empty());
+    }
+
+    #[cfg(all(feature = "wallet", feature = "spilman-wallet-http"))]
+    #[tokio::test]
     async fn wallet_channel_open_rejects_non_sat_units() {
         let temp = tempfile::tempdir().unwrap();
         let error = open_streaming_route_cashu_spilman_channel_from_wallet(
             temp.path(),
             StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                output_version: Default::default(),
                 mint_url: "https://mint.example".to_string(),
                 receiver_pubkey_hex: "receiver".to_string(),
                 capacity_sat: 1,

@@ -44,6 +44,15 @@ impl PaidRouteStore {
                 )
             })?;
         let previous_channel_id = session_record.session.payment.channel_id.clone();
+        let quote = self
+            .quotes
+            .get(&lease_record.lease.quote_id)
+            .ok_or_else(|| anyhow!("paid route session has no quote"))?;
+        if paid_route_payment_output_version(&request.payment)? != quote.quote.output_version {
+            return Err(anyhow!(
+                "funded channel output format differs from the accepted seller offer"
+            ));
+        }
         let mut channel = self
             .channels
             .remove(&previous_channel_id)

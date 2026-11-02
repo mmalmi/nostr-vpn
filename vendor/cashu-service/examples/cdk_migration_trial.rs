@@ -69,19 +69,16 @@ async fn host(candidate: &Path) -> Result<()> {
     )
     .await
     .map_err(anyhow::Error::msg)?;
-    let request = StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
-        mint_url: mint.url().to_string(),
-        receiver_pubkey_hex: receiver.receiver_pubkey_hex().to_string(),
-        capacity_sat: 64,
-        expiry_unix: now + 3600,
-        max_amount_per_output: 0,
-        unit: "sat".into(),
-        opening_paid_msat: 0,
-        keyset_id: None,
-        keyset_info_json: None,
-        client_request_id: Some("migration-existing-channel".into()),
-        route_created_at_unix: Some(now),
-    };
+    // The old binary does not know output_version; it creates and persists a
+    // legacy fixture. This source must also compile against that old library.
+    let request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest =
+        serde_json::from_value(serde_json::json!({
+            "output_version": 2, "mint_url": mint.url(),
+            "receiver_pubkey_hex": receiver.receiver_pubkey_hex(),
+            "capacity_sat": 64, "expiry_unix": now + 3600,
+            "max_amount_per_output": 0, "unit": "sat", "opening_paid_msat": 0,
+            "client_request_id": "migration-existing-channel", "route_created_at_unix": now
+        }))?;
     let opened = wallet
         .open_streaming_route_cashu_spilman_channel(request.clone())
         .await?;
@@ -123,7 +120,9 @@ async fn host(candidate: &Path) -> Result<()> {
         backup.success(),
         "old binary could not open untouched pre-upgrade backup"
     );
-    println!("BACKUP: old binary reopened untouched pre-upgrade snapshot; do not spend it after candidate operations");
+    println!(
+        "BACKUP: old binary reopened untouched pre-upgrade snapshot; do not spend it after candidate operations"
+    );
     ensure!(network.accounting()?.is_conserved());
     Ok(())
 }
@@ -191,16 +190,37 @@ async fn upgrade(root: &Path) -> Result<()> {
     drop(wallet);
     let refund =
         restore_streaming_route_cashu_spilman_refund(&buyer, &fixture.channel.channel_id).await?;
+    let legacy = serde_json::to_value(&fixture.request)?
+        .get("output_version")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1)
+        == 1;
     ensure!(
-        refund.complete && refund.imported_amount_sat == 44,
+        refund.complete && refund.imported_amount_sat == if legacy { 0 } else { 44 },
         "unexpected refund: {refund:?}"
     );
     let retry =
         restore_streaming_route_cashu_spilman_refund(&buyer, &fixture.channel.channel_id).await?;
     ensure!(retry.complete && retry.imported_amount_sat == 0);
-    ensure!(load_mint_balance(&buyer, mint).await?.balance_sat == 236);
-    ensure!(load_mint_balance(&seller, mint).await?.balance_sat == 20);
-    println!("CANDIDATE: identity/funding unchanged; failed prepare unchanged; pending 16 reclaimed; paid/closed 20; refund 44 exactly once; balances 236 + 20 = 256");
+    ensure!(load_mint_balance(&buyer, mint).await?.balance_sat == if legacy { 192 } else { 236 });
+    ensure!(load_mint_balance(&seller, mint).await?.balance_sat == if legacy { 0 } else { 20 });
+    if legacy {
+        for directory in [&buyer, &seller] {
+            let wallet = CashuWalletService::open_file_backed(directory).await?;
+            ensure!(!wallet
+                .load_wallet_overview(false)
+                .await?
+                .warnings
+                .is_empty());
+        }
+        println!(
+            "CANDIDATE: legacy identity/funding unchanged; 192 spendable; 44 refund + 20 payout held intact for mint-assisted recovery"
+        );
+    } else {
+        println!(
+            "CANDIDATE: identity/funding unchanged; pending 16 reclaimed; paid/closed 20; refund 44 exactly once; balances 236 + 20 = 256"
+        );
+    }
     Ok(())
 }
 

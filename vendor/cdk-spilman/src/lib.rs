@@ -64,7 +64,7 @@ pub use deterministic::{
 };
 pub use established_channel::EstablishedChannel;
 pub use keysets_and_amounts::{KeysetInfo, OrderedListOfAmounts};
-pub use params::{compute_channel_secret, ChannelId, ChannelParameters};
+pub use params::{compute_channel_secret, ChannelId, ChannelOutputVersion, ChannelParameters};
 pub use sender_and_receiver::{
     verify_valid_channel, ChannelVerificationError, ChannelVerificationResult, SpilmanChannelSender,
 };
