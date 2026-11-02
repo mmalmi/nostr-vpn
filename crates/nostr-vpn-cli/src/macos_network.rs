@@ -815,8 +815,53 @@ fn delete_macos_direct_route_on_interface(target: &str, iface: &str) -> Result<(
     run_checked(&mut delete)
 }
 
+// Legacy shared anchor; still flushed for journals written before
+// per-config anchors existed so existing installs clean up.
 #[cfg(any(target_os = "macos", test))]
-const MACOS_PF_EXIT_ANCHOR: &str = "com.apple/nostrvpn-exit";
+pub(crate) const MACOS_PF_EXIT_ANCHOR: &str = "com.apple/nostrvpn-exit";
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) const MACOS_EXIT_CLAIM_SUFFIX: &str = ".exit-claims";
+
+/// sha256 config identity, mirroring the per-config runtime directory
+/// derivation, so each configuration owns a distinct machine-global identity.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_config_identity(config_path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let absolute = if config_path.is_absolute() {
+        config_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|directory| directory.join(config_path))
+            .unwrap_or_else(|_| config_path.to_path_buf())
+    };
+    format!(
+        "{:x}",
+        Sha256::digest(absolute.to_string_lossy().as_bytes())
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_exit_pf_anchor(config_path: &Path) -> String {
+    format!(
+        "{MACOS_PF_EXIT_ANCHOR}-{}",
+        macos_config_identity(config_path)
+    )
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_exit_claim_owner(file_name: &str) -> Option<&str> {
+    file_name.strip_suffix(MACOS_EXIT_CLAIM_SUFFIX)
+}
+
+/// A foreign owner's exit claim keeps the machine-global knobs (PF, IPv4
+/// forwarding) enabled; only the last exiting configuration turns them off.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_other_exit_claims_remain(entries: &[String], owner: &str) -> bool {
+    entries
+        .iter()
+        .any(|entry| macos_exit_claim_owner(entry).is_some_and(|claim_owner| claim_owner != owner))
+}
 
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_exit_node_pf_rules(
@@ -888,14 +933,16 @@ pub(crate) fn parse_macos_pf_enabled(output: &str) -> Result<bool> {
 
 #[cfg(target_os = "macos")]
 pub(super) fn apply_macos_exit_node_pf_rules(
+    config_path: &Path,
     tunnel_iface: &str,
     outbound_iface: &str,
     tunnel_source_cidr: &str,
 ) -> Result<()> {
     let rules = macos_exit_node_pf_rules(tunnel_iface, outbound_iface, tunnel_source_cidr);
+    let anchor = macos_exit_pf_anchor(config_path);
     let mut command = ProcessCommand::new("pfctl")
         .arg("-a")
-        .arg(MACOS_PF_EXIT_ANCHOR)
+        .arg(&anchor)
         .arg("-f")
         .arg("-")
         .stdin(Stdio::piped())
@@ -916,7 +963,7 @@ pub(super) fn apply_macos_exit_node_pf_rules(
     }
 
     Err(anyhow!(
-        "command failed: pfctl -a {MACOS_PF_EXIT_ANCHOR} -f -\nstdout: {}\nstderr: {}",
+        "command failed: pfctl -a {anchor} -f -\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout).trim(),
         String::from_utf8_lossy(&output.stderr).trim()
     ))
@@ -928,19 +975,19 @@ pub(super) fn enable_macos_pf() -> Result<()> {
 }
 
 #[cfg(any(target_os = "macos", test))]
-pub(crate) fn macos_pf_anchor_flush_args() -> Vec<String> {
+pub(crate) fn macos_pf_anchor_flush_args(anchor: &str) -> Vec<String> {
     vec![
         "-a".to_string(),
-        MACOS_PF_EXIT_ANCHOR.to_string(),
+        anchor.to_string(),
         "-F".to_string(),
         "all".to_string(),
     ]
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn cleanup_macos_pf_nat() -> Result<()> {
+pub(super) fn cleanup_macos_pf_nat(anchor: &str) -> Result<()> {
     let mut command = ProcessCommand::new("pfctl");
-    command.args(macos_pf_anchor_flush_args());
+    command.args(macos_pf_anchor_flush_args(anchor));
     run_checked(&mut command)
 }
 

@@ -246,6 +246,9 @@ impl FipsPrivateTunnelRuntime {
             original_default_route: None,
             ipv4_forward_was_enabled: self.exit_node_runtime.ipv4_forward_was_enabled,
             pf_was_enabled: self.exit_node_runtime.pf_was_enabled,
+            pf_exit_anchor: self.exit_node_runtime.pf_was_enabled.is_some().then(|| {
+                crate::macos_network::macos_exit_pf_anchor(&self.cleanup_journal_config_path)
+            }),
             secure_dns_resolver_files: self.secure_dns.is_some(),
         };
         (!state.managed_routes.is_empty()
