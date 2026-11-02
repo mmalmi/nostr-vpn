@@ -54,11 +54,7 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
         })?;
         if !no_select_exit_node {
             store.begin_buyer_session_open_attempt(&session.session_id, now_unix)?;
-            store.manual_renewal_session_id = if args.auto_renew {
-                session.session_id.clone()
-            } else {
-                String::new()
-            };
+            store.set_manual_renewal(&session.session_id, args.auto_renew)?;
         }
         Ok(session)
     })?;
@@ -140,11 +136,7 @@ fn paid_exit_use_once(args: PaidExitUseArgs) -> Result<PaidExitUseResult> {
             ));
         }
         store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
-        store.manual_renewal_session_id = if args.auto_renew {
-            session_id.clone()
-        } else {
-            String::new()
-        };
+        store.set_manual_renewal(&session_id, args.auto_renew)?;
         let seller_npub = store.buyer_session_seller_npub(&session_id)?;
         let endpoint_hints = store.buyer_session_seller_fips_endpoints(&session_id)?;
         Ok((seller_npub, endpoint_hints))
@@ -193,6 +185,9 @@ fn print_paid_exit_buy_result(result: &PaidExitBuyResult) {
     println!("seller: {}", result.session.seller_npub);
     println!("offer: {}", result.session.offer_id);
     println!("mint: {}", display_or_none(&result.session.mint_url));
+    if result.session.mint_url.is_empty() {
+        println!("payment: no wallet spending authorized");
+    }
     println!(
         "channel: {} capacity={} expires_at={}",
         result.session.channel_id,

@@ -489,6 +489,25 @@ fn paid_route_store_does_not_trust_seller_listed_mint() {
     assert!(error.to_string().contains("not approved in this wallet"));
     assert!(store.wallet.mints.is_empty());
     assert!(store.sessions.is_empty());
+
+    // Omitting the mint accepts only the seller's advertised free allowance.
+    let trial = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+        offer_selector: "internet-exit".into(),
+        buyer_npub: buyer.public_key().to_bech32().unwrap(),
+        mint_url: None,
+        channel_capacity_sat: None,
+        initial_paid_msat: 0,
+        now_unix: 121,
+    }).expect("fresh wallet can open the advertised free trial");
+    assert!(trial.mint_url.is_empty());
+    assert!(store.wallet.mints.is_empty());
+    assert!(store.buyer_session_allows_routing(&trial.session_id, 122).unwrap());
+    assert_eq!(store.buyer_session_funding_retry_at(&trial.session_id), u64::MAX);
+    assert!(store.upsert_wallet_mint("https://mint.minibits.cash/Bitcoin", "", Some(900_000), 122));
+    assert_eq!(store.buyer_session_funding_retry_at(&trial.session_id), u64::MAX);
+    assert!(store.set_manual_renewal(&trial.session_id, true).is_err());
+    assert!(store.begin_buyer_session_funding(&trial.session_id, 122).is_err());
+    assert_eq!(store.sessions[&trial.session_id].funding_started_unix, 0);
 }
 
 #[test]

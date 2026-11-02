@@ -20,6 +20,9 @@ impl PaidRouteStore {
         let accepted_terms = PaidExitConfig::from_paid_route_offer(&offer);
         let buyer_npub = normalize_paid_route_npub(&request.buyer_npub, "buyer")?;
         let mint_url = select_buyer_mint(&offer, &self.wallet, request.mint_url.as_deref())?;
+        if mint_url.is_empty() && request.initial_paid_msat != 0 {
+            return Err(anyhow!("an initial payment requires an approved wallet mint"));
+        }
         let balance = self
             .wallet
             .mints

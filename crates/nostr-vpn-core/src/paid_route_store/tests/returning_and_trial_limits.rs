@@ -76,6 +76,10 @@ fn trial_request(
     ip: Option<&str>,
     now: u64,
 ) -> ApplyPaidRouteSellerSessionOpenRequest {
+    // Buyers sharing a carrier address still have distinct tunnel addresses.
+    use std::sync::atomic::{AtomicU16, Ordering};
+    static NEXT_ADDRESS: AtomicU16 = AtomicU16::new(1);
+    let [high, low] = NEXT_ADDRESS.fetch_add(1, Ordering::Relaxed).to_be_bytes();
     ApplyPaidRouteSellerSessionOpenRequest {
         open: PaidRouteSessionOpen {
             version: PAID_ROUTE_OFFER_VERSION.into(),
@@ -83,7 +87,7 @@ fn trial_request(
             lease_id: lease.into(),
             channel_id: format!("channel-{lease}"),
             seller_npub: seller.public_key().to_bech32().unwrap(),
-            buyer_tunnel_ip: "10.44.201.17/32".into(),
+            buyer_tunnel_ip: format!("10.44.{high}.{low}/32"),
             expires_at_unix: now + 600,
         },
         authenticated_buyer_pubkey: buyer.public_key().to_hex(),

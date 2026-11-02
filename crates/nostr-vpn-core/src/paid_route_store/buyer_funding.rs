@@ -26,6 +26,9 @@ impl PaidRouteStore {
         if paid_route_session_has_payment_material(&session.session, channel) {
             return Ok(false);
         }
+        if channel.mint_url.is_empty() {
+            return Err(anyhow!("this session has no payment mint and cannot be funded"));
+        }
         let session = self
             .sessions
             .get_mut(session_id)
