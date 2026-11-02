@@ -79,15 +79,74 @@ Network Destination        Netmask          Gateway       Interface  Metric
             parse_windows_default_route_candidates(sample),
             &[77, 88],
             |address| match address {
-                "10.44.0.2" => Ok(77),
-                "10.77.0.2" => Ok(88),
-                "192.168.1.42" => Ok(11),
+                "10.44.0.2" => Ok((77, true)),
+                "10.77.0.2" => Ok((88, true)),
+                "192.168.1.42" => Ok((11, false)),
                 other => Err(anyhow!("unexpected address {other}")),
             },
         )
         .expect("eligible physical default route");
 
         assert_eq!(route, windows_underlay(11, "192.168.1.1", "192.168.1.42"));
+    }
+
+    #[test]
+    fn rejects_tunnel_class_defaults_when_a_physical_default_exists() {
+        let mut foreign_tun = netdev::Interface::dummy();
+        foreign_tun.index = 77;
+        foreign_tun.if_type = netdev::interface::types::InterfaceType::ProprietaryVirtual;
+        foreign_tun.ipv4 = vec!["10.44.0.2/24".parse().expect("foreign tun address")];
+        let mut kernel_tunnel = netdev::Interface::dummy();
+        kernel_tunnel.index = 88;
+        kernel_tunnel.if_type = netdev::interface::types::InterfaceType::Tunnel;
+        kernel_tunnel.ipv4 = vec!["10.77.0.2/24".parse().expect("kernel tunnel address")];
+        let mut physical = netdev::Interface::dummy();
+        physical.index = 11;
+        physical.if_type = netdev::interface::types::InterfaceType::Ethernet;
+        physical.ipv4 = vec!["192.0.2.147/24".parse().expect("physical address")];
+        let output = "0.0.0.0 0.0.0.0 10.44.0.1 10.44.0.2 1\n\
+                      0.0.0.0 0.0.0.0 10.77.0.1 10.77.0.2 2\n\
+                      0.0.0.0 0.0.0.0 192.0.2.1 192.0.2.147 25";
+        let route = select_windows_default_route_from_output(output, &[], &[
+            foreign_tun, kernel_tunnel, physical,
+        ])
+        .expect("physical default behind lower-metric tunnel-class routes");
+        assert_eq!(route, windows_underlay(11, "192.0.2.1", "192.0.2.147"));
+    }
+
+    #[test]
+    fn all_tunnel_class_default_tables_end_in_the_existing_no_underlay_error() {
+        let sample = "\
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0        10.44.0.1      10.44.0.2      1
+          0.0.0.0          0.0.0.0        10.77.0.1      10.77.0.2      2
+";
+        let resolve_tunnel_only = |address: &str| match address {
+            "10.44.0.2" => Ok((77, true)),
+            "10.77.0.2" => Ok((88, true)),
+            other => Err(anyhow!("unexpected address {other}")),
+        };
+        let by_type = select_windows_default_route_candidate(
+            parse_windows_default_route_candidates(sample),
+            &[],
+            resolve_tunnel_only,
+        )
+        .expect_err("a tunnel-only table must not become the physical underlay");
+        let by_index = select_windows_default_route_candidate(
+            parse_windows_default_route_candidates(sample),
+            &[77, 88],
+            resolve_tunnel_only,
+        )
+        .expect_err("an all-excluded table keeps failing closed");
+        for error in [by_type, by_index] {
+            assert!(
+                error
+                    .to_string()
+                    .contains("no physical IPv4 default route found"),
+                "tunnel-class rejection must land on the unchanged no-underlay fallback: {error:#}"
+            );
+        }
     }
 
     #[test]

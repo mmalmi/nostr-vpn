@@ -256,9 +256,25 @@ fn select_windows_default_route_from_output(
             interfaces
                 .iter()
                 .find(|interface| interface.ipv4.iter().any(|network| network.addr() == address))
-                .map(|interface| interface.index)
+                .map(|interface| {
+                    (
+                        interface.index,
+                        windows_interface_is_tunnel_class(interface.if_type),
+                    )
+                })
                 .ok_or_else(|| anyhow!("no Windows interface found with IPv4 address {address}"))
         },
+    )
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn windows_interface_is_tunnel_class(if_type: netdev::interface::types::InterfaceType) -> bool {
+    // Wintun/TAP-style VPN adapters report propVirtual (53) and kernel
+    // tunnels report tunnel (131); neither is ever the physical underlay.
+    matches!(
+        if_type,
+        netdev::interface::types::InterfaceType::ProprietaryVirtual
+            | netdev::interface::types::InterfaceType::Tunnel
     )
 }
 
@@ -266,18 +282,18 @@ fn select_windows_default_route_from_output(
 fn select_windows_default_route_candidate(
     candidates: Vec<ParsedWindowsDefaultRoute>,
     excluded_tunnel_interfaces: &[u32],
-    mut resolve_interface_index: impl FnMut(&str) -> Result<u32>,
+    mut resolve_interface: impl FnMut(&str) -> Result<(u32, bool)>,
 ) -> Result<WindowsDefaultRoute> {
     let mut resolution_failures = Vec::new();
     for candidate in candidates {
-        let interface_index = match resolve_interface_index(&candidate.interface_ip) {
-            Ok(interface_index) => interface_index,
+        let (interface_index, tunnel_class) = match resolve_interface(&candidate.interface_ip) {
+            Ok((interface_index, tunnel_class)) => (interface_index, tunnel_class),
             Err(error) => {
                 resolution_failures.push(format!("{}: {error:#}", candidate.interface_ip));
                 continue;
             }
         };
-        if excluded_tunnel_interfaces.contains(&interface_index) {
+        if tunnel_class || excluded_tunnel_interfaces.contains(&interface_index) {
             continue;
         }
         return Ok(WindowsDefaultRoute {
