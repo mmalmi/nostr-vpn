@@ -194,7 +194,7 @@ pub(crate) fn acquire_unix_daemon_instance_lock_at(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             return Err(anyhow!(
-                "daemon already running or protected instance lock {} is unavailable: {}",
+                "cannot access protected daemon instance lock {}: {}",
                 lock_path.display(),
                 error
             ));
@@ -209,7 +209,7 @@ pub(crate) fn acquire_unix_daemon_instance_lock_at(
     options.create(true).read(true).write(true).mode(0o600);
     let file = options.open(lock_path).map_err(|error| {
         anyhow!(
-            "daemon already running or protected instance lock {} is unavailable: {}",
+            "cannot access protected daemon instance lock {}: {}",
             lock_path.display(),
             error
         )
