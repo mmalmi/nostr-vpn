@@ -79,7 +79,9 @@ async fn endpoints() -> (
 ) {
     let buyer = Keys::generate();
     let old = Keys::generate();
-    let new = Keys::generate();
+    // Scalar six has an odd-parity public key. Its authenticated full key
+    // differs from the even-parity reconstruction of the same seller npub.
+    let new = Keys::parse(&format!("{:064x}", 6)).unwrap();
     let npub = |keys: &Keys| keys.public_key().to_bech32().unwrap();
     let (buyer_id, old_id, new_id) = (npub(&buyer), npub(&old), npub(&new));
     let (buyer_port, old_port, new_port) = (
@@ -113,6 +115,17 @@ async fn endpoints() -> (
 
 async fn two_sellers() {
     let (buyer, incumbent, candidate, buyer_identity, seller) = endpoints().await;
+    let seller_hex = hex::encode(seller.pubkey().serialize());
+    buyer
+        .set_paid_route_accounting_peers(vec![
+            FipsPaidRouteAccountingPeer::parse(
+                &seller_hex,
+                FipsPaidRouteAccountingRole::LocalBuyer,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
     let local: SocketAddrV4 = "10.44.1.2:42000".parse().unwrap();
     let other = SocketAddrV4::new(*local.ip(), 42001);
     let remote: SocketAddrV4 = "1.1.1.1:443".parse().unwrap();
@@ -148,6 +161,7 @@ async fn two_sellers() {
     let (events, _) = tokio::sync::mpsc::channel(1);
     let mesh = buyer.mesh.load();
     let mut output = DirectTunWriteBatch::with_capacity(2);
+    output.set_admission_mesh(buyer.mesh.load_full());
     for (sender, allowed) in [(&incumbent, false), (&candidate, true)] {
         sender
             .endpoint
@@ -161,6 +175,23 @@ async fn two_sellers() {
         assert_eq!(admitted, usize::from(allowed));
         assert_eq!(registration.flow.received.load(Ordering::Acquire), allowed);
     }
+    buyer
+        .finalize_direct_endpoint_tun_batch_blocking(&output)
+        .unwrap();
+    let usage = buyer.drain_paid_route_usage(&seller_hex).unwrap();
+    assert_eq!((usage.tx_packets, usage.rx_packets), (1, 1));
+    // Both possible endpoint representations of this seller must match.
+    let mut scalar = [0; 32];
+    scalar[31] = 6;
+    let full = fips_core::identity::Identity::from_secret_bytes(&scalar)
+        .unwrap()
+        .pubkey_full();
+    let authenticated = PeerIdentity::from_pubkey_full(full);
+    assert_ne!(authenticated, seller);
+    assert_eq!(
+        registration.flow.admit_reply(authenticated, &reply),
+        Some(true)
+    );
     drop(registration);
     buyer
         .blocking_send_tun_pipeline_packet_turn(
@@ -246,6 +277,8 @@ async fn live_probe() {
                     &mut output,
                     &tx,
                 )?;
+                output.set_admission_mesh(buyer.mesh.load_full());
+                buyer.finalize_direct_endpoint_tun_batch_blocking(&output)?;
                 for p in output.run_slices() {
                     buyer_tun.write_all(p)?;
                 }

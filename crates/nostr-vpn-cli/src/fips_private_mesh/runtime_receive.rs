@@ -290,7 +290,10 @@ impl FipsPrivateMeshRuntime {
         let peer_activity = self.peer_activity.load();
         let mut presence_needed = false;
         for run in runs {
-            let admitter = direct_run_admitter(mesh, run)?;
+            let Some(admitter) = direct_run_admitter(mesh, run) else {
+                // A probe-only peer does not contribute private mesh presence.
+                continue;
+            };
             if let Some(activity) = admitter
                 .source_pubkey_bytes()
                 .and_then(|key| peer_activity.get(key))
@@ -309,7 +312,10 @@ impl FipsPrivateMeshRuntime {
             .write()
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
         for run in runs {
-            let admitter = direct_run_admitter(mesh, run)?;
+            let Some(admitter) = direct_run_admitter(mesh, run) else {
+                // A probe-only peer does not contribute private mesh presence.
+                continue;
+            };
             if admitter
                 .source_pubkey_bytes()
                 .is_some_and(|key| peer_activity.contains_key(key))
@@ -482,10 +488,9 @@ fn decode_endpoint_control_frame(
 fn direct_run_admitter<'a>(
     mesh: &'a FipsMeshRuntime,
     run: &FipsEndpointDirectPacketRun,
-) -> Result<FipsEndpointSourceAdmitter<'a>> {
+) -> Option<FipsEndpointSourceAdmitter<'a>> {
     let source_node_addr = run.source_peer().node_addr().as_bytes();
     mesh.endpoint_source_admitter(source_node_addr)
-        .ok_or_else(|| anyhow!("accepted FIPS direct packet run lost admission source"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

@@ -204,7 +204,7 @@ def stop_app():
         process = None
 
 
-def browse_sellers():
+def browse_sellers(selected=False):
     wait_until(lambda: buttons("Internet"), "initial backend result")
     window = subprocess.check_output(
         ["xdotool", "search", "--onlyvisible", "--pid", str(process.pid), "--name", "^Nostr VPN$"],
@@ -213,10 +213,11 @@ def browse_sellers():
     assert len(window) == 1
     subprocess.run(["xdotool", "windowsize", "--sync", window[0], "1040", "1120"], check=True, timeout=5)
     click("Internet")
-    click("Direct")
-    assert not named("Working…"), "Selecting the current Direct route queued an unnecessary change"
+    if not selected:
+        click("Direct")
+        assert not named("Working…"), "Selecting the current Direct route queued an unnecessary change"
     click("Paid · Choose manually")
-    wait_until(lambda: len(buttons("Connect")) == 2, "both signed offers rendered")
+    wait_until(lambda: len(buttons("Connect")) == (1 if selected else 2), "both signed offers rendered")
 
 
 def connect_states():
@@ -270,6 +271,20 @@ try:
     wait_until(lambda: connect_states() == [True, True], "trusted mint survives restart")
     assert not buttons("Trust mint https://first-mint.invalid") and not buttons("Trust mint http://second-mint.invalid")
     snapshot("restart")
+    (output / "block-status").unlink()
+    stop_app()
+    selected_data = output / "selected-data"
+    subprocess.run([args.fixture, str(selected_data), "--selected"], check=True)
+    env["NVPN_APP_DATA_DIR"] = str(selected_data)
+    launch("selected")
+    block_next_refresh()
+    browse_sellers(selected=True)
+    wait_until(lambda: len(buttons("Selected")) == 1, "configured seller is selected")
+    assert named("No sessions yet") and not named("No seller selected")
+    assert not buttons("Active")
+    assert not buttons("Selected")[0].getState().contains(pyatspi.STATE_SENSITIVE)
+    snapshot("selected-pending")
+    checks.append("A selected seller with no daemon or funded session is labeled Selected")
     calls = [json.loads(line) for line in (output / "cli-calls.jsonl").read_text().splitlines()]
     assert calls and all(call[0] in ("status", "service", "version") for call in calls)
     assert not (output / "status-timed-out").exists(), "Blocked refresh exceeded its fixture deadline"

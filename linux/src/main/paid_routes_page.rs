@@ -172,7 +172,7 @@ fn build_paid_route_market_card(app: &AppRef, page: &gtk::Box, state: &NativeApp
 
     section_header(&buyer, "Your Paid Internet", "");
     if market.sessions.is_empty() {
-        empty_row(&buyer, "No seller selected");
+        empty_row(&buyer, "No sessions yet");
     } else {
         for session in &market.sessions {
             paid_route_session_row(
@@ -342,7 +342,7 @@ fn paid_route_offer_row(
     if offer.can_rate {
         paid_exit_rating_buttons(app, &row, &offer.seller_npub, offer.personal_rating);
     }
-    let active = state.internet_source == "paid_manual" && state.exit_node == offer.seller_npub;
+    let selected = state.internet_source == "paid_manual" && state.exit_node == offer.seller_npub;
     let compatible_mint = offer.price_msat_per_gb == 0
         || offer.accepted_mints.iter().any(|accepted| {
             state
@@ -353,15 +353,15 @@ fn paid_route_offer_row(
                 .any(|mint| mint.url == *accepted)
         });
     let connect = icon_text_button(
-        if active { "Active" } else { "Connect" },
-        if active {
+        if selected { "Selected" } else { "Connect" },
+        if selected {
             "emblem-ok-symbolic"
         } else {
             "go-next-symbolic"
         },
     );
     connect.set_sensitive(
-        !active && compatible_mint && !offer.key.is_empty() && offer.personal_rating >= 0,
+        !selected && compatible_mint && !offer.key.is_empty() && offer.personal_rating >= 0,
     );
     {
         let app = app.clone();

@@ -194,13 +194,13 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let first = Keys::generate();
     let second = Keys::generate();
     let third = Keys::generate();
-    let open = |lease: &str| PaidRouteSessionOpen {
+    let open = |lease: &str, host: u8| PaidRouteSessionOpen {
         version: nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_VERSION.into(),
         service_id: "internet-exit".into(),
         lease_id: lease.into(),
         channel_id: format!("channel-{lease}"),
         seller_npub: seller_npub.clone(),
-        buyer_tunnel_ip: "10.44.201.17/32".into(),
+        buyer_tunnel_ip: format!("10.44.0.{host}/32"),
         expires_at_unix: unix_timestamp() + 600,
     };
     let mut peer = fips_endpoint::FipsEndpointPeer {
@@ -233,7 +233,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(first.public_key().to_hex(), open("first"))],
+        vec![(first.public_key().to_hex(), open("first", 1))],
         &[peer.clone()],
     )
     .unwrap();
@@ -242,7 +242,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(second.public_key().to_hex(), open("rotated-key"))],
+        vec![(second.public_key().to_hex(), open("rotated-key", 2))],
         &[peer.clone()],
     )
     .unwrap();
@@ -254,7 +254,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(third.public_key().to_hex(), open("relay"))],
+        vec![(third.public_key().to_hex(), open("relay", 3))],
         &[peer.clone()],
     )
     .unwrap();
@@ -264,7 +264,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(third.public_key().to_hex(), open("other-hop"))],
+        vec![(third.public_key().to_hex(), open("other-hop", 3))],
         &[peer],
     )
     .unwrap();

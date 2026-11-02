@@ -325,6 +325,8 @@
             Ok(())
         }).unwrap();
 
+        assert!(!runtime.state().exit_node_active, "a persisted probe cannot replace the actual route");
+        runtime.daemon_state.as_mut().unwrap().tunnel_exit_peer = Some(seller_hex.clone());
         let active = runtime.state();
         assert!(active.exit_node_active);
         assert!(!active.exit_node_blocked);
@@ -332,6 +334,17 @@
             format!("Automatic paid exit · {provider_name} · 198.51.100.42 · Active"));
         assert!(!active.networks[0].participants.iter()
             .any(|peer| peer.pubkey_hex == seller_hex), "seller remains outside the private roster");
+
+        let store_path = nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path);
+        update_paid_route_store(&store_path, |store| {
+            store.selected_buyer_session_id.clear();
+            Ok(())
+        }).unwrap();
+        assert!(!runtime.state().exit_node_active, "an older lease must not supply the selected session's health");
+        update_paid_route_store(&store_path, |store| {
+            store.selected_buyer_session_id = session.session_id.clone();
+            Ok(())
+        }).unwrap();
 
         runtime.daemon_state.as_mut().unwrap().peers[0].reachable = false;
         assert!(!runtime.state().exit_node_active, "old probe must not hide disconnection");

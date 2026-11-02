@@ -342,7 +342,9 @@ pub(super) fn apply_paid_exit_session_opens(
             ..PaidExitApplySessionOpensResult::default()
         };
         for (buyer_pubkey, open) in opens {
-            let buyer_pubkey = match app.validate_paid_exit_seller_buyer(&buyer_pubkey) {
+            let buyer_pubkey = match app
+                .validate_paid_exit_seller_session(&buyer_pubkey, &open.buyer_tunnel_ip)
+            {
                 Ok(buyer_pubkey) => buyer_pubkey,
                 Err(error) => {
                     result.error_count += 1;
@@ -401,6 +403,7 @@ pub(super) struct PaidExitMeshEventContext<'a> {
     pub(super) underlay_interface_mtu: Option<u32>,
     pub(super) own_pubkey: Option<&'a str>,
     pub(super) vpn_status: &'a mut String,
+    pub(super) seller_admission_refresh_pending: &'a mut bool,
     pub(super) spilman_receiver: Option<&'a FileSpilmanPaymentReceiver>,
     pub(super) spilman_receiver_error: Option<&'a str>,
 }
@@ -418,6 +421,7 @@ pub(super) async fn handle_paid_exit_mesh_events(
         underlay_interface_mtu,
         own_pubkey,
         vpn_status,
+        seller_admission_refresh_pending,
         spilman_receiver,
         spilman_receiver_error,
     } = context;
@@ -432,13 +436,13 @@ pub(super) async fn handle_paid_exit_mesh_events(
             apply_paid_exit_session_opens(app, config_path, session_opens, &peers)
         });
         match applied {
-            Ok(result) => {
+            Ok(mut result) => {
                 eprintln!(
                     "paid-exit: authenticated session opens received={} applied={} errors={} changed={}",
                     result.received_count, result.applied_count, result.error_count, result.changed
                 );
-                if result.changed
-                    && let Err(error) = refresh_fips_tunnel_config(
+                if result.changed || *seller_admission_refresh_pending {
+                    let refreshed = refresh_fips_tunnel_config(
                         runtime,
                         app,
                         config_path,
@@ -447,10 +451,12 @@ pub(super) async fn handle_paid_exit_mesh_events(
                         underlay_interface_mtu,
                         own_pubkey,
                     )
-                    .await
-                {
-                    *vpn_status =
-                        format!("paid-exit free-probe admission refresh failed ({error})");
+                    .await;
+                    *seller_admission_refresh_pending = refreshed.is_err();
+                    if let Err(error) = refreshed {
+                        *vpn_status = format!("paid-exit admission refresh failed ({error})");
+                        result.acknowledgments.clear();
+                    }
                 }
                 for (buyer_pubkey, lease_id) in result.acknowledgments {
                     if let Err(error) = runtime
@@ -585,6 +591,17 @@ pub(super) fn flush_fips_paid_route_usage(
             Vec::new()
         };
 
+        if let Some(seller) = store.pending_probe_seller() {
+            let seller_pubkey = normalize_nostr_pubkey(&seller)?;
+            let usage_delta = runtime.drain_paid_route_usage(&seller_pubkey)?;
+            if !usage_delta.is_empty() {
+                store.record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
+                    seller_pubkey,
+                    usage_delta,
+                    now_unix,
+                })?;
+            }
+        }
         let mut buyer_delta = PaidRouteUsage::default();
         if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
             let mut usage_delta = runtime.drain_paid_route_usage(&seller_pubkey)?;

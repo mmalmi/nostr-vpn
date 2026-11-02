@@ -203,31 +203,22 @@ impl NativeAppRuntime {
         let selected_exit_node = normalize_nostr_pubkey(selected_exit_node).ok()?;
         let store = load_paid_route_store(&self.paid_route_store_path()).ok()?;
         let now_unix = unix_timestamp();
-        store
-            .sessions
-            .values()
-            .filter_map(|record| {
-                let channel = store.channels.get(&record.session.payment.channel_id)?;
-                let counterparty = normalize_nostr_pubkey(&channel.counterparty_npub).ok()?;
-                (channel.role == PaidRouteChannelRole::Buyer
-                    && counterparty == selected_exit_node
-                    && store
-                        .buyer_session_is_seller_admitted(&record.session.session_id)
-                        .unwrap_or(false)
-                    && store
-                        .buyer_session_allows_routing(&record.session.session_id, now_unix)
-                        .unwrap_or(false))
-                .then(|| {
-                    (
-                        record.updated_at_unix,
-                        record.session.realized_exit_ip.clone().unwrap_or_default(),
-                    )
-                })
-            })
-            .max_by_key(|(updated_at, _)| *updated_at)
-            .and_then(|(_, realized_exit_ip)| {
-                (!realized_exit_ip.trim().is_empty()).then_some(realized_exit_ip)
-            })
+        let session_id = &store.selected_buyer_session_id;
+        let session = &store.sessions.get(session_id)?.session;
+        let channel = store.channels.get(&session.payment.channel_id)?;
+        if channel.role != PaidRouteChannelRole::Buyer
+            || normalize_nostr_pubkey(&channel.counterparty_npub).ok()? != selected_exit_node
+            || !store.buyer_session_is_seller_admitted(session_id).ok()?
+            || !store
+                .buyer_session_allows_routing(session_id, now_unix)
+                .ok()?
+        {
+            return None;
+        }
+        session
+            .realized_exit_ip
+            .clone()
+            .filter(|ip| !ip.trim().is_empty())
     }
 
     fn mutate_paid_route_store(

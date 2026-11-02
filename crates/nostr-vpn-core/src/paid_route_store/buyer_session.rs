@@ -123,6 +123,18 @@ impl PaidRouteStore {
         })
     }
 
+    pub fn pending_probe_seller(&self) -> Option<String> {
+        if self.automatic_reselect_from.is_empty()
+            || self.automatic_reselect_session_id.is_empty()
+            || self.automatic_reselect_session_id == self.selected_buyer_session_id
+        {
+            return None;
+        }
+        self.buyer_session_seller_npub(&self.automatic_reselect_session_id)
+            .ok()
+            .filter(|seller| seller != &self.automatic_reselect_from)
+    }
+
     pub fn buyer_session_seller_npub(&self, session_id: &str) -> Result<String> {
         let session_id = trimmed_required(session_id, "paid route session id")?;
         let record = self

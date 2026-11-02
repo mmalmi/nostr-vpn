@@ -42,18 +42,26 @@ impl ProbeFlow {
         self.matches(packet, self.local, self.remote)
     }
 
-    pub(super) fn send_run(&self, packet: Vec<u8>) -> FipsEndpointIdentitySendRun {
-        FipsEndpointIdentitySendRun::new(
+    pub(super) fn send_run(
+        &self,
+        mesh: &FipsPrivateMeshRuntime,
+        packet: Vec<u8>,
+    ) -> Result<FipsEndpointIdentitySendRun> {
+        let key = self.seller.pubkey().serialize();
+        mesh.note_paid_route_outbound_packet(None, Some(&key), &packet)?;
+        Ok(FipsEndpointIdentitySendRun::new(
             None,
-            Some(self.seller.pubkey().serialize()),
+            Some(key),
             self.seller,
             packet,
-        )
+        ))
     }
 
     pub(super) fn admit_reply(&self, peer: PeerIdentity, packet: &[u8]) -> Option<bool> {
         self.matches(packet, self.remote, self.local).then(|| {
-            if peer != self.seller {
+            // A seller is identified by the x-only key in its signed offer.
+            // The authenticated handshake also carries the full key's parity.
+            if peer.pubkey() != self.seller.pubkey() {
                 return false;
             }
             self.received.store(true, Ordering::Release);

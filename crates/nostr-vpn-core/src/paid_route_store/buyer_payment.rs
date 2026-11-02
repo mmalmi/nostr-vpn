@@ -607,7 +607,9 @@ impl PaidRouteStore {
         now_unix: u64,
     ) -> Option<PaidRouteBuyerUsageSession> {
         let mut best = None::<(u64, PaidRouteBuyerUsageSession)>;
-        let accounting_session = if self
+        let accounting_session = if self.pending_probe_seller().as_deref() == Some(seller_npub) {
+            &self.automatic_reselect_session_id
+        } else if self
             .buyer_session_renewal_starts
             .contains_key(&self.selected_buyer_session_id)
         {

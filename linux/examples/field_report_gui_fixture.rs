@@ -27,7 +27,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     buyer.fips_bootstrap_enabled = false;
     buyer.fips_nostr_discovery_enabled = false;
     buyer.wallet_fiat_enabled = false;
-    buyer.save(&config_path)?;
+    let selected =
+        std::env::args_os().nth(2).as_deref() == Some(std::ffi::OsStr::new("--selected"));
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let store_path = paid_route_store_file_path(&config_path);
@@ -37,6 +38,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         ("free-desktop-regression", 0),
     ] {
         let seller = AppConfig::generated_without_networks();
+        if selected && price > 0 {
+            buyer.select_public_paid_exit_node(&seller.own_nostr_pubkey_hex()?)?;
+        }
         let mut settings = PaidExitConfig::default();
         settings.enabled = true;
         settings.pricing.price_msat_per_gb = price;
@@ -49,6 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             signed_paid_exit_offer_from_config(id, &seller.nostr_keys()?, &settings, None, now)?;
         upsert_paid_route_offer(&store_path, signed, Vec::new(), now)?;
     }
+    buyer.save(&config_path)?;
     let store = load_paid_route_store(&store_path)?;
     assert_eq!(store.offers.len(), 2);
     assert!(store.wallet.mints.is_empty());

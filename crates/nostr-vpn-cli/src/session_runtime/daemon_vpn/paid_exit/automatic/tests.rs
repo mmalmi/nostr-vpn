@@ -217,6 +217,7 @@ fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session(
     assert!(
         crate::load_pending_fips_control_recipients(&config_path)
             .unwrap()
+            .peers
             .iter()
             .any(|(_, peer)| peer == &alternative.public_key().to_bech32().unwrap())
     );
@@ -248,9 +249,20 @@ fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session(
     );
     // The request and the original channel also survive a daemon restart.
     recovered = PaidExitAutomaticBuyer::default();
-    assert!(reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 5).unwrap());
-    assert_eq!(load_paid_route_store(&store_path).unwrap().automatic_reselect_session_id, candidate_id);
-    assert_eq!(app.public_paid_exit_node_pubkey_hex(), Some(seller_pubkey.clone()));
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 5)
+            .unwrap()
+    );
+    assert_eq!(
+        load_paid_route_store(&store_path)
+            .unwrap()
+            .automatic_reselect_session_id,
+        candidate_id
+    );
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(seller_pubkey.clone())
+    );
     // An ACK alone is insufficient. Concentrate authority in the authenticated
     // probe completion, which must also re-read the user's current selection.
     update_paid_route_store(&store_path, |s| {
@@ -269,6 +281,27 @@ fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session(
         app.public_paid_exit_node_pubkey_hex(),
         Some(seller_pubkey.clone())
     );
+    update_paid_route_store(&store_path, |s| {
+        let recorded = s
+            .record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
+                seller_pubkey: alternative.public_key().to_hex(),
+                usage_delta: PaidRouteUsage {
+                    tx_bytes: 800,
+                    rx_bytes: 400,
+                    billable_bytes: 1200,
+                    ..Default::default()
+                },
+                now_unix: now + 6,
+            })?
+            .expect("candidate usage");
+        assert_eq!(recorded.session_id, candidate_id);
+        assert_eq!(
+            s.sessions[&session.session.session_id].session.usage,
+            session.session.usage
+        );
+        Ok(())
+    })
+    .unwrap();
     let mut direct = app.clone();
     direct.set_internet_source(InternetSource::Direct);
     direct.save(&config_path).unwrap();

@@ -438,6 +438,18 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
         .count();
     let mesh_ready = vpn_active;
     let health = build_health_issues(app, vpn_active, mesh_ready, network, port_mapping, &peers);
+    let vpn_status = if vpn_active
+        && matches!(app.internet_source, nostr_vpn_core::config::InternetSource::PaidManual | nostr_vpn_core::config::InternetSource::PaidAutomatic)
+        && matches!(vpn_status, "VPN on" | "Config reloaded" | "Connected (network refresh)")
+    {
+        match app.public_paid_exit_node_pubkey_hex() {
+            Some(seller) if tunnel_runtime.tunnel_exit_peer.as_deref() == Some(seller.as_str()) =>
+                "Paid exit route installed",
+            _ => "Waiting for paid exit route",
+        }
+    } else {
+        vpn_status
+    };
     let (open_file_descriptor_count, open_file_descriptor_types) =
         open_file_descriptor_snapshot().unzip();
     DaemonRuntimeState {

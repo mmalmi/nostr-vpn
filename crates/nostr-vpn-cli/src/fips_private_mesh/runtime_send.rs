@@ -101,7 +101,7 @@ impl FipsPrivateMeshRuntime {
             for packet in packets {
                 #[cfg(feature = "paid-exit")]
                 if let Some(flow) = probe.as_deref().filter(|f| f.matches_outbound(&packet)) {
-                    runs.push(flow.send_run(packet));
+                    runs.push(flow.send_run(self, packet)?);
                     routed_packets += 1;
                     continue;
                 }
@@ -190,7 +190,7 @@ impl FipsPrivateMeshRuntime {
                     .as_deref()
                     .filter(|f| f.matches_outbound(&packet.bytes))
                 {
-                    runs.push(flow.send_run(packet.bytes));
+                    runs.push(flow.send_run(self, packet.bytes)?);
                     routed_packets += 1;
                     continue;
                 }
