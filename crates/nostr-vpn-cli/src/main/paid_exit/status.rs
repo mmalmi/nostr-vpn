@@ -762,7 +762,10 @@ fn paid_exit_mints_text(mints: &[String]) -> String {
     if mints.is_empty() {
         "none".to_string()
     } else {
-        mints.join(",")
+        mints.iter().map(|mint| match nostr_vpn_core::paid_routes::paid_exit_mint_notice(mint) {
+            Some(notice) => format!("{mint} ({notice})"),
+            None => mint.clone(),
+        }).collect::<Vec<_>>().join(",")
     }
 }
 

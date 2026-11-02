@@ -448,6 +448,21 @@ impl ManualPaidExitProvider {
     }
 }
 
+/// Local offer presentation only. Private and test-network sellers may intentionally use these mints.
+pub fn paid_exit_mint_notice(mint: &str) -> Option<&'static str> {
+    let url = Url::parse(mint).ok()?;
+    let host = url.host_str()?.trim_matches(['[', ']']);
+    if host.eq_ignore_ascii_case("testnut.cashu.space") {
+        return Some("test mint");
+    }
+    let local = match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local() || ip.is_unspecified(),
+        Err(_) => host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local"),
+    };
+    if local { Some("local network address") } else if url.scheme() == "http" { Some("unencrypted HTTP") } else { None }
+}
+
 fn normalize_paid_exit_provider_mint(value: &str) -> Result<String> {
     let mut url = Url::parse(value).context("invalid paid exit provider mint URL")?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {

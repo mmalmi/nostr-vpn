@@ -313,6 +313,16 @@ fn paid_route_offer_row(
     status.set_xalign(0.0);
     status.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     text.append(&status);
+    for mint in &offer.accepted_mints {
+        if let Some(notice) = nostr_vpn_core::paid_routes::paid_exit_mint_notice(mint) {
+            let label = gtk::Label::new(Some(&format!("{mint} · {notice}")));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            label.add_css_class("caption");
+            label.add_css_class("warning");
+            text.append(&label);
+        }
+    }
     let metrics = paid_route_metric_text(
         &non_empty_or(
             &offer.quality_text,
