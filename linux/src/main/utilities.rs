@@ -203,24 +203,9 @@ fn desktop_exec_escape(value: &str) -> String {
 }
 
 fn default_data_dir() -> String {
-    if let Some(data_dir) = std::env::var_os("NVPN_APP_DATA_DIR") {
-        return PathBuf::from(data_dir).to_string_lossy().to_string();
-    }
-    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
-        return PathBuf::from(data_home)
-            .join("nostr-vpn")
-            .to_string_lossy()
-            .to_string();
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join(".local")
-            .join("share")
-            .join("nostr-vpn")
-            .to_string_lossy()
-            .to_string();
-    }
-    "nostr-vpn".to_string()
+    nostr_vpn_core::platform_paths::linux_user_config_path().parent()
+        .filter(|dir| !dir.as_os_str().is_empty()).unwrap_or_else(|| std::path::Path::new("."))
+        .to_string_lossy().into_owned()
 }
 
 fn bootstrap_session_bus() {
