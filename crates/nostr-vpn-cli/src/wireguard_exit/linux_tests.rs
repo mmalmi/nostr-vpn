@@ -20,6 +20,7 @@ struct FakeNetworkState {
     table_routes: Vec<String>,
     main_routes: Vec<String>,
     policy_rule_present: bool,
+    unscoped_policy_rule_present: bool,
 }
 
 struct FakeRunner {
@@ -63,6 +64,7 @@ impl FakeRunner {
                     "default via 203.0.113.1 dev eth1 src 203.0.113.10 metric 20".to_string(),
                 ],
                 policy_rule_present: true,
+                unscoped_policy_rule_present: false,
             },
             commands: Vec::new(),
             stdin_commands: Vec::new(),
@@ -255,12 +257,17 @@ impl LinuxCommandRunner for FakeRunner {
                 return Ok(Self::success(self.state.table_routes.join("\n") + "\n"));
             }
             "-4 rule show" => {
+                let unscoped = self
+                    .state
+                    .unscoped_policy_rule_present
+                    .then_some("10888:\tfrom 10.44.0.0/16 lookup 51888\n");
                 let managed = self
                     .state
                     .policy_rule_present
-                    .then_some("10888:\tfrom 10.44.0.0/16 lookup 51888\n");
+                    .then_some("10888:\tfrom 10.44.0.0/16 iif nvpn0 lookup 51888\n");
                 return Ok(Self::success(format!(
-                    "0:\tfrom all lookup local\n{}32766:\tfrom all lookup main\n",
+                    "0:\tfrom all lookup local\n{}{}32766:\tfrom all lookup main\n",
+                    unscoped.unwrap_or(""),
                     managed.unwrap_or("")
                 )));
             }
@@ -327,12 +334,22 @@ impl LinuxCommandRunner for FakeRunner {
                 self.state.table_routes.clear();
                 return Ok(self.mutation_result());
             }
-            "-4 rule add priority 10888 from 10.44.0.0/16 table 51888" => {
+            "-4 rule add priority 10888 from 10.44.0.0/16 iif nvpn0 table 51888" => {
                 self.state.policy_rule_present = true;
                 return Ok(self.mutation_result());
             }
-            "-4 rule del priority 10888 from 10.44.0.0/16 table 51888" => {
+            "-4 rule del priority 10888 from 10.44.0.0/16 iif nvpn0 table 51888" => {
                 self.state.policy_rule_present = false;
+                return Ok(self.mutation_result());
+            }
+            // Without `iif` the kernel deletes the first rule matching the rest,
+            // which is the older unscoped rule when both exist.
+            "-4 rule del priority 10888 from 10.44.0.0/16 table 51888" => {
+                if self.state.unscoped_policy_rule_present {
+                    self.state.unscoped_policy_rule_present = false;
+                } else {
+                    self.state.policy_rule_present = false;
+                }
                 return Ok(self.mutation_result());
             }
             "-4 route flush cache" => {
@@ -801,19 +818,10 @@ fn post_apply_cleanup_restores_existing_interface_and_unowned_state() {
         .expect("inbound-guard failure cleanup");
     assert_eq!(runner.state, initial);
     assert!(
-        !runner.commands.iter().any(|(_, args)| {
-            args == &strings(&[
-                "-4",
-                "rule",
-                "del",
-                "priority",
-                "10888",
-                "from",
-                "10.44.0.0/16",
-                "table",
-                "51888",
-            ])
-        }),
+        !runner
+            .commands
+            .iter()
+            .any(|(_, args)| args.starts_with(&strings(&["-4", "rule", "del"]))),
         "a preexisting exact policy rule is not owned"
     );
 }
@@ -899,6 +907,73 @@ fn legacy_journal_still_restores_pre_policy_main_defaults() {
     let legacy: LinuxWireGuardExitRuntime = serde_json::from_value(legacy).unwrap();
     assert!(legacy.main_defaults_owned);
     runner.state.main_routes = vec!["default dev nvwg0 src 10.77.0.2".into()];
+    cleanup_linux_wireguard_exit_upstream_with(&mut runner, &legacy).expect("legacy cleanup");
+    assert_eq!(runner.state, initial);
+}
+
+#[test]
+fn policy_rule_matches_only_packets_from_the_mesh_interface() {
+    let _guard = lock_tests();
+    let mut runner = FakeRunner::existing();
+    runner.state.policy_rule_present = false;
+    // A rule matching the mesh source range from any interface also captures
+    // local networks in that range, so it must not count as ours.
+    runner.state.unscoped_policy_rule_present = true;
+    let initial = runner.state.clone();
+
+    let runtime = apply_linux_wireguard_exit_upstream_with(
+        &mut runner,
+        &config(),
+        "10.44.0.0/16",
+        None,
+        None,
+    )
+    .expect("WireGuard exit apply");
+    command_index(
+        &runner,
+        &[
+            "-4",
+            "rule",
+            "add",
+            "priority",
+            "10888",
+            "from",
+            "10.44.0.0/16",
+            "iif",
+            "nvpn0",
+            "table",
+            "51888",
+        ],
+    );
+
+    cleanup_linux_wireguard_exit_upstream_with(&mut runner, &runtime)
+        .expect("WireGuard exit cleanup");
+    assert_eq!(
+        runner.state, initial,
+        "only the owned scoped rule is removed"
+    );
+}
+
+#[test]
+fn legacy_journal_removes_the_unscoped_policy_rule() {
+    let _guard = lock_tests();
+    let mut runner = FakeRunner::existing();
+    runner.state.policy_rule_present = false;
+    let initial = runner.state.clone();
+    let runtime = apply_linux_wireguard_exit_upstream_with(
+        &mut runner,
+        &config(),
+        "10.44.0.0/16",
+        None,
+        None,
+    )
+    .expect("fixture apply");
+    let mut legacy = serde_json::to_value(&runtime).unwrap();
+    legacy.as_object_mut().unwrap().remove("policy_rule_iif");
+    let legacy: LinuxWireGuardExitRuntime = serde_json::from_value(legacy).unwrap();
+    // The version that wrote this journal installed the unscoped rule.
+    runner.state.policy_rule_present = false;
+    runner.state.unscoped_policy_rule_present = true;
     cleanup_linux_wireguard_exit_upstream_with(&mut runner, &legacy).expect("legacy cleanup");
     assert_eq!(runner.state, initial);
 }

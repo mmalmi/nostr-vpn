@@ -431,9 +431,12 @@ pub(super) fn replace_linux_policy_mesh_route(
     )
 }
 
+// The source range alone also matches local networks that happen to use it, so
+// only packets arriving from the private mesh may take the WireGuard table.
 pub(super) fn add_linux_wireguard_exit_policy_rule(
     runner: &mut impl LinuxCommandRunner,
     source_cidr: &str,
+    mesh_iface: &str,
 ) -> Result<()> {
     run_checked(
         runner,
@@ -446,6 +449,8 @@ pub(super) fn add_linux_wireguard_exit_policy_rule(
             &WIREGUARD_EXIT_RULE_PRIORITY.to_string(),
             "from",
             source_cidr,
+            "iif",
+            mesh_iface,
             "table",
             &WIREGUARD_EXIT_TABLE.to_string(),
         ]),
@@ -627,24 +632,28 @@ pub(super) fn restore_linux_main_default_snapshot_exact(
 pub(super) fn delete_linux_wireguard_exit_policy_rule(
     runner: &mut impl LinuxCommandRunner,
     source_cidr: &str,
+    mesh_iface: Option<&str>,
     table: u32,
     priority: u32,
 ) -> Result<()> {
-    run_checked_allow_absent(
-        runner,
-        "ip",
-        &strings(&[
-            "-4",
-            "rule",
-            "del",
-            "priority",
-            &priority.to_string(),
-            "from",
-            source_cidr,
-            "table",
-            &table.to_string(),
-        ]),
-    )
+    let priority = priority.to_string();
+    let table = table.to_string();
+    let mut args = vec![
+        "-4",
+        "rule",
+        "del",
+        "priority",
+        priority.as_str(),
+        "from",
+        source_cidr,
+    ];
+    // Journals written before the rule was scoped carry no interface; deleting
+    // without `iif` removes the unscoped rule those versions installed.
+    if let Some(mesh_iface) = mesh_iface {
+        args.extend(["iif", mesh_iface]);
+    }
+    args.extend(["table", table.as_str()]);
+    run_checked_allow_absent(runner, "ip", &strings(&args))
 }
 
 pub(super) fn delete_linux_wireguard_exit_link(
@@ -661,16 +670,18 @@ pub(super) fn flush_linux_route_cache(runner: &mut impl LinuxCommandRunner) -> R
 pub(super) fn linux_wireguard_exit_policy_rule_exists(
     output: &str,
     source_cidr: &str,
+    mesh_iface: &str,
     table: u32,
     priority: u32,
 ) -> bool {
-    let priority_prefix = format!("{priority}:");
-    let table_lookup = format!("lookup {table}");
+    let priority = format!("{priority}:");
+    let table = table.to_string();
     output.lines().any(|line| {
-        let line = line.trim();
-        line.starts_with(&priority_prefix)
-            && line.contains("from ")
-            && line.contains(source_cidr)
-            && line.contains(&table_lookup)
+        let tokens = line.split_whitespace().collect::<Vec<_>>();
+        let has_pair = |key: &str, value: &str| tokens.windows(2).any(|pair| pair == [key, value]);
+        tokens.first() == Some(&priority.as_str())
+            && has_pair("from", source_cidr)
+            && has_pair("iif", mesh_iface)
+            && has_pair("lookup", &table)
     })
 }

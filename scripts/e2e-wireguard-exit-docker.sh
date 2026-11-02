@@ -319,6 +319,23 @@ if [[ -z "$FIPS_IFACE" ]] \
   echo "mesh reply route: ${MESH_REPLY_ROUTE:-unavailable}" >&2
   exit 1
 fi
+# A local network inside the mesh source range, such as a container or VM
+# bridge, must keep its own routes while the WG exit policy is installed.
+"${COMPOSE[@]}" exec -T node-a sh -lc '
+  set -e
+  ip link add nvpn-e2e-lan type veth peer name nvpn-e2e-lanp
+  ip addr add 10.44.0.1/24 dev nvpn-e2e-lan
+  ip link set nvpn-e2e-lanp up
+  ip link set nvpn-e2e-lan up'
+LOCAL_NET_ROUTE="$("${COMPOSE[@]}" exec -T node-a sh -lc \
+  'ip -4 route get 10.44.0.5 from 10.44.0.1' | tr -d '\r')"
+"${COMPOSE[@]}" exec -T node-a ip link del nvpn-e2e-lan
+LOCAL_NET_IFACE="$(awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$LOCAL_NET_ROUTE")"
+if [[ "$LOCAL_NET_IFACE" != "nvpn-e2e-lan" ]]; then
+  echo "wireguard-exit e2e failed: the WG exit policy captured a local network in the mesh range" >&2
+  echo "local network route: ${LOCAL_NET_ROUTE:-unavailable}" >&2
+  exit 1
+fi
 if ! "${COMPOSE[@]}" exec -T node-a ping -I "$ALICE_TUNNEL_IP" -c 5 -W 2 "$BOB_TUNNEL_IP" \
   >/tmp/nvpn-wg-exit-mesh-a-to-b.log; then
   echo "wireguard-exit e2e failed: node-a could not reach node-b while the WG exit was active" >&2
