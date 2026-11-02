@@ -816,6 +816,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         "failed to persist daemon state after applying control request"
                     ));
                 }
+                match &control_result {
+                    Ok(()) => eprintln!("daemon: {} completed at {}", request.as_str(), unix_timestamp()),
+                    Err(error) => eprintln!("daemon: {} failed at {}: {error:#}", request.as_str(), unix_timestamp()),
+                }
                 let _ = write_daemon_control_result(&config_path, request, control_result);
             }
             if !state_background_ready {

@@ -454,22 +454,27 @@ fn control_daemon(args: ControlArgs, request: DaemonControlRequest) -> Result<()
     let status = daemon_status(&config_path)?;
     if !status.running {
         persist_desired_daemon_vpn_enabled_for_request(&config_path, request)?;
-        println!("daemon: not running");
+        match request {
+            DaemonControlRequest::Pause => println!("daemon: not running; VPN will stay paused on startup"),
+            DaemonControlRequest::Resume => println!("daemon: not running; VPN will connect on startup"),
+            _ => println!("daemon: not running"),
+        }
         return Ok(());
     }
 
     wait_for_running_daemon_control_ready(&config_path, &status)?;
-    write_daemon_control_request(&config_path, request)?;
-    match request {
-        DaemonControlRequest::Pause | DaemonControlRequest::Resume => {}
-        DaemonControlRequest::Reload | DaemonControlRequest::Stop => {
-            wait_for_daemon_control_ack(&config_path, daemon_control_ack_timeout(request))?;
-        }
+    let confirm_vpn = matches!(request, DaemonControlRequest::Pause | DaemonControlRequest::Resume);
+    if confirm_vpn {
+        clear_daemon_control_result(&config_path);
     }
-
+    write_daemon_control_request(&config_path, request)?;
+    wait_for_daemon_control_ack(&config_path, daemon_control_ack_timeout(request))?;
+    if confirm_vpn {
+        wait_for_daemon_control_result(&config_path, request, daemon_control_result_timeout(request))?;
+    }
     match request {
-        DaemonControlRequest::Pause => println!("daemon pause requested"),
-        DaemonControlRequest::Resume => println!("daemon resume requested"),
+        DaemonControlRequest::Pause => println!("VPN paused until resumed, including after restart"),
+        DaemonControlRequest::Resume => println!("VPN resumed"),
         DaemonControlRequest::Reload => println!("daemon reload requested"),
         DaemonControlRequest::Stop => println!("daemon stop requested"),
     }
