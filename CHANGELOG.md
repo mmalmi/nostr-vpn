@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## 4.1.20 - 2026-11-03
 
+### Release notes
+
+Nostr VPN does less discovery work once a peer is connected and recovers
+peer messaging more reliably after a restart. This release also fixes paid
+Internet refunds and seller payouts, and removes network join secrets from
+diagnostic bundles.
+
+In release testing, an iPhone with the VPN enabled used 2.47% of one CPU core
+while idle, above our 2% target. A mesh connection also timed out during a
+test with a heavily loaded relay. We are still investigating the cause.
+
 ### Improved
 
 - Honor peer capacity and gossip settings across desktop and mobile, and spread
