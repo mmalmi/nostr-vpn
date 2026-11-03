@@ -38,6 +38,7 @@ type LiveUpdate = Rc<dyn Fn(&NativeAppState)>;
 struct AppRuntime {
     model: Rc<RefCell<Option<AppRef>>>,
     pending_urls: Rc<RefCell<Vec<String>>>,
+    pending_files: Rc<RefCell<Vec<PathBuf>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,6 +179,7 @@ struct AppModel {
     header_status_dot: gtk::Box,
     header_vpn_switch: gtk::Switch,
     selected_device_pubkey: Option<String>,
+    focused_transfer_id: Option<String>,
     drafts: Drafts,
     notice: String,
     tray: tray::TrayRuntime,
@@ -246,6 +248,7 @@ impl AppModel {
             header_status_dot,
             header_vpn_switch,
             selected_device_pubkey: None,
+            focused_transfer_id: None,
             drafts,
             notice: String::new(),
             tray,
@@ -272,6 +275,7 @@ include!("main/core_worker.rs");
 include!("main/runtime_events.rs");
 include!("main/shell.rs");
 include!("main/devices_page.rs");
+include!("main/file_transfers.rs");
 include!("main/share_page.rs");
 include!("main/exit_nodes_page.rs");
 include!("main/paid_routes_page.rs");

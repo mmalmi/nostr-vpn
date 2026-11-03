@@ -1980,6 +1980,7 @@ checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
 dependencies = [
  "futures-core",
  "futures-sink",
+ "nanorand",
  "spin",
 ]
 
@@ -3630,6 +3631,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nanorand"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
+dependencies = [
+ "getrandom 0.2.17",
+]
+
+[[package]]
 name = "ndk-context"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3873,9 +3883,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.18"
+version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afd77c862de316d52c9996a406ba7f5b3614e9574666021a01ac733986a8def4"
+checksum = "d7615308044527a935027210cf62720d1ce36e49ae1fe888c0dd705c6359d4a8"
 dependencies = [
  "async-trait",
  "nostr",
@@ -4032,6 +4042,7 @@ dependencies = [
  "boringtun",
  "core-foundation 0.9.4",
  "core-foundation-sys",
+ "flume",
  "hashtree-updater",
  "hex",
  "hickory-proto",
@@ -4049,9 +4060,11 @@ dependencies = [
  "nvpn-cashu-service",
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
+ "nvpn-fips-file-transfer",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
  "reqwest",
+ "rustix",
  "security-framework 2.11.1",
  "security-framework-sys",
  "serde",
@@ -4286,6 +4299,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c667a0ab8bc373e581b59fc5688bfe1b2ca57ffdb419f8da1d0746834ce582f9"
 dependencies = [
  "nvpn-fips-core",
+]
+
+[[package]]
+name = "nvpn-fips-file-transfer"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2004aae502cb19c48bea1c001eaece94c9bfc1b4862e3d452efe68a6d61dc5bf"
+dependencies = [
+ "flume",
+ "libc",
+ "nvpn-fips-core",
+ "nvpn-fips-tcp",
+ "nvpn-fips-tcp-endpoint",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]

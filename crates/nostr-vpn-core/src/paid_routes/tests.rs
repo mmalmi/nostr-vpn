@@ -2,6 +2,30 @@ use super::events::{paid_route_offer_tags, paid_route_tag};
 use super::*;
 
 #[test]
+fn paid_exit_mint_notices_distinguish_test_local_and_http_offers() {
+    assert_eq!(
+        paid_exit_mint_notice("https://testnut.cashu.space"),
+        Some("test mint")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("http://172.17.0.1:3341"),
+        Some("local network address")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("https://[::1]/mint"),
+        Some("local network address")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("http://mint.example"),
+        Some("unencrypted HTTP")
+    );
+    assert_eq!(
+        paid_exit_mint_notice("https://mint.example/testnut.cashu.space"),
+        None
+    );
+}
+
+#[test]
 fn paid_exit_config_normalizes_operator_hints() {
     let mut config = PaidExitConfig {
         enabled: true,
@@ -626,6 +650,45 @@ fn signed_offer_builder_requires_enabled_paid_exit_with_mint_for_nonzero_price()
         .offer()
         .expect("decode normalized offer");
     assert_eq!(offer.ip_support, PaidRouteIpSupport::default());
+}
+
+#[test]
+fn local_seller_cannot_advertise_a_trial_larger_than_its_source_budget() {
+    let seller = Keys::generate();
+    let mut config = sample_paid_exit_config();
+    for (probe, grace) in [
+        (10 * 1024 * 1024, 20 * 1024 * 1024),
+        (8 * 1024 * 1024, 1),
+        (1, u64::MAX),
+    ] {
+        config.channel.free_probe_units = probe;
+        config.channel.grace_units = grace;
+        let error =
+            signed_paid_exit_offer_from_config("exit", &seller, &config, None, 100).unwrap_err();
+        assert!(error.to_string().contains("at most 8 MiB"), "{error}");
+    }
+    config.channel.free_probe_units = 7 * 1024 * 1024;
+    config.channel.grace_units = 1024 * 1024;
+    assert!(signed_paid_exit_offer_from_config("exit", &seller, &config, None, 100).is_ok());
+    config.channel.free_probe_units = 0;
+    config.channel.grace_units = 20 * 1024 * 1024;
+    assert!(signed_paid_exit_offer_from_config("exit", &seller, &config, None, 100).is_ok());
+
+    // Other implementations may serve larger trials. The local abuse budget
+    // must not become a new wire validity rule or invalidate their signatures.
+    config.channel.free_probe_units = 10 * 1024 * 1024;
+    let foreign = SignedPaidRouteOffer::sign(
+        PaidRouteOffer::from_paid_exit_config(
+            "foreign",
+            seller.public_key().to_bech32().unwrap(),
+            &config,
+            None,
+        ),
+        &seller,
+        100,
+    )
+    .unwrap();
+    assert!(foreign.verify().is_ok());
 }
 
 #[test]

@@ -103,6 +103,9 @@ pub(crate) async fn fund_paid_exit_session(
                         shortfall.required_sat,
                     );
                 }
+                if error.is::<cashu_service::MintRequestRejected>() {
+                    return Ok(());
+                }
                 store.defer_buyer_mint_retry(
                     &mint_url,
                     unix_timestamp(),

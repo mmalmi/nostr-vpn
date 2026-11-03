@@ -13,7 +13,8 @@ use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{FipsEndpoint, PeerIdentity};
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, RecordType};
-use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
+#[cfg(test)]
+use hickory_proto::serialize::binary::BinEncodable as _;
 use nostr_vpn_core::config::ExitDnsResolverConfig;
 use nostr_vpn_core::magic_dns::resolve_fips_dns_if_handled;
 use nostr_vpn_core::secure_dns::{
@@ -78,36 +79,45 @@ pub(crate) struct SecureDnsHealthProbe {
 
 impl SecureDnsHealthProbe {
     pub(crate) async fn check_paid_exit(&self) -> Result<()> {
-        let mut query = Message::new(0x4e56, MessageType::Query, OpCode::Query);
-        query.metadata.recursion_desired = true;
-        query.add_query(Query::query(
-            Name::from_ascii(PAID_EXIT_DNS_HEALTH_HOST)
-                .expect("paid exit DNS health host is valid"),
-            RecordType::A,
-        ));
-        let mut packet = Vec::with_capacity(64);
-        query
-            .emit(&mut BinEncoder::new(&mut packet))
-            .context("encode paid exit DNS health query")?;
+        let query = paid_exit_dns_question();
+        let packet = query.to_vec()?;
         let response = self
             .resolver
             .resolve(&packet)
             .await
             .context("secure DNS did not answer through the selected exit")?;
-        let response = Message::from_vec(&response)
-            .context("secure DNS returned an invalid paid exit health response")?;
-        if response.metadata.response_code != ResponseCode::NoError
-            || !response
-                .answers
-                .iter()
-                .any(|answer| matches!(answer.data, RData::A(_)))
-        {
-            return Err(anyhow!(
-                "secure DNS returned no IPv4 address through the selected exit"
-            ));
-        }
+        paid_exit_dns_answer(&query, &response)?;
         Ok(())
     }
+}
+
+pub(crate) fn paid_exit_dns_question() -> Message {
+    let mut query = Message::new(rand::random(), MessageType::Query, OpCode::Query);
+    query.metadata.recursion_desired = true;
+    query.add_query(Query::query(
+        Name::from_ascii(PAID_EXIT_DNS_HEALTH_HOST).expect("valid paid exit health host"),
+        RecordType::A,
+    ));
+    query
+}
+
+pub(crate) fn paid_exit_dns_answer(query: &Message, packet: &[u8]) -> Result<Ipv4Addr> {
+    let response = Message::from_vec(packet).context("invalid paid exit DNS health response")?;
+    if response.metadata.message_type != MessageType::Response
+        || response.metadata.id != query.metadata.id
+        || response.queries != query.queries
+        || response.metadata.response_code != ResponseCode::NoError
+    {
+        anyhow::bail!("invalid paid exit DNS health answer");
+    }
+    response
+        .answers
+        .iter()
+        .find_map(|record| match record.data {
+            RData::A(ip) => Some(ip.0),
+            _ => None,
+        })
+        .ok_or_else(|| anyhow!("secure DNS returned no IPv4 address through the selected exit"))
 }
 
 pub(crate) struct SecureDnsRuntime {

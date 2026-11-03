@@ -590,6 +590,7 @@ dpkg-deb -x "$remote_dir/nostr-vpn.deb.copy" "$package_root"
 [[ "$(stat -c '%a' "$package_root/usr/bin/nostr-vpn")" == "755" ]]
 [[ "$(stat -c '%a' "$package_root/usr/bin/nvpn")" == "755" ]]
 [[ -f "$package_root/usr/share/applications/nostr-vpn.desktop" ]]
+[[ -f "$package_root/usr/share/applications/fi.siriusbusiness.nvpn.desktop" ]]
 find "$package_root/usr/share/icons/hicolor" -type f \
   -name nostr-vpn.png -print -quit | grep -q .
 

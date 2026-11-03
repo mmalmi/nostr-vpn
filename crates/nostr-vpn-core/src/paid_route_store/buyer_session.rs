@@ -20,6 +20,9 @@ impl PaidRouteStore {
         let accepted_terms = PaidExitConfig::from_paid_route_offer(&offer);
         let buyer_npub = normalize_paid_route_npub(&request.buyer_npub, "buyer")?;
         let mint_url = select_buyer_mint(&offer, &self.wallet, request.mint_url.as_deref())?;
+        if mint_url.is_empty() && request.initial_paid_msat != 0 {
+            return Err(anyhow!("an initial payment requires an approved wallet mint"));
+        }
         let balance = self
             .wallet
             .mints
@@ -29,8 +32,8 @@ impl PaidRouteStore {
         let capacity_sat = requested_channel_capacity(
             &offer,
             request.channel_capacity_sat.or_else(|| {
-                automatic_selection::recommended_capacity_sat(&offer, balance)
-                    .or_else(|| automatic_selection::recommended_capacity_sat(&offer, None))
+                self.recommended_capacity_sat(&offer, balance, request.now_unix)
+                    .or_else(|| self.recommended_capacity_sat(&offer, None, request.now_unix))
             }),
         )?;
         let now_unix = request.now_unix;
@@ -121,6 +124,18 @@ impl PaidRouteStore {
             expires_at_unix,
             changed,
         })
+    }
+
+    pub fn pending_probe_seller(&self) -> Option<String> {
+        if self.automatic_reselect_from.is_empty()
+            || self.automatic_reselect_session_id.is_empty()
+            || self.automatic_reselect_session_id == self.selected_buyer_session_id
+        {
+            return None;
+        }
+        self.buyer_session_seller_npub(&self.automatic_reselect_session_id)
+            .ok()
+            .filter(|seller| seller != &self.automatic_reselect_from)
     }
 
     pub fn buyer_session_seller_npub(&self, session_id: &str) -> Result<String> {
@@ -358,6 +373,33 @@ impl PaidRouteStore {
         let before = record.session.usage.clone();
         apply_usage_delta(&mut record.session.usage, &request.usage_delta);
         let changed = record.session.usage != before;
+        if record.session.usage.billable_bytes > before.billable_bytes {
+            if record.last_usage_at_unix == 0 {
+                // A renewal can be funded long before it carries traffic.
+                // Freeze the accounting start before later acknowledgments
+                // or reconnects can move the admission timestamp.
+                record.usage_started_at_unix = if before.billable_bytes > 0 {
+                    // Legacy counters predate the measurement window. Keep
+                    // their full lifetime instead of attributing old traffic
+                    // to a recent reconnect's admission time.
+                    record.created_at_unix
+                } else {
+                    self.buyer_session_renewal_starts
+                        .iter()
+                        .find_map(|(previous, started)| {
+                            (self.buyer_session_renewals.get(previous) == Some(&target.session_id))
+                                .then_some(*started)
+                        })
+                        .or_else(|| {
+                            self.buyer_session_admissions
+                                .get(&record.session.lease_id)
+                                .copied()
+                        })
+                        .unwrap_or(record.created_at_unix)
+                };
+            }
+            record.last_usage_at_unix = record.last_usage_at_unix.max(request.now_unix);
+        }
         if changed {
             record.updated_at_unix = request.now_unix;
         }

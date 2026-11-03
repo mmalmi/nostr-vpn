@@ -72,6 +72,7 @@ if release_join_prepare_ios_release; then exit 90; fi
                'NVPN_IOS_CODE_SIGN_IDENTITY': 'fixture-signing',
                'NVPN_IOS_PROVISIONING_PROFILE_UUID': 'fixture-profile',
                'NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID': 'fixture-tunnel-profile',
+               'NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID': 'fixture-share-profile',
                'NVPN_FIPS_REPO_PATH': str(root), 'CAPTURE': str(capture),
                'NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA': str(retained),
                'NVPN_MOBILE_IOS_RELEASE_XCTESTRUN': str(plan),

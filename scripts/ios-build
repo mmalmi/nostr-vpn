@@ -77,6 +77,7 @@ env (read from .env.release.local or shell):
   NVPN_IOS_UPLOAD_TRANSPORT      Transporter delivery method (default HTTP)
   NVPN_IOS_ADHOC_PROVISIONING_PROFILE_UUID
   NVPN_IOS_ADHOC_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID
+  NVPN_IOS_ADHOC_SHARE_FILES_PROVISIONING_PROFILE_UUID
                                   exact Ad Hoc profiles for ios-release-testing
   NVPN_IOS_FROZEN_DEVICE_UDID    physical device required in those profiles
   NVPN_RELEASE_STAGE_DIR          exact passed release gate for upload actions
@@ -117,6 +118,7 @@ write_export_options() {
   local app_uuid="$3"
   local tunnel_uuid="$4"
   local internal_only="$5"
+  local share_uuid="${6:?File sharing provisioning profile is required}"
   local testflight_internal_only=""
   local testflight_entry=""
   local signing_certificate="${NVPN_IOS_EXPORT_SIGNING_CERTIFICATE:-${NVPN_IOS_CODE_SIGN_IDENTITY:-Apple Distribution}}"
@@ -157,6 +159,8 @@ $testflight_entry
     <string>$app_uuid</string>
     <key>$PACKET_TUNNEL_BUNDLE_ID</key>
     <string>$tunnel_uuid</string>
+    <key>$BUNDLE_ID.ShareFiles</key>
+    <string>$share_uuid</string>
   </dict>
 </dict>
 </plist>
@@ -344,14 +348,15 @@ run_ios_archive() {
   ensure_profiles
   ensure_dir "$DIST_DIR"
 
-  run_ios_xcframework
-  run_ios_project
-
   # shellcheck disable=SC1090
   source "$PROVISIONING_ENV"
   : "${NVPN_IOS_CODE_SIGN_IDENTITY:?code signing identity not set}"
   : "${NVPN_IOS_PROVISIONING_PROFILE_UUID:?profile uuid not set}"
   : "${NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID:?packet tunnel profile uuid not set}"
+  : "${NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID:?File sharing provisioning profile missing; configure the ShareFiles app extension profile before building}"
+
+  run_ios_xcframework
+  run_ios_project
 
   if ! xcodebuild \
     -project "$PROJECT" \
@@ -364,6 +369,7 @@ run_ios_archive() {
     NVPN_IOS_CODE_SIGN_IDENTITY="$NVPN_IOS_CODE_SIGN_IDENTITY" \
     NVPN_IOS_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PROVISIONING_PROFILE_UUID" \
     NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID" \
+    NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID="$NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID" \
     NVPN_BUILD_GIT_SHA="$NVPN_BUILD_GIT_SHA" \
     NVPN_BUILD_TIMESTAMP_UTC="$NVPN_BUILD_TIMESTAMP_UTC" \
     archive
@@ -456,11 +462,13 @@ validate_frozen_gate_seal() {
 run_ios_release_testing_export() {
   local app_uuid="${NVPN_IOS_ADHOC_PROVISIONING_PROFILE_UUID:-}"
   local tunnel_uuid="${NVPN_IOS_ADHOC_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID:-}"
+  local share_uuid="${NVPN_IOS_ADHOC_SHARE_FILES_PROVISIONING_PROFILE_UUID:-}"
   local device_udid="${NVPN_IOS_FROZEN_DEVICE_UDID:-}"
   local options="$FROZEN_DIR/ReleaseTestingExportOptions.plist"
   local ipa app
   : "${app_uuid:?NVPN_IOS_ADHOC_PROVISIONING_PROFILE_UUID is required}"
   : "${tunnel_uuid:?NVPN_IOS_ADHOC_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID is required}"
+  : "${share_uuid:?NVPN_IOS_ADHOC_SHARE_FILES_PROVISIONING_PROFILE_UUID is required}"
   : "${device_udid:?NVPN_IOS_FROZEN_DEVICE_UDID is required}"
   validate_frozen_archive
   if [[ -f "$FROZEN_ADHOC_RECEIPT" \
@@ -494,7 +502,8 @@ run_ios_release_testing_export() {
     release-testing \
     "$app_uuid" \
     "$tunnel_uuid" \
-    false
+    false \
+    "$share_uuid"
   run_export_archive "$FROZEN_ADHOC_EXPORT_DIR" "$options"
   ipa="$(exact_ipa_path "$FROZEN_ADHOC_EXPORT_DIR")"
   app="$(unpack_ipa "$ipa" "$FROZEN_ADHOC_UNPACK_DIR")"
@@ -520,12 +529,14 @@ run_ios_export() {
   source "$PROVISIONING_ENV"
   : "${NVPN_IOS_PROVISIONING_PROFILE_UUID:?profile uuid not set}"
   : "${NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID:?packet tunnel profile uuid not set}"
+  : "${NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID:?File sharing provisioning profile missing; configure the ShareFiles app extension profile before building}"
   write_export_options \
     "$EXPORT_OPTIONS" \
     app-store-connect \
     "$NVPN_IOS_PROVISIONING_PROFILE_UUID" \
     "$NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID" \
-    "$IOS_INTERNAL_ONLY"
+    "$IOS_INTERNAL_ONLY" \
+    "$NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID"
   run_export_archive "$EXPORT_DIR" "$EXPORT_OPTIONS"
   ipa="$(exact_ipa_path "$EXPORT_DIR")"
   app="$(unpack_ipa "$ipa" "$FROZEN_APPSTORE_UNPACK_DIR")"

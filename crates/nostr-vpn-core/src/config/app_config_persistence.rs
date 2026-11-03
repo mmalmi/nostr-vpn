@@ -198,11 +198,36 @@ impl AppConfig {
         Ok(buyer)
     }
 
+    /// Never let a public buyer claim a return address reserved by the seller
+    /// or by another device on the seller's active private network.
+    pub fn validate_paid_exit_seller_session(&self, buyer: &str, address: &str) -> Result<String> {
+        let buyer = self.validate_paid_exit_seller_buyer(buyer)?;
+        let own = self.own_nostr_pubkey_hex()?;
+        let network = self.effective_network_id();
+        if own == buyer
+            || std::iter::once(own)
+                .chain(self.participant_pubkeys_hex())
+                .filter(|peer| peer != &buyer)
+                .any(|peer| {
+                    derive_mesh_tunnel_ip(&network, &peer).as_deref() == Some(address.trim())
+                })
+        {
+            return Err(anyhow!(
+                "buyer tunnel address conflicts with the seller's private network"
+            ));
+        }
+        Ok(buyer)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let mut config: AppConfig =
             toml::from_str(&raw).with_context(|| "failed to parse config TOML")?;
+        if config.paid_exit.ip_support.ipv6 || !config.paid_exit.ip_support.ipv4 {
+            static WARNED: std::sync::Once = std::sync::Once::new();
+            WARNED.call_once(|| eprintln!("nvpn: paid exit sellers currently support IPv4 only; ignoring unsupported paid_exit.ip_support settings"));
+        }
         config.apply_load_migrations();
         hydrate_config_secrets(path, &mut config)?;
         config.ensure_defaults();

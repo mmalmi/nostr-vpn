@@ -49,3 +49,24 @@ fn all_internet_mode_switches_persist_and_reselect_through_native_actions() {
         }
     }
 }
+
+#[cfg(feature = "paid-exit")]
+#[test]
+fn mobile_paid_exit_reselection_preserves_the_route_without_a_candidate_probe() {
+    use nostr_sdk::prelude::Keys;
+    let dir = unique_service_test_dir("nvpn-mobile-exit-reselect");
+    let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("fixture"));
+    runtime.mobile_runtime = true;
+    runtime.config_path = dir.join("config.toml");
+    create_test_network(&mut runtime, "Exit switch");
+    let seller = Keys::generate().public_key().to_hex();
+    runtime.config.set_internet_source(InternetSource::PaidAutomatic);
+    runtime.config.select_public_paid_exit_node(&seller).unwrap();
+    runtime.config.save(&runtime.config_path).unwrap();
+    let before = std::fs::read(&runtime.config_path).unwrap();
+    let error = runtime.reselect_paid_exit().unwrap_err();
+    assert!(error.to_string().contains("current provider is still selected"));
+    assert_eq!(runtime.config.public_paid_exit_node_pubkey_hex(), Some(seller));
+    assert_eq!(std::fs::read(&runtime.config_path).unwrap(), before);
+    std::fs::remove_dir_all(dir).unwrap();
+}

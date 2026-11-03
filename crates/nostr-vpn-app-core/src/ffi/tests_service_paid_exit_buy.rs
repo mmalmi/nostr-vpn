@@ -185,6 +185,7 @@
         })
         .expect("record fresh end-to-end health probe");
         runtime.daemon_state = Some(DaemonRuntimeState {
+            tunnel_exit_peer: Some(seller.public_key().to_hex()),
             vpn_enabled: true,
             vpn_active: true,
             peers: vec![DaemonPeerState {

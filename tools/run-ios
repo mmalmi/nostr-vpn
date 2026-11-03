@@ -61,6 +61,7 @@ build_rust_target() {
   # both the iOS app and Packet Tunnel framework so it cannot run dormantly.
   local cargo_args=(
     build
+    --locked
     --quiet
     -p nostr-vpn-app-core
     --no-default-features

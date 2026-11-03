@@ -444,6 +444,7 @@ fn automatic_selection_does_not_fund_a_legacy_listing() {
     let seller = Keys::generate();
     let mut config = sample_config();
     config.channel.free_probe_units = 8 * 1024 * 1024;
+    config.channel.grace_units = 0;
     config.pricing.price_msat_per_gb = 50_000;
     let mut store = PaidRouteStore::default();
     store.upsert_wallet_mint(

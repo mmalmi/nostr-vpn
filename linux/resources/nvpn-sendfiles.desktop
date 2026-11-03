@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Service
+MimeType=application/octet-stream;
+Actions=sendFiles;
+X-KDE-ServiceTypes=KonqPopupMenu/Plugin
+X-KDE-Priority=TopLevel
+
+[Desktop Action sendFiles]
+Name=Send with Nostr VPN
+Icon=nostr-vpn
+Exec=nostr-vpn --send-files %F

@@ -476,6 +476,7 @@ fn fips_tunnel_config_from_app(
 
     let pending_control_recipients = load_pending_fips_control_recipients(config_path)?;
     let control_recipient_pubkeys = pending_control_recipients
+        .peers
         .iter()
         .map(|(_, recipient)| recipient.as_str())
         .collect::<Vec<_>>();
@@ -496,7 +497,7 @@ fn fips_tunnel_config_from_app(
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let _ = underlay_interface;
     config.ethernet_underlay = ethernet_underlay.cloned();
-    for (kind, recipient) in pending_control_recipients {
+    for (kind, recipient) in pending_control_recipients.peers {
         match crate::fips_private_mesh::prioritize_fips_control_recipient(
             config.endpoint_peers.clone(),
             &recipient,
@@ -572,8 +573,11 @@ fn fips_tunnel_config_from_app(
                 config.endpoint_peers,
                 &config.paid_route_admissions,
             );
-        config.paid_route_accounting_peers =
-            fips_paid_route_accounting_peers(app, &config.paid_route_admissions);
+        config.paid_route_accounting_peers = fips_paid_route_accounting_peers(
+            app,
+            pending_control_recipients.probe_seller,
+            &config.paid_route_admissions,
+        );
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         if app.paid_exit.enabled {
             eprintln!(
@@ -601,11 +605,13 @@ fn fips_tunnel_config_from_app(
 #[cfg(feature = "paid-exit")]
 fn fips_paid_route_accounting_peers(
     app: &AppConfig,
+    probe_seller: Option<String>,
     admissions: &[FipsPaidRouteAdmission],
 ) -> Vec<crate::fips_private_mesh::FipsPaidRouteAccountingPeer> {
     let mut peers: Vec<crate::fips_private_mesh::FipsPaidRouteAccountingPeer> = app
         .public_paid_exit_node_pubkey_hex()
         .into_iter()
+        .chain(probe_seller)
         .filter_map(|participant_pubkey| {
             crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
                 &participant_pubkey,
@@ -681,7 +687,10 @@ fn fips_paid_route_admissions_from_store(
         .seller_admissions(&app.paid_exit, unix_timestamp())
         .into_iter()
         .filter_map(|admission| {
-            if let Err(error) = app.validate_paid_exit_seller_buyer(&admission.buyer_pubkey) {
+            if let Err(error) = app.validate_paid_exit_seller_session(
+                &admission.buyer_pubkey,
+                &admission.buyer_tunnel_ip,
+            ) {
                 eprintln!(
                     "paid-exit: withholding seller admission for {}: {error}",
                     admission.buyer_pubkey

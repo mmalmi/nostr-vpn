@@ -338,7 +338,9 @@ pub(super) fn select_buyer_mint(
         return Ok(wallet_mint.url.trim().to_string());
     }
 
-    if !paid_route_offer_requires_payment(offer) {
+    if !paid_route_offer_requires_payment_before_routing(offer) {
+        // An empty mint binds this session to its free allowance. Adding a
+        // trusted mint later must not authorize funding the existing trial.
         return Ok(String::new());
     }
 

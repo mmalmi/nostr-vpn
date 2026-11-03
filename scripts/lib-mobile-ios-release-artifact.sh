@@ -377,6 +377,12 @@ with open(path, "w", encoding="utf-8") as handle:
             "appProvisioningProfileSha256": hashlib.sha256(
                 open(app_profile_path, "rb").read()
             ).hexdigest(),
+            "shareFilesExecutableSha256": hashlib.sha256(
+                open(os.path.join(app_path, "PlugIns", "ShareFiles.appex", "ShareFiles"), "rb").read()
+            ).hexdigest(),
+            "shareFilesProvisioningProfileSha256": hashlib.sha256(
+                open(os.path.join(app_path, "PlugIns", "ShareFiles.appex", "embedded.mobileprovision"), "rb").read()
+            ).hexdigest(),
             "packetTunnelProvisioningProfileSha256": hashlib.sha256(
                 open(tunnel_profile_path, "rb").read()
             ).hexdigest(),
@@ -396,13 +402,14 @@ PY
 
 ios_release_network_audit_artifact() {
   local label="$1" result_dir="$2"
-  local app appex executable tunnel_executable receipt
+  local app appex share_extension executable tunnel_executable receipt
   app="$(ios_release_network_app_path)"
   appex="$app/PlugIns/Nostr VPN Tunnel.appex"
+  share_extension="$app/PlugIns/ShareFiles.appex"
   executable="$app/Nostr VPN"
   tunnel_executable="$appex/Nostr VPN Tunnel"
-  [[ -d "$app" && -d "$appex" && -x "$executable" && -x "$tunnel_executable" ]] || {
-    echo "iOS Release app/Packet Tunnel artifact is incomplete" >&2
+  [[ -d "$app" && -d "$appex" && -d "$share_extension" && -x "$share_extension/ShareFiles" && -x "$executable" && -x "$tunnel_executable" ]] || {
+    echo "iOS Release app/Packet Tunnel/file sharing artifact is incomplete" >&2
     return 1
   }
   ios_release_network_audit_forbidden_runtime \
@@ -416,6 +423,7 @@ ios_release_network_audit_artifact() {
   }
 
   local audit_dir app_details tunnel_details app_profile tunnel_profile
+  local share_profile share_entitlements share_certificate_prefix
   local installed_apps app_entitlements tunnel_entitlements certificate_prefix
   local tunnel_certificate_prefix signer_sha_path signer_sha signer_identity_sha extra
   audit_dir="$(
@@ -430,6 +438,9 @@ ios_release_network_audit_artifact() {
   tunnel_details="$audit_dir/tunnel-codesign.txt"
   app_profile="$audit_dir/app-profile.plist"
   tunnel_profile="$audit_dir/tunnel-profile.plist"
+  share_profile="$audit_dir/share-profile.plist"
+  share_entitlements="$audit_dir/share-entitlements.plist"
+  share_certificate_prefix="$audit_dir/share-cert"
   app_entitlements="$audit_dir/app-entitlements.plist"
   tunnel_entitlements="$audit_dir/tunnel-entitlements.plist"
   certificate_prefix="$audit_dir/app-cert"
@@ -440,6 +451,9 @@ ios_release_network_audit_artifact() {
     || ! codesign -dvvv "$appex" >"$tunnel_details" 2>&1 \
     || ! security cms -D -i "$app/embedded.mobileprovision" >"$app_profile" \
     || ! security cms -D -i "$appex/embedded.mobileprovision" >"$tunnel_profile" \
+    || ! security cms -D -i "$share_extension/embedded.mobileprovision" >"$share_profile" \
+    || ! codesign -d --entitlements :- "$share_extension" >"$share_entitlements" 2>/dev/null \
+    || ! codesign -d --extract-certificates="$share_certificate_prefix" "$share_extension" >/dev/null 2>&1 \
     || ! codesign -d --entitlements :- "$app" >"$app_entitlements" 2>/dev/null \
     || ! codesign -d --entitlements :- "$appex" >"$tunnel_entitlements" 2>/dev/null \
     || ! codesign -d --extract-certificates="$certificate_prefix" "$app" \
@@ -466,7 +480,9 @@ ios_release_network_audit_artifact() {
     "${NVPN_IOS_EXPECTED_SIGNER_ORGANIZATION:-Sirius Business Oy}" \
     "$IOS_BUNDLE_ID" \
     "${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-${IOS_BUNDLE_ID}.PacketTunnel}" \
-    "$NVPN_EXPECTED_IOS_DISTRIBUTION_CERT_SHA256" "$signer_sha_path" <<'PY'
+    "$NVPN_EXPECTED_IOS_DISTRIBUTION_CERT_SHA256" "$signer_sha_path" \
+    "$share_profile" "$share_entitlements" "${share_certificate_prefix}0" \
+    "${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.${IOS_BUNDLE_ID}.shared}" <<'PY'
 import hashlib
 import plistlib
 import sys
@@ -484,6 +500,7 @@ import sys
     tunnel_bundle_id,
     expected_signer_sha,
     signer_sha_path,
+    share_profile_path, share_entitlements_path, share_certificate_path, app_group_id,
 ) = sys.argv[1:]
 app_profile, tunnel_profile, app_entitlements, tunnel_entitlements = [
     plistlib.load(open(path, "rb"))
@@ -494,10 +511,12 @@ app_profile, tunnel_profile, app_entitlements, tunnel_entitlements = [
         tunnel_entitlements_path,
     )
 ]
+share_profile = plistlib.load(open(share_profile_path, "rb"))
+share_entitlements = plistlib.load(open(share_entitlements_path, "rb"))
 app_certificate = open(app_certificate_path, "rb").read()
 tunnel_certificate = open(tunnel_certificate_path, "rb").read()
-if app_certificate != tunnel_certificate:
-    raise SystemExit("app and Packet Tunnel use different signing certificates")
+if app_certificate != tunnel_certificate or app_certificate != open(share_certificate_path, "rb").read():
+    raise SystemExit("app and extensions use different signing certificates")
 actual_signer_sha = hashlib.sha256(app_certificate).hexdigest()
 if actual_signer_sha != expected_signer_sha:
     raise SystemExit("Release signer does not match the required certificate pin")
@@ -523,6 +542,7 @@ if team_id not in [entry.value for entry in organizational_units]:
 for profile, bundle_id in (
     (app_profile, app_bundle_id),
     (tunnel_profile, tunnel_bundle_id),
+    (share_profile, f"{app_bundle_id}.ShareFiles"),
 ):
     if not profile.get("ProvisionedDevices"):
         raise SystemExit("Ad Hoc profile has no provisioned device")
@@ -537,6 +557,8 @@ for profile, bundle_id in (
         raise SystemExit("Ad Hoc profile entitlement belongs to the wrong Apple team")
     if profile_entitlements.get("application-identifier") != f"{team_id}.{bundle_id}":
         raise SystemExit("Ad Hoc profile application identifier is wrong")
+    if app_group_id not in profile_entitlements.get("com.apple.security.application-groups", []):
+        raise SystemExit("Ad Hoc profile is missing the shared app group")
     signer_sha = hashlib.sha256(app_certificate).digest()
     profile_signers = {
         hashlib.sha256(value).digest()
@@ -547,6 +569,7 @@ for profile, bundle_id in (
 for entitlements, bundle_id in (
     (app_entitlements, app_bundle_id),
     (tunnel_entitlements, tunnel_bundle_id),
+    (share_entitlements, f"{app_bundle_id}.ShareFiles"),
 ):
     if entitlements.get("get-task-allow") is True:
         raise SystemExit("signed physical Release artifact is debuggable")
@@ -554,6 +577,8 @@ for entitlements, bundle_id in (
         raise SystemExit("signed Release artifact belongs to the wrong Apple team")
     if entitlements.get("application-identifier") != f"{team_id}.{bundle_id}":
         raise SystemExit("signed Release application identifier is wrong")
+    if app_group_id not in entitlements.get("com.apple.security.application-groups", []):
+        raise SystemExit("signed extension is missing the shared app group")
 if not tunnel_entitlements.get("com.apple.developer.networking.networkextension"):
     raise SystemExit("Packet Tunnel entitlement is missing")
 with open(signer_sha_path, "w", encoding="ascii") as handle:

@@ -299,6 +299,30 @@ impl NativeAppRuntime {
         }
 
         NativeAppState {
+            file_transfers: nostr_vpn_core::file_transfers::read_state(&self.config_path)
+                .unwrap_or_else(|error| vec![nostr_vpn_core::file_transfers::TransferState {
+                    id: "service".into(), peer_npub: String::new(), peer_name: String::new(),
+                    is_sender: false, files: Vec::new(), status: "unavailable".into(),
+                    transferred_bytes: 0, total_bytes: 0, error: Some(error.to_string()),
+                }])
+                .into_iter()
+                .map(|transfer| crate::native_state::NativeFileTransferState {
+                    id: transfer.id,
+                    peer_npub: transfer.peer_npub,
+                    peer_name: transfer.peer_name,
+                    is_sender: transfer.is_sender,
+                    files: transfer.files.into_iter().map(|file| crate::native_state::NativeTransferFileState {
+                        name: file.name,
+                        size_bytes: file.size_bytes,
+                        local_path: file.local_path,
+                    }).collect(),
+                    status: if !vpn_active && matches!(transfer.status.as_str(), "connecting" | "transferring") {
+                        "paused".into()
+                    } else { transfer.status },
+                    transferred_bytes: transfer.transferred_bytes,
+                    total_bytes: transfer.total_bytes,
+                    error: transfer.error,
+                }).collect(),
             rev: self.rev,
             platform: capabilities.platform,
             mobile: capabilities.mobile,

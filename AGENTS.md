@@ -5,7 +5,8 @@
 - Delete concepts, LOC, unused code, stale tests, test-only APIs, and diagnostic scaffolding.
 - Avoid knobs, wrappers, fallbacks, and duplicate paths.
 - Keep the nvpn/FIPS adapter thin and canonical; leave dataplane policy, batching, queueing, priority, and liveness logic on the FIPS side when possible.
-- Do not change FIPS protocol message types, byte values, wire record formats, routing semantics, or compatibility boundaries without explicit user approval. Performance work must preserve the FIPS protocol surface unless the user has approved a protocol change for that task.
+- Implement requested routing fixes within the existing trust boundaries and verify them with focused tests.
+- Get explicit approval for changes to FIPS message types, byte values, wire formats, or interoperability, including during performance work. Also ask before widening which peers can see traffic, allowing traffic outside leak protection, or authorizing additional spending. A user request that explicitly covers the change is sufficient approval.
 - Measure bottlenecks: throughput, latency, loss, hard counters, CPU-sec/GB or cycles/Gbit.
 - If architecture is sound, debug first bad perf rows before reverting. Large rewrites allowed.
 - Build/test sparingly; use a separate test worktree for long runs.

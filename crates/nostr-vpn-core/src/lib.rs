@@ -10,6 +10,7 @@ pub mod control_pubsub;
 pub mod control_pubsub_runtime;
 pub mod data_plane;
 pub mod diagnostics;
+pub mod file_transfers;
 pub mod fips_control;
 pub mod fips_control_tcp;
 pub mod fips_discovery;

@@ -9,6 +9,7 @@ pub const PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
 
 const FUTURE_CLOCK_SKEW_SECS: u64 = 5 * 60;
 const CHANNEL_TARGET_BYTES: u64 = 100 * 1024 * 1024;
+const CHANNEL_TARGET_SECS: u64 = 60 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Candidate {
@@ -37,24 +38,86 @@ struct LocalProbeRank {
 }
 
 impl PaidRouteStore {
+    /// Reuse the saved purchase independently of current adverts or wallet
+    /// availability. Recovery still has to establish fresh route health.
+    pub fn funded_buyer_session_selection(
+        &self,
+        session_id: &str,
+        now_unix: u64,
+    ) -> Option<PaidRouteAutomaticOfferSelection> {
+        let session = self.sessions.get(session_id)?;
+        let channel = self.channels.get(&session.session.payment.channel_id)?;
+        let lease = self.leases.get(&session.session.lease_id)?;
+        let terms = accepted_channel_terms(channel, PaidRouteChannelRole::Buyer).ok()?;
+        if !terms.ip_support.ipv4
+            || self.exit_provider_is_avoided(&channel.counterparty_npub)
+            || channel.counterparty_npub == self.automatic_reselect_from
+            || channel.routing_expires_at_unix(lease.lease.expires_at_unix) <= now_unix
+            || !paid_route_lifecycle_allows_routing(channel.status)
+            || !paid_route_lifecycle_allows_routing(lease.status)
+            || !self.buyer_session_has_remaining_capacity(session_id).ok()?
+            || !paid_route_session_has_payment_material(&session.session, channel)
+        {
+            return None;
+        }
+        Some(PaidRouteAutomaticOfferSelection {
+            funded: true,
+            previously_verified: session.successful_probe_unix() > 0,
+            offer_key: paid_route_offer_store_key(&channel.counterparty_npub, &channel.offer_id),
+            mint_url: channel.mint_url.trim().to_string(),
+            channel_capacity_sat: session.session.payment.capacity_sat,
+        })
+    }
+
     pub fn select_automatic_offer(
         &self,
         now_unix: u64,
     ) -> Result<PaidRouteAutomaticOfferSelection> {
-        self.offers
+        if let Some(selected) =
+            self.funded_buyer_session_selection(&self.selected_buyer_session_id, now_unix)
+        {
+            return Ok(selected);
+        }
+        let candidate = self
+            .offers
             .iter()
             .filter_map(|(key, record)| self.candidate(key, record, now_unix))
             .max_by(compare_candidates)
-            .map(|candidate| PaidRouteAutomaticOfferSelection {
-                funded: candidate.funded,
-                previously_verified: candidate.previously_verified,
-                offer_key: candidate.offer_key,
-                mint_url: candidate.mint_url,
-                channel_capacity_sat: candidate.capacity_sat,
-            })
             .ok_or_else(|| {
-                anyhow!("no eligible paid route offer is available for automatic selection")
-            })
+                anyhow!(
+                    "No eligible automatic exit at or below {} sat/GB",
+                    PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GB / 1_000
+                )
+            })?;
+        // Keep blocked candidates in the ranking to explain why selection is
+        // waiting, but never return one as a new purchase. Existing funded
+        // channels remain usable without reaching their mint.
+        if !candidate.payment_available {
+            let mint = Url::parse(&candidate.mint_url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_string))
+                .unwrap_or_else(|| candidate.mint_url.clone());
+            if self.buyer_mint_needs_funds(&candidate.mint_url, candidate.capacity_sat) {
+                return Err(anyhow!("More funds needed · {mint}"));
+            }
+            let cause = normalize_paid_route_mint_url(&candidate.mint_url)
+                .ok()
+                .and_then(|url| self.buyer_mint_retries.get(&url))
+                .filter(|retry| !retry.error.is_empty())
+                .map_or_else(String::new, |retry| format!(" · {}", retry.error));
+            return Err(anyhow!(
+                "Payment unavailable · {mint}{cause} · No payable alternative · Retrying in {} s",
+                self.buyer_mint_failure_retry_at(&candidate.mint_url)
+                    .saturating_sub(now_unix)
+            ));
+        }
+        Ok(PaidRouteAutomaticOfferSelection {
+            funded: candidate.funded,
+            previously_verified: candidate.previously_verified,
+            offer_key: candidate.offer_key,
+            mint_url: candidate.mint_url,
+            channel_capacity_sat: candidate.capacity_sat,
+        })
     }
 
     fn candidate(
@@ -97,6 +160,14 @@ impl PaidRouteStore {
             return None;
         }
         let (mint_url, capacity_sat, funded) = self.trusted_mint_and_capacity(&offer, now_unix)?;
+        // A requested replacement must demonstrate working Internet before
+        // moving the live route or opening a new paid channel.
+        if !self.automatic_reselect_from.is_empty()
+            && !funded
+            && offer.channel.free_probe_units < PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES
+        {
+            return None;
+        }
         if !funded
             && record.signed_offer.output_version().ok()?
                 != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION
@@ -132,24 +203,15 @@ impl PaidRouteStore {
             .sessions
             .values()
             .filter_map(|session| {
-                let lease = self.leases.get(&session.session.lease_id)?;
-                let channel = self.channels.get(&session.session.payment.channel_id)?;
-                let mint = channel.mint_url.trim();
-                (channel.role == PaidRouteChannelRole::Buyer
-                    && channel.offer_id == offer.offer_id
-                    && channel.counterparty_npub == offer.seller_npub
-                    && accepted.iter().any(|url| url == mint)
-                    && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
-                    && paid_route_lifecycle_allows_routing(lease.status)
-                    && paid_route_lifecycle_allows_routing(channel.status)
-                    && self
-                        .buyer_session_has_remaining_capacity(&session.session.session_id)
-                        .ok()?
-                    && paid_route_session_has_payment_material(&session.session, channel))
+                let selected =
+                    self.funded_buyer_session_selection(&session.session.session_id, now_unix)?;
+                (selected.offer_key
+                    == paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id)
+                    && accepted.iter().any(|url| url == &selected.mint_url))
                 .then_some((
                     session.updated_at_unix,
-                    mint.to_string(),
-                    session.session.payment.capacity_sat,
+                    selected.mint_url,
+                    selected.channel_capacity_sat,
                 ))
             })
             .max_by_key(|(updated_at, _, _)| *updated_at)
@@ -157,19 +219,21 @@ impl PaidRouteStore {
             return Some((existing.1, existing.2, true));
         }
         let default = self.wallet.default_mint.trim();
+        let target = self.recommended_capacity_sat(offer, None, now_unix)?;
         let mut wallet_mints = self
             .wallet
             .mints
             .iter()
             .filter(|mint| accepted.iter().any(|url| url == mint.url.trim()))
+            .filter_map(|mint| {
+                let capacity =
+                    target.min(mint.balance_msat.map_or(target, |balance| balance / 1_000));
+                (capacity > 0).then_some((mint, capacity))
+            })
             .collect::<Vec<_>>();
-        let target = recommended_capacity_sat(offer, None)?;
-        wallet_mints.sort_by_key(|mint| {
+        wallet_mints.sort_by_key(|(mint, capacity)| {
             (
-                self.buyer_mint_needs_funds(
-                    &mint.url,
-                    recommended_capacity_sat(offer, mint.balance_msat).unwrap_or(target),
-                ),
+                self.buyer_mint_needs_funds(&mint.url, *capacity),
                 self.buyer_mint_failure_retry_at(&mint.url) > now_unix,
                 mint.balance_msat
                     .is_none_or(|balance| balance / 1_000 < target),
@@ -177,10 +241,10 @@ impl PaidRouteStore {
                 mint.url.trim(),
             )
         });
-        wallet_mints.into_iter().find_map(|mint| {
-            recommended_capacity_sat(offer, mint.balance_msat)
-                .map(|capacity| (mint.url.trim().to_string(), capacity, false))
-        })
+        wallet_mints
+            .into_iter()
+            .next()
+            .map(|(mint, capacity)| (mint.url.trim().to_string(), capacity, false))
     }
 
     fn local_probe_history(
@@ -278,25 +342,79 @@ fn probe_rank(quality: &PaidRouteQualityMetrics) -> Option<LocalProbeRank> {
     })
 }
 
-pub(super) fn recommended_capacity_sat(
-    offer: &PaidRouteOffer,
-    balance_msat: Option<u64>,
-) -> Option<u64> {
-    let traffic_msat = u64::try_from(
-        u128::from(offer.pricing.price_msat_per_gb)
-            .saturating_mul(u128::from(CHANNEL_TARGET_BYTES))
-            .div_ceil(u128::from(PAID_ROUTE_PRICE_BYTES_PER_GB)),
-    )
-    .ok()?;
-    let target_sat = traffic_msat
-        .saturating_add(999)
-        .saturating_div(1_000)
-        .max(1);
-    let mut capacity = target_sat
-        .min(offer.channel.max_channel_capacity_sat)
-        .min(PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT);
-    if let Some(balance_msat) = balance_msat {
-        capacity = capacity.min(balance_msat / 1_000);
+impl PaidRouteStore {
+    pub(super) fn recommended_capacity_sat(
+        &self,
+        offer: &PaidRouteOffer,
+        balance_msat: Option<u64>,
+        now_unix: u64,
+    ) -> Option<u64> {
+        let matches_offer = |channel: &PaidRouteChannelRecord| {
+            channel.role == PaidRouteChannelRole::Buyer
+                && channel.offer_id == offer.offer_id
+                && channel.counterparty_npub == offer.seller_npub
+        };
+        // Start small. Once traffic has been observed locally, budget an hour
+        // at the most recently used channel's average rate, bounded by its
+        // usable lifetime. A one-minute denominator limits short probe bursts.
+        let horizon = CHANNEL_TARGET_SECS.min(
+            crate::paid_routes::paid_route_collection_after_secs(offer.channel.channel_expiry_secs),
+        );
+        let measured = self.sessions.values().filter(|session| {
+            session.usage_started_at_unix >= session.created_at_unix
+                && session.last_usage_at_unix >= session.usage_started_at_unix
+                && session.last_usage_at_unix > 0
+                && session.last_usage_at_unix <= now_unix
+                && session.session.usage.billable_bytes > 0
+                && self
+                    .channels
+                    .get(&session.session.payment.channel_id)
+                    .is_some_and(matches_offer)
+        });
+        let newest_used_channel = measured
+            .clone()
+            .map(|session| session.created_at_unix)
+            .max()
+            .unwrap_or(0);
+        let traffic_bytes = measured
+            .filter(|session| now_unix - session.last_usage_at_unix <= CHANNEL_TARGET_SECS)
+            .max_by_key(|session| session.last_usage_at_unix)
+            .map_or(0, |session| {
+                u128::from(session.session.usage.billable_bytes) * u128::from(horizon)
+                    / u128::from(
+                        (session.last_usage_at_unix - session.usage_started_at_unix).max(60),
+                    )
+            })
+            .max(u128::from(CHANNEL_TARGET_BYTES));
+        let target_sat = u128::from(offer.pricing.price_msat_per_gb)
+            .saturating_mul(traffic_bytes)
+            .div_ceil(u128::from(PAID_ROUTE_PRICE_BYTES_PER_GB) * 1_000)
+            .max(1);
+        // The prepared quote survives wallet failures and process restarts.
+        // Retain that target when reselection must open a replacement, even
+        // after the traffic sample ages out during a mint outage.
+        let pending_capacity = self
+            .buyer_session_renewals
+            .values()
+            .filter_map(|id| self.sessions.get(id))
+            .filter_map(|session| {
+                let channel = self.channels.get(&session.session.payment.channel_id)?;
+                (matches_offer(channel)
+                    && session.created_at_unix <= now_unix
+                    && session.created_at_unix >= newest_used_channel
+                    && !paid_route_session_has_payment_material(&session.session, channel))
+                .then_some(channel.payment.capacity_sat)
+            })
+            .max()
+            .unwrap_or(0);
+        let mut capacity = target_sat
+            .max(u128::from(pending_capacity))
+            .min(u128::from(offer.channel.max_channel_capacity_sat))
+            .min(u128::from(PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT))
+            as u64;
+        if let Some(balance_msat) = balance_msat {
+            capacity = capacity.min(balance_msat / 1_000);
+        }
+        (capacity > 0).then_some(capacity)
     }
-    (capacity > 0).then_some(capacity)
 }

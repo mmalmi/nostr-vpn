@@ -20,20 +20,24 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
 
     match args.command {
         PaidExitWalletCommand::Show(show) => {
-            let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
-                crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
-                &config_path,
-                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
-                    refresh_quotes: show.refresh,
-                },
-            )
-            .await?,
-            )?;
-            let (changed, store) = update_paid_route_store(&store_path, |store| {
-                let changed =
-                    sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
-                Ok((changed, store.clone()))
-            })?;
+            let wallet_before = load_paid_route_store(&store_path)?.wallet;
+            let overview = if show.refresh || show.activity || daemon_status(&config_path)?.running {
+                let response = crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
+                    &config_path,
+                    crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                        refresh_quotes: show.refresh,
+                    },
+                )
+                .await?;
+                Some(crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(response)?)
+            } else {
+                None
+            };
+            // The wallet worker synchronizes balances at startup and after
+            // mutations, including an explicit refresh. Viewing its cached
+            // overview must not rewrite the last-check time in the route store.
+            let store = load_paid_route_store(&store_path)?;
+            let changed = store.wallet != wallet_before;
             let activity = if show.activity {
                 Some(
                     daemon_cashu_wallet_request::<Vec<cashu_service::CashuWalletActivityEntry>>(
@@ -54,7 +58,8 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                         "data_dir": data_dir.display().to_string(),
                         "changed": changed,
                         "wallet": store.wallet,
-                        "cashu": cashu_wallet_overview_json(&overview),
+                        "cashu": overview.as_ref().map(cashu_wallet_overview_json),
+                        "offline": overview.is_none(),
                         "activity": activity,
                     }))?
                 );
@@ -62,7 +67,11 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                 println!("store: {} changed={changed}", store_path.display());
                 println!("data_dir: {}", data_dir.display());
                 print_paid_exit_wallet(&store);
-                print_cashu_wallet_overview(&overview);
+                if let Some(overview) = &overview {
+                    print_cashu_wallet_overview(overview);
+                } else {
+                    println!("Daemon offline. Showing last recorded mint balances.");
+                }
                 if let Some(activity) = activity {
                     println!("activity: {}", activity.len());
                     for entry in activity.iter().take(20) {

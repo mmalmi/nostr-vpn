@@ -139,6 +139,12 @@ public partial class App : System.Windows.Application
     private void HandleLaunchArgs(IEnumerable<string> args, bool forceShow)
     {
         var launchArgs = args.ToArray();
+        var filesIndex = Array.IndexOf(launchArgs, "--send-files");
+        if (filesIndex >= 0 && _window is not null)
+        {
+            var files = launchArgs.Skip(filesIndex + 1).Where(Path.IsPathFullyQualified).ToArray();
+            if (files.Length > 0) { ShowMainWindow(); _ = _window.ChooseFileRecipientAsync(files); }
+        }
         foreach (var arg in launchArgs.Where(arg => arg.StartsWith("nvpn://", StringComparison.OrdinalIgnoreCase)))
         {
             _viewModel?.HandleDeepLink(arg);

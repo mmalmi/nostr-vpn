@@ -34,6 +34,7 @@ const DEFAULT_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
 const DEFAULT_CHANNEL_EXPIRY_SECS: u64 = 86_400;
 const DEFAULT_FREE_PROBE_BYTES: u64 = 1_048_576;
 const DEFAULT_GRACE_BYTES: u64 = 262_144;
+pub(crate) const MAX_SOURCE_FREE_PROBE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// Stop using a channel and begin settlement before its immutable refund deadline.
 /// The standard 24-hour channel gets a 12-hour retry window; shorter contracts
@@ -223,6 +224,21 @@ impl Default for PaidRouteChannelTerms {
             free_probe_units: DEFAULT_FREE_PROBE_BYTES,
             grace_units: DEFAULT_GRACE_BYTES,
         }
+    }
+}
+
+impl PaidRouteChannelTerms {
+    /// A locally advertised trial must fit the seller's per-source daily pool.
+    /// This is local seller policy, not a validity rule for received offers.
+    pub fn validate_seller_free_probe_budget(&self) -> Result<()> {
+        if self.free_probe_units > 0
+            && self.free_probe_units.saturating_add(self.grace_units) > MAX_SOURCE_FREE_PROBE_BYTES
+        {
+            return Err(anyhow!(
+                "free probe and grace must total at most 8 MiB (8388608 bytes); reduce either amount or disable the free probe"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -429,6 +445,34 @@ impl ManualPaidExitProvider {
             ));
         }
         Ok(())
+    }
+}
+
+/// Local offer presentation only. Private and test-network sellers may intentionally use these mints.
+pub fn paid_exit_mint_notice(mint: &str) -> Option<&'static str> {
+    let url = Url::parse(mint).ok()?;
+    let host = url.host_str()?.trim_matches(['[', ']']);
+    if host.eq_ignore_ascii_case("testnut.cashu.space") {
+        return Some("test mint");
+    }
+    let local = match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => {
+            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
+        }
+        Ok(std::net::IpAddr::V6(ip)) => {
+            ip.is_loopback()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.is_unspecified()
+        }
+        Err(_) => host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local"),
+    };
+    if local {
+        Some("local network address")
+    } else if url.scheme() == "http" {
+        Some("unencrypted HTTP")
+    } else {
+        None
     }
 }
 

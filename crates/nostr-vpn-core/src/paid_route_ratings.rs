@@ -239,10 +239,13 @@ impl PaidRouteStore {
             return Err(anyhow!("select an automatic provider first"));
         }
         let seller = PublicKey::parse(&app.exit_node)?.to_bech32()?;
-        let previous = std::mem::replace(&mut self.automatic_reselect_from, seller);
+        let previous = std::mem::replace(&mut self.automatic_reselect_from, seller.clone());
         if self.select_automatic_offer(now).is_err() {
             self.automatic_reselect_from = previous;
             return Err(anyhow!("no other eligible provider is available yet"));
+        }
+        if previous != seller {
+            self.automatic_reselect_session_id.clear();
         }
         Ok(())
     }

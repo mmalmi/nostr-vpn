@@ -12,6 +12,7 @@ struct DevicesPage: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
+                FileTransfersCard(model: model)
                 if !model.state.error.isEmpty || shouldShowStatusNotice(model.statusMessage) {
                     NoticeCard(
                         text: model.state.error.isEmpty ? model.statusMessage : model.state.error,

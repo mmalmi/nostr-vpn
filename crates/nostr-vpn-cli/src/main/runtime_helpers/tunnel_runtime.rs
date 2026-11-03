@@ -53,13 +53,19 @@ impl CliTunnelRuntime {
     }
 }
 
-fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'static str, String)>> {
+struct PendingFipsControlRecipients {
+    peers: Vec<(&'static str, String)>,
+    #[cfg(feature = "paid-exit")]
+    probe_seller: Option<String>,
+}
+
+fn load_pending_fips_control_recipients(config_path: &Path) -> Result<PendingFipsControlRecipients> {
     let recipients = nostr_vpn_core::join_delivery::load_join_rosters(config_path)
         .into_iter()
         .map(|(_, queued)| ("join roster", queued.recipient_npub))
         .collect::<Vec<_>>();
     #[cfg(feature = "paid-exit")]
-    let recipients = {
+    let (recipients, probe_seller) = {
         let mut recipients = recipients;
         recipients.extend(
             load_paid_exit_payment_outbox(config_path)
@@ -67,6 +73,10 @@ fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'sta
                 .map(|queued| ("paid-exit", queued.envelope.seller)),
         );
         let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+        let probe_seller = store.pending_probe_seller();
+        if let Some(seller) = &probe_seller {
+            recipients.push(("paid-exit Internet check", seller.clone()));
+        }
         recipients.extend(
             store
                 .channels
@@ -87,9 +97,13 @@ fn load_pending_fips_control_recipients(config_path: &Path) -> Result<Vec<(&'sta
                     )
                 }),
         );
-        recipients
+        (recipients, probe_seller)
     };
-    Ok(recipients)
+    Ok(PendingFipsControlRecipients {
+        peers: recipients,
+        #[cfg(feature = "paid-exit")]
+        probe_seller,
+    })
 }
 
 fn endpoint_with_listen_port(endpoint: &str, listen_port: u16) -> String {

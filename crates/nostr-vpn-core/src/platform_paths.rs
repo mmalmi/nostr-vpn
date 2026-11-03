@@ -8,6 +8,75 @@ pub fn legacy_config_path_from_dirs_config_dir(dirs_config_dir: Option<&Path>) -
     PathBuf::from("nvpn.toml")
 }
 
+/// Both Linux clients use the same identity. An explicit app data directory
+/// still isolates tests and named profiles from the installed service.
+#[cfg(target_os = "linux")]
+pub fn linux_user_config_path() -> PathBuf {
+    if let Some(dir) = std::env::var_os("NVPN_APP_DATA_DIR").filter(|dir| !dir.is_empty()) {
+        return PathBuf::from(dir).join("config.toml");
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let xdg_root = |key, suffix: &str| {
+        std::env::var_os(key)
+            .map(PathBuf::from)
+            .filter(|dir| dir.is_absolute())
+            .or_else(|| home.as_ref().map(|dir| dir.join(suffix)))
+    };
+    let cli = xdg_root("XDG_CONFIG_HOME", ".config")
+        .unwrap_or_default()
+        .join("nvpn/config.toml");
+    let desktop = xdg_root("XDG_DATA_HOME", ".local/share")
+        .unwrap_or_default()
+        .join("nostr-vpn/config.toml");
+    let unit = std::fs::read_to_string("/etc/systemd/system/nvpn.service").unwrap_or_default();
+    linux_user_config_for_paths(cli, desktop, &unit)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_user_config_for_paths(cli: PathBuf, desktop: PathBuf, unit: &str) -> PathBuf {
+    // Only adopt a service tied to this user's conventional config locations.
+    // A system daemon can belong to a different user or an explicit profile.
+    if let Some(path) = linux_service_config_path_from_unit_contents(unit) {
+        for candidate in [&cli, &desktop] {
+            if candidate == Path::new(&path)
+                || candidate.canonicalize().ok().as_deref() == Some(Path::new(&path))
+            {
+                return candidate.clone();
+            }
+        }
+    }
+    if desktop.is_file() { desktop } else { cli }
+}
+
+pub fn linux_service_config_path_from_unit_contents(unit: &str) -> Option<String> {
+    let command = unit
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("ExecStart="))?;
+    let value = command.split_once(" --config ")?.1.trim_start();
+    systemd_first_argument(value)
+}
+
+fn systemd_first_argument(value: &str) -> Option<String> {
+    let Some(quoted) = value.strip_prefix('"') else {
+        return value.split_whitespace().next().map(ToOwned::to_owned);
+    };
+    let mut parsed = String::new();
+    let mut escaped = false;
+    for character in quoted.chars() {
+        if escaped {
+            parsed.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character == '"' {
+            return Some(parsed.replace("%%", "%").replace("$$", "$"));
+        } else {
+            parsed.push(character);
+        }
+    }
+    None
+}
+
 pub fn windows_machine_config_path_from_program_data_dir(
     program_data_dir: Option<&Path>,
 ) -> Option<PathBuf> {
@@ -101,12 +170,38 @@ fn windows_command_line_program(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        legacy_config_path_from_dirs_config_dir, windows_default_config_path_for_state,
-        windows_machine_config_path_from_program_data_dir,
+        legacy_config_path_from_dirs_config_dir, linux_user_config_for_paths,
+        windows_default_config_path_for_state, windows_machine_config_path_from_program_data_dir,
         windows_service_binary_path_from_sc_qc_output,
         windows_service_config_path_from_sc_qc_output,
     };
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn linux_clients_share_existing_identity_and_respect_the_installed_service() {
+        // Use an existing regular fixture to represent a previously configured desktop.
+        let desktop = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let cli = desktop.with_file_name("missing-cli-config.toml");
+        assert_eq!(
+            linux_user_config_for_paths(cli.clone(), desktop.clone(), ""),
+            desktop
+        );
+        let installed = format!("ExecStart=nvpn daemon --config \"{}\"", cli.display());
+        assert_eq!(
+            linux_user_config_for_paths(cli.clone(), desktop.clone(), &installed),
+            cli
+        );
+        assert_eq!(
+            linux_user_config_for_paths(
+                cli.clone(),
+                desktop.clone(),
+                "ExecStart=nvpn daemon --config /another/profile"
+            ),
+            desktop
+        );
+        let absent = desktop.with_file_name("missing-desktop-config.toml");
+        assert_eq!(linux_user_config_for_paths(cli.clone(), absent, ""), cli);
+    }
 
     #[test]
     fn legacy_config_path_uses_user_config_root() {

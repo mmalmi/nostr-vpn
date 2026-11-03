@@ -18,6 +18,7 @@ use qrcode::QrCode;
 use serde_json::{Value, json};
 use tower_http::services::{ServeDir, ServeFile};
 
+mod files;
 mod ui_types;
 
 use crate::ui_types::{
@@ -121,6 +122,13 @@ async fn main() -> Result<()> {
 
     let mut app = Router::new()
         .route("/api/health", get(health))
+        .route("/api/files", get(files::list))
+        .route("/api/files/send", post(files::send))
+        .route("/api/files/{id}/accept", post(files::accept))
+        .route("/api/files/{id}/decline", post(files::decline))
+        .route("/api/files/{id}/cancel", post(files::cancel))
+        .route("/api/files/{id}/resume", post(files::resume))
+        .route("/api/files/{id}/{index}", get(files::download))
         .route("/api/tick", post(tick))
         .route("/api/connect_vpn", post(connect_vpn))
         .route("/api/disconnect_vpn", post(disconnect_vpn))

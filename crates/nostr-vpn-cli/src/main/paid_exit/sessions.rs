@@ -41,16 +41,22 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
     let store_path = paid_route_store_file_path(&config_path);
     let no_select_exit_node = args.no_select_exit_node;
     let no_reload_daemon = args.no_reload_daemon;
+    let now_unix = unix_timestamp();
     let result = update_paid_route_store(&store_path, |store| {
         let offer_selector = paid_exit_buy_offer_selector(&args, store)?;
-        store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+        let session = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector,
             buyer_npub,
             mint_url: args.mint,
             channel_capacity_sat: args.channel_capacity_sat,
             initial_paid_msat: args.initial_paid_msat,
-            now_unix: unix_timestamp(),
-        })
+            now_unix,
+        })?;
+        if !no_select_exit_node {
+            store.begin_buyer_session_open_attempt(&session.session_id, now_unix)?;
+            store.set_manual_renewal(&session.session_id, args.auto_renew)?;
+        }
+        Ok(session)
     })?;
 
     let (selected_exit_node, daemon_reload_attempted) = if no_select_exit_node {
@@ -130,6 +136,7 @@ fn paid_exit_use_once(args: PaidExitUseArgs) -> Result<PaidExitUseResult> {
             ));
         }
         store.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+        store.set_manual_renewal(&session_id, args.auto_renew)?;
         let seller_npub = store.buyer_session_seller_npub(&session_id)?;
         let endpoint_hints = store.buyer_session_seller_fips_endpoints(&session_id)?;
         Ok((seller_npub, endpoint_hints))
@@ -178,6 +185,9 @@ fn print_paid_exit_buy_result(result: &PaidExitBuyResult) {
     println!("seller: {}", result.session.seller_npub);
     println!("offer: {}", result.session.offer_id);
     println!("mint: {}", display_or_none(&result.session.mint_url));
+    if result.session.mint_url.is_empty() {
+        println!("payment: no wallet spending authorized");
+    }
     println!(
         "channel: {} capacity={} expires_at={}",
         result.session.channel_id,

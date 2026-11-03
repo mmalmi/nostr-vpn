@@ -9,6 +9,145 @@ use nostr_vpn_core::paid_routes::{ExitNetworkClass, SignedPaidRouteOffer};
 use serde_json::Value;
 
 #[test]
+fn paid_exit_stop_renewal_works_offline_without_reselecting_a_channel() {
+    let dir = TestDir::new("nvpn-stop-renewal");
+    let config = dir.path().join("config.toml");
+    let store_path = dir.path().join("paid-routes.json");
+    nostr_vpn_core::paid_route_store::update_paid_route_store(&store_path, |store| {
+        store.selected_buyer_session_id = "old-session".into();
+        store.manual_renewal_session_id = "old-session".into();
+        Ok(())
+    })
+    .unwrap();
+    for _ in 0..2 {
+        assert_success(&run_nvpn([
+            "paid-exit",
+            "stop-renewal",
+            "--config",
+            config.to_str().unwrap(),
+        ]));
+        let store = load_paid_route_store(&store_path).unwrap();
+        assert!(store.manual_renewal_session_id.is_empty());
+        assert_eq!(store.selected_buyer_session_id, "old-session");
+        assert!(!config.exists());
+    }
+}
+
+#[test]
+fn paid_exit_rating_requires_publication_consent_before_changing_state() {
+    let dir = TestDir::new("nvpn-public-rating");
+    let path = dir.path().join("config.toml");
+    let output = run_nvpn([
+        "paid-exit",
+        "rate",
+        "down",
+        "--config",
+        path.to_str().unwrap(),
+    ]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--publish to confirm"));
+    assert!(!path.exists());
+    assert!(!dir.path().join("paid-routes.json").exists());
+}
+
+#[test]
+fn paid_exit_wallet_shows_recorded_balances_offline_without_writing() {
+    use nostr_vpn_core::paid_route_store::{PaidRouteWalletMint, update_paid_route_store};
+    let dir = TestDir::new("nvpn-wallet-offline");
+    let config = dir.path().join("config.toml");
+    let store_path = dir.path().join("paid-routes.json");
+    let config = config.to_str().unwrap();
+    let read = || run_nvpn(["paid-exit", "wallet", "--json", "show", "--config", config]);
+
+    assert_success(&read());
+    assert!(!store_path.exists());
+    update_paid_route_store(&store_path, |store| {
+        store.wallet.mints.push(PaidRouteWalletMint {
+            url: "https://mint.invalid".into(),
+            label: String::new(),
+            balance_msat: Some(12_000),
+            last_checked_unix: 1234,
+        });
+        Ok(())
+    })
+    .unwrap();
+    let before = std::fs::read(&store_path).unwrap();
+    let result = read();
+    assert_success(&result);
+    let json: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(json["offline"], true);
+    assert_eq!(json["changed"], false);
+    assert_eq!(json["wallet"]["mints"][0]["balance_msat"], 12000);
+    assert_eq!(json["wallet"]["mints"][0]["last_checked_unix"], 1234);
+    assert!(json["cashu"].is_null());
+    let refresh = run_nvpn(["paid-exit", "wallet", "show", "--refresh", "--config", config]);
+    assert!(!refresh.status.success());
+    assert_eq!(std::fs::read(&store_path).unwrap(), before);
+}
+
+#[test]
+fn paid_exit_wallet_accepts_config_after_its_subcommand() {
+    let dir = TestDir::new("nvpn-wallet-global-config");
+    let config = dir.path().join("config.toml");
+    for command in ["show", "topup", "receive", "send", "withdraw", "add-mint"] {
+        // Help parses the same CLI arguments without starting a daemon or
+        // performing a wallet operation.
+        let output = run_nvpn([
+            "paid-exit",
+            "wallet",
+            command,
+            "--config",
+            config.to_str().unwrap(),
+            "--help",
+        ]);
+        assert_success(&output);
+        let help = String::from_utf8_lossy(&output.stdout);
+        assert!(help.contains("--config <CONFIG>"), "{help}");
+        assert!(!config.exists(), "parsing help must not create a config");
+    }
+}
+
+#[test]
+fn paid_exit_rejects_impossible_free_probe_before_saving_settings() {
+    let dir = TestDir::new("nvpn-probe-budget-config");
+    let path = dir.path().join("config.toml");
+    let config = path.to_str().unwrap();
+    assert_success(&run_paid_exit_with_network_class(config, None));
+    let config_before = std::fs::read(&path).unwrap();
+    let store_path = dir.path().join("paid-routes.json");
+    let store_before = std::fs::read(&store_path).ok();
+    for args in [
+        vec![
+            "paid-exit",
+            "run",
+            "--config",
+            config,
+            "--no-reload-daemon",
+            "--free-probe-units",
+            "10 MB",
+            "--grace-units",
+            "20 MB",
+        ],
+        vec![
+            "set",
+            "--config",
+            config,
+            "--paid-exit-free-probe-units",
+            "10 MB",
+            "--paid-exit-grace-units",
+            "20 MB",
+        ],
+    ] {
+        let output = run_nvpn(args);
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("at most 8 MiB"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), config_before);
+        assert_eq!(std::fs::read(&store_path).ok(), store_before);
+    }
+}
+
+#[test]
 fn paid_exit_run_persists_custom_offer_identity_across_processes() {
     let dir = TestDir::new("nvpn-custom-offer-id");
     let path = dir.path().join("config.toml");

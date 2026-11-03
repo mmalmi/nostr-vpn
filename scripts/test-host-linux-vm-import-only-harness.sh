@@ -548,6 +548,15 @@ data_files = {
         (repo_root / "linux/resources/nostr-vpn.desktop").read_bytes(),
         0o644,
     ),
+    "./usr/share/applications/fi.siriusbusiness.nvpn.desktop": (
+        (repo_root / "linux/resources/fi.siriusbusiness.nvpn.desktop").read_bytes(), 0o644,
+    ),
+    "./usr/share/Thunar/sendto/nvpn.desktop": (
+        (repo_root / "linux/resources/nvpn-sendto.desktop").read_bytes(), 0o644,
+    ),
+    "./usr/share/kio/servicemenus/nvpn-sendfiles.desktop": (
+        (repo_root / "linux/resources/nvpn-sendfiles.desktop").read_bytes(), 0o644,
+    ),
     "./usr/share/doc/nostr-vpn/copyright": (
         b"Format: https://www.debian.org/doc/packaging-manuals/"
         b"copyright-format/1.0/\n"

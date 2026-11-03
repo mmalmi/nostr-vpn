@@ -14,6 +14,12 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
     #[cfg(target_os = "windows")]
     let config_path = windows_service_install_config_path(args.config)?;
 
+    #[cfg(target_os = "linux")]
+    if args.config.is_none() && crate::config_bootstrap::configured_config_path(std::env::var_os(crate::config_bootstrap::CONFIG_PATH_ENV)).is_none()
+        && unsafe { libc::geteuid() } == 0
+        && std::env::var("SUDO_UID").ok().and_then(|uid| uid.parse::<u32>().ok()).is_some_and(|uid| uid != 0) {
+        return Err(anyhow!("Pass --config with your existing user's config when installing the service with sudo"));
+    }
     #[cfg(not(target_os = "windows"))]
     let config_path = args.config.unwrap_or_else(default_config_path);
 

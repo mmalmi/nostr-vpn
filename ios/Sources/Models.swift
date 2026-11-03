@@ -69,6 +69,7 @@ struct AppState: Decodable {
     var autoconnect = false
     var configPath = ""
     var networks: [NetworkState] = []
+    var fileTransfers: [FileTransferState] = []
     var health: [HealthIssue] = []
 
     var activeNetwork: NetworkState? {
@@ -98,7 +99,7 @@ struct AppState: Decodable {
         case fipsNostrDiscoveryEnabled, fipsWebrtcEnabled, fipsBootstrapEnabled
         case magicDnsSuffix, magicDnsStatus, autoconnect
         case configPath
-        case networks, health
+        case networks, health, fileTransfers
     }
 
     init() {}
@@ -173,6 +174,7 @@ struct AppState: Decodable {
         autoconnect = container.bool(.autoconnect)
         configPath = container.string(.configPath)
         networks = container.array(.networks)
+        fileTransfers = container.array(.fileTransfers)
         health = container.array(.health)
     }
 }
@@ -631,4 +633,22 @@ private extension KeyedDecodingContainer {
         (try? decodeIfPresent([T].self, forKey: key)) ?? []
     }
 
+}
+
+struct TransferFileState: Decodable {
+    var name: String
+    var sizeBytes: UInt64
+    var localPath: String?
+}
+
+struct FileTransferState: Decodable, Identifiable {
+    var id: String
+    var peerNpub: String
+    var peerName: String
+    var isSender: Bool
+    var files: [TransferFileState]
+    var status: String
+    var transferredBytes: UInt64
+    var totalBytes: UInt64
+    var error: String?
 }

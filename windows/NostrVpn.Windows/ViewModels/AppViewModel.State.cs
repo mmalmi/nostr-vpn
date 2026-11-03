@@ -52,7 +52,7 @@ public sealed partial class AppViewModel
         NativeAppState state,
         bool joinCoordinationActive)
     {
-        if (joinCoordinationActive)
+        if (joinCoordinationActive || state.FileTransfers.Any(transfer => transfer.Status is "offered" or "preparing" or "connecting" or "transferring"))
         {
             return JoinCoordinationRefreshInterval;
         }
@@ -273,6 +273,7 @@ public sealed partial class AppViewModel
     {
         OnPropertyChanged(nameof(SelectedParticipantCanRename));
         OnPropertyChanged(nameof(SelectedParticipantCanManage));
+        OnPropertyChanged(nameof(SelectedParticipantCanSendFiles));
     }
 
     private void NormalizeSelectedParticipant(NativeAppState state)

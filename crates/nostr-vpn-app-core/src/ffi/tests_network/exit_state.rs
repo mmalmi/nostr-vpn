@@ -197,6 +197,41 @@
 
     #[cfg(feature = "paid-exit")]
     #[test]
+    fn automatic_exit_status_explains_price_limit_before_selecting_a_provider() {
+        use nostr_vpn_core::paid_route_store::{paid_route_store_file_path, update_paid_route_store};
+        use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+        let dir = unique_service_test_dir("nvpn-automatic-price-limit");
+        let mut runtime = NativeAppRuntime::from_startup_error(&anyhow!("test"));
+        runtime.startup_error = None;
+        runtime.config.wallet_fiat_enabled = false;
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Buyer");
+        runtime.config.set_internet_source(InternetSource::PaidAutomatic);
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            vpn_enabled: true,
+            vpn_active: true,
+            ..DaemonRuntimeState::default()
+        });
+        let seller = Keys::generate();
+        let now = unix_timestamp();
+        let mut offer = PaidExitConfig { enabled: true, ..Default::default() };
+        offer.pricing.price_msat_per_gb = 250_000;
+        offer.channel.accepted_mints = vec!["https://mint.example".into()];
+        let signed = signed_paid_exit_offer_from_config("exit", &seller, &offer, None, now).unwrap();
+        update_paid_route_store(&paid_route_store_file_path(&runtime.config_path), |store| {
+            store.upsert_signed_offer(signed, vec![], now)?;
+            store.upsert_wallet_mint("https://mint.example", "Mint", Some(1_000_000), now);
+            Ok(())
+        }).unwrap();
+        let state = runtime.state();
+        assert!(state.exit_node_needs_attention);
+        assert!(state.exit_node_status_text.contains("100 sat/GB"));
+        assert!(!state.exit_node_active);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(feature = "paid-exit")]
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn automatic_exit_confirmation_tracks_selection_probe_and_live_connection() {
         use nostr_vpn_core::paid_route_store::{
@@ -290,6 +325,8 @@
             Ok(())
         }).unwrap();
 
+        assert!(!runtime.state().exit_node_active, "a persisted probe cannot replace the actual route");
+        runtime.daemon_state.as_mut().unwrap().tunnel_exit_peer = Some(seller_hex.clone());
         let active = runtime.state();
         assert!(active.exit_node_active);
         assert!(!active.exit_node_blocked);
@@ -297,6 +334,17 @@
             format!("Automatic paid exit · {provider_name} · 198.51.100.42 · Active"));
         assert!(!active.networks[0].participants.iter()
             .any(|peer| peer.pubkey_hex == seller_hex), "seller remains outside the private roster");
+
+        let store_path = nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path);
+        update_paid_route_store(&store_path, |store| {
+            store.selected_buyer_session_id.clear();
+            Ok(())
+        }).unwrap();
+        assert!(!runtime.state().exit_node_active, "an older lease must not supply the selected session's health");
+        update_paid_route_store(&store_path, |store| {
+            store.selected_buyer_session_id = session.session_id.clone();
+            Ok(())
+        }).unwrap();
 
         runtime.daemon_state.as_mut().unwrap().peers[0].reachable = false;
         assert!(!runtime.state().exit_node_active, "old probe must not hide disconnection");

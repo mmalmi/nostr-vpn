@@ -55,6 +55,7 @@ fn run_command_with_runtime(command: Command) -> Result<()> {
 
 async fn run_command(command: Command) -> Result<()> {
     match command {
+        Command::File(args) => run_file_command(args)?,
         #[cfg(target_os = "linux")]
         Command::EgressGuard { config } => crate::linux_exit_intent::restore_at_boot(&config)?,
         Command::Init {
@@ -280,6 +281,7 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("device_id={}", app.nostr.public_key);
                 println!("magic_dns_suffix: {}", app.magic_dns_suffix);
                 println!("autoconnect: {}", app.autoconnect);
+                println!("internet_source: {}", app.internet_source.as_str());
                 println!("node: {}", app.node.id);
                 println!("tunnel_ip: {}", runtime_local_tunnel_ip(&app, &network_id));
                 println!("endpoint: {endpoint}");
@@ -293,7 +295,11 @@ async fn run_command(command: Command) -> Result<()> {
                 if app.exit_node.is_empty() {
                     println!("exit_node: none");
                 } else {
-                    println!("exit_node: {}", app.exit_node);
+                    let exit_node = PublicKey::parse(&app.exit_node)
+                        .ok()
+                        .and_then(|key| key.to_bech32().ok())
+                        .unwrap_or_else(|| app.exit_node.clone());
+                    println!("exit_node: {exit_node}");
                 }
                 println!(
                     "exit_node_leak_protection: {}",
@@ -429,6 +435,7 @@ async fn run_command(command: Command) -> Result<()> {
                     if path.exists() {
                         update_paid_route_store(&path, |store| {
                             store.automatic_reselect_from.clear();
+                            store.automatic_reselect_session_id.clear();
                             Ok(())
                         })?;
                     }
@@ -501,6 +508,9 @@ async fn run_command(command: Command) -> Result<()> {
                 if let Some(value) = args.paid_exit_grace_units.as_deref() {
                     app.paid_exit.channel.grace_units =
                         paid_exit_parse_traffic_units_arg(value, "--paid-exit-grace-units")?;
+                }
+                if app.paid_exit.enabled && app.paid_exit != previous_app.paid_exit {
+                    app.paid_exit.channel.validate_seller_free_probe_budget()?;
                 }
             }
             if let Some(value) = args.wireguard_exit_enabled {

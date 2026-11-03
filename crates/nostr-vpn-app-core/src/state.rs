@@ -18,6 +18,8 @@ pub struct DaemonRuntimeState {
     pub advertised_endpoint: String,
     #[serde(default, alias = "listen_port")]
     pub listen_port: u16,
+    #[serde(default, alias = "tunnel_exit_peer")]
+    pub tunnel_exit_peer: Option<String>,
     #[serde(default, alias = "paid_exit_seller_ready")]
     pub paid_exit_seller_ready: bool,
     #[serde(default, alias = "wireguard_exit_ready")]

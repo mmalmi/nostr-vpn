@@ -101,6 +101,8 @@
                 funding_required_balance_sat: 0,
                 funding_started_unix: 0,
                 last_successful_probe_unix: 0,
+                last_usage_at_unix: 0,
+                usage_started_at_unix: 0,
                 session: PaidRouteSession {
                     session_id: "session-1".to_string(),
                     lease_id: "lease-1".to_string(),
@@ -414,6 +416,7 @@
                             ),
                             retry_after_secs: Some(1800),
                             insufficient_funds: None,
+                            rejected_request_status: None,
                         },
                     )
                     .unwrap();

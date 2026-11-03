@@ -127,6 +127,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
             }
         }
     }
+    item { FileTransfersCard(state, dispatch) }
     if (network.localIsAdmin) {
         item {
             Button(

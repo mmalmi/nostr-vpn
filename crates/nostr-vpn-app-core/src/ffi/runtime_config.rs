@@ -1,6 +1,9 @@
 impl NativeAppRuntime {
     #[allow(clippy::too_many_lines)]
     fn apply_settings_patch(&mut self, patch: SettingsPatch) -> Result<()> {
+        if patch.paid_exit_ipv6 == Some(true) || patch.paid_exit_ipv4 == Some(false) {
+            return Err(anyhow!("Paid exit sellers currently support IPv4 only"));
+        }
         let parsed_wireguard_exit_config = patch
             .wireguard_exit_config
             .as_deref()
@@ -12,6 +15,21 @@ impl NativeAppRuntime {
             .map(parse_paid_exit_mint_urls)
             .transpose()?;
         let internet_source_in_patch = patch.internet_source.is_some();
+
+        if patch.paid_exit_enabled.unwrap_or(self.config.paid_exit.enabled)
+            && (patch.paid_exit_enabled.is_some()
+                || patch.paid_exit_free_probe_units.is_some()
+                || patch.paid_exit_grace_units.is_some())
+        {
+            let mut channel = self.config.paid_exit.channel.clone();
+            if let Some(value) = patch.paid_exit_free_probe_units {
+                channel.free_probe_units = value;
+            }
+            if let Some(value) = patch.paid_exit_grace_units {
+                channel.grace_units = value;
+            }
+            channel.validate_seller_free_probe_budget()?;
+        }
 
         if let Some(value) = patch.node_name {
             self.config.node_name = value.trim().to_string();
@@ -52,6 +70,7 @@ impl NativeAppRuntime {
                 if store_file.exists() {
                     nostr_vpn_core::paid_route_store::update_paid_route_store(&store_file, |store| {
                         store.automatic_reselect_from.clear();
+                        store.automatic_reselect_session_id.clear();
                         Ok(())
                     })?;
                 }

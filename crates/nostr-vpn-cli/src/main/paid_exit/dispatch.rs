@@ -9,6 +9,7 @@ async fn run_paid_exit_command(args: PaidExitArgs) -> Result<()> {
         PaidExitCommand::Discover(args) => paid_exit_discover_command(args).await,
         PaidExitCommand::Buy(args) => paid_exit_buy_command(args),
         PaidExitCommand::Use(args) => paid_exit_use_command(args),
+        PaidExitCommand::StopRenewal(args) => paid_exit_stop_renewal(args),
         PaidExitCommand::Probe(args) => paid_exit_probe_command(args).await,
         PaidExitCommand::RecordProbe(args) => paid_exit_record_probe_command(args),
         PaidExitCommand::Ratings(args) => paid_exit_ratings_command(args).await,
@@ -22,6 +23,20 @@ async fn run_paid_exit_command(args: PaidExitArgs) -> Result<()> {
         PaidExitCommand::CollectDue(args) => paid_exit_collect_due_command(args).await,
         PaidExitCommand::Wallet(args) => paid_exit_wallet_command(args).await,
     }
+}
+
+fn paid_exit_stop_renewal(args: PaidExitStatusArgs) -> Result<()> {
+    let config = args.config.unwrap_or_else(default_config_path);
+    update_paid_route_store(&paid_route_store_file_path(&config), |store| {
+        store.manual_renewal_session_id.clear();
+        Ok(())
+    })?;
+    if args.json {
+        println!("{}", json!({"manual_auto_renew": false}));
+    } else {
+        println!("Manual channel renewal is off.");
+    }
+    Ok(())
 }
 
 fn paid_exit_status_command(args: PaidExitStatusArgs) -> Result<()> {
@@ -47,6 +62,9 @@ fn paid_exit_status_command(args: PaidExitStatusArgs) -> Result<()> {
 }
 
 fn paid_exit_rate_command(args: PaidExitRateArgs) -> Result<()> {
+    if !args.publish {
+        return Err(anyhow!("Ratings are public and signed with your identity. Add --publish to confirm."));
+    }
     let path = args.config.unwrap_or_else(default_config_path);
     let mut app = load_config_read_only(&path)?;
     let seller = args.provider.unwrap_or_else(|| app.exit_node.clone());

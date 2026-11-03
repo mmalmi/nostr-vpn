@@ -368,6 +368,10 @@ fn mobile_runtime_state_with_tun_counters(
         local_endpoint: config.advertised_endpoint.clone(),
         advertised_endpoint: config.advertised_endpoint.clone(),
         listen_port: config.listen_port,
+        tunnel_exit_peer: mesh
+            .route_outbound_destination_peer(std::net::Ipv4Addr::UNSPECIFIED.into())
+            .filter(|route| route.via_default_route)
+            .map(|route| route.participant_pubkey.to_owned()),
         vpn_enabled: true,
         vpn_active: true,
         vpn_status: if expected_peer_count == 0 {

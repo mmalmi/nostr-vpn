@@ -32,6 +32,8 @@ APP_NAME = "Nostr VPN.app"
 APP_EXECUTABLE = "Nostr VPN"
 TUNNEL_NAME = "Nostr VPN Tunnel.appex"
 TUNNEL_EXECUTABLE = "Nostr VPN Tunnel"
+SHARE_NAME = "ShareFiles.appex"
+SHARE_EXECUTABLE = "ShareFiles"
 RECEIPT_SCHEMA = 1
 
 
@@ -123,10 +125,13 @@ def unsigned_content_manifest(
         pathlib.PurePosixPath("embedded.mobileprovision"),
         pathlib.PurePosixPath("PlugIns") / TUNNEL_NAME / TUNNEL_EXECUTABLE,
         pathlib.PurePosixPath("PlugIns") / TUNNEL_NAME / "embedded.mobileprovision",
+        pathlib.PurePosixPath("PlugIns") / SHARE_NAME / SHARE_EXECUTABLE,
+        pathlib.PurePosixPath("PlugIns") / SHARE_NAME / "embedded.mobileprovision",
     }
     semantic_plists = {
         pathlib.PurePosixPath("Info.plist"),
         pathlib.PurePosixPath("PlugIns") / TUNNEL_NAME / "Info.plist",
+        pathlib.PurePosixPath("PlugIns") / SHARE_NAME / "Info.plist",
     }
     entries: list[dict[str, Any]] = []
     for current, directories, files in os.walk(app, followlinks=False):
@@ -142,7 +147,7 @@ def unsigned_content_manifest(
             if path.is_symlink():
                 entries.append(safe_symlink(path, app))
                 continue
-            if relative != pathlib.Path("PlugIns") / TUNNEL_NAME and (
+            if relative not in {pathlib.Path("PlugIns") / TUNNEL_NAME, pathlib.Path("PlugIns") / SHARE_NAME} and (
                 name.endswith((".app", ".appex", ".framework"))
             ):
                 raise ValueError(f"unexpected nested iOS code bundle: {relative}")
@@ -193,6 +198,7 @@ def read_plist(path: pathlib.Path) -> dict[str, Any]:
 
 def app_paths(app: pathlib.Path) -> dict[str, pathlib.Path]:
     tunnel = app / "PlugIns" / TUNNEL_NAME
+    share = app / "PlugIns" / SHARE_NAME
     paths = {
         "app": app,
         "appExecutable": app / APP_EXECUTABLE,
@@ -202,9 +208,13 @@ def app_paths(app: pathlib.Path) -> dict[str, pathlib.Path]:
         "tunnelExecutable": tunnel / TUNNEL_EXECUTABLE,
         "tunnelInfo": tunnel / "Info.plist",
         "tunnelProfile": tunnel / "embedded.mobileprovision",
+        "share": share,
+        "shareExecutable": share / SHARE_EXECUTABLE,
+        "shareInfo": share / "Info.plist",
+        "shareProfile": share / "embedded.mobileprovision",
     }
     for name, path in paths.items():
-        if name in {"app", "tunnel"}:
+        if name in {"app", "tunnel", "share"}:
             require(path.is_dir(), f"iOS bundle is missing: {path}")
         else:
             require(path.is_file(), f"iOS bundle file is missing: {path}")
@@ -215,6 +225,7 @@ def bundle_identity(app: pathlib.Path) -> dict[str, Any]:
     paths = app_paths(app)
     app_info = read_plist(paths["appInfo"])
     tunnel_info = read_plist(paths["tunnelInfo"])
+    share_info = read_plist(paths["shareInfo"])
     content_sha, content_count = unsigned_content_manifest(app)
     return {
         "appBundleIdentifier": str(app_info.get("CFBundleIdentifier", "")),
@@ -245,6 +256,12 @@ def bundle_identity(app: pathlib.Path) -> dict[str, Any]:
         "packetTunnelNormalizedExecutableSha256": normalized_executable_sha256(
             paths["tunnelExecutable"]
         ),
+        "shareFilesBundleIdentifier": str(share_info.get("CFBundleIdentifier", "")),
+        "shareFilesBuildGitSha": str(share_info.get("NVPNBuildGitSha", "")),
+        "shareFilesBuildTimestampUTC": str(share_info.get("NVPNBuildTimestampUTC", "")),
+        "shareFilesBuildNumber": str(share_info.get("CFBundleVersion", "")),
+        "shareFilesMarketingVersion": str(share_info.get("CFBundleShortVersionString", "")),
+        "shareFilesNormalizedExecutableSha256": normalized_executable_sha256(paths["shareExecutable"]),
         "unsignedContentFileCount": content_count,
         "unsignedContentManifestSha256": content_sha,
     }
@@ -470,6 +487,17 @@ def signed_bundle_audit(
         signer_sha=signer_sha,
         device_udid=device_udid,
     )
+    share_bundle_id = f"{app_bundle_id}.ShareFiles"
+    run(["codesign", "--verify", "--strict", str(paths["share"])])
+    share_details = codesign_details(paths["share"])
+    require(share_details["Identifier"] == share_bundle_id, "signed file sharing extension has the wrong bundle identifier")
+    require(share_details["TeamIdentifier"] == team_id, "signed file sharing extension has the wrong team")
+    require(certificate_sha256(paths["share"]) == signer_sha, "signed file sharing extension has the wrong certificate")
+    validate_profile(
+        decoded_profile(paths["shareProfile"]), signed_entitlements(paths["share"]),
+        distribution=distribution, team_id=team_id, bundle_id=share_bundle_id,
+        app_group_id=app_group_id, signer_sha=signer_sha, device_udid=device_udid,
+    )
     app_network_extensions = app_entitlements.get(
         "com.apple.developer.networking.networkextension"
     )
@@ -498,6 +526,8 @@ def signed_bundle_audit(
         "packetTunnelProvisioningProfileSha256": sha256_file(
             paths["tunnelProfile"]
         ),
+        "shareFilesCodeDirectoryHash": share_details["CDHash"].lower(),
+        "shareFilesProvisioningProfileSha256": sha256_file(paths["shareProfile"]),
         "signerCertificateSha256": signer_sha,
         "signingTeamIdentifier": team_id,
     }
@@ -521,6 +551,10 @@ def validate_identity(
         "packetTunnelBuildGitSha": app_head,
         "packetTunnelBuildNumber": build,
         "packetTunnelMarketingVersion": version,
+        "shareFilesBundleIdentifier": f"{app_bundle_id}.ShareFiles",
+        "shareFilesBuildGitSha": app_head,
+        "shareFilesBuildNumber": build,
+        "shareFilesMarketingVersion": version,
     }
     for name, value in expected.items():
         require(

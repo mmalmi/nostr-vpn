@@ -18,6 +18,7 @@ fn paid_exit_seller_identity(app: &AppConfig) -> Result<(String, String)> {
 fn paid_exit_status_json(app: &AppConfig) -> serde_json::Value {
     let config = &app.paid_exit;
     json!({
+        "role": "seller",
         "enabled": config.enabled,
         "upstream": config.access.upstream.as_str(),
         "private_vpn_access": config.access.private_vpn_access.as_str(),
@@ -42,7 +43,7 @@ fn paid_exit_status_json(app: &AppConfig) -> serde_json::Value {
 fn print_paid_exit_status(app: &AppConfig) {
     let config = &app.paid_exit;
     println!(
-        "paid_exit: {}",
+        "paid_exit_selling: {}",
         if config.enabled {
             "enabled"
         } else {

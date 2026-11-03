@@ -137,6 +137,48 @@ fn manual_failures_preserve_explicit_exit_selection() {
     );
     assert_eq!(std::fs::read(&config_path).unwrap(), saved_selection);
 
+    // The daemon's next periodic open must retry existing credit instead of
+    // clearing the failed selection and waiting for another manual purchase.
+    let payment = CashuSpilmanPayment {
+        channel_id: session.channel_id.clone(),
+        balance: 1,
+        signature: "signed".into(),
+        params: Some(serde_json::json!({"unit": "sat"})),
+        funding_proofs: Some(serde_json::json!({"proofs": []})),
+    };
+    update_paid_route_store(&store_path, |store| {
+        store
+            .sessions
+            .get_mut(&session.session_id)
+            .unwrap()
+            .session
+            .payment
+            .cashu_spilman_payment = Some(payment.clone());
+        store
+            .channels
+            .get_mut(&session.channel_id)
+            .unwrap()
+            .payment
+            .cashu_spilman_payment = Some(payment);
+        Ok(())
+    })
+    .unwrap();
+    reconcile_selected_paid_exit_session(
+        &mut app,
+        &config_path,
+        &seller.public_key().to_hex(),
+        132,
+    )
+    .unwrap();
+    let recovered = load_paid_route_store(&store_path).unwrap();
+    assert_eq!(recovered.selected_buyer_session_id, session.session_id);
+    assert_eq!(recovered.sessions.len(), 1);
+    assert_eq!(
+        recovered.channels[&session.channel_id].status,
+        PaidRouteLifecycleStatus::Opening
+    );
+    assert_eq!(std::fs::read(&config_path).unwrap(), saved_selection);
+
     let _ = std::fs::remove_dir_all(directory);
 }
 
@@ -152,13 +194,13 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let first = Keys::generate();
     let second = Keys::generate();
     let third = Keys::generate();
-    let open = |lease: &str| PaidRouteSessionOpen {
+    let open = |lease: &str, host: u8| PaidRouteSessionOpen {
         version: nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_VERSION.into(),
         service_id: "internet-exit".into(),
         lease_id: lease.into(),
         channel_id: format!("channel-{lease}"),
         seller_npub: seller_npub.clone(),
-        buyer_tunnel_ip: "10.44.201.17/32".into(),
+        buyer_tunnel_ip: format!("10.44.0.{host}/32"),
         expires_at_unix: unix_timestamp() + 600,
     };
     let mut peer = fips_endpoint::FipsEndpointPeer {
@@ -191,7 +233,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(first.public_key().to_hex(), open("first"))],
+        vec![(first.public_key().to_hex(), open("first", 1))],
         &[peer.clone()],
     )
     .unwrap();
@@ -200,7 +242,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(second.public_key().to_hex(), open("rotated-key"))],
+        vec![(second.public_key().to_hex(), open("rotated-key", 2))],
         &[peer.clone()],
     )
     .unwrap();
@@ -212,7 +254,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(third.public_key().to_hex(), open("relay"))],
+        vec![(third.public_key().to_hex(), open("relay", 3))],
         &[peer.clone()],
     )
     .unwrap();
@@ -222,7 +264,7 @@ fn seller_trial_uses_authenticated_carrier_ip_across_buyer_keys() {
     let result = apply_paid_exit_session_opens(
         &app,
         &config_path,
-        vec![(third.public_key().to_hex(), open("other-hop"))],
+        vec![(third.public_key().to_hex(), open("other-hop", 3))],
         &[peer],
     )
     .unwrap();

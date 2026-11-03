@@ -276,6 +276,24 @@ fn mint_failover_keeps_existing_funded_channel_during_cooldown() {
         store.select_automatic_offer(now + 1).unwrap().mint_url,
         PRIMARY
     );
+    let expected = store.select_automatic_offer(now + 1).unwrap().offer_key;
+    // The purchased contract remains authoritative during discovery after a
+    // restart. Missing adverts and a busy mint must not strand existing credit.
+    store.offers.clear();
+    let mut restarted = PaidExitAutomaticBuyer::default();
+    let recovered = restarted.selection(&store, now + 1).unwrap();
+    assert_eq!(recovered.offer_key, expected);
+    assert!(recovered.funded);
+    assert_eq!(recovered.mint_url, PRIMARY);
+    let selected = store.selected_buyer_session_id.clone();
+    let seller = store.channels[&store.sessions[&selected].session.payment.channel_id]
+        .counterparty_npub
+        .clone();
+    store.automatic_reselect_from = seller;
+    assert!(
+        restarted.selection(&store, now + 2).is_err(),
+        "respect an explicit request to leave this provider"
+    );
 }
 
 #[test]
@@ -290,6 +308,55 @@ fn mint_failover_waits_without_rejecting_seller_when_all_mints_cooling_down() {
     let candidate = automatic.candidate.as_ref().unwrap();
     assert!(!candidate.failed);
     assert_eq!(candidate.selection.mint_url, PRIMARY);
+}
+
+#[test]
+fn automatic_selection_waits_for_a_payable_mint_before_starting_after_restart() {
+    let (dir, mut app, _, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let store_path = paid_route_store_file_path(&path);
+    update_paid_route_store(&store_path, |store| {
+        store.defer_buyer_mint_retry(ALTERNATIVE, now, Some("Mint unavailable"), Some(600))
+    })
+    .unwrap();
+    let before = load_paid_route_store(&store_path).unwrap();
+    assert!(before.select_automatic_offer(now + 1).is_err());
+    let mut automatic = PaidExitAutomaticBuyer::default();
+    assert!(
+        !reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 1).unwrap()
+    );
+    assert!(automatic.candidate.is_none());
+    assert!(automatic.rejected_offers.is_empty());
+    let after = load_paid_route_store(&store_path).unwrap();
+    assert_eq!(after.sessions, before.sessions);
+    assert_eq!(after.channels, before.channels);
+    assert_eq!(
+        after.selected_buyer_session_id,
+        before.selected_buyer_session_id
+    );
+
+    reconcile_automatic_paid_exit_selection(&mut automatic, &mut app, &path, now + 601).unwrap();
+    assert!(automatic.candidate.is_some());
+    assert!(automatic.rejected_offers.is_empty());
+}
+
+#[test]
+fn automatic_selection_waits_for_observed_funding_shortfall_to_clear() {
+    let (dir, _, automatic, now) = fixture();
+    let path = dir.path().join("config.toml");
+    let mut store = load_paid_route_store(&paid_route_store_file_path(&path)).unwrap();
+    let session_id = automatic.candidate.unwrap().session_id;
+    store.buyer_mint_retries.clear();
+    store.upsert_wallet_mint(ALTERNATIVE, "alternative", Some(0), now);
+    store
+        .record_buyer_session_funding_shortfall(&session_id, 17)
+        .unwrap();
+    assert!(store.select_automatic_offer(now + 1).is_err());
+    store.upsert_wallet_mint(PRIMARY, "primary", Some(17_000), now + 2);
+    assert_eq!(
+        store.select_automatic_offer(now + 2).unwrap().mint_url,
+        PRIMARY
+    );
 }
 
 #[test]
