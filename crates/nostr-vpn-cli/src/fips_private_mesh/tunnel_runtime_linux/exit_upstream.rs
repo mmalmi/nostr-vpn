@@ -167,6 +167,15 @@ impl FipsPrivateTunnelRuntime {
                 outbound_iface,
                 crate::LinuxExitNodeIpFamily::V4,
             );
+            let ingress_mark = crate::linux_exit_node_ipv4_ingress_mark_rule(
+                &self.iface,
+                outbound_iface,
+                tunnel_source_cidr,
+            );
+            let legacy_masquerade = crate::linux_exit_node_ipv4_legacy_masquerade_rule(
+                outbound_iface,
+                tunnel_source_cidr,
+            );
             let masquerade =
                 crate::linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
             let mss_clamp = crate::linux_exit_node_ipv4_mss_clamp_rule(
@@ -186,6 +195,20 @@ impl FipsPrivateTunnelRuntime {
                     crate::LinuxExitNodeIpFamily::V4,
                     None,
                     &forward_out,
+                )
+            })
+            .and_then(|()| {
+                crate::linux_iptables_ensure_rule_at_front(
+                    crate::LinuxExitNodeIpFamily::V4,
+                    Some("mangle"),
+                    &ingress_mark,
+                )
+            })
+            .and_then(|()| {
+                crate::linux_iptables_delete_rule(
+                    crate::LinuxExitNodeIpFamily::V4,
+                    Some("nat"),
+                    &legacy_masquerade,
                 )
             })
             .and_then(|()| {

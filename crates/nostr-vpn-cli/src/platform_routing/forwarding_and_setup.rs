@@ -153,8 +153,64 @@ pub(crate) fn linux_exit_node_legacy_forward_out_rule(
     ]
 }
 
-#[cfg(target_os = "linux")]
+// POSTROUTING cannot match the ingress interface, so connections forwarded
+// from the mesh carry this connection-mark bit to the NAT rule. The source
+// range alone would also match a local network that uses it.
+#[cfg(any(target_os = "linux", test))]
+const LINUX_EXIT_NODE_INGRESS_CONNMARK: &str = "0x1000000/0x1000000";
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_exit_node_ipv4_ingress_mark_rule(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-i".to_string(),
+        tunnel_iface.to_string(),
+        "-o".to_string(),
+        outbound_iface.to_string(),
+        "-s".to_string(),
+        tunnel_source_cidr.to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        "nvpn-exit-ingress".to_string(),
+        "-j".to_string(),
+        "CONNMARK".to_string(),
+        "--set-xmark".to_string(),
+        LINUX_EXIT_NODE_INGRESS_CONNMARK.to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_exit_node_ipv4_masquerade_rule(
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Vec<String> {
+    vec![
+        "POSTROUTING".to_string(),
+        "-o".to_string(),
+        outbound_iface.to_string(),
+        "-s".to_string(),
+        tunnel_source_cidr.to_string(),
+        "-m".to_string(),
+        "connmark".to_string(),
+        "--mark".to_string(),
+        LINUX_EXIT_NODE_INGRESS_CONNMARK.to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        "nvpn-exit-masq".to_string(),
+        "-j".to_string(),
+        "MASQUERADE".to_string(),
+    ]
+}
+
+// Earlier versions masqueraded the whole source range; cleanup still removes it.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_exit_node_ipv4_legacy_masquerade_rule(
     outbound_iface: &str,
     tunnel_source_cidr: &str,
 ) -> Vec<String> {

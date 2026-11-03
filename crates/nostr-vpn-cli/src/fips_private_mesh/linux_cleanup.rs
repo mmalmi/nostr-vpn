@@ -499,8 +499,17 @@ pub(super) fn cleanup_linux_forwarding_state(
         );
         let masquerade =
             crate::linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
+        let legacy_masquerade =
+            crate::linux_exit_node_ipv4_legacy_masquerade_rule(outbound_iface, tunnel_source_cidr);
+        let ingress_mark = crate::linux_exit_node_ipv4_ingress_mark_rule(
+            iface,
+            outbound_iface,
+            tunnel_source_cidr,
+        );
         for (label, table, rule) in [
             ("masquerade", Some("nat"), &masquerade),
+            ("legacy masquerade", Some("nat"), &legacy_masquerade),
+            ("ingress mark", Some("mangle"), &ingress_mark),
             ("forward-out", None, &forward_out),
             ("forward-in", None, &forward_in),
         ] {
