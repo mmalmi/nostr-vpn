@@ -404,10 +404,10 @@ run_release_gate_candidate_preflight() {
   ./scripts/check-source-file-lines.sh
   # Release harness defects are cheap to catch and catastrophically expensive
   # after an exact-candidate VM build or physical-device run has started.
-  ./scripts/test-release-gate-orchestration.sh
   if bool_is_true "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}"; then
     verify_production_ios_idle_cpu
   fi
+  ./scripts/test-release-gate-orchestration.sh
   # Fail on cheap source-quality errors before any remote platform starts an
   # expensive exact-candidate build. These use the locked release graph and
   # are not repeated by the later full host validation lane.
@@ -1609,7 +1609,7 @@ verify_production_ios_idle_cpu() {
     if [[ -n "${NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION:-}" ]]; then
       exception_args=(--release-exception "$NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION"
         --release-commit "$NVPN_EXPECTED_APP_GIT_SHA"
-        --release-version "$(node -p 'require("./package.json").version')")
+        --release-version "$(package_version "$ROOT_DIR")")
     fi
     # A harness-only correction must not rebuild or relabel the signed app.
     # Prove its product inputs are unchanged, then validate CPU evidence
