@@ -46,7 +46,7 @@ nvpn-fips-core = { version = "=0.4.115", features = ["webrtc-transport"] }
 nvpn-fips-tcp = { version = "=0.2.6" }
 nvpn-fips-tcp-endpoint = { version = "=0.2.50" }
 futures = "0.3"
-hashtree-updater = "0.2.87"
+hashtree-updater = "0.3.0"
 hex = "0.4"
 hickory-proto = "0.26.3"
 hostname = "0.4"
