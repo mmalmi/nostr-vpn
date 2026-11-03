@@ -117,6 +117,35 @@
         )
     }
 
+    fn ipv4_tcp_packet(
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+        source_port: u16,
+        destination_port: u16,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let total_len = 40 + payload.len();
+        let mut packet = vec![0_u8; total_len];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(
+            &u16::try_from(total_len)
+                .expect("tcp packet length fits u16")
+                .to_be_bytes(),
+        );
+        packet[8] = 64;
+        packet[9] = 6;
+        packet[12..16].copy_from_slice(&source.octets());
+        packet[16..20].copy_from_slice(&destination.octets());
+        packet[20..22].copy_from_slice(&source_port.to_be_bytes());
+        packet[22..24].copy_from_slice(&destination_port.to_be_bytes());
+        packet[32] = 0x50;
+        packet[40..].copy_from_slice(payload);
+        let checksum = ipv4_header_checksum(&packet[..20]);
+        packet[10..12].copy_from_slice(&checksum.to_be_bytes());
+        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
+        packet
+    }
+
     #[test]
     fn mobile_inbound_roster_requires_signed_event() {
         let admin_hex = Keys::generate().public_key().to_hex();
@@ -841,6 +870,164 @@
         let mut direct_dns = ipv4_udp_packet(profile_dns[0], mesh, 53, 54000, b"direct DNS");
         assert!(!dns_nat.rewrite_response(&mut direct_dns));
         assert_eq!(&direct_dns[12..16], &profile_dns[0].octets());
+    }
+
+    #[test]
+    fn mobile_wireguard_dns_flow_table_caps_and_evicts_oldest_entries() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let server = Ipv4Addr::new(94, 140, 14, 14);
+        let dns_nat = MobileExitDnsNat::new(local_dns, vec![server]).unwrap();
+        let count = u16::try_from(MOBILE_EXIT_DNS_FLOWS_MAX)
+            .expect("flow cap fits u16")
+            + 8;
+        for offset in 0..count {
+            let mut query = ipv4_udp_packet(mesh, local_dns, 40000 + offset, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        }
+
+        assert_eq!(
+            dns_nat.flows.lock().expect("flow table").entries.len(),
+            MOBILE_EXIT_DNS_FLOWS_MAX
+        );
+
+        let mut evicted = ipv4_udp_packet(server, mesh, 53, 40000, b"response");
+        assert!(!dns_nat.rewrite_response(&mut evicted));
+        let mut newest = ipv4_udp_packet(server, mesh, 53, 40000 + count - 1, b"response");
+        assert!(dns_nat.rewrite_response(&mut newest));
+        assert_eq!(&newest[12..16], &local_dns.octets());
+    }
+
+    #[test]
+    fn mobile_wireguard_dns_tcp_flows_rewrite_under_cap_pressure() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let server = Ipv4Addr::new(94, 140, 14, 14);
+        let dns_nat = MobileExitDnsNat::new(local_dns, vec![server]).unwrap();
+        let count = u16::try_from(MOBILE_EXIT_DNS_FLOWS_MAX)
+            .expect("flow cap fits u16")
+            + 16;
+        for offset in 0..count {
+            let mut query = ipv4_tcp_packet(mesh, local_dns, 20000 + offset, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        }
+
+        let mut evicted = ipv4_tcp_packet(server, mesh, 53, 20000, b"response");
+        assert!(!dns_nat.rewrite_response(&mut evicted));
+
+        let fresh_port = 20000 + count - 1;
+        let mut fresh = ipv4_tcp_packet(server, mesh, 53, fresh_port, b"response");
+        assert!(dns_nat.rewrite_response(&mut fresh));
+        assert_eq!(&fresh[12..16], &local_dns.octets());
+        let mut repeated = ipv4_tcp_packet(server, mesh, 53, fresh_port, b"response");
+        assert!(dns_nat.rewrite_response(&mut repeated));
+        assert_eq!(
+            dns_nat.flows.lock().expect("flow table").entries.len(),
+            MOBILE_EXIT_DNS_FLOWS_MAX
+        );
+    }
+
+    #[test]
+    fn mobile_wireguard_dns_flow_table_keeps_queue_bounded_under_reply_churn() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let server = Ipv4Addr::new(94, 140, 14, 14);
+        let dns_nat = MobileExitDnsNat::new(local_dns, vec![server]).unwrap();
+
+        let mut persistent = ipv4_udp_packet(mesh, local_dns, 40200, 53, b"query");
+        assert_eq!(dns_nat.rewrite_query(&mut persistent), Some(server));
+
+        for _ in 0..8192 {
+            let mut query = ipv4_udp_packet(mesh, local_dns, 40100, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+            let mut response = ipv4_udp_packet(server, mesh, 53, 40100, b"response");
+            assert!(dns_nat.rewrite_response(&mut response));
+
+            let flows = dns_nat.flows.lock().expect("flow table");
+            assert_eq!(flows.entries.len(), 1, "replied flow must leave the table");
+            assert!(
+                flows.order.len() <= 2 * flows.entries.len(),
+                "order queue grew unbounded: {} entries for {} flows",
+                flows.order.len(),
+                flows.entries.len()
+            );
+        }
+
+        let mut query = ipv4_udp_packet(mesh, local_dns, 40100, 53, b"query");
+        assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        let flows = dns_nat.flows.lock().expect("flow table");
+        assert_eq!(flows.entries.len(), 2);
+        assert!(flows.order.len() <= 2 * flows.entries.len());
+    }
+
+    #[test]
+    fn mobile_wireguard_dns_flow_table_eviction_skips_stale_duplicates() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let server = Ipv4Addr::new(94, 140, 14, 14);
+        let dns_nat = MobileExitDnsNat::new(local_dns, vec![server]).unwrap();
+        let flow = |client_port: u16| MobileWireGuardDnsFlow {
+            server,
+            protocol: 17,
+            client_port,
+        };
+
+        // The persistent flow guards the queue front, so the reply below
+        // leaves a stale stamp behind a live entry instead of pruning it.
+        let mut persistent = ipv4_udp_packet(mesh, local_dns, 40200, 53, b"query");
+        assert_eq!(dns_nat.rewrite_query(&mut persistent), Some(server));
+
+        let requery_port = 40100_u16;
+        let mut query = ipv4_udp_packet(mesh, local_dns, requery_port, 53, b"query");
+        assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        let mut response = ipv4_udp_packet(server, mesh, 53, requery_port, b"response");
+        assert!(dns_nat.rewrite_response(&mut response));
+
+        // Flows that age between the reply and the re-query: older than
+        // the re-queried flow, so correct eviction takes them first.
+        for offset in 0..8 {
+            let mut query = ipv4_udp_packet(mesh, local_dns, 40210 + offset, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        }
+        let mut requery = ipv4_udp_packet(mesh, local_dns, requery_port, 53, b"query");
+        assert_eq!(dns_nat.rewrite_query(&mut requery), Some(server));
+
+        // Fill so the eviction sweep crosses the stale stamp but still
+        // has middle flows ahead of the re-queried flow: with the stale
+        // stamp the sweep must evict the persistent flow and the first
+        // middle flows, never the re-queried flow.
+        let fill = u16::try_from(MOBILE_EXIT_DNS_FLOWS_MAX - 6).expect("fill count fits u16");
+        for offset in 0..fill {
+            let mut query = ipv4_udp_packet(mesh, local_dns, 30000 + offset, 53, b"query");
+            assert_eq!(dns_nat.rewrite_query(&mut query), Some(server));
+        }
+
+        let flows = dns_nat.flows.lock().expect("flow table");
+        assert_eq!(flows.entries.len(), MOBILE_EXIT_DNS_FLOWS_MAX);
+        assert!(
+            flows.order.len() <= 2 * flows.entries.len(),
+            "order queue grew unbounded under churn"
+        );
+        assert!(
+            flows.contains(flow(requery_port)),
+            "a stale duplicate must not evict the newer active flow"
+        );
+        assert!(
+            !flows.contains(flow(40200)),
+            "the oldest live flow must still be evicted first"
+        );
+        for port in [40210, 40211, 40212] {
+            assert!(
+                !flows.contains(flow(port)),
+                "middle flows older than the survivor must be evicted in order"
+            );
+        }
+        for port in [40213, 40217] {
+            assert!(
+                flows.contains(flow(port)),
+                "flows the sweep never reached must stay active"
+            );
+        }
     }
 
     #[test]
