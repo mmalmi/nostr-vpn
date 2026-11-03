@@ -9,9 +9,9 @@ All notable changes to this project are documented in this file.
 - Paid Internet channels now size renewals from recent traffic. The app also
   recovers unused channel credit after reconnecting and shows why an offer
   cannot be selected.
-- Lightning withdrawals account for input fees and can recover funds reserved
-  by an interrupted withdrawal. Sellers get an error when their advertised
-  free trial exceeds the amount they can provide.
+- The wallet log now shows how much was recovered after an interrupted
+  withdrawal. Sellers get an error when their advertised free trial exceeds
+  the amount they can provide.
 - Send files to a network peer and resume interrupted transfers. Received
   files are available from the inbox.
 - The built-in updater uses Hashtree 0.3.0 to read signed releases.
