@@ -87,13 +87,7 @@ build_rust_target() {
   local IFS=$'\x1f'
   local encoded_flags="${CARGO_ENCODED_RUSTFLAGS-${link_flags[*]}}"
   if [[ "$PROFILE" == release ]]; then
-    # Rust stores source locations in panic messages embedded in the executable.
-    local remaps=("--remap-path-prefix=$HOME=/build/home"
-                  "--remap-path-prefix=$ROOT=/build/nvpn")
-    if [[ -n "${NVPN_FIPS_REPO_PATH:-}" && -n "${NVPN_EXPECTED_FIPS_GIT_SHA:-}" ]]; then
-      remaps+=("--remap-path-prefix=$(cd "$NVPN_FIPS_REPO_PATH" && pwd -P)=/build/fips-$NVPN_EXPECTED_FIPS_GIT_SHA")
-    fi
-    encoded_flags="${encoded_flags:+$encoded_flags$'\x1f'}${remaps[*]}"
+    encoded_flags="$(release_encoded_rustflags "$ROOT" "${link_flags[@]}")"
   fi
 
   env \

@@ -325,7 +325,12 @@ verify_android_release_install() {
   fi
   native_strings="$(mktemp "${TMPDIR:-/tmp}/nvpn-android-release-strings.XXXXXX")"
   strings "$native_lib" >"$native_strings"
-  if ! grep -Fq "${NVPN_FIPS_REPO_PATH%/}/crates/fips-core/src/" "$native_strings" \
+  if grep -Fq "$HOME/" "$native_strings" || grep -Fq "${NVPN_FIPS_REPO_PATH%/}/" "$native_strings"; then
+    rm -f "$native_lib" "$native_strings"
+    echo "Android Release native library embeds a private build path" >&2
+    return 1
+  fi
+  if ! grep -Fq "/build/fips-${NVPN_EXPECTED_FIPS_GIT_SHA:?}/crates/fips-core/src/" "$native_strings" \
     || ! grep -Fq 'fips_core::node' "$native_strings" \
     || ! grep -Fq 'fips_core::transport' "$native_strings"
   then

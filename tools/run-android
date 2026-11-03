@@ -103,6 +103,13 @@ case "$cmd" in
     run_gradle :app:assembleDebug "$@"
     ;;
   release|assembleRelease)
+    android_rustflags=()
+    if [[ -n "${RUSTFLAGS:-}" ]]; then
+      read -r -a android_rustflags <<<"$RUSTFLAGS"
+    fi
+    CARGO_ENCODED_RUSTFLAGS="$(release_encoded_rustflags "$ROOT" \
+      ${android_rustflags[@]+"${android_rustflags[@]}"})"
+    export CARGO_ENCODED_RUSTFLAGS
     run_gradle :app:bundleRelease "$@"
     "$ROOT/scripts/prepare-android-release-from-bundle.sh"
     ;;
