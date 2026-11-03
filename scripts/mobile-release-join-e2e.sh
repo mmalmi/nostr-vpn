@@ -3,6 +3,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The release gate has already qualified Android. Build the iOS-only QR
+# variant from the production receipt's checkout before strict joint reuse.
+if [[ "${1:-}" == --prepare-ios-variant ]]; then
+  [[ "${NVPN_RELEASE_JOIN_BUILD_ONLY:-}" == 1 && $# == 1 ]] || exit 2
+  ROOT="$(cd "${NVPN_IOS_RELEASE_SOURCE_ROOT:?Missing production iOS sources}" && pwd)"
+fi
 # shellcheck disable=SC1091
 source "$ROOT/scripts/release_common.sh"
 # shellcheck disable=SC1091
@@ -460,7 +466,9 @@ if release_join_reuse_artifacts; then
 fi
 RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
 export RELEASE_JOIN_DEVICE_MUTATION_ALLOWED
-release_join_prepare_android_release
+if [[ "${1:-}" != --prepare-ios-variant ]]; then
+  release_join_prepare_android_release
+fi
 release_join_prepare_ios_release
 
 case "${NVPN_RELEASE_JOIN_BUILD_ONLY:-0}" in

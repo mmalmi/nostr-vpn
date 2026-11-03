@@ -865,9 +865,27 @@ test('iOS export and upload retain original source, paths and bytes across harne
   withIosArtifactSource(original, ({ cwd }) => assert.equal(cwd, repoRoot))
 
   writeFileSync(join(repoRoot, 'docs', 'release-resume.md'), 'new harness instructions\n')
-  git(['add', 'docs'])
+  mkdirSync(join(repoRoot, 'scripts'))
+  writeFileSync(join(repoRoot, 'scripts', 'mobile-release-join-e2e.sh'), [
+    '#!/bin/sh', 'set -eu', 'test "$1" = --prepare-ios-variant',
+    'test "$NVPN_EXPECTED_APP_GIT_SHA" = "$(git rev-parse HEAD)"',
+    'test "$NVPN_EXPECTED_APP_GIT_TREE" = "$(git rev-parse HEAD^{tree})"',
+    'test "$NVPN_BUILD_GIT_SHA" = "$NVPN_EXPECTED_APP_GIT_SHA"',
+    'git rev-parse HEAD > "$NVPN_RELEASE_JOIN_RESULT_DIR/variant-commit"',
+  ].join('\n') + '\n', { mode: 0o755 })
+  git(['add', 'docs', 'scripts'])
   git(['commit', '-qm', 'harness update'])
   const candidate = { ...original, commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']) }
+  const productionReceipt = join(gateDir, 'production.json')
+  writeFileSync(productionReceipt, JSON.stringify(receipt))
+  const build = spawnSync(process.execPath, [join(process.cwd(), 'scripts/ios-artifact-source.mjs'), 'build-mobile-join'], {
+    cwd: repoRoot, encoding: 'utf8', env: {
+      ...env, NVPN_RELEASE_JOIN_BUILD_ONLY: '1', NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT: productionReceipt,
+      NVPN_EXPECTED_APP_GIT_SHA: candidate.commit, NVPN_EXPECTED_APP_GIT_TREE: candidate.tree,
+    },
+  })
+  assert.equal(build.status, 0, build.stderr)
+  assert.equal(readFileSync(join(joinDir, 'variant-commit'), 'utf8').trim(), receipt.appGitSha)
   for (const shouldFail of [false, true]) {
     let temporarySource
     const invoke = () => withIosArtifactSource(candidate, ({ cwd, env: scoped }) => {

@@ -1689,6 +1689,17 @@ PY
   fi
 }
 
+# A retained plan must be the sole plan generated in these exact products.
+select_generated_ios_release_xctestrun_for_gate() {
+  local selected
+  selected="$(NVPN_MOBILE_IOS_RELEASE_XCTESTRUN= select_generated_ios_release_xctestrun "$@")" || return 1
+  if [[ -n "${NVPN_MOBILE_IOS_RELEASE_XCTESTRUN:-}" && "$NVPN_MOBILE_IOS_RELEASE_XCTESTRUN" != "$selected" ]]; then
+    echo "Retained XCTest plan differs from the generated plan" >&2
+    return 1
+  fi
+  printf '%s\n' "$selected"
+}
+
 run_mobile_wireguard_exit_gates() {
   local mode="${NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E:-auto}"
   local remote_native=0
@@ -1932,11 +1943,11 @@ run_mobile_underlay_change_gates() {
       ./scripts/mobile-wireguard-exit-e2e.sh android
   MOBILE_ANDROID_APP_READY=1
 
-  local ios_prepared_dir ios_xctestrun ios_runner_tree
+  local ios_prepared_dir ios_derived_data ios_xctestrun ios_runner_tree
   ios_prepared_dir="$evidence_dir/ios-wireguard-dns-artifacts"
-  ios_xctestrun="$(select_generated_ios_release_xctestrun \
-    "$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData/Build/Products" \
-    "iOS underlay artifact reuse")" || return 1
+  ios_derived_data="${NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA:-$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData}"
+  ios_xctestrun="$(select_generated_ios_release_xctestrun_for_gate \
+    "$ios_derived_data/Build/Products" "iOS underlay artifact reuse")" || return 1
   ios_runner_tree="$(jq -er '.runnerBundleTreeSha256' \
     "$ios_prepared_dir/installed-runner-receipt.json")" || return 1
 
@@ -1967,7 +1978,7 @@ run_mobile_underlay_change_gates() {
       NVPN_MOBILE_WG_EXIT_THROUGH_DNS_IP=10.99.80.53 \
       NVPN_MOBILE_WG_EXIT_HTTP_PROBE_PORT="$((port_base + 1))" \
       NVPN_MOBILE_IOS_RELEASE_APP_PATH="$ROOT_DIR/dist/ios/frozen/release-testing-unpacked/Payload/Nostr VPN.app" \
-      NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA="$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData" \
+      NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA="$ios_derived_data" \
       NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$ios_xctestrun" \
       NVPN_MOBILE_IOS_REUSE_RECEIPT="$NVPN_MOBILE_IOS_RELEASE_RECEIPT" \
       NVPN_MOBILE_IOS_RELEASE_RUNNER_RECEIPT="$ios_prepared_dir/mobile-ios-release-runner-diagnostics.json" \
@@ -2093,10 +2104,10 @@ run_mobile_join_e2e_gate() {
     NVPN_RELEASE_JOIN_DESKTOP_MOBILE=0 \
     NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=0 \
     NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT="$ios_production_receipt" \
-    ./scripts/mobile-release-join-e2e.sh
+    node "$ROOT_DIR/scripts/ios-artifact-source.mjs" build-mobile-join
 
   ios_xctestrun="$(
-    select_generated_ios_release_xctestrun \
+    select_generated_ios_release_xctestrun_for_gate \
       "$ios_derived_data/Build/Products" \
       "Strict Release join reuse"
   )" || return 1
