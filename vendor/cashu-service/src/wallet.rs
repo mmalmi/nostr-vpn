@@ -27,10 +27,20 @@ use legacy_refunds::{hold_legacy_refunds, is_legacy_refund};
 
 mod persistence;
 mod polling;
+mod reservations;
 pub use persistence::*;
 
 mod runtime;
 pub use runtime::*;
+
+mod database_backup;
+pub use database_backup::restore_wallet_database;
+
+mod reviewed_lightning;
+pub use reviewed_lightning::{CashuLightningResult, CashuLightningReview};
+
+mod reviewed;
+pub use reviewed::CashuSendReview;
 
 mod send;
 #[cfg(test)]
@@ -574,8 +584,13 @@ impl CashuWalletService {
         let mint_url =
             MintUrl::from_str(&normalized_mint).context("Failed to parse normalized mint URL")?;
         let _guard = self.lock_operation().await;
+        self.require_restored_review()?;
         let wallet = ensure_sat_wallet(self.repository(), &mint_url).await?;
 
+        anyhow::ensure!(
+            self.recover_wallet_sagas(&wallet).await?.skipped == 0,
+            "Finish the reviewed payment before starting another Lightning payment"
+        );
         let mut payment = send_lightning_payment_with_wallet(&wallet, payment_request).await?;
         payment.mint_url = normalized_mint;
         append_wallet_activity_entry(
@@ -626,8 +641,7 @@ impl CashuWalletService {
 
         let _guard = self.lock_operation().await;
         let wallet = ensure_sat_wallet(self.repository(), &mint_url).await?;
-        wallet
-            .recover_incomplete_sagas()
+        self.recover_wallet_sagas(&wallet)
             .await
             .context("Failed to recover Cashu wallet state before receiving payment")?;
 
@@ -699,8 +713,7 @@ impl CashuWalletService {
 
         let _guard = self.lock_operation().await;
         let wallet = ensure_sat_wallet(self.repository(), &mint_url).await?;
-        wallet
-            .recover_incomplete_sagas()
+        self.recover_wallet_sagas(&wallet)
             .await
             .context("Failed to recover Cashu wallet state before importing proofs")?;
 
@@ -809,9 +822,10 @@ impl CashuWalletService {
         let mint_url =
             MintUrl::from_str(&normalized_mint).context("Failed to parse normalized mint URL")?;
         let _guard = self.lock_operation().await;
+        self.require_restored_review()?;
+        reviewed::begin_reclaim(self, &normalized_mint, operation_id).await?;
         let wallet = ensure_sat_wallet(self.repository(), &mint_url).await?;
-        wallet
-            .recover_incomplete_sagas()
+        self.recover_wallet_sagas(&wallet)
             .await
             .context("Failed to recover Cashu wallet state before revoking payment")?;
 
@@ -894,7 +908,10 @@ async fn send_lightning_payment_with_wallet(
         .await
         .context("Failed to prepare Cashu Lightning payment")?;
     let finalized = prepared
-        .confirm()
+        // CDK's pre-melt swap estimates input fees before adding the fee to
+        // the output amount. That addition can need another proof and fee.
+        // Direct melting selects fee-covered inputs and returns mint change.
+        .confirm_with_options(cdk::wallet::MeltConfirmOptions::skip_swap())
         .await
         .context("Failed to execute Cashu Lightning payment")?;
 

@@ -77,3 +77,34 @@ selection may invoke it only in Auto mode, never in Off or Manual mode.
 `credit-settlement` binds an already authorized accounting settlement to one
 exact CDK route. It neither chooses trust/payment policy nor proves that an
 authenticated counterparty received the resulting bearer token.
+
+## Reviewed payments and recovery
+
+`preview_payment_token_reviewed` estimates the total sender fee without confirming
+an operation. After explicit approval, `send_payment_token_reviewed` takes the
+approved maximum fee and a stable request ID. Its token has the exact requested
+face amount; recipient redemption fees remain separate. Persist that request ID
+with the destination context. Retries recover the original CDK operation and
+exact token, including after restart, rather than selecting replacement proofs.
+A request cannot change mint or amount, and reclaim durably blocks token reuse
+before contacting the mint. Changed fee metadata fails closed before a reserved
+operation is confirmed.
+
+Lightning requires an explicit `preview_lightning_payment_reviewed` call followed
+by `confirm_lightning_payment_reviewed` with its saved quote ID and maximum fee.
+Neither opening a wallet nor retrying confirmation creates a new quote. Pending
+melt recovery uses the same CDK operation. A completed payment and its actual fee
+are journaled before history reconciliation; retries repair missing history.
+
+`export_wallet_database` returns a consistent SQLite snapshot containing proofs,
+operation recovery and service journals. It does **not** encrypt the output or
+include the secure-store seed. Applications must encrypt both with an
+owner-bound, authenticated password-hardened format and never log them.
+`restore_wallet_database` only installs into an absent wallet with its matching
+seed already secured by the application. Existing funds are never overwritten.
+A restored wallet requires an explicit successful `review_restored_wallet` before
+spending or reclaiming. Stop using the original device copy before restoring.
+
+The ignored `reviewed_wallet_local` acceptance test requires an explicitly started,
+owned loopback CDK FakeWallet mint via `CASHU_OWNED_TEST_MINT`. It rejects public
+URLs and uses no real funds. The normal wallet request budget remains enabled.

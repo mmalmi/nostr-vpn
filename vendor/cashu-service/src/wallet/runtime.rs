@@ -46,6 +46,7 @@ pub struct CashuWalletStartupRecoveryReport {
     pub pending_sagas: usize,
     pub failed_sagas: usize,
     pub minted_amount: u64,
+    pub recovered_reserved_amounts: std::collections::BTreeMap<String, u64>,
     pub warnings: Vec<String>,
 }
 
@@ -91,6 +92,10 @@ impl CashuWalletService {
         fs::create_dir_all(cashu_wallet_dir(data_dir))
             .context("failed to create the Cashu wallet directory")?;
         let writer_lock = acquire_wallet_writer_lock(data_dir)?;
+        anyhow::ensure!(
+            !super::database_backup::restore_pending(data_dir),
+            "A wallet restore is pending; resume it with the same encrypted backup"
+        );
         let resolved = resolve_wallet_seed(data_dir, seed_store, migrate_legacy_seed)?;
         let localstore = Arc::new(
             WalletSqliteDatabase::new(cashu_wallet_db_path(data_dir))
@@ -153,6 +158,10 @@ impl CashuWalletService {
                     report.pending_sagas += recovery.pending_sagas;
                     report.failed_sagas += recovery.failed_sagas;
                     report.minted_amount += recovery.minted_amount;
+                    for (unit, amount) in recovery.recovered_reserved_amounts {
+                        let total = report.recovered_reserved_amounts.entry(unit).or_default();
+                        *total = total.saturating_add(amount);
+                    }
                     report.warnings.extend(recovery.warnings);
                 }
                 Err(error) => report

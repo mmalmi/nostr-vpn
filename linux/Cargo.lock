@@ -4151,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn-cashu-service"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4164,8 +4164,10 @@ dependencies = [
  "nvpn-cdk-spilman",
  "rand 0.8.6",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tokio",
  "url",
