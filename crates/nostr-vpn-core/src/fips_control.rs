@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use cashu_service::StreamingRoutePaymentEnvelope;
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkRoster {
@@ -179,7 +179,7 @@ fn signed_roster_tags(network_id: &str, roster: &NetworkRoster) -> Result<Vec<Ta
 
 fn signed_roster_from_tags(tags: &[Tag], signed_at: u64) -> Result<(String, NetworkRoster)> {
     let mut app_ok = false;
-    let mut version_ok = false;
+    let mut versions = Vec::new();
     let mut network_id = None;
     let mut network_name = String::new();
     let mut devices = Vec::new();
@@ -194,11 +194,7 @@ fn signed_roster_from_tags(tags: &[Tag], signed_at: u64) -> Result<(String, Netw
         match kind {
             "d" => network_id = parts.get(1).map(|value| value.trim().to_string()),
             "app" => app_ok |= parts.get(1).is_some_and(|value| value == SIGNED_ROSTER_APP),
-            "v" => {
-                version_ok |= parts
-                    .get(1)
-                    .is_some_and(|value| value == SIGNED_ROSTER_VERSION)
-            }
+            "v" => versions.push(&parts[1..]),
             "name" => {
                 if let Some(value) = parts.get(1) {
                     network_name = value.trim().to_string();
@@ -230,8 +226,13 @@ fn signed_roster_from_tags(tags: &[Tag], signed_at: u64) -> Result<(String, Netw
     if !app_ok {
         return Err(anyhow!("signed roster event is missing app tag"));
     }
-    if !version_ok {
-        return Err(anyhow!("signed roster event has unsupported version"));
+    // Unknown tags are skipped, so a roster carrying a second, newer version
+    // tag must not pass as this version with its new fields ignored.
+    match versions.as_slice() {
+        [] => return Err(anyhow!("signed roster event is missing version tag")),
+        [version] if version == &[SIGNED_ROSTER_VERSION] => {}
+        [_] => return Err(anyhow!("signed roster event has unsupported version")),
+        _ => return Err(anyhow!("signed roster event has more than one version tag")),
     }
 
     devices.sort();
@@ -252,6 +253,34 @@ fn signed_roster_from_tags(tags: &[Tag], signed_at: u64) -> Result<(String, Netw
             signed_at,
         },
     ))
+}
+
+/// Address assignments carried by a roster's `address` tags
+/// (`docs/assigned-addresses.md`). Rejects a malformed tag, a value that is not
+/// an IPv4 `/32`, and more than one tag for a member; membership, assignable
+/// space and uniqueness are checked by `effective_mesh_tunnel_ipv4s`.
+///
+/// Not called yet: rosters carrying assignments are still rejected.
+pub fn roster_address_assignments(tags: &[Tag]) -> Result<BTreeMap<String, Ipv4Addr>> {
+    let mut assignments = BTreeMap::new();
+    for tag in tags {
+        let parts = tag.as_slice();
+        if parts.first().map(String::as_str) != Some("address") {
+            continue;
+        }
+        let [_, pubkey, value] = parts else {
+            return Err(anyhow!("roster address tag needs a member and an address"));
+        };
+        let member = normalize_roster_pubkey(pubkey, "address")?;
+        let address = value
+            .strip_suffix("/32")
+            .and_then(|address| address.parse::<Ipv4Addr>().ok())
+            .ok_or_else(|| anyhow!("roster address {value} for {member} is not an IPv4 /32"))?;
+        if assignments.insert(member.clone(), address).is_some() {
+            return Err(anyhow!("roster assigns more than one address to {member}"));
+        }
+    }
+    Ok(assignments)
 }
 
 fn roster_tag(parts: &[&str]) -> Result<Tag> {
