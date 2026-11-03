@@ -1357,7 +1357,17 @@ if ACTION == "preflight":
         fail(f"Multiple App Store versions match {VERSION_NAME}")
     availability = app_availability(app["id"])
     build = find_build(app["id"])
-    review = active_review_submission(app["id"])
+    version = matching_versions[0] if matching_versions else None
+    linked_build = None
+    review = None
+    if version:
+        status, body = request(
+            "GET", f"appStoreVersions/{version['id']}/relationships/build"
+        )
+        linked_build = require_ok(status, body, "Read linked App Store build").get("data")
+        review = active_review_submission(app["id"])
+        if review and version["id"] not in review_submission_version_ids(review["id"]):
+            review = None
     print(
         json.dumps(
             {
@@ -1367,12 +1377,9 @@ if ACTION == "preflight":
                 "version": VERSION_NAME,
                 "buildNumber": BUILD_NUMBER,
                 "buildPresent": build is not None,
+                "linkedBuildId": linked_build["id"] if linked_build else None,
                 "versionState": (
-                    matching_versions[0].get("attributes", {}).get(
-                        "appStoreState"
-                    )
-                    if matching_versions
-                    else None
+                    version["attributes"].get("appStoreState") if version else None
                 ),
                 "reviewState": (
                     review.get("attributes", {}).get("state")

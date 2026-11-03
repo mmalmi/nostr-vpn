@@ -1041,7 +1041,7 @@ test('accepted pending iOS upload waits or finalizes without duplicate upload', 
   )
   assert.match(
     publisher,
-    /!submittedStates\.has[\s\S]*?\) \{\s*beforeMutation\(\)\s*run\([\s\S]*?'appstore-draft'\), 'submit'/,
+    /!versionSubmitted\(preflight\.appStore\)\) \{\s*beforeMutation\(\)\s*run\([\s\S]*?'appstore-draft'\), 'submit'/,
   )
   assert.doesNotMatch(publisher, /removeIosPendingUploadReceipt|unlinkSync/)
 })

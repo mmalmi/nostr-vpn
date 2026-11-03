@@ -194,6 +194,17 @@ function testflightPreflight({ repoRoot, mutationEnv }) {
   )
 }
 
+function appStorePreflight({ repoRoot, mutationEnv }) {
+  return parsePreflight(
+    run(
+      'bash',
+      [join(repoRoot, 'scripts', 'appstore-draft'), 'preflight'],
+      { cwd: repoRoot, env: mutationEnv, capture: true },
+    ),
+    'App Store',
+  )
+}
+
 export function preflightIosPublication({
   repoRoot,
   stagedManifest,
@@ -231,14 +242,7 @@ export function preflightIosPublication({
   }
 
   const testflight = testflightPreflight({ repoRoot, mutationEnv })
-  const appStore = parsePreflight(
-    run(
-      'bash',
-      [join(repoRoot, 'scripts', 'appstore-draft'), 'preflight'],
-      { cwd: repoRoot, env: mutationEnv, capture: true },
-    ),
-    'App Store',
-  )
+  const appStore = appStorePreflight({ repoRoot, mutationEnv })
   for (const evidence of [testflight, appStore]) {
     if (
       evidence.bundleId !== frozen.gate.bundle_id
@@ -409,10 +413,10 @@ export function publishExactIosDistribution({
     'READY_FOR_DISTRIBUTION',
     'READY_FOR_SALE',
   ])
-  if (
-    !submittedStates.has(preflight.appStore?.reviewState)
-    && !submittedStates.has(preflight.appStore?.versionState)
-  ) {
+  const versionSubmitted = (appStore) =>
+    appStore.version === frozen.gate.marketing_version
+    && (submittedStates.has(appStore.reviewState) || submittedStates.has(appStore.versionState))
+  if (!versionSubmitted(preflight.appStore)) {
     beforeMutation()
     run(
       'bash',
@@ -429,6 +433,10 @@ export function publishExactIosDistribution({
       [join(repoRoot, 'scripts', script), action],
       { cwd: repoRoot, env: mutationEnv },
     )
+  }
+  const appStore = appStorePreflight({ repoRoot, mutationEnv })
+  if (!versionSubmitted(appStore) || appStore.linkedBuildId !== uploaded.buildId) {
+    throw new Error('App Store Connect does not show the staged version and build as submitted.')
   }
   return { submitted: true, verified: true }
 }

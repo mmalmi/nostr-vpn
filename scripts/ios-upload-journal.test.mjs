@@ -676,13 +676,23 @@ case "$1" in
 esac
 `,
   )
+  const storeState = join(fixture.repoRoot, 'app-store-state.json')
+  writeFileSync(storeState, JSON.stringify({
+    ...fixture.testflight,
+    linkedBuildId: fixture.testflight.buildId,
+    reviewState: null,
+    versionState: 'READY_FOR_SALE',
+  }))
   writeExecutable(
     join(scripts, 'appstore-draft'),
     `#!/bin/sh
 set -eu
 case "$1" in
   preflight)
-    printf '%s\\n' '{"schema":1,"status":"passed","bundleId":"fi.siriusbusiness.nvpn","version":"4.1.5","buildNumber":"4010501","reviewState":"READY_FOR_SALE","versionState":"READY_FOR_SALE"}'
+    cat "$FAKE_STORE_STATE"
+    ;;
+  submit)
+    printf 'submit\\n' >> "$FAKE_STORE_STATE.log"
     ;;
   status)
     ;;
@@ -695,6 +705,7 @@ esac
   return {
     mutationEnv: {
       ...fixture.mutationEnv,
+      FAKE_STORE_STATE: storeState,
       FAKE_ASC_STATE: state,
       FAKE_ASC_VISIBLE: visible,
       FAKE_UPLOAD_LOG: uploadLog,
@@ -760,6 +771,44 @@ test('publication accepts either both review notes or a shared reviewer configur
     assert.equal(readFileSync(fake.preflightLog, 'utf8'), 'read\n')
     assert.equal(uploadCount(fake.uploadLog), 0)
   }
+})
+
+test('publication rejects a different build already in review without resubmitting it', () => {
+  const fixture = createJournalFixture()
+  const { mutationEnv } = installFakeAppleBoundary(fixture)
+  const storeState = mutationEnv.FAKE_STORE_STATE
+  writeFileSync(storeState, JSON.stringify({
+    ...fixture.testflight,
+    linkedBuildId: 'different-asc-build',
+    reviewState: 'WAITING_FOR_REVIEW',
+    versionState: 'WAITING_FOR_REVIEW',
+  }))
+  const options = { repoRoot: fixture.repoRoot, stagedManifest: fixture.stagedManifest, mutationEnv }
+  const preflight = preflightIosPublication(options)
+  assert.throws(
+    () => publishExactIosDistribution({ ...options, preflight }),
+    /does not show the staged version and build as submitted/,
+  )
+  assert.equal(existsSync(`${storeState}.log`), false)
+})
+
+test('publication reads back the submitted build before reporting success', () => {
+  const fixture = createJournalFixture()
+  const { mutationEnv } = installFakeAppleBoundary(fixture)
+  const storeState = mutationEnv.FAKE_STORE_STATE
+  writeFileSync(storeState, JSON.stringify({
+    ...fixture.testflight,
+    linkedBuildId: null,
+    reviewState: null,
+    versionState: null,
+  }))
+  const options = { repoRoot: fixture.repoRoot, stagedManifest: fixture.stagedManifest, mutationEnv }
+  const preflight = preflightIosPublication(options)
+  assert.throws(
+    () => publishExactIosDistribution({ ...options, preflight }),
+    /does not show the staged version and build as submitted/,
+  )
+  assert.equal(readFileSync(`${storeState}.log`, 'utf8'), 'submit\n')
 })
 
 test('local upload validation fails before creating an immutable intent', () => {
