@@ -368,6 +368,8 @@ run_macos_rust() {
         read -r -a flags <<<"$RUSTFLAGS"
       fi
       encoded_flags="$(release_encoded_rustflags "$ROOT" "${flags[@]}")"
+      # Apple's linker otherwise retains private object paths in its debug map.
+      encoded_flags+=$'\x1f-C\x1flink-arg=-Wl,-S'
       env \
         SDKROOT="$sdkroot" \
         MACOSX_DEPLOYMENT_TARGET="$min_version" \
@@ -805,6 +807,9 @@ run_macos_app() {
     exit 1
   fi
   sign_args+=(CODE_SIGNING_ALLOWED=NO)
+  if [[ "$XCODE_CONFIGURATION" == Release ]]; then
+    sign_args+=('OTHER_LDFLAGS=$(inherited) -Wl,-S')
+  fi
 
   SWIFTC_MAXIMUM_DETERMINISM="${NVPN_MACOS_SWIFTC_MAXIMUM_DETERMINISM:-1}" \
   xcodebuild \
