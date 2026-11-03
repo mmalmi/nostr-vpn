@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.20 - 2026-10-28
+## 4.1.20 - 2026-11-03
 
 ### Improved
 
@@ -32,6 +32,11 @@ All notable changes to this project are documented in this file.
 - Pin and verify the Windows tunnel driver's build input.
 - Reject untrusted Linux network cleanup files instead of changing their
   permissions before reading them.
+
+### Known issues
+
+- The VPN exceeded its 2% idle CPU target on an iPhone in release testing.
+- A mesh connection timed out during a test with a heavily loaded relay. The cause is still under investigation.
 
 ## 4.1.19 - 2026-10-26
 
