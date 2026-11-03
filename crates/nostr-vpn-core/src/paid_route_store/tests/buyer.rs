@@ -254,6 +254,73 @@ fn variable_denominator_store_upgrade_drops_only_offers() {
 }
 
 #[test]
+fn unreadable_store_is_kept_before_the_next_write_replaces_it() {
+    let scratch = ScratchDir::new("unreadable-store-kept");
+    let store_path = scratch.path().join("paid-routes.json");
+    let kept_files = || {
+        fs::read_dir(scratch.path())
+            .expect("list scratch dir")
+            .map(|entry| entry.expect("scratch entry").path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("paid-routes.json.unreadable-"))
+            })
+            .collect::<Vec<_>>()
+    };
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let (store, _, channel_id) = buyer_store_with_session(&seller, &buyer, &sample_config());
+    update_paid_route_store(&store_path, |target| {
+        *target = store.clone();
+        Ok(())
+    })
+    .expect("write store");
+    assert!(kept_files().is_empty(), "a readable store is not copied");
+
+    // A store written by a newer release, e.g. a channel status this build
+    // does not know, as after a downgrade.
+    let mut encoded = serde_json::to_value(&store).expect("encode store");
+    encoded["channels"][&channel_id]["status"] = json!("settling");
+    let newer = serde_json::to_vec_pretty(&encoded).expect("encode newer store");
+    fs::write(&store_path, &newer).expect("write newer store");
+
+    assert!(
+        load_paid_route_store(&store_path)
+            .expect("load")
+            .channels
+            .is_empty()
+    );
+    assert!(kept_files().is_empty(), "reading alone writes nothing");
+
+    update_paid_route_store(&store_path, |target| {
+        target.selected_buyer_session_id = "next".to_string();
+        Ok(())
+    })
+    .expect("update unreadable store");
+
+    let kept = kept_files();
+    assert_eq!(kept.len(), 1);
+    assert_eq!(fs::read(&kept[0]).expect("read kept store"), newer);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mode = fs::metadata(&kept[0])
+            .expect("kept metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    assert_eq!(
+        load_paid_route_store(&store_path)
+            .expect("reload")
+            .selected_buyer_session_id,
+        "next"
+    );
+}
+
+#[test]
 fn accepted_buyer_terms_survive_same_offer_replacement() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
