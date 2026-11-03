@@ -459,13 +459,6 @@ impl MobileTunnelConfig {
             )?);
         }
 
-        if !network_id.trim().is_empty()
-            && !route_targets
-                .iter()
-                .any(|route| route == MESH_TUNNEL_IPV4_CIDR)
-        {
-            route_targets.push(MESH_TUNNEL_IPV4_CIDR.to_string());
-        }
         let internet_source = serialized_mobile_internet_source(app);
         preserve_mobile_pending_exit_default_routes(
             &mut route_targets,
@@ -525,6 +518,14 @@ impl MobileTunnelConfig {
         } else {
             (Vec::new(), String::new())
         };
+        // Members already have their own /32 routes. Route the MagicDNS stub
+        // the same way instead of the whole mesh range, which would also
+        // capture a local network numbered inside it, with its gateway and DNS.
+        if !magic_dns_server.is_empty() {
+            route_targets.push(format!("{magic_dns_server}/32"));
+            route_targets.sort();
+            route_targets.dedup();
+        }
         let dns_match_domains = if wireguard_exit.is_some() || selected_peer_exit {
             vec![String::new()]
         } else if local_dns_required {
