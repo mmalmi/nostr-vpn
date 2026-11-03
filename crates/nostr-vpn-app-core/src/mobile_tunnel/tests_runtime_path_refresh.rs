@@ -466,8 +466,8 @@ fn mobile_path_refresh_leaves_pending_attempt_untouched() {
             .block_on(Box::pin(async {
                 let [server_app, phone_app, _] = mobile_path_refresh_apps();
                 let server_key = server_app.own_nostr_pubkey_hex().expect("server key");
-                // A missing carrier queues a real FIPS retry immediately,
-                // without waiting for a native handshake timeout.
+                // A refused loopback TCP connection queues a real FIPS retry
+                // once background connection preparation has been processed.
                 let mut config = mobile_path_refresh_config(&phone_app);
                 config.peer_hints.insert(
                     server_key.clone(),
@@ -480,9 +480,18 @@ fn mobile_path_refresh_leaves_pending_attempt_untouched() {
                 let phone = Box::pin(MobileTunnel::start_async(config.clone(), phone_app))
                     .await
                     .expect("phone");
-                let pending = mobile_path_peer(&phone.endpoint, &server_key)
-                    .await
-                    .expect("queued retry");
+                let pending = tokio::time::timeout(Duration::from_secs(8), async {
+                    loop {
+                        if let Some(peer) = mobile_path_peer(&phone.endpoint, &server_key).await
+                            && peer.direct_probe_pending
+                        {
+                            break peer;
+                        }
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                })
+                .await
+                .expect("background connection failure must queue a real retry");
                 assert!(!pending.connected && pending.direct_probe_pending);
                 phone
                     .presence
