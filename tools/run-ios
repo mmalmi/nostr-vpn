@@ -82,6 +82,20 @@ build_rust_target() {
   local cargo_cmd=(cargo)
   cargo_cmd+=("${cargo_args[@]}")
 
+  local link_flags=(-C "linker=$toolchain_bin/clang" -C "link-arg=-target"
+                    -C "link-arg=$clang_target" -C "link-arg=$min_flag=$MIN_VERSION")
+  local IFS=$'\x1f'
+  local encoded_flags="${CARGO_ENCODED_RUSTFLAGS-${link_flags[*]}}"
+  if [[ "$PROFILE" == release ]]; then
+    # Rust stores source locations in panic messages embedded in the executable.
+    local remaps=("--remap-path-prefix=$HOME=/build/home"
+                  "--remap-path-prefix=$ROOT=/build/nvpn")
+    if [[ -n "${NVPN_FIPS_REPO_PATH:-}" && -n "${NVPN_EXPECTED_FIPS_GIT_SHA:-}" ]]; then
+      remaps+=("--remap-path-prefix=$(cd "$NVPN_FIPS_REPO_PATH" && pwd -P)=/build/fips-$NVPN_EXPECTED_FIPS_GIT_SHA")
+    fi
+    encoded_flags="${encoded_flags:+$encoded_flags$'\x1f'}${remaps[*]}"
+  fi
+
   env \
     SDKROOT="$sdkroot" \
     IPHONEOS_DEPLOYMENT_TARGET="$MIN_VERSION" \
@@ -91,7 +105,7 @@ build_rust_target() {
     RANLIB="$toolchain_bin/ranlib" \
     CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$toolchain_bin/clang" \
     CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$toolchain_bin/clang" \
-    RUSTFLAGS="-C linker=$toolchain_bin/clang -C link-arg=-target -C link-arg=$clang_target -C link-arg=$min_flag=$MIN_VERSION" \
+    CARGO_ENCODED_RUSTFLAGS="$encoded_flags" \
     "${cargo_cmd[@]}"
 }
 

@@ -640,12 +640,25 @@ def archive_app(archive: pathlib.Path) -> pathlib.Path:
     return archive / "Products" / "Applications" / APP_NAME
 
 
+def verify_build_path_privacy(app: pathlib.Path, args: argparse.Namespace) -> None:
+    roots = (pathlib.Path.home(), pathlib.Path(args.source_root), pathlib.Path(args.fips_root))
+    prefixes = [os.fsencode(root.resolve()) + b"/" for root in roots]
+    paths = app_paths(app)
+    for name in ("appExecutable", "tunnelExecutable"):
+        executable = paths[name].read_bytes()
+        require(
+            all(prefix not in executable for prefix in prefixes),
+            f"{name} embeds a private build path",
+        )
+
+
 def freeze_archive(args: argparse.Namespace) -> None:
     archive = pathlib.Path(args.archive).resolve()
     receipt_path = pathlib.Path(args.receipt)
     require(archive.is_dir(), f"iOS archive is missing: {archive}")
     validate_source_and_fips(args)
     app = archive_app(archive)
+    verify_build_path_privacy(app, args)
     identity = bundle_identity(app)
     validate_identity(
         identity,
@@ -700,6 +713,7 @@ def validate_archive_receipt(
     )
     relocation = validate_source_and_fips(args, receipt)
     app = archive_app(archive)
+    verify_build_path_privacy(app, args)
     fips_metadata = pathlib.Path(args.fips_metadata).resolve()
     expected_receipt = {
         "appGitSha": args.app_head,
