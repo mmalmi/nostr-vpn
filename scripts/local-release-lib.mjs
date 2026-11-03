@@ -734,7 +734,8 @@ export function extractChangelogSection(changelogText, tag) {
   return null
 }
 
-function extractProductReleaseNotes(changelogSection, tag) {
+export function productReleaseNotes(changelogText, tag) {
+  const changelogSection = extractChangelogSection(changelogText, tag)
   if (!changelogSection) {
     return null
   }
@@ -1208,8 +1209,7 @@ export function renderReleaseNotes({
   assetBaseUrl = '',
 }) {
   const lines = []
-  const changelogSection = extractChangelogSection(changelogText, tag)
-  const productNotes = extractProductReleaseNotes(changelogSection, tag)
+  const productNotes = productReleaseNotes(changelogText, tag)
 
   if (productNotes) {
     lines.push(

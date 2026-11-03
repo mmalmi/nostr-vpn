@@ -1188,7 +1188,7 @@ test('every publisher runs only after exact staged-source validation', () => {
   const promoteEnd = source.indexOf('\n  const steps = [', promoteStart)
   const promote = source.slice(promoteStart, promoteEnd)
   assert.ok(promoteStart >= 0 && promoteEnd > promoteStart)
-  const sourcePublication = promote.indexOf("'--publish-source'")
+  const sourcePublication = promote.indexOf('publishHapsSource({')
   assert.ok(sourcePublication >= 0)
   assert.ok(promote.indexOf('replayCanonicalMutationGate({') < sourcePublication)
   assert.ok(sourcePublication < promote.indexOf('publishExactIosDistribution({'))
@@ -1475,6 +1475,7 @@ esac
     `#!/bin/sh
 set -eu
 printf 'haps %s\\n' "$*" >> "$FAKE_HTREE_LOG"
+node -e 'if (JSON.parse(require("fs").readFileSync(process.argv[1])).draft !== false) process.exit(1)' "$2/release.json"
 if [ "\${FAKE_SOURCE_REJECT:-}" = 1 ]; then
   echo 'source verification failed' >&2
   exit 42
@@ -1601,6 +1602,10 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
   }
 
   const htreeCommands = readFileSync(htreeLog, 'utf8').trim().split('\n')
+  const sourceStage = htreeCommands.find((command) => command.startsWith('haps import-release '))
+    ?.match(/^haps import-release (.+?) --config /)?.[1]
+  assert.match(sourceStage ?? '', /nvpn-final-release-stage-[^/]+\/stage$/)
+  assert.equal(existsSync(sourceStage), false)
   assert.deepEqual(htreeCommands, [
     'user',
     'status',
@@ -1608,7 +1613,7 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
     'user',
     'status',
     'release publish --help',
-    `haps import-release ${stage} --config ${join(realpathSync(repo), 'haps-release.json')} --tag v4.1.5 --publish-source`,
+    `haps import-release ${sourceStage} --config ${join(realpathSync(repo), 'haps-release.json')} --tag v4.1.5 --publish-source`,
     `add --no-ignore ${stage}`,
     'user',
     'status',
@@ -2404,10 +2409,15 @@ test('promotion preflights and publishes exact iOS to both TestFlight lanes and 
     promoteFunctionStart,
     promoteFunctionEnd,
   )
-  assert.match(promoteFunction, /cpSync\(stageDir,\s*finalStageDir/)
-  assert.match(promoteFunction, /join\(finalStageDir,\s*name\)/)
+  assert.match(promoteFunction, /withFinalReleaseStage\(stageDir,/)
+  const finalCopy = localRelease.slice(
+    localRelease.indexOf('function withFinalReleaseStage('),
+    localRelease.indexOf('function publishHapsSource('),
+  )
+  assert.match(finalCopy, /cpSync\(stageDir,\s*finalStageDir/)
+  assert.match(finalCopy, /join\(finalStageDir,\s*name\)/)
   assert.doesNotMatch(
-    promoteFunction,
+    finalCopy,
     /join\(stageDir,\s*(?:'release\.json'|'manifest\.json'|name)\)/,
   )
 })

@@ -11,7 +11,7 @@ peer messaging more reliably after a restart. This release also fixes paid
 Internet refunds and seller payouts, and removes network join secrets from
 diagnostic bundles.
 
-In release testing, an iPhone with the VPN enabled used 2.47% of one CPU core
+In release testing, the iPhone VPN tunnel averaged 2.47% of one CPU core
 while idle, above our 2% target. A mesh connection also timed out during a
 test with a heavily loaded relay. We are still investigating the cause.
 
