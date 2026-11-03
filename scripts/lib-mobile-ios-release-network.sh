@@ -991,7 +991,7 @@ ios_release_network_write_runner_diagnostics() {
   runner="$IOS_RELEASE_NETWORK_DERIVED_DATA/Build/Products/Release-iphoneos/NostrVpnIosUITests-Runner.app"
   test_bundle="$runner/PlugIns/NostrVpnIosUITests.xctest"
   [[ -d "$app" && -d "$runner" \
-    && -x "$test_bundle/NostrVpnIosUITests" \
+    && -f "$test_bundle/NostrVpnIosUITests" && ! -L "$test_bundle/NostrVpnIosUITests" \
     && -s "$xctestrun" ]] || {
     echo "iOS Release runner diagnostics found incomplete test products" >&2
     return 1
@@ -1014,6 +1014,11 @@ ios_release_network_write_runner_diagnostics() {
     echo "iOS Release runner diagnostics could not read code signatures" >&2
     return 1
   }
+  # iOS can install the signed test plug-in with mode 0644. XCTest loads it as a Mach-O bundle.
+  if ! otool -arch arm64 -hv "$test_bundle/NostrVpnIosUITests" | awk '$5 == "BUNDLE" { found=1 } END { exit !found }'; then
+    echo "iOS Release test plug-in is not an arm64 Mach-O bundle" >&2
+    return 1
+  fi
   runner_archs="$(lipo -archs "$runner/NostrVpnIosUITests-Runner")"
   test_archs="$(lipo -archs "$test_bundle/NostrVpnIosUITests")"
   [[ "$app_details" == *"Authority=Apple Distribution: ${NVPN_IOS_EXPECTED_SIGNER_ORGANIZATION:-Sirius Business Oy}"* \

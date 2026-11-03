@@ -1604,7 +1604,10 @@ raise SystemExit(
 }
 
 verify_production_ios_idle_cpu() {
-    local artifact_app_sha
+    local artifact_app_sha artifact_receipt
+    # The measured app may have been qualified with an earlier XCTest plan.
+    # Always verify the original measurement receipt against the app being released.
+    artifact_receipt="${NVPN_IOS_PRODUCTION_IDLE_CPU_ARTIFACT_RECEIPT:-${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}}"
     local -a exception_args=()
     if [[ -n "${NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION:-}" ]]; then
       exception_args=(--release-exception "$NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION"
@@ -1615,7 +1618,7 @@ verify_production_ios_idle_cpu() {
     # Prove its product inputs are unchanged, then validate CPU evidence
     # against the original artifact source and all original measurement bytes.
     artifact_app_sha="$(node --input-type=module - \
-      "$ROOT_DIR" "${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}" \
+      "$ROOT_DIR" "$artifact_receipt" \
       "$NVPN_EXPECTED_APP_GIT_SHA" <<'JS'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -1630,7 +1633,7 @@ JS
     )" || return
     python3 "$ROOT_DIR/scripts/verify-ios-release-gate-cpu.py" \
       --receipt "${NVPN_IOS_PRODUCTION_IDLE_CPU_RECEIPT:?Missing signed production iOS CPU evidence}" \
-      --artifact-receipt "${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}" \
+      --artifact-receipt "$artifact_receipt" \
       --app "${NVPN_MOBILE_IOS_RELEASE_APP_PATH:?Missing production app}" \
       --app-git-sha "$artifact_app_sha" \
       --fips-git-sha "$NVPN_EXPECTED_FIPS_GIT_SHA" \
@@ -1754,7 +1757,7 @@ run_mobile_wireguard_exit_gates() {
       NVPN_MOBILE_WG_EXIT_SOURCE_IP_URL=https://api.ipify.org \
       NVPN_MOBILE_WG_EXIT_IMAGE_READY="$image_ready" \
       NVPN_MOBILE_WG_EXIT_IMAGE="$image" \
-      NVPN_MOBILE_WG_EXIT_REUSE_ANDROID_BUILD=0 \
+      NVPN_MOBILE_WG_EXIT_REUSE_ANDROID_BUILD="${NVPN_MOBILE_WG_EXIT_REUSE_ANDROID_BUILD:-0}" \
       NVPN_MOBILE_WG_EXIT_CONTAINER="nostr-vpn-mobile-wg-release-android-$$" \
       NVPN_MOBILE_WG_EXIT_HOST_PORT="$port_base" \
       NVPN_MOBILE_WG_EXIT_SERVER_IP=10.99.77.1 \
