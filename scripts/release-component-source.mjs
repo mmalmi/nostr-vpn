@@ -115,6 +115,8 @@ const harnessOnlyPaths = new Set([
   'scripts/verify.sh',
   'scripts/verify-paid-exit-seller-ui-receipts.py',
   'scripts/verify-paid-exit-seller-ui-receipts.mjs',
+  // Samples the already-installed CLI; the Windows installer build remains a product input.
+  'scripts/windows-daemon-idle-cpu.ps1',
   'scripts/windows-release-publication-proof.ps1',
   'scripts/windows-release-mobile-join-remote.ps1',
   'scripts/windows-vm-desktop-underlay-change-e2e.sh',
