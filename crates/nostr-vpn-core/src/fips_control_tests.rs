@@ -310,4 +310,190 @@ mod tests {
 
         assert!(decode_fips_control_frame(&bytes).expect("decode").is_none());
     }
+
+    // Compatibility fixtures for admin-assigned tunnel addresses (#159).
+
+    fn signed_roster_event(tags: &[Vec<String>], keys: &Keys) -> Event {
+        let tags = tags
+            .iter()
+            .map(|parts| roster_tag(&parts.iter().map(String::as_str).collect::<Vec<_>>()))
+            .collect::<Result<Vec<_>>>()
+            .expect("roster tags");
+        EventBuilder::new(Kind::Custom(SIGNED_ROSTER_KIND), "")
+            .tags(tags)
+            .custom_created_at(Timestamp::from(123))
+            .sign_with_keys(keys)
+            .expect("sign roster event")
+    }
+
+    fn roster_tags(version_tags: &[&[&str]], member: &str, extra: &[&[&str]]) -> Vec<Vec<String>> {
+        let owned = |parts: &[&str]| parts.iter().map(|part| part.to_string()).collect::<Vec<_>>();
+        let mut tags = vec![owned(&["d", "mesh"]), owned(&["app", SIGNED_ROSTER_APP])];
+        tags.extend(version_tags.iter().map(|parts| owned(parts)));
+        tags.push(owned(&["member", member]));
+        tags.extend(extra.iter().map(|parts| owned(parts)));
+        tags
+    }
+
+    #[test]
+    fn unassigned_roster_keeps_the_v1_tag_layout() {
+        let admin = Keys::generate();
+        let admin_hex = admin.public_key().to_hex();
+        let mut members = [
+            Keys::generate().public_key().to_hex(),
+            Keys::generate().public_key().to_hex(),
+        ];
+        members.sort();
+        let mut aliases = HashMap::new();
+        aliases.insert(members[1].clone(), "phone".to_string());
+        let roster = NetworkRoster {
+            network_name: "Home".to_string(),
+            devices: vec![members[1].clone(), members[0].clone()],
+            admins: vec![admin_hex.clone()],
+            aliases,
+            signed_at: 123,
+        };
+
+        let signed = SignedRoster::sign("mesh", roster, &admin).expect("sign roster");
+        let tags = signed
+            .event
+            .tags
+            .iter()
+            .map(|tag| tag.as_slice().to_vec())
+            .collect::<Vec<_>>();
+        let expected = [
+            vec!["d", "mesh"],
+            vec!["app", SIGNED_ROSTER_APP],
+            vec!["v", "1"],
+            vec!["name", "Home"],
+            vec!["member", &members[0]],
+            vec!["member", &members[1]],
+            vec!["admin", &admin_hex],
+            vec!["alias", &members[1], "phone"],
+        ]
+        .map(|parts| parts.iter().map(|part| part.to_string()).collect::<Vec<_>>());
+
+        assert_eq!(tags, expected);
+    }
+
+    #[test]
+    fn current_parser_rejects_a_roster_with_assigned_addresses() {
+        let admin = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let event = signed_roster_event(
+            &roster_tags(
+                &[&["v", "2"]],
+                &member,
+                &[&["address", &member, "100.64.0.13/32"]],
+            ),
+            &admin,
+        );
+
+        let error = SignedRoster::from_event(event).expect_err("v2 roster");
+        assert!(error.to_string().contains("unsupported version"), "{error}");
+    }
+
+    #[test]
+    fn v1_parser_ignores_an_address_tag_so_assignments_need_a_new_version() {
+        let admin = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let event = signed_roster_event(
+            &roster_tags(
+                &[&["v", "1"]],
+                &member,
+                &[&["address", &member, "100.64.0.13/32"]],
+            ),
+            &admin,
+        );
+
+        let roster = SignedRoster::from_event(event)
+            .expect("unknown tags are skipped")
+            .roster()
+            .expect("roster");
+        assert_eq!(roster.devices, vec![member]);
+    }
+
+    #[test]
+    fn roster_requires_exactly_one_well_formed_version_tag() {
+        let admin = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let cases: [(&[&[&str]], &str); 6] = [
+            (&[], "missing version tag"),
+            (&[&["v"]], "unsupported version"),
+            (&[&["v", " 1"]], "unsupported version"),
+            (&[&["v", "1", "2"]], "unsupported version"),
+            (&[&["v", "1"], &["v", "2"]], "more than one version tag"),
+            (&[&["v", "1"], &["v", "1"]], "more than one version tag"),
+        ];
+
+        for (version_tags, expected) in cases {
+            let event = signed_roster_event(&roster_tags(version_tags, &member, &[]), &admin);
+            let error = SignedRoster::from_event(event).expect_err("malformed version");
+            assert!(
+                error.to_string().contains(expected),
+                "{version_tags:?}: {error}"
+            );
+        }
+    }
+
+    fn address_tags(tags: &[&[&str]]) -> Vec<Tag> {
+        tags.iter()
+            .map(|parts| roster_tag(parts).expect("tag"))
+            .collect()
+    }
+
+    #[test]
+    fn address_tags_give_each_member_one_effective_address() {
+        let alice = Keys::generate().public_key().to_hex();
+        let bob = Keys::generate().public_key().to_hex();
+        let members = vec![alice.clone(), bob.clone()];
+        let tags = address_tags(&[
+            &["member", &alice],
+            &["member", &bob],
+            &["address", &alice, "100.64.0.13/32"],
+        ]);
+
+        let assignments = roster_address_assignments(&tags).expect("assignments");
+        let effective =
+            crate::config::effective_mesh_tunnel_ipv4s("mesh", &members, &assignments)
+                .expect("effective addresses");
+
+        assert_eq!(effective[&alice], Ipv4Addr::new(100, 64, 0, 13));
+        assert_eq!(
+            Some(format!("{}/32", effective[&bob])),
+            crate::config::derive_mesh_tunnel_ip("mesh", &bob)
+        );
+
+        let outsider = Keys::generate().public_key().to_hex();
+        let tags = address_tags(&[&["address", &outsider, "100.64.0.14/32"]]);
+        let assignments = roster_address_assignments(&tags).expect("assignments");
+        let error = crate::config::effective_mesh_tunnel_ipv4s("mesh", &members, &assignments)
+            .expect_err("non-member");
+        assert!(error.to_string().contains("non-member"), "{error}");
+    }
+
+    #[test]
+    fn malformed_address_tags_are_rejected() {
+        let member = Keys::generate().public_key().to_hex();
+        let cases: [(&[&[&str]], &str); 6] = [
+            (&[&["address", &member]], "needs a member and an address"),
+            (&[&["address", &member, "100.64.0.13"]], "not an IPv4 /32"),
+            (&[&["address", &member, "100.64.0.0/24"]], "not an IPv4 /32"),
+            (&[&["address", &member, "fd7a::1/128"]], "not an IPv4 /32"),
+            (&[&["address", "not-a-key", "100.64.0.13/32"]], "pubkey"),
+            (
+                &[
+                    &["address", &member, "100.64.0.13/32"],
+                    &["address", &member, "100.64.0.14/32"],
+                ],
+                "more than one address",
+            ),
+        ];
+
+        for (tags, expected) in cases {
+            let error =
+                roster_address_assignments(&address_tags(tags)).expect_err("malformed address");
+            assert!(error.to_string().contains(expected), "{tags:?}: {error}");
+        }
+    }
 }

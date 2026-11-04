@@ -23,8 +23,8 @@ pub use crate::config_magic_dns::{
 };
 pub use crate::network_routes::{
     MESH_TUNNEL_IPV4_CIDR, derive_mesh_tunnel_ip, effective_advertised_routes,
-    exit_node_default_routes, normalize_advertised_route, normalize_advertised_routes,
-    route_is_ipv6,
+    effective_mesh_tunnel_ipv4s, exit_node_default_routes, is_assignable_tunnel_ipv4,
+    normalize_advertised_route, normalize_advertised_routes, route_is_ipv6,
 };
 
 use crate::config_defaults::{

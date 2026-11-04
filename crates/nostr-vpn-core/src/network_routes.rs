@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use sha2::{Digest, Sha256};
@@ -24,6 +24,69 @@ pub fn derive_mesh_tunnel_ip(network_id: &str, own_pubkey_hex: &str) -> Option<S
     let third_octet = (digest[0] % 254) + 1;
     let fourth_octet = (digest[1] % 254) + 1;
     Some(format!("10.44.{third_octet}.{fourth_octet}/32"))
+}
+
+/// Address space a network admin may assign as a member's tunnel address:
+/// RFC 1918 private ranges and RFC 6598 shared space (`100.64.0.0/10`, which
+/// Tailscale-style networks use), except the MagicDNS service address. See
+/// `docs/assigned-addresses.md`.
+pub fn is_assignable_tunnel_ipv4(address: Ipv4Addr) -> bool {
+    let [first, second, ..] = address.octets();
+    let private_or_shared = first == 10
+        || (first == 172 && (16..=31).contains(&second))
+        || (first == 192 && second == 168)
+        || (first == 100 && (64..=127).contains(&second));
+    private_or_shared && address.to_string() != crate::MESH_MAGIC_DNS_SERVER
+}
+
+/// The one tunnel address each member uses for routing, DNS, packet admission
+/// and forwarding: its assigned address when the roster assigns one, otherwise
+/// the derived address. Assignments must name members and use assignable
+/// space. Once a roster assigns any address, every member's final address
+/// must be unique, so two derived addresses that collide are rejected too and
+/// the admin resolves it by assigning one of them. A roster without
+/// assignments keeps the v1 behavior, collisions included.
+///
+/// Not called yet: consumers adopt it before rosters may carry assignments.
+pub fn effective_mesh_tunnel_ipv4s(
+    network_id: &str,
+    members: &[String],
+    assignments: &BTreeMap<String, Ipv4Addr>,
+) -> anyhow::Result<BTreeMap<String, Ipv4Addr>> {
+    for (member, &address) in assignments {
+        if !members.contains(member) {
+            anyhow::bail!("tunnel address {address} is assigned to a non-member {member}");
+        }
+        if address.to_string() == crate::MESH_MAGIC_DNS_SERVER {
+            anyhow::bail!("tunnel address {address} for {member} is reserved for MagicDNS");
+        }
+        if !is_assignable_tunnel_ipv4(address) {
+            anyhow::bail!("tunnel address {address} for {member} is outside assignable space");
+        }
+    }
+
+    let mut effective = BTreeMap::new();
+    let mut owners = BTreeMap::new();
+    for member in members {
+        let address = match assignments.get(member) {
+            Some(&address) => address,
+            None => derive_mesh_tunnel_ip(network_id, member)
+                .and_then(|address| strip_ipv4_host_prefix(&address))
+                .ok_or_else(|| anyhow::anyhow!("no derived tunnel address for {member}"))?,
+        };
+        if !assignments.is_empty()
+            && let Some(owner) = owners.insert(address, member)
+            && owner != member
+        {
+            anyhow::bail!("tunnel address {address} is used by both {owner} and {member}");
+        }
+        effective.insert(member.clone(), address);
+    }
+    Ok(effective)
+}
+
+fn strip_ipv4_host_prefix(address: &str) -> Option<Ipv4Addr> {
+    address.strip_suffix("/32")?.parse().ok()
 }
 
 pub fn normalize_advertised_route(value: &str) -> Option<String> {
@@ -112,4 +175,138 @@ fn mask_ipv6(ip: Ipv6Addr, bits: u8) -> Ipv6Addr {
         u128::MAX << (128 - bits)
     };
     Ipv6Addr::from(u128::from_be_bytes(ip.octets()) & mask)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn members() -> Vec<String> {
+        vec!["a".repeat(64), "b".repeat(64)]
+    }
+
+    fn derived(member: &str) -> Ipv4Addr {
+        strip_ipv4_host_prefix(&derive_mesh_tunnel_ip("mesh", member).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn assignable_space_is_private_and_shared_ipv4_only() {
+        for address in [
+            "10.0.0.1",
+            "10.44.0.1",
+            "172.16.0.1",
+            "172.31.255.254",
+            "192.168.1.1",
+            "100.64.0.1",
+            "100.127.255.254",
+        ] {
+            assert!(
+                is_assignable_tunnel_ipv4(address.parse().unwrap()),
+                "{address}"
+            );
+        }
+        for address in [
+            "0.0.0.0",
+            "8.8.8.8",
+            "10.44.0.53",
+            "100.63.255.255",
+            "100.128.0.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "172.15.255.255",
+            "172.32.0.1",
+            "192.169.0.1",
+            "224.0.0.1",
+            "255.255.255.255",
+        ] {
+            assert!(
+                !is_assignable_tunnel_ipv4(address.parse().unwrap()),
+                "{address}"
+            );
+        }
+    }
+
+    #[test]
+    fn effective_addresses_are_derived_without_assignments() {
+        let members = members();
+        let effective = effective_mesh_tunnel_ipv4s("mesh", &members, &BTreeMap::new()).unwrap();
+        for member in &members {
+            assert_eq!(effective[member], derived(member));
+        }
+    }
+
+    #[test]
+    fn assigned_address_replaces_the_derived_one_for_that_member_only() {
+        // Migration case: keep a device's existing 100.64.0.0/10 tailnet address.
+        let members = members();
+        let assignments = BTreeMap::from([(members[0].clone(), Ipv4Addr::new(100, 64, 0, 13))]);
+        let effective = effective_mesh_tunnel_ipv4s("mesh", &members, &assignments).unwrap();
+        assert_eq!(effective[&members[0]], Ipv4Addr::new(100, 64, 0, 13));
+        assert_eq!(effective[&members[1]], derived(&members[1]));
+    }
+
+    #[test]
+    fn invalid_assignments_are_rejected() {
+        let members = members();
+        let outsider = "c".repeat(64);
+        let cases = [
+            (
+                BTreeMap::from([(outsider, Ipv4Addr::new(100, 64, 0, 1))]),
+                "non-member",
+            ),
+            (
+                BTreeMap::from([(members[0].clone(), Ipv4Addr::new(8, 8, 8, 8))]),
+                "outside assignable space",
+            ),
+            (
+                BTreeMap::from([(members[0].clone(), Ipv4Addr::new(10, 44, 0, 53))]),
+                "reserved for MagicDNS",
+            ),
+            (
+                BTreeMap::from([
+                    (members[0].clone(), Ipv4Addr::new(100, 64, 0, 1)),
+                    (members[1].clone(), Ipv4Addr::new(100, 64, 0, 1)),
+                ]),
+                "used by both",
+            ),
+            (
+                BTreeMap::from([(members[0].clone(), derived(&members[1]))]),
+                "used by both",
+            ),
+        ];
+        for (assignments, expected) in cases {
+            let error = effective_mesh_tunnel_ipv4s("mesh", &members, &assignments)
+                .expect_err("invalid assignment");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn colliding_derived_addresses_need_an_assignment_once_a_roster_assigns_any() {
+        // These two members derive the same address in the network "mesh".
+        let colliding = [format!("{:064x}", 0x0b), format!("{:064x}", 0xdd)];
+        assert_eq!(derived(&colliding[0]), derived(&colliding[1]));
+        let unrelated = "a".repeat(64);
+        let members = vec![
+            colliding[0].clone(),
+            colliding[1].clone(),
+            unrelated.clone(),
+        ];
+
+        // v1 roster: no assignments, behavior unchanged.
+        let effective = effective_mesh_tunnel_ipv4s("mesh", &members, &BTreeMap::new()).unwrap();
+        assert_eq!(effective[&colliding[0]], effective[&colliding[1]]);
+
+        // Assigning an unrelated member does not hide the collision.
+        let assignments = BTreeMap::from([(unrelated, Ipv4Addr::new(100, 64, 0, 13))]);
+        let error = effective_mesh_tunnel_ipv4s("mesh", &members, &assignments)
+            .expect_err("derived collision");
+        assert!(error.to_string().contains("used by both"), "{error}");
+
+        // Assigning one of the colliding members resolves it.
+        let assignments = BTreeMap::from([(colliding[1].clone(), Ipv4Addr::new(100, 64, 0, 14))]);
+        let effective = effective_mesh_tunnel_ipv4s("mesh", &members, &assignments).unwrap();
+        assert_eq!(effective[&colliding[0]], derived(&colliding[0]));
+        assert_eq!(effective[&colliding[1]], Ipv4Addr::new(100, 64, 0, 14));
+    }
 }
