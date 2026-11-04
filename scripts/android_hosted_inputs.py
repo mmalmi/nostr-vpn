@@ -22,17 +22,18 @@ SCRIPTS = {
     "scripts/verify-cargo-path-patch-lock.py": "46debe878143664e33288494535aa95c9ebb9bbb68ad40405a4535befe64f653",
 }
 BUNDLETOOL_SHA = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
-# Set only from the authenticated successful artifact. This identifies this
+# Pinned from the authenticated successful artifact. This identifies this
 # frozen hosted payload even if its mutable receipt loses all origin fields.
-HOSTED_JNI_SHA256 = None
-# Admission stays closed until the successful platform job and service artifact
-# are reviewed. A producer receipt cannot supply or override these pins.
+HOSTED_JNI_SHA256 = "7f66ee9d9c3ceb48fda4e02c6f648ceeb9c5f1e1dbb1291d1fdb1c8cac219619"
+# Reviewed successful platform job and service artifact. A producer receipt
+# cannot supply or override these pins; native signing/runtime gates remain.
 SERVICE = {
     "repository": "mmalmi/nostr-vpn", "workflow": ".github/workflows/android-release-inputs.yml",
-    "producerCommit": "c172eb1f04d88d57e2e2c610456c42a2c63167c7", "runId": "41925607166",
-    "runAttempt": None, "jobId": None, "jobName": "inputs", "jobConclusion": "success",
-    "artifactId": None, "artifactName": "android-release-inputs-52a1f8ee",
-    "artifactBytes": None, "artifactSha256": None,
+    "producerCommit": "3004f4213bf1bc074916e43ebbb423e66c1da24b", "runId": "41930825160",
+    "runAttempt": "1", "jobId": 126927031969, "jobName": "inputs", "jobConclusion": "success",
+    "artifactId": 13372722005, "artifactName": "android-release-inputs-52a1f8ee",
+    "artifactBytes": 79706092,
+    "artifactSha256": "c8794751a84af7702e9fd052488e014daf69ca38b3b7a22dfdc002f41ef4ebc4",
 }
 
 
