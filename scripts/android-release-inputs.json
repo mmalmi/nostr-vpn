@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "app": {
+    "commit": "52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4",
+    "tree": "2f722bd2e0f34e7b71cae665cce74c3080c99661"
+  },
+  "fips": {
+    "commit": "d0b18f2d1b2e97d42fa8460a0c70a8dffeaa2552",
+    "tree": "08ceced056b8592a2b2c840c4c276bf01cf28c85",
+    "version": "0.4.117"
+  },
+  "realizedCargoLockSha256": "41067773c75d291993622ac7d0a66ac77e3ce050ff6b9a646466a413f5cb065a",
+  "target": "aarch64-linux-android",
+  "abi": "arm64-v8a",
+  "androidApi": 26,
+  "compileSdk": 36,
+  "ndkVersion": "28.2.13676358",
+  "rustVersion": "1.95.0",
+  "javaMajorVersion": 17,
+  "gradle": {
+    "version": "8.14.3",
+    "url": "https://services.gradle.org/distributions/gradle-8.14.3-bin.zip",
+    "sha256": "bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531"
+  },
+  "cargoNdk": {
+    "version": "4.1.2",
+    "url": "https://static.crates.io/crates/cargo-ndk/cargo-ndk-4.1.2.crate",
+    "sha256": "903cc87cda6ab7a2ff82a74065e1c2ae5baa869546b32eb4aacabcc6ed5a670f"
+  },
+  "bundletool": {
+    "version": "1.18.3",
+    "sha256": "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29",
+    "execution": "local release owner only, after signing the exact unsigned AAB"
+  },
+  "rustComponents": [
+    {
+      "name": "rustc",
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "8426a3d170a5879f5682f5fbdd024a1779b3951e7baba685af2d6dc32a6dfc15"
+    },
+    {
+      "name": "cargo",
+      "url": "https://static.rust-lang.org/dist/2026-04-16/cargo-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "e74edd2cf7d0f1f1383b4f00eb90c843750bc489e2ccf7214e6476678a907425"
+    },
+    {
+      "name": "host-std",
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "047ea7098803d3500fa1072e9cee5392697e21525559e4458128a2bf874aa382"
+    },
+    {
+      "name": "android-std",
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-aarch64-linux-android.tar.xz",
+      "sha256": "de5e8fa5d955809891eea77682811fc90be705f78883bd94071e98f5a738d05b"
+    }
+  ],
+  "hostedNativeComponentsQualified": false,
+  "capacity": {
+    "physicalFloorBytes": 21474836480,
+    "maximumOwnGrowthBudgetBytes": 17179869184,
+    "concurrentGrowthBudgetBytes": 0,
+    "expectedExclusiveRunner": true,
+    "budgetIsMeasuredPeak": false
+  },
+  "scope": "Unsigned hosted compilation only; local signing, AAB-derived APK and physical release gates remain separate"
+}

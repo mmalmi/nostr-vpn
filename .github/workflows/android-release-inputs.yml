@@ -1,0 +1,56 @@
+name: Android Release inputs
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Inspect hosted inputs before admitting unsigned compilation
+        type: choice
+        default: inventory
+        options: [inventory]
+  push:
+    branches: [codex/nvpn-hosted-apple-producer, codex/nvpn-hosted-android-producer]
+    paths:
+      - .github/workflows/android-release-inputs.yml
+      - scripts/build-android-release-inputs.py
+      - scripts/android-release-inputs.json
+      - scripts/test-android-release-inputs.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-inputs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  inputs:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check capacity before source checkout
+        run: |
+          python3 - <<'PY'
+          import shutil
+          available = shutil.disk_usage('.').free
+          print(f'Hosted free bytes before checkout: {available}')
+          if available < 20 * 1024**3 + 256 * 1024**2:
+              raise SystemExit('20 GiB reserve plus bounded checkout growth is unavailable')
+          PY
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/build-android-release-inputs.py
+            scripts/android-release-inputs.json
+      - name: Inventory native tools without compiling or signing
+        run: python3 scripts/build-android-release-inputs.py inventory qualification
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: android-release-input-inventory
+          path: qualification/
+          if-no-files-found: error
+          retention-days: 14
