@@ -16,6 +16,10 @@ on:
         description: Full reviewed producer commit for receipt collection
         type: string
         default: ''
+      authenticate_inputs:
+        description: Also run the pinned release gate against the retained unsigned inputs
+        type: boolean
+        default: false
   push:
     branches: [codex/nvpn-hosted-apple-producer, codex/nvpn-hosted-android-producer]
     paths:
@@ -146,18 +150,25 @@ jobs:
             scripts/android-release-inputs.json
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: 3f6dbc53c40d319c01e25ed177769d398d81bd1f
+          ref: 20c122fb6a48de21fa1865605df5c95866d73013
           path: validator
           persist-credentials: false
           sparse-checkout-cone-mode: false
-          sparse-checkout: scripts/android_hosted_content.py
+          sparse-checkout: |
+            scripts/android_hosted_content.py
+            scripts/android_hosted_inputs.py
+            scripts/android_hosted_admission.py
       - name: Authenticate the service ZIP and return only small receipts
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: validator/scripts
           PRODUCER_RUN: ${{ inputs.producer_run }}
           PRODUCER_COMMIT: ${{ inputs.producer_commit }}
-        run: python3 -B scripts/build-android-release-inputs.py collect-receipts receipts --run-id "$PRODUCER_RUN" --producer-commit "$PRODUCER_COMMIT"
+          AUTHENTICATE_INPUTS: ${{ inputs.authenticate_inputs }}
+        run: |
+          arguments=()
+          if [[ "$AUTHENTICATE_INPUTS" == true ]]; then arguments+=(--authenticate-inputs); fi
+          python3 -B scripts/build-android-release-inputs.py collect-receipts receipts --run-id "$PRODUCER_RUN" --producer-commit "$PRODUCER_COMMIT" "${arguments[@]}"
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:

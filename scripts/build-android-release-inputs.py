@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 PINS = Path(__file__).with_name("android-release-inputs.json")
+INPUT_VALIDATOR_COMMIT = "20c122fb6a48de21fa1865605df5c95866d73013"
 SIGNING_VARIABLES = (
     "ANDROID_KEYSTORE_PATH", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS",
     "ANDROID_KEY_PASSWORD", "ANDROID_KEYSTORE_B64",
@@ -548,7 +549,7 @@ def build(output, pins, app, fips):
                 shutil.copytree(report, output / "verification-failure")
 
 
-def collect_receipts(output, pins, run_id, producer_commit):
+def collect_receipts(output, pins, run_id, producer_commit, authenticate_inputs=False):
     """Read an authenticated hosted artifact; never run or admit its products."""
     from android_hosted_content import zip_identity
     require(os.environ.get("GITHUB_ACTIONS") == "true", "Artifact receipt collection stays off the Mac")
@@ -613,6 +614,29 @@ def collect_receipts(output, pins, run_id, producer_commit):
         jni = native["base/lib/arm64-v8a/libnostr_vpn_app_core.so"]
         require(jni == {"sha256": receipt["compiledJni"]["sha256"], "bytes": receipt["compiledJni"]["size"]},
                 "AAB does not contain the recorded compiled JNI")
+        if authenticate_inputs:
+            import android_hosted_inputs as admission
+            validator_root = Path(admission.__file__).resolve().parent.parent
+            require(capture("git", "-C", str(validator_root), "rev-parse", "HEAD") == INPUT_VALIDATOR_COMMIT,
+                    "Actual-input authentication must use the exact reviewed public validator")
+            payload = root / "payload"
+            payload.mkdir()
+            # zip_identity already verified canonical names, regular files,
+            # uniqueness, hashes and the bounded total uncompressed size.
+            with zipfile.ZipFile(package) as archive:
+                for name in identities:
+                    session.guard()
+                    destination = payload / name
+                    require(destination.resolve().is_relative_to(payload), "Artifact extraction left its contained root")
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(name) as source, destination.open("xb") as target:
+                        shutil.copyfileobj(source, target)
+            session.run(["python3", "-B", str(validator_root / "scripts/android_hosted_admission.py"),
+                         "authenticate-inputs", "--root", str(root)])
+            verified = admission.verified_inputs(root)
+            require(verified["producerReceiptSha256"] == identities["provenance/receipt.json"]["sha256"],
+                    "Release gate authenticated a different producer receipt")
+            shutil.copyfile(root / "hosted-inputs.json", output / "hosted-inputs.json")
         session.guard()
         (output / "producer-receipt.json").write_bytes(receipt_bytes)
         proof = {"schema": 1, "productExecuted": False, "nativeAdmissionPerformed": False,
@@ -623,7 +647,10 @@ def collect_receipts(output, pins, run_id, producer_commit):
                  "producerReceiptSha256": identities["provenance/receipt.json"]["sha256"],
                  "aabSha256": identities["unsigned/app-release.aab"]["sha256"], "jniSha256": jni["sha256"],
                  "verifiedExportFiles": len(receipt["files"]), "collectorCommit": os.environ["GITHUB_SHA"],
-                 "collectorRunId": os.environ["GITHUB_RUN_ID"], "validatorCommit": "3f6dbc53c40d319c01e25ed177769d398d81bd1f"}
+                 "collectorRunId": os.environ["GITHUB_RUN_ID"], "validatorCommit": INPUT_VALIDATOR_COMMIT,
+                 "actualInputAuthenticationPerformed": authenticate_inputs}
+        if authenticate_inputs:
+            proof["hostedInputsSha256"] = digest(output / "hosted-inputs.json")
         (output / "artifact-proof.json").write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n")
         session.save_resources()
         print(json.dumps(proof, sort_keys=True))
@@ -637,6 +664,7 @@ def main():
     parser.add_argument("--fips", type=Path)
     parser.add_argument("--run-id", type=int)
     parser.add_argument("--producer-commit")
+    parser.add_argument("--authenticate-inputs", action="store_true")
     args = parser.parse_args()
     pins = json.loads(PINS.read_text())
     unsigned_environment(os.environ)
@@ -649,7 +677,7 @@ def main():
         build(args.output.resolve(), pins, args.app.resolve(), args.fips.resolve())
     else:
         require(args.run_id and args.producer_commit, "An exact successful producer run and commit are required")
-        collect_receipts(args.output.resolve(), pins, args.run_id, args.producer_commit)
+        collect_receipts(args.output.resolve(), pins, args.run_id, args.producer_commit, args.authenticate_inputs)
 
 
 if __name__ == "__main__":
