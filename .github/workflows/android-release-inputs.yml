@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Inspect hosted inputs before admitting unsigned compilation
+        description: Qualify inputs, build the unsigned bundle, or check admission fixtures
         type: choice
         default: inventory
-        options: [inventory, qualify-ndk, build]
+        options: [inventory, qualify-ndk, build, admission-check]
   push:
     branches: [codex/nvpn-hosted-apple-producer, codex/nvpn-hosted-android-producer]
     paths:
@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-release-inputs-${{ github.ref }}
+  group: android-release-inputs-${{ github.ref }}${{ github.event_name == 'push' && '-checks' || inputs.operation == 'admission-check' && '-admission' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +39,7 @@ jobs:
       - name: Verify producer boundaries without compiling products
         run: python3 scripts/test-android-release-inputs.py
   inputs:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation != 'admission-check'
     needs: producer-checks
     runs-on: ubuntu-24.04
     timeout-minutes: 100
@@ -90,3 +90,28 @@ jobs:
           path: ${{ inputs.operation == 'build' && 'android-release-inputs/' || 'qualification/' }}
           if-no-files-found: error
           retention-days: 14
+  admission-checks:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'admission-check'
+    needs: producer-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 15872d0ee5572a6ffb340806ed68875a4f4a3a82
+          path: admission
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/android_hosted_content.py
+            scripts/android_hosted_inputs.py
+            scripts/android_hosted_admission.py
+            scripts/test-android-hosted-content.py
+            scripts/test-android-hosted-admission.py
+            scripts/mobile_release_artifact_receipt.py
+            scripts/lib-mobile-android-release-gate.sh
+      - name: Check hosted admission fixtures without importing any product
+        working-directory: admission
+        run: |
+          python3 -B scripts/test-android-hosted-content.py
+          python3 -B scripts/test-android-hosted-admission.py
