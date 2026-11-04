@@ -40,7 +40,9 @@ An admin may assign any IPv4 address in:
 | `100.64.0.0/10` | RFC 6598, used by Tailscale-style networks |
 
 Public, loopback, link-local, multicast, broadcast and unspecified addresses
-are rejected. `10.44.0.0/16` is allowed, subject to the uniqueness rule.
+are rejected. `10.44.0.0/16` is allowed, subject to the uniqueness rule,
+except `10.44.0.53`: nvpn already serves MagicDNS there, so assigning it to a
+device would make DNS traffic to that address ambiguous.
 
 There is no per-network address pool. A pool would be one more signed field to
 validate, migrate and display, and the migration case needs only the address.
@@ -62,17 +64,28 @@ Signing refuses, and verification rejects as a whole, a roster where:
 
 - an `address` tag names a pubkey that is not a `member`;
 - a member has more than one `address` tag;
-- a value is not an IPv4 `/32` inside the assignable ranges;
-- an assigned address equals another member's effective address, assigned or
+- a value is not an IPv4 `/32` inside the assignable ranges, or is the
+  MagicDNS address `10.44.0.53`;
+- two members end up with the same effective address, whether assigned or
   derived.
+
+Uniqueness is checked across the final map, not only against assignments. Two
+derived addresses can already collide today, and a v1 roster keeps that
+behavior. Once a roster assigns any address, a derived collision is rejected
+too, even when the assignment is for an unrelated member, and the admin
+resolves it by assigning one of the two colliding members.
 
 `roster_address_assignments` checks the tags themselves: a valid pubkey, at
 most one tag per member, and an IPv4 `/32`. `effective_mesh_tunnel_ipv4s`
-checks membership, the assignable ranges and uniqueness. Signing and
-verification will call both when assignments are enabled.
+checks membership, the assignable ranges, the MagicDNS reservation and
+uniqueness. Signing and verification will call both when assignments are
+enabled.
 
-Two derived addresses can already collide today. That behavior is unchanged,
-and an admin can resolve it by assigning one of the two members an address.
+| Fixture in `network_routes.rs` | Pins |
+| --- | --- |
+| `assignable_space_is_private_and_shared_ipv4_only` | the ranges, with `10.44.0.53` rejected |
+| `invalid_assignments_are_rejected` | non-members, public space, the MagicDNS address, shared and reused addresses |
+| `colliding_derived_addresses_need_an_assignment_once_a_roster_assigns_any` | v1 keeps a derived collision; an unrelated assignment exposes it; assigning a colliding member resolves it |
 
 ## Versioning
 
@@ -111,12 +124,46 @@ Fixtures in `fips_control_tests.rs` pin each of these:
    `10.44.0.0/16` constant to members' effective `/32`s. The #158 overlap
    fixes land on their own before this step; it builds on them and does not
    block them.
-3. **Enable.** The parser accepts v2 rosters and `address` tags, and admin
-   apps and the CLI can set them. Admin apps warn while any member runs a
-   version that rejects v2, because those members stop receiving roster
-   updates until they upgrade.
+3. **Enable.** The parser accepts v2 rosters and `address` tags, clients
+   advertise that they accept v2, and admin apps and the CLI can set
+   assignments behind the gate below.
 
 No release advertises assignment support before step 3.
+
+## First v2 roster: the gate
+
+A client that rejects v2 keeps its last v1 roster. It stops receiving roster
+updates, including revocations: a member removed in a v2 roster stays admitted
+by that client. So the first assignment in a network is gated on evidence that
+every retained member can apply v2.
+
+- **Evidence.** From step 3, each client lists the roster versions it accepts
+  in the capabilities frame it already sends its peers (`PeerCapabilities`,
+  a new `roster_versions` field that older clients ignore). The frame arrives
+  over the FIPS session authenticated as that member's key. The admin's
+  device keeps the latest list each member sent and when.
+- **Gate.** Admin apps and the CLI refuse to sign the first roster with an
+  `address` tag while any retained member or admin has not advertised v2. They
+  list those members. The admin either waits for them to upgrade and connect,
+  or removes them in the same roster, which isolates them: v2 clients stop
+  admitting them, and the admin re-adds them after they upgrade. Admins are
+  included because an admin device on an old release would sign v1 rosters
+  that silently drop every assignment (see the last row below).
+- **After the first v2 roster**, the admin's device keeps checking. A member
+  whose latest list no longer includes v2, after a downgrade, is flagged with
+  the same choice.
+
+Expected behavior:
+
+| Situation | Clients that accept v2 | A client that rejects v2 |
+| --- | --- | --- |
+| Revocation before the first assignment | Apply it (v1 roster) | Apply it (v1 roster) |
+| First v2 roster, retained members all advertise v2 | Apply it | Only possible after a downgrade; see the next rows |
+| First v2 roster removes members without evidence | Stop admitting them | Keeps its last v1 roster and is isolated: v2 clients do not admit it, and it reaches only other members still on that roster |
+| Revocation in a later v2 roster | Enforce it | Keeps admitting the revoked member until it upgrades or receives a newer v1 roster; the gate and the downgrade flag keep such clients out of the network |
+| Newer signed v1 roster (rollback: last assignment removed) | Accept it; members return to derived addresses | Accepts it and catches up, including revocations made while v2 was in effect |
+| An older v1 roster replayed after a v2 one | Reject it: a roster must be strictly newer than the current one (`signed_at`, existing rule) | Reject it on the same rule if it already holds a newer v1 roster |
+| An admin device on an old release signs a v1 roster | Accept it, as a rollback; assignments disappear until an admin re-signs them | Accepts it |
 
 ## Changing, removing and rolling back
 
@@ -125,7 +172,8 @@ No release advertises assignment support before step 3.
   for the old address, as for a member removed and re-added. Connections to
   the old address end.
 - Removing the last assignment produces a v1 roster again, which older clients
-  accept. That is the rollback path.
+  accept. That is the rollback path; the table above lists how each client
+  treats it.
 
 ## Admin UX
 
