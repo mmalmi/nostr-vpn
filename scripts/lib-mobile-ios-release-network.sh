@@ -398,11 +398,15 @@ ios_release_network_prepare_reuse() {
   # The post-case audit needs this same sealed build receipt. Reject missing or
   # mismatched inputs before device queries and expensive physical tests.
   metadata_receipt="${NVPN_IOS_FIPS_METADATA_RECEIPT:-$ROOT/artifacts/mobile-ios/fips-linkage.json}"
-  if ! python3 - "$receipt" "$metadata_receipt" "${NVPN_FIPS_REPO_PATH:-}" <<'PY'
+  if ! python3 - "$receipt" "$metadata_receipt" "${NVPN_FIPS_REPO_PATH:-}" \
+    "$ROOT/dist/ios/frozen/archive-receipt.json" \
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
+sys.path.insert(0, sys.argv[5])
+from apple_hosted_admission import digest, load, validate_ios_admission
 
 try:
     receipt = json.loads(Path(sys.argv[1]).read_text())
@@ -412,6 +416,15 @@ try:
         "fipsCargoMetadataReceiptPathSha256": hashlib.sha256(str(metadata.resolve()).encode()).hexdigest(),
         "fipsCheckoutPathSha256": hashlib.sha256(str(Path(sys.argv[3]).resolve()).encode()).hexdigest(),
     }
+    archive_path = Path(sys.argv[4])
+    if archive_path.is_file():
+        archive = load(archive_path)
+        admission = validate_ios_admission(archive_path, archive)
+        if admission:
+            expected["fipsValidationCheckoutPathSha256"] = expected.pop("fipsCheckoutPathSha256")
+            expected["fipsCheckoutPathSha256"] = archive["fipsCheckoutPathSha256"]
+            expected["fipsDependenciesRebuildLocation"] = "hosted"
+            expected["hostedAdmissionReceiptSha256"] = digest(archive_path.parent / "hosted-admission.json")
     valid = bool(sys.argv[3]) and all(receipt.get(key) == value for key, value in expected.items())
 except (OSError, ValueError, AttributeError):
     valid = False

@@ -119,15 +119,15 @@ def validate_app_receipt(
     expected_app_head: str,
     expected_app_tree: str,
 ) -> None:
+    from macos_hosted_admission import validate_receipt_admission
+    validate_receipt_admission(receipt, app.parent / "hosted-admission.json", app)
     executable = app / "Contents" / "MacOS" / "Nostr VPN"
     if not executable.is_file() or not app.is_dir():
         fail("exact macOS Release app is missing")
     for name, expected in (
-        ("receiptSchema", 1),
         ("artifactType", "macOS company Developer ID Release gate package"),
         ("companySigningVerified", True),
         ("configuration", "Release"),
-        ("builtOnHost", True),
         ("builtOnTestVm", False),
         ("appGitSha", expected_app_head),
         ("appGitTree", expected_app_tree),
@@ -188,7 +188,7 @@ def observed_driver(args: argparse.Namespace) -> dict[str, Any]:
         or app_receipt.get("signerCertificateSha256") != expected_signer
     ):
         fail("app and Exit DNS driver are not signed by the same company identity")
-    return {
+    receipt = {
         "receiptSchema": 1,
         "artifactType": "macOS Exit DNS public-UI Release gate driver",
         "appArtifactReceiptSha256": sha256_file(app_receipt_path),
@@ -217,6 +217,15 @@ def observed_driver(args: argparse.Namespace) -> dict[str, Any]:
         "builtOnTestVm": False,
         "expectedCases": list(CASES),
     }
+    if app_receipt.get("receiptSchema") == 2:
+        from macos_hosted_support import SUPPORT_FILES, validate_support_receipt
+        evidence = validate_support_receipt(app_receipt, app.parent)
+        expected_driver = evidence["files"][SUPPORT_FILES["exitDnsDriverSha256"]]["sha256"]
+        require(receipt, "driverExecutableSha256", expected_driver)
+        receipt.update(receiptSchema=2, builtOnHost=False, buildOrigin="github-actions",
+                       signedOnHost=True,
+                       hostedSupportCanonicalSha256=app_receipt["hostedSupportCanonicalSha256"])
+    return receipt
 
 
 def create_driver(args: argparse.Namespace) -> None:
@@ -246,9 +255,12 @@ def validate_driver(args: argparse.Namespace) -> None:
         "signingTeam": observed["signingTeam"],
         "signingIdentitySha1": observed["signingIdentitySha1"],
         "signerCertificateSha256": observed["signerCertificateSha256"],
-        "builtOnHost": True,
+        "builtOnHost": observed["builtOnHost"],
         "builtOnTestVm": False,
     }
+    if observed.get("receiptSchema") == 2:
+        output.update(buildOrigin="github-actions", signedOnHost=True,
+                      hostedSupportCanonicalSha256=observed["hostedSupportCanonicalSha256"])
     write_json(pathlib.Path(args.verification_output), output)
 
 
@@ -424,7 +436,7 @@ def create_case(args: argparse.Namespace) -> None:
         "applyPid": apply["pid"],
         "readbackPid": readback["pid"],
         "relaunchPidChanged": True,
-        "builtOnHost": True,
+        "builtOnHost": app_receipt["builtOnHost"],
         "builtOnTestVm": False,
         "companySigningVerified": True,
     }
@@ -548,7 +560,7 @@ def create_seller(args: argparse.Namespace) -> None:
         "applyPid": apply["pid"],
         "readbackPid": readback["pid"],
         "relaunchPidChanged": True,
-        "builtOnHost": True,
+        "builtOnHost": app_receipt["builtOnHost"],
         "builtOnTestVm": False,
         "companySigningVerified": True,
     }
@@ -659,7 +671,7 @@ def create_summary(args: argparse.Namespace) -> None:
             driver_verification_path
         ),
         "restorationReceiptSha256": sha256_file(restoration_path),
-        "builtOnHost": True,
+        "builtOnHost": app_receipt["builtOnHost"],
         "builtOnTestVm": False,
         "remoteImportVerified": True,
         "companySigningVerified": True,

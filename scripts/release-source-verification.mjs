@@ -18,6 +18,7 @@ import {
   sha256FileSync,
 } from './local-release-lib.mjs'
 import { proveUnchangedPlatformInputs } from './release-component-source.mjs'
+import { validateMacosBuildProvenance } from './macos-hosted-provenance.mjs'
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url))
 const defaultCandidateRoot = resolve(scriptsDir, '..')
@@ -295,11 +296,10 @@ export function validateWindowsRuntimeFipsVersion(options) {
 export function validateMacosRuntimeFipsVersion(options) {
   const { artifactReceipt: receipt, exactPackages, expectedFipsGitSha,
     expectedFipsGitTree, expectedFipsVersion, cliSha256, runtimeVersion } = options
+  validateMacosBuildProvenance(receipt)
   requireExactFields(receipt, {
-    receiptSchema: 1,
     artifactType: 'macOS company Developer ID Release gate package',
     configuration: 'Release', companySigningVerified: true,
-    builtOnHost: true, builtOnTestVm: false,
     fipsGitSha: expectedFipsGitSha, fipsGitTree: expectedFipsGitTree,
     fipsCoreVersion: expectedFipsVersion,
   }, 'macOS imported Release artifact')

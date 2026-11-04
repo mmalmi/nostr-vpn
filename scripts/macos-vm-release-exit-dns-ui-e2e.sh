@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build on the host, import to the isolated macOS VM, and drive every Exit DNS public UI.
+# Import the signed Release package to the isolated VM and drive every Exit DNS public UI.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -115,14 +115,13 @@ rm -rf "$RESULT_DIR"
 mkdir -p "$PRIVATE_DIR" "$IMPORT_RESULT"
 chmod 700 "$PRIVATE_DIR"
 
-# The shared importer builds the signed Release app on this host and copies
-# that exact bundle to the VM. It never builds application code on the VM.
+# The shared importer verifies the exact prepared package before VM use.
 NVPN_RELEASE_JOIN_RESULT_DIR="$IMPORT_RESULT" \
   macos_vm_prepare_or_verify_imported_release "$ROOT" "$MAC_HOST"
 
 for path in "$PUBLICATION_APP" "$APP_RECEIPT" "$IMPORT_VERIFICATION"; do
   [[ -e "$path" ]] || {
-    echo "host-built imported Release evidence is missing: $path" >&2
+    echo "imported Release evidence is missing: $path" >&2
     exit 1
   }
 done
@@ -160,16 +159,31 @@ PY
   exit 1
 }
 
-xcrun swiftc -O \
-  -framework AppKit \
-  -framework ApplicationServices \
-  -framework Foundation \
-  -o "$HOST_DRIVER" \
-  "$ROOT/scripts/macos-exit-dns-ax.swift"
-codesign --force --timestamp --options runtime \
-  --identifier desktop-manual-join-ax \
-  --sign "$MACOS_SIGNING_IDENTITY" \
-  "$HOST_DRIVER"
+if python3 - "$APP_RECEIPT" <<'PY'
+import json, sys
+sys.exit(0 if json.load(open(sys.argv[1])).get("receiptSchema") == 2 else 1)
+PY
+then
+  # The imported package already binds this signed driver to its distinct
+  # hosted producer. create-driver below revalidates the retained proof.
+  hosted_driver="$(dirname "$PUBLICATION_APP")/drivers/macos-exit-dns-ax"
+  [[ -f "$hosted_driver" && ! -L "$hosted_driver" ]] || {
+    echo "Hosted macOS gate package lacks its admitted Exit DNS driver" >&2
+    exit 1
+  }
+  cp "$hosted_driver" "$HOST_DRIVER"
+else
+  xcrun swiftc -O \
+    -framework AppKit \
+    -framework ApplicationServices \
+    -framework Foundation \
+    -o "$HOST_DRIVER" \
+    "$ROOT/scripts/macos-exit-dns-ax.swift"
+  codesign --force --timestamp --options runtime \
+    --identifier desktop-manual-join-ax \
+    --sign "$MACOS_SIGNING_IDENTITY" \
+    "$HOST_DRIVER"
+fi
 codesign --verify --strict "$HOST_DRIVER"
 
 python3 "$ROOT/scripts/macos_exit_dns_ui_receipt.py" create-driver \

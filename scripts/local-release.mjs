@@ -1405,6 +1405,9 @@ function buildMacosArtifacts({
         '--expected-app-tree',
         gateSource.tree,
         '--require-gate-bundle-tree',
+        ...(gateReceipt.receiptSchema === 2
+          ? ['--hosted-admission', join(dirname(gatedAppPath), 'hosted-admission.json')]
+          : []),
       ],
     )
   }
@@ -1459,6 +1462,8 @@ function buildMacosArtifacts({
       gateSource.commit,
       gateSource.tree,
       join(repoRoot, 'scripts', 'macos_release_join_artifact.py'),
+      ...(receipt.receiptSchema === 2
+        ? [join(dirname(gatedAppPath), 'hosted-admission.json')] : []),
     ],
   )
 
@@ -1497,7 +1502,9 @@ function buildMacosArtifacts({
       payloads: { nvpn: cliPayloadSha256 },
     })
   }
-  builtLines.push('Built Apple Silicon CLI locally.')
+  builtLines.push(receipt.receiptSchema === 2
+    ? 'Packaged the gate-tested hosted Apple Silicon CLI.'
+    : 'Built Apple Silicon CLI locally.')
   builtLines.push('Packaged the gate-tested signed and notarized Apple Silicon app.')
   return proofs
 }
@@ -1606,6 +1613,11 @@ function buildIosArtifacts({
   }
   return {
     receipt_schema: receipt.receiptSchema,
+    ...(archiveReceipt.receiptSchema === 2 ? {
+      hosted_admission_receipt_sha256: sha256FileSync(
+        join(repoRoot, 'dist', 'ios', 'frozen', 'hosted-admission.json'),
+      ),
+    } : {}),
     app_git_sha: receipt.appGitSha,
     app_git_tree: receipt.appGitTree,
     bundle_id: identity.appBundleIdentifier,
@@ -2267,6 +2279,11 @@ function main() {
       ),
     },
     ios: {
+      ...(existsSync(join(repoRoot, 'dist', 'ios', 'frozen', 'archive-receipt.json'))
+        && readRequiredJson(join(repoRoot, 'dist', 'ios', 'frozen', 'archive-receipt.json'),
+          'Frozen iOS archive receipt').receiptSchema === 2
+        ? { hosted_admission: join(repoRoot, 'dist', 'ios', 'frozen', 'hosted-admission.json') }
+        : {}),
       frozen_archive: join(
         repoRoot,
         'dist',

@@ -15,6 +15,11 @@ nvpn-updater
 secure hashtree update check
 nostr_vpn_update_check
 nostr_vpn_update_download
+com.apple.net.utun_control
+CTLIOCGINFO
+current_ios_utun_fd
+nostr_vpn_mobile_tunnel_attach_current_tun_fd
+native utun fd attached
 EOF
 }
 
@@ -58,6 +63,25 @@ ios_release_network_audit_forbidden_runtime() {
 }
 
 ios_release_network_audit_rust_feature_surface() {
+  local frozen_receipt="$ROOT/dist/ios/frozen/archive-receipt.json"
+  if [[ -f "$frozen_receipt" ]] && python3 - "$frozen_receipt" <<'PY'
+import json, sys
+sys.exit(0 if json.load(open(sys.argv[1])).get("receiptSchema") == 2 else 1)
+PY
+  then
+    # Hosted archives have authenticated build evidence, not local compiler
+    # intermediates. Their mandatory admission already audits the final app
+    # and tunnel; ordinary signing/export/device checks still run below.
+    python3 - "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" "$frozen_receipt" <<'PY'
+import pathlib, sys
+sys.path.insert(0, sys.argv[1])
+from apple_hosted_admission import load, validate_ios_admission
+receipt = pathlib.Path(sys.argv[2])
+if not validate_ios_admission(receipt, load(receipt)):
+    raise SystemExit("hosted archive lacks mandatory admission")
+PY
+    return $?
+  fi
   local target_root="${CARGO_TARGET_DIR:-$ROOT/target}"
   [[ "$target_root" = /* ]] || target_root="$ROOT/$target_root"
   local archive="$target_root/aarch64-apple-ios/release/libnostr_vpn_app_core.a"
@@ -259,12 +283,16 @@ ios_release_network_app_path() {
 }
 
 ios_release_network_write_artifact_receipt() {
-  python3 - "$@" <<'PY'
+  python3 - "$ROOT/dist/ios/frozen/archive-receipt.json" \
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" "$@" <<'PY'
 import hashlib
 import json
 import os
 import plistlib
 import sys
+import pathlib
+sys.path.insert(0, sys.argv[2])
+from apple_hosted_admission import digest, load, validate_ios_admission
 
 (
     path,
@@ -291,7 +319,23 @@ import sys
     fips_checkout_path_sha,
     signer_sha,
     signer_identity_sha,
-) = sys.argv[1:]
+) = sys.argv[3:]
+hosted_fields = {}
+archive_path = pathlib.Path(sys.argv[1])
+if archive_path.is_file():
+    archive = load(archive_path)
+    admission = validate_ios_admission(archive_path, archive)
+    if admission:
+        if (fips_checkout_path_sha != admission["hostedBuild"]["validationSource"]["fipsCheckoutPathSha256"]
+            or fips_metadata_sha != archive["fipsCargoMetadataReceiptSha256"]
+            or fips_metadata_path_sha != archive["fipsCargoMetadataReceiptPathSha256"]):
+            raise SystemExit("physical artifact differs from admitted hosted FIPS provenance")
+        hosted_fields = {
+            "fipsDependenciesRebuildLocation": "hosted",
+            "fipsValidationCheckoutPathSha256": fips_checkout_path_sha,
+            "fipsCheckoutPathSha256": archive["fipsCheckoutPathSha256"],
+            "hostedAdmissionReceiptSha256": digest(archive_path.parent / "hosted-admission.json"),
+        }
 app_info = plistlib.load(open(app_info_path, "rb"))
 installed_app = json.load(open(installed_apps_path, encoding="utf-8"))
 if (not isinstance(installed_app, dict)
@@ -391,6 +435,7 @@ with open(path, "w", encoding="utf-8") as handle:
             "installedMarketingVersion": str(installed_app["version"]),
             "installedIdentityProvider": installed_app["provider"],
             "installedSignerIdentitySha256": signer_identity_sha,
+            **hosted_fields,
         },
         handle,
         indent=2,

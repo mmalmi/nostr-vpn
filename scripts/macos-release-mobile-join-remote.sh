@@ -9,6 +9,9 @@ REMOTE_HARNESS_FILES=(
   scripts/lib-macos-release-app-ownership.sh
   scripts/macos-release-mobile-join-remote.sh
   scripts/macos_release_join_artifact.py
+  scripts/macos_hosted_admission.py
+  scripts/macos_hosted_support.py
+  scripts/apple_hosted_admission.py
   scripts/mobile_release_artifact_receipt.py
 )
 ACTUAL_HARNESS_DIGEST="$(

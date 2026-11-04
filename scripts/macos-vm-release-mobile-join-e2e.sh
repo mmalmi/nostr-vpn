@@ -101,6 +101,9 @@ REMOTE_HARNESS_FILES=(
   scripts/lib-macos-release-app-ownership.sh
   scripts/macos-release-mobile-join-remote.sh
   scripts/macos_release_join_artifact.py
+  scripts/macos_hosted_admission.py
+  scripts/macos_hosted_support.py
+  scripts/apple_hosted_admission.py
   scripts/mobile_release_artifact_receipt.py
 )
 REMOTE_HARNESS_DIGEST="$(
@@ -580,6 +583,14 @@ JS
 prepare_host_artifact() {
   local build_log="$RESULT_DIR/macos/host-build.log"
   local reuse_app=0 support
+  if [[ -f "$CACHED_RECEIPT" ]] && python3 - "$CACHED_RECEIPT" <<'PY'
+import json, sys
+sys.exit(0 if json.load(open(sys.argv[1])).get("receiptSchema") == 2 else 1)
+PY
+  then
+    echo "Hosted macOS apps require an admitted prebuilt support package; use imported artifact validation/run-only. Local app and support compilation are disabled for this path." >&2
+    return 1
+  fi
   rm -rf "$HOST_PACKAGE" "$HOST_SUPPORT"
   rm -f "$HOST_ARCHIVE" "$HOST_RECEIPT"
   : >"$build_log"
@@ -1416,8 +1427,11 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
             "schema": 1,
             "platform": "macos",
             "artifact": artifact_summary,
-            "builtOnHost": True,
+            "builtOnHost": artifact["builtOnHost"],
             "builtOnTestVm": False,
+            **({"buildOrigin": "github-actions", "signedOnHost": True,
+                "hostedAdmissionReceiptSha256": artifact["hostedAdmissionReceiptSha256"]}
+               if artifact.get("receiptSchema") == 2 else {}),
             "remoteImportVerified": True,
             "publicUiOnly": True,
             "appLaunchArgumentsOrEnvironment": False,

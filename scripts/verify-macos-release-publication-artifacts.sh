@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if (($# != 7)); then
-  echo "usage: $0 RECEIPT APP UPDATER_TAR DMG COMMIT TREE VALIDATOR" >&2
+if (($# < 7 || $# > 8)); then
+  echo "usage: $0 RECEIPT APP UPDATER_TAR DMG COMMIT TREE VALIDATOR [HOSTED_ADMISSION]" >&2
   exit 2
 fi
 
@@ -13,6 +13,10 @@ DMG="$4"
 COMMIT="$5"
 TREE="$6"
 VALIDATOR="$7"
+admission_args=()
+if [[ -n "${8:-}" ]]; then
+  admission_args=(--hosted-admission "$8")
+fi
 
 updater_root="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-macos-updater-proof.XXXXXX")"
 mount_root="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-macos-dmg-proof.XXXXXX")"
@@ -33,7 +37,7 @@ verify_app() {
     --receipt "$RECEIPT" \
     --app "$1" \
     --expected-app-head "$COMMIT" \
-    --expected-app-tree "$TREE"
+    --expected-app-tree "$TREE" "${admission_args[@]}"
 }
 
 verify_app "$APP"

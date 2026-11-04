@@ -21,6 +21,9 @@ from mobile_release_artifact_receipt import (
     sha256_file,
     tree_sha256,
 )
+from macos_hosted_admission import (
+    receipt_fields, validate_admission, validate_receipt_admission, validate_receipt_binding,
+)
 
 
 def run(command: list[str], *, cwd: pathlib.Path | None = None) -> bytes:
@@ -282,7 +285,7 @@ def observed_receipt(args: argparse.Namespace) -> dict[str, Any]:
         )
     bundle_manifest = tree_sha256(app)
     package_manifest = tree_sha256(package)
-    return {
+    receipt = {
         "receiptSchema": 1,
         "artifactType": "macOS company Developer ID Release gate package",
         "archiveSha256": sha256_file(archive),
@@ -320,6 +323,17 @@ def observed_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "appLaunchArgumentsOrEnvironment": False,
         "privateAppStateRead": False,
     }
+    companion = pathlib.Path(getattr(args, "hosted_admission", None) or package / "hosted-admission.json")
+    if companion.exists():
+        from macos_hosted_support import support_evidence, support_receipt_fields
+        admission = validate_admission(companion, app)
+        receipt.update(receipt_fields(companion, admission))
+        receipt["shareFilesExecutableSha256"] = admission["appIdentity"]["shareFilesExecutableSha256"]
+        validate_receipt_binding(receipt, companion, admission)
+        receipt.update(support_receipt_fields(support_evidence(package, admission["signing"])))
+    elif any(package.glob("*/hosted-inputs.json")) or getattr(args, "hosted_admission", None):
+        raise ValueError("hosted macOS package is missing its mandatory admission")
+    return receipt
 
 
 def create_receipt(args: argparse.Namespace) -> None:
@@ -357,9 +371,12 @@ def validate_receipt(args: argparse.Namespace) -> None:
         "signingTeam": observed["signingTeam"],
         "signingIdentitySha1": observed["signingIdentitySha1"],
         "signerCertificateSha256": observed["signerCertificateSha256"],
-        "builtOnHost": True,
+        "builtOnHost": observed["builtOnHost"],
         "builtOnTestVm": False,
     }
+    if observed["receiptSchema"] == 2:
+        verification.update(buildOrigin="github-actions", signedOnHost=True,
+                            hostedAdmissionReceiptSha256=observed["hostedAdmissionReceiptSha256"])
     pathlib.Path(args.verification_output).write_text(
         json.dumps(verification, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -372,7 +389,7 @@ def validate_published_app(args: argparse.Namespace) -> None:
     executable = app / "Contents" / "MacOS" / "Nostr VPN"
     cli = app / "Contents" / "Resources" / "nvpn"
     if (
-        receipt.get("receiptSchema") != 1
+        receipt.get("receiptSchema") not in (1, 2)
         or receipt.get("artifactType")
         != "macOS company Developer ID Release gate package"
         or receipt.get("companySigningVerified") is not True
@@ -393,6 +410,8 @@ def validate_published_app(args: argparse.Namespace) -> None:
             raise ValueError(f"macOS publication receipt {name} changed")
     if not app.is_dir() or not executable.is_file() or not cli.is_file():
         raise ValueError("macOS publication app payload is missing")
+    companion = pathlib.Path(getattr(args, "hosted_admission", None) or app.parent / "hosted-admission.json")
+    validate_receipt_admission(receipt, companion, app, allow_stapled=not args.require_gate_bundle_tree)
     if (
         args.require_gate_bundle_tree
         and tree_sha256(app) != receipt.get("appBundleTreeSha256")
@@ -433,6 +452,7 @@ def validate_published_app(args: argparse.Namespace) -> None:
 
 
 def add_common_arguments(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--hosted-admission")
     for name in (
         "receipt",
         "package",
@@ -477,6 +497,7 @@ def parser() -> argparse.ArgumentParser:
     publication.add_argument("--expected-team")
     publication.add_argument("--expected-identity-sha1")
     publication.add_argument("--expected-signer-sha256")
+    publication.add_argument("--hosted-admission")
     return result
 
 

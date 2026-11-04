@@ -26,6 +26,12 @@ from mobile_release_artifact_receipt import (
 )
 from ios_xctestrun import rewrite_xctestrun
 from ios_frozen_gate import seal_gate, validate_gate_seal
+from apple_hosted_admission import (
+    canonical_digest,
+    local_build_contract,
+    prepare_ios_admission,
+    validate_ios_admission,
+)
 
 
 APP_NAME = "Nostr VPN.app"
@@ -191,12 +197,13 @@ def unsigned_content_manifest(
 
 def read_plist(path: pathlib.Path) -> dict[str, Any]:
     require(path.is_file(), f"property list is missing: {path}")
-    value = plistlib.load(path.open("rb"))
+    with path.open("rb") as source:
+        value = plistlib.load(source)
     require(isinstance(value, dict), f"property list root is not a dictionary: {path}")
     return value
 
 
-def app_paths(app: pathlib.Path) -> dict[str, pathlib.Path]:
+def app_paths(app: pathlib.Path, *, require_profiles: bool = True) -> dict[str, pathlib.Path]:
     tunnel = app / "PlugIns" / TUNNEL_NAME
     share = app / "PlugIns" / SHARE_NAME
     paths = {
@@ -216,13 +223,13 @@ def app_paths(app: pathlib.Path) -> dict[str, pathlib.Path]:
     for name, path in paths.items():
         if name in {"app", "tunnel", "share"}:
             require(path.is_dir(), f"iOS bundle is missing: {path}")
-        else:
+        elif require_profiles or not name.endswith("Profile"):
             require(path.is_file(), f"iOS bundle file is missing: {path}")
     return paths
 
 
-def bundle_identity(app: pathlib.Path) -> dict[str, Any]:
-    paths = app_paths(app)
+def bundle_identity(app: pathlib.Path, *, require_profiles: bool = True) -> dict[str, Any]:
+    paths = app_paths(app, require_profiles=require_profiles)
     app_info = read_plist(paths["appInfo"])
     tunnel_info = read_plist(paths["tunnelInfo"])
     share_info = read_plist(paths["shareInfo"])
@@ -606,6 +613,7 @@ def require_clean_checkout(root: pathlib.Path, label: str) -> None:
 def validate_source_and_fips(
     args: argparse.Namespace,
     archive_receipt: dict[str, Any] | None = None,
+    hosted_build: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     require(
         args.rust_profile == "release",
@@ -625,6 +633,15 @@ def validate_source_and_fips(
     relocation_path = getattr(args, "fips_source_relocation", None)
     relocation_sha = getattr(args, "fips_source_relocation_sha256", None)
     relocation = None
+    if hosted_build is not None:
+        require(not relocation_path and not relocation_sha,
+                "hosted admission and retained-source relocation are distinct contracts")
+        require(hosted_build["validationSource"]["fipsCheckoutPathSha256"] == checkout_path_sha,
+                "hosted archive validation checkout changed")
+        require(hosted_build["buildContract"] == local_build_contract(
+            source_root, fips_root, hosted_build["inputs"]["producerReceipt"]),
+            "hosted build recipe, target, features, patches or locks changed")
+        checkout_path_sha = hosted_build["historicalFipsMetadata"]["checkoutPathSha256"]
     if relocation_path or relocation_sha:
         require(archive_receipt is not None, "FIPS relocation cannot authorize a new archive")
         require(
@@ -690,8 +707,11 @@ def freeze_archive(args: argparse.Namespace) -> None:
     archive = pathlib.Path(args.archive).resolve()
     receipt_path = pathlib.Path(args.receipt)
     require(archive.is_dir(), f"iOS archive is missing: {archive}")
-    validate_source_and_fips(args)
     app = archive_app(archive)
+    hosted_input = getattr(args, "hosted_inputs", None)
+    hosted_build = (prepare_ios_admission(hosted_input, receipt_path, args, app)
+                    if hosted_input else None)
+    validate_source_and_fips(args, hosted_build=hosted_build)
     verify_build_path_privacy(app, args)
     identity = bundle_identity(app)
     validate_identity(
@@ -714,7 +734,7 @@ def freeze_archive(args: argparse.Namespace) -> None:
     )
     fips_metadata = pathlib.Path(args.fips_metadata).resolve()
     receipt = {
-        "receiptSchema": RECEIPT_SCHEMA,
+        "receiptSchema": 2 if hosted_build else RECEIPT_SCHEMA,
         "artifactType": "iOS frozen App Store xcarchive",
         "archiveAppBundleTreeSha256": tree_sha256(app),
         "archivePathSha256": path_sha256(archive),
@@ -723,7 +743,9 @@ def freeze_archive(args: argparse.Namespace) -> None:
         "appGitTree": args.app_tree,
         "fipsCargoMetadataReceiptPathSha256": path_sha256(fips_metadata),
         "fipsCargoMetadataReceiptSha256": sha256_file(fips_metadata),
-        "fipsCheckoutPathSha256": path_sha256(pathlib.Path(args.fips_root)),
+        "fipsCheckoutPathSha256": (
+            hosted_build["historicalFipsMetadata"]["checkoutPathSha256"] if hosted_build
+            else path_sha256(pathlib.Path(args.fips_root))),
         "fipsCoreVersion": args.fips_version,
         "fipsGitSha": args.fips_head,
         "fipsGitTree": args.fips_tree,
@@ -731,7 +753,14 @@ def freeze_archive(args: argparse.Namespace) -> None:
         "rustBuildProfile": args.rust_profile,
         "signing": signing,
     }
+    if hosted_build:
+        receipt["hostedBuildSha256"] = canonical_digest(hosted_build)
     atomic_json(receipt_path, receipt)
+    if hosted_build:
+        atomic_json(receipt_path.parent / "hosted-admission.json", {
+            "receiptSchema": 1, "artifactType": "signed hosted iOS archive admission",
+            "hostedBuild": hosted_build, "archiveReceiptSha256": sha256_file(receipt_path),
+        })
 
 
 def validate_archive_receipt(
@@ -741,11 +770,13 @@ def validate_archive_receipt(
     receipt_path = pathlib.Path(args.archive_receipt)
     receipt = load_json(receipt_path)
     require(
-        receipt.get("receiptSchema") == RECEIPT_SCHEMA
+        receipt.get("receiptSchema") in (RECEIPT_SCHEMA, 2)
         and receipt.get("artifactType") == "iOS frozen App Store xcarchive",
         "frozen iOS archive receipt has the wrong schema or type",
     )
-    relocation = validate_source_and_fips(args, receipt)
+    admission = validate_ios_admission(receipt_path, receipt)
+    hosted_build = admission["hostedBuild"] if admission else None
+    relocation = validate_source_and_fips(args, receipt, hosted_build)
     app = archive_app(archive)
     verify_build_path_privacy(app, args)
     fips_metadata = pathlib.Path(args.fips_metadata).resolve()
@@ -759,6 +790,7 @@ def validate_archive_receipt(
         "fipsCargoMetadataReceiptSha256": sha256_file(fips_metadata),
         "fipsCheckoutPathSha256": (
             relocation["historicalCheckoutPathSha256"] if relocation
+            else hosted_build["historicalFipsMetadata"]["checkoutPathSha256"] if hosted_build
             else path_sha256(pathlib.Path(args.fips_root))
         ),
         "fipsCoreVersion": args.fips_version,
@@ -897,6 +929,7 @@ def parser() -> argparse.ArgumentParser:
     freeze = subparsers.add_parser("freeze")
     freeze.add_argument("--archive", required=True)
     freeze.add_argument("--receipt", required=True)
+    freeze.add_argument("--hosted-inputs")
     add_revision_arguments(freeze)
 
     validate_archive = subparsers.add_parser("validate-archive")

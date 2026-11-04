@@ -554,6 +554,21 @@ def create_ios_join_variant(args: argparse.Namespace) -> None:
     validate_xctestrun(xctestrun)
 
     production = load_json(production_path)
+    hosted_inputs = getattr(args, "hosted_inputs", None)
+    hosted_join = None
+    if production.get("hostedAdmissionReceiptSha256") and not hosted_inputs:
+        raise ValueError(
+            "the separately compiled join-test variant requires its own hosted admission; "
+            "production admission cannot authenticate variant bytes"
+        )
+    if hosted_inputs:
+        from apple_hosted_admission import prepare_ios_join_admission
+        root = output.parent / "hosted-join"
+        if pathlib.Path(hosted_inputs).resolve() != (root / "hosted-inputs.json").resolve():
+            raise ValueError("retain hosted join inputs beside the variant receipt")
+        if not production.get("hostedAdmissionReceiptSha256"):
+            raise ValueError("hosted join variant requires admitted hosted production")
+        hosted_join = prepare_ios_join_admission(root, app)
     production_identity = {
         "receiptSchema": 2,
         "artifactType": "iOS company Ad Hoc Release app",
@@ -593,6 +608,12 @@ def create_ios_join_variant(args: argparse.Namespace) -> None:
         raise ValueError("join-test app code-directory hash matches production")
 
     receipt = dict(production)
+    if hosted_join:
+        metadata = output.parent / "hosted-join/unsigned/artifacts/mobile-ios/fips-linkage.json"
+        receipt.update(hostedJoinBuild=hosted_join,
+            fipsCheckoutPathSha256=hosted_join["historicalFipsMetadata"]["checkoutPathSha256"],
+            fipsCargoMetadataReceiptSha256=sha256_file(metadata),
+            fipsCargoMetadataReceiptPathSha256=path_sha256(metadata))
     receipt.update(
         {
             **production_identity,
@@ -673,6 +694,24 @@ def validate_ios(args: argparse.Namespace) -> None:
         if args.production_receipt
         else None
     )
+    frozen_path = getattr(args, "frozen_archive_receipt", None)
+    frozen = load_json(pathlib.Path(frozen_path)) if frozen_path else None
+    if (frozen and frozen.get("receiptSchema") == 2) or receipt.get("fipsDependenciesRebuildLocation") == "hosted":
+        from apple_hosted_admission import validate_ios_admission
+        if not frozen_path:
+            raise ValueError("hosted physical artifact requires its frozen archive admission")
+        frozen_path = pathlib.Path(frozen_path)
+        frozen = load_json(frozen_path)
+        if not validate_ios_admission(frozen_path, frozen):
+            raise ValueError("hosted physical artifact has no hosted frozen archive")
+        require_equal(receipt, "fipsDependenciesRebuildLocation", "hosted")
+        require_equal(receipt, "hostedAdmissionReceiptSha256",
+                      sha256_file(frozen_path.parent / "hosted-admission.json"))
+        if production_receipt_path:
+            from apple_hosted_admission import validate_ios_join_admission
+            validate_ios_join_admission(receipt_path, receipt, app)
+        else:
+            require_equal(receipt, "fipsCheckoutPathSha256", frozen["fipsCheckoutPathSha256"])
     artifact_type = (
         "iOS Ad Hoc Release join-test variant"
         if production_receipt_path
@@ -846,8 +885,10 @@ def parser() -> argparse.ArgumentParser:
     ):
         ios.add_argument(f"--{name.replace('_', '-')}", required=True)
     ios.add_argument("--production-receipt")
+    ios.add_argument("--frozen-archive-receipt")
 
     variant = subparsers.add_parser("create-ios-join-variant")
+    variant.add_argument("--hosted-inputs")
     for name in (
         "receipt",
         "production_receipt",

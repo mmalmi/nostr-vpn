@@ -57,6 +57,13 @@ const harnessOnlyPaths = new Set([
   'scripts/ios-build',
   'scripts/ios_frozen_archive.py',
   'scripts/ios_frozen_gate.py',
+  // Authenticates existing hosted outputs and binds their signing/runtime
+  // evidence; it never compiles or changes product content.
+  'scripts/apple_hosted_admission.py',
+  'scripts/macos_hosted_admission.py',
+  'scripts/macos_hosted_support.py',
+  'scripts/macos-hosted-provenance.mjs',
+  'scripts/verify-macos-release-publication-artifacts.sh',
   'scripts/ios-upload-receipt.mjs',
   'scripts/ios-artifact-source.mjs',
   'scripts/lib-desktop-underlay-host-peer.sh',

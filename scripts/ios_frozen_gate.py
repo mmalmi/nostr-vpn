@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from apple_hosted_admission import validate_ios_admission
+
 import argparse
 import json
 import os
@@ -70,7 +72,7 @@ def validate_archive_and_adhoc(
     archive_receipt_sha256: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     require(
-        archive.get("receiptSchema") == RECEIPT_SCHEMA
+        archive.get("receiptSchema") in (RECEIPT_SCHEMA, 2)
         and archive.get("artifactType") == "iOS frozen App Store xcarchive",
         "gate seal received the wrong frozen archive receipt",
     )
@@ -800,9 +802,15 @@ def validate_desktop_mobile_join_receipt(
 def seal_gate(args: argparse.Namespace) -> None:
     archive_receipt = pathlib.Path(args.archive_receipt)
     archive = load_json(archive_receipt)
+    hosted_admission = validate_ios_admission(archive_receipt, archive)
     adhoc = load_json(pathlib.Path(args.adhoc_receipt))
     mobile_receipt = pathlib.Path(args.mobile_receipt)
     mobile = load_json(mobile_receipt)
+    if hosted_admission:
+        require(mobile.get("fipsDependenciesRebuildLocation") == "hosted"
+                and mobile.get("hostedAdmissionReceiptSha256") == sha256_file(
+                    archive_receipt.parent / "hosted-admission.json"),
+                "physical mobile receipt lacks the hosted build admission")
     join_variant_receipt = pathlib.Path(args.mobile_join_ios_variant_receipt)
     join_variant = load_json(join_variant_receipt)
     mobile_join_receipt = pathlib.Path(args.mobile_join_receipt)
@@ -894,6 +902,9 @@ def seal_gate(args: argparse.Namespace) -> None:
         "mobileArtifactEvidence": mobile_evidence,
         "requiredRealDeviceGates": required_gates,
     }
+    if hosted_admission:
+        value["hostedAdmissionReceiptSha256"] = sha256_file(
+            archive_receipt.parent / "hosted-admission.json")
     atomic_json(pathlib.Path(args.output), value)
 
 
@@ -901,9 +912,17 @@ def validate_gate_seal(args: argparse.Namespace) -> None:
     seal = load_json(pathlib.Path(args.gate_seal))
     archive_receipt = pathlib.Path(args.archive_receipt)
     archive = load_json(archive_receipt)
+    hosted_admission = validate_ios_admission(archive_receipt, archive)
+    require(seal.get("hostedAdmissionReceiptSha256") == (
+        sha256_file(archive_receipt.parent / "hosted-admission.json") if hosted_admission else None),
+        "physical gate does not bind the exact hosted admission")
     adhoc = load_json(pathlib.Path(args.adhoc_receipt))
     sealed_mobile_receipt = pathlib.Path(args.sealed_mobile_receipt)
     mobile = load_json(sealed_mobile_receipt)
+    if hosted_admission:
+        require(mobile.get("fipsDependenciesRebuildLocation") == "hosted"
+                and mobile.get("hostedAdmissionReceiptSha256") == seal.get("hostedAdmissionReceiptSha256"),
+                "sealed mobile receipt does not bind hosted build provenance")
     join_variant_receipt = pathlib.Path(args.mobile_join_ios_variant_receipt)
     join_variant = load_json(join_variant_receipt)
     mobile_join_receipt = pathlib.Path(args.mobile_join_receipt)

@@ -354,6 +354,7 @@ def digest(path):
 app = write(
     "app.json",
     {
+        "builtOnHost": True,
         "appGitSha": "a" * 40,
         "appGitTree": "b" * 40,
         "fipsGitSha": "c" * 40,
