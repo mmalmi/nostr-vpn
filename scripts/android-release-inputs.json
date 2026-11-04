@@ -9915,6 +9915,21 @@
         ]
       },
       {
+        "group": "org.bouncycastle",
+        "name": "bcutil-jdk18on",
+        "version": "1.79",
+        "artifacts": [
+          {
+            "name": "bcutil-jdk18on-1.79.jar",
+            "sha256": "c70b88ada58938cbc2f005d40329054078bcfa1149e6ffc03e9242eb6ab21836"
+          },
+          {
+            "name": "bcutil-jdk18on-1.79.pom",
+            "sha256": "e24c1fb4cf1605405a6988e9e4d6e4b2e1f4393fc73a89a9452ae625ee311d02"
+          }
+        ]
+      },
+      {
         "group": "org.checkerframework",
         "name": "checker-qual",
         "version": "2.5.2",
@@ -12058,6 +12073,13 @@
         "size": 2315715,
         "name": "aapt2-8.11.0-12782657-linux.jar",
         "sha256": "b2b0e079e5e0790a11cea3e2fb366533cd977a5ca67d065052fbf929fd5d1dbc"
+      }
+    ],
+    "additionalQualificationSources": [
+      {
+        "repository": "https://repo.maven.apache.org/maven2",
+        "component": "org.bouncycastle:bcutil-jdk18on:1.79",
+        "reason": "Strict producer verification41926206779 rejected missing entries before use"
       }
     ]
   },
