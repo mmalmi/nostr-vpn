@@ -45,7 +45,12 @@ jobs:
             scripts/android-release-inputs.json
             scripts/test-android-release-inputs.py
       - name: Verify producer boundaries without compiling products
-        run: python3 scripts/test-android-release-inputs.py
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, tempfile
+          subprocess.run(['df', '-PT', tempfile.gettempdir(), os.environ['RUNNER_TEMP']], check=True)
+          PY
+          python3 scripts/test-android-release-inputs.py
   inputs:
     if: github.event_name == 'workflow_dispatch' && (inputs.operation == 'inventory' || inputs.operation == 'qualify-ndk' || inputs.operation == 'build')
     needs: producer-checks

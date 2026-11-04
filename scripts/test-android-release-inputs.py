@@ -3,6 +3,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -70,7 +71,7 @@ class AndroidInputBoundary(unittest.TestCase):
                 producer.bundle_native_entries(package, "arm64-v8a")
 
     def test_binary_download_stdout_is_not_mixed_with_diagnostics(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        with tempfile.TemporaryDirectory(dir=os.environ["RUNNER_TEMP"]) as temporary:
             root = Path(temporary)
             pins = {"capacity": {"physicalFloorBytes": 20 * 1024**3,
                     "maximumOwnGrowthBudgetBytes": 128 * 1024**2, "concurrentGrowthBudgetBytes": 0}}
