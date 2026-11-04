@@ -108,6 +108,27 @@ class HostedAdmission(unittest.TestCase):
         companion.unlink()
         self.assertIsNone(hosted.validate_ios_admission(receipt_path, hosted.load(receipt_path)))
 
+    def test_join_and_support_require_their_own_reviewed_producers(self):
+        for selected in ("ios-join", "macos-support"):
+            producer = hosted.PRODUCERS[selected]
+            run = {"id": 123, "head_sha": producer,
+                   "repository": {"full_name": hosted.REPOSITORY},
+                   "path": ".github/workflows/apple-release-inputs.yml", "run_attempt": 1}
+            artifact = {"id": 456, "name": f"apple-release-inputs-{selected}-{hosted.APP['commit']}",
+                        "expired": False, "workflow_run": {"id": 123, "head_sha": producer},
+                        "digest": "sha256:" + "a" * 64, "size_in_bytes": 100}
+            job = {"id": 789, "run_id": 123, "run_attempt": 1, "head_sha": producer,
+                   "name": f"inputs ({selected})", "status": "completed", "conclusion": "success"}
+            self.assertEqual(hosted.authenticate_run(run, artifact, job, selected, 123)[
+                "producerCommit"], producer)
+            with self.subTest(platform=selected), self.assertRaises(ValueError):
+                hosted.authenticate_run({**run, "head_sha": hosted.PRODUCER}, artifact, job, selected, 123)
+
+    def test_join_variant_cannot_inherit_production_admission(self):
+        with self.assertRaisesRegex(ValueError, "independent hosted admission"):
+            hosted.validate_ios_join_admission(self.root / "variant.json",
+                {"hostedAdmissionReceiptSha256": "a" * 64}, self.root / "signed.app")
+
     @unittest.skipUnless(sys.platform == "darwin", "uses the platform's Mach-O signature remover")
     def test_current_executables_and_content_must_match_immutable_inputs(self):
         unsigned, signed = self.root / "unsigned.app", self.root / "signed.app"

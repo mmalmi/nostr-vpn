@@ -845,6 +845,13 @@ release_join_prepare_ios_release() {
     echo "Release join gate requires a regular production iOS receipt" >&2
     return 1
   }
+  python3 - "$NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT" <<'PY' || return 1
+import json, sys
+with open(sys.argv[1]) as source:
+    production = json.load(source)
+if production.get("hostedAdmissionReceiptSha256"):
+    raise SystemExit("Hosted production requires its separately admitted join variant via strict artifact reuse; local compilation is not authorized by that proof")
+PY
   [[ -n "$expected_team" && "$team" == "$expected_team" ]] || {
     echo "NVPN_IOS_TEAM_ID is not the explicitly expected company distribution team" >&2
     return 1

@@ -18,6 +18,9 @@ import zipfile
 
 REPOSITORY = "mmalmi/nostr-vpn"
 PRODUCER = "92ab2ceb349c1c0d46f68a591493fbbe9f357144"
+PRODUCERS = {"ios": PRODUCER, "macos": PRODUCER,
+             "ios-join": "5e9d464e34d9f312d5ef2df6c2757e51df2cde8b",
+             "macos-support": "501fd9167321691c1baf6b8cbc0f2522f896bdee"}
 APP = {"commit": "52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4",
        "tree": "2f722bd2e0f34e7b71cae665cce74c3080c99661"}
 FIPS = {"commit": "d0b18f2d1b2e97d42fa8460a0c70a8dffeaa2552",
@@ -63,26 +66,27 @@ def api(path):
 
 
 def authenticate_run(run, artifact, job, selected, run_id):
-    require(run.get("id") == run_id and run.get("head_sha") == PRODUCER
+    producer = PRODUCERS[selected]
+    require(run.get("id") == run_id and run.get("head_sha") == producer
             and run.get("repository", {}).get("full_name") == REPOSITORY
             and run.get("path") == ".github/workflows/apple-release-inputs.yml",
             "hosted workflow is not the reviewed producer")
     require(type(run.get("run_attempt")) is int and run["run_attempt"] > 0,
             "hosted attempt is missing")
     require(job.get("run_id") == run_id and job.get("run_attempt") == run["run_attempt"]
-            and job.get("head_sha") == PRODUCER and job.get("name") == f"inputs ({selected})"
+            and job.get("head_sha") == producer and job.get("name") == f"inputs ({selected})"
             and job.get("status") == "completed" and job.get("conclusion") == "success",
             "hosted platform job did not succeed on the reviewed attempt")
     require(artifact.get("name") == f"apple-release-inputs-{selected}-{APP['commit']}"
             and artifact.get("expired") is False
             and artifact.get("workflow_run", {}).get("id") == run_id
-            and artifact.get("workflow_run", {}).get("head_sha") == PRODUCER,
+            and artifact.get("workflow_run", {}).get("head_sha") == producer,
             "service artifact belongs to a different source/run")
     require(isinstance(artifact.get("digest"), str)
             and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact["digest"]) is not None,
             "GitHub did not provide an artifact digest")
     return {"repository": REPOSITORY, "workflow": run["path"],
-            "producerCommit": PRODUCER, "runId": str(run_id),
+            "producerCommit": producer, "runId": str(run_id),
             "runAttempt": str(run["run_attempt"]), "jobConclusion": "success",
             "jobId": job["id"], "jobName": job["name"],
             "artifactId": artifact["id"], "artifactName": artifact["name"],
@@ -137,7 +141,7 @@ def checked_tar(archive, destination, files):
 
 
 def verify_receipt(receipt, authentication, selected):
-    expected = {"schema": 1, "app": APP, "fips": FIPS, "producerCommit": PRODUCER,
+    expected = {"schema": 1, "app": APP, "fips": FIPS, "producerCommit": PRODUCERS[selected],
                 "runId": authentication["runId"], "runAttempt": authentication["runAttempt"],
                 "platform": selected, "configuration": "Release",
                 "realizedLockSha256": REALIZED_LOCK,
@@ -148,6 +152,22 @@ def verify_receipt(receipt, authentication, selected):
                 "runtimeTestsExecuted": False, "releaseAccepted": False}
     for key, value in expected.items():
         require(receipt.get(key) == value, "hosted receipt differs at " + key)
+    if selected == "ios-join":
+        require(receipt.get("testOnlyJoinVariant") is True
+                and receipt.get("joinTestingCompilationCondition") == "NVPN_RELEASE_JOIN_TESTING"
+                and receipt.get("fixtureInfo") == {"CFBundleDisplayName": "Nostr VPN Test Files",
+                    "UIFileSharingEnabled": True, "LSSupportsOpeningDocumentsInPlace": True}
+                and "OTHER_SWIFT_FLAGS=$(inherited) -DNVPN_RELEASE_JOIN_TESTING" in receipt["recipes"][-1]
+                and receipt["recipes"][-1][-1] == "build-for-testing",
+                "hosted join variant lacks its separate compilation contract")
+    if selected == "macos-support":
+        require(receipt.get("recipes") == [["scripts/macos-build", "macos-gate-support"]],
+                "hosted support inputs used a different canonical recipe")
+        require({entry["path"] for entry in receipt["files"]} == {
+            "macos/.build/hosted-gate-support/fixtures/desktop_manual_join_e2e_fixture",
+            "macos/.build/hosted-gate-support/drivers/desktop-manual-join-ax",
+            "macos/.build/hosted-gate-support/drivers/macos-service-toggle-ax"},
+            "hosted support payload differs from the three required tools")
     require(receipt.get("rustc", "").startswith("rustc 1.95.0 (59807616e 2026-04-14)\n"),
             "hosted compiler differs")
     require(receipt.get("runnerImageVersion") and receipt.get("runnerImageOS"),
@@ -218,7 +238,7 @@ def verified_inputs(root, selected):
     authentication = proof["authentication"]
     require(authentication.get("repository") == REPOSITORY
             and authentication.get("workflow") == ".github/workflows/apple-release-inputs.yml"
-            and authentication.get("producerCommit") == PRODUCER
+            and authentication.get("producerCommit") == PRODUCERS[selected]
             and authentication.get("jobConclusion") == "success"
             and authentication.get("jobName") == f"inputs ({selected})",
             "hosted input proof has no reviewed successful producer")
@@ -281,7 +301,7 @@ def local_build_contract(source, fips, receipt):
             "realizedLockSha256": REALIZED_LOCK, "pathPatchPackages": specs,
             "rustTarget": "aarch64-apple-ios", "rustProfile": "release",
             "rustPackage": "nostr-vpn-app-core", "defaultFeatures": False,
-            "additionalFeatures": [], "producerCommit": PRODUCER,
+            "additionalFeatures": [], "producerCommit": receipt["producerCommit"],
             "canonicalRecipeSha256": digest(source / "tools/run-ios"),
             "localFipsWorkspaceRecipeSha256": digest(source / "scripts/local-fips-workspace.sh"),
             "pathPatchVerifierSha256": digest(verifier),
@@ -303,6 +323,66 @@ def verify_ios_lineage(unsigned_app, signed_app):
     return unsigned_identity
 
 
+def ios_executable_audit(signed_app):
+    audit_script = pathlib.Path(__file__).with_name("lib-mobile-ios-release-artifact.sh")
+    app_executable = signed_app / "Nostr VPN"
+    tunnel_executable = signed_app / "PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"
+    subprocess.run(["bash", "-euo", "pipefail", "-c", '''
+source "$1"
+ios_release_network_audit_forbidden_runtime "$2" "hosted iOS Release app"
+ios_release_network_audit_forbidden_runtime "$3" "hosted iOS Release Packet Tunnel"
+ios_release_network_audit_packet_flow_binary "$3"
+''', "hosted-final-executable-audit", str(audit_script),
+        str(app_executable), str(tunnel_executable)], check=True)
+    return {"auditorSha256": digest(audit_script),
+            "appExecutableSha256": digest(app_executable),
+            "packetTunnelExecutableSha256": digest(tunnel_executable),
+            "forbiddenRuntimeAbsentFromAppAndTunnel": True,
+            "privateUtunAbsentFromAppAndTunnel": True,
+            "packetTunnelSupportedPacketFlowAbiPresent": True,
+            "staticArchiveAuditExecutedLocally": False}
+
+
+def prepare_ios_join_admission(root, signed_app):
+    inputs = verified_inputs(root, "ios-join")
+    unsigned_app = root / "unsigned/ios/.build/JoinReleaseDerivedData/Build/Products/Release-iphoneos/Nostr VPN.app"
+    metadata = root / "unsigned/artifacts/mobile-ios/fips-linkage.json"
+    return {"receiptSchema": 1, "artifactType": "hosted iOS join variant admission",
+            "inputs": inputs, "unsignedIdentity": verify_ios_lineage(unsigned_app, signed_app),
+            "finalExecutableAudit": ios_executable_audit(signed_app),
+            "historicalFipsMetadata": load(metadata), "historicalFipsMetadataSha256": digest(metadata)}
+
+
+def validate_ios_join_admission(receipt_path, receipt, signed_app):
+    root = receipt_path.parent / "hosted-join"
+    proof = receipt.get("hostedJoinBuild", {})
+    require(proof.get("receiptSchema") == 1
+            and proof.get("artifactType") == "hosted iOS join variant admission",
+            "join variant has no independent hosted admission")
+    require(proof.get("inputs") == verified_inputs(root, "ios-join"),
+            "hosted join input binding changed")
+    unsigned_app = root / "unsigned/ios/.build/JoinReleaseDerivedData/Build/Products/Release-iphoneos/Nostr VPN.app"
+    require(proof.get("unsignedIdentity") == verify_ios_lineage(unsigned_app, signed_app),
+            "signed join variant differs from its independently compiled hosted bytes")
+    audit = proof.get("finalExecutableAudit", {})
+    require(audit.get("auditorSha256") == digest(pathlib.Path(__file__).with_name(
+                "lib-mobile-ios-release-artifact.sh"))
+            and audit.get("appExecutableSha256") == digest(signed_app / "Nostr VPN")
+            and audit.get("packetTunnelExecutableSha256") == digest(signed_app /
+                "PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel")
+            and audit.get("forbiddenRuntimeAbsentFromAppAndTunnel") is True
+            and audit.get("privateUtunAbsentFromAppAndTunnel") is True
+            and audit.get("packetTunnelSupportedPacketFlowAbiPresent") is True
+            and audit.get("staticArchiveAuditExecutedLocally") is False,
+            "join variant lacks its final executable feature audit")
+    metadata = root / "unsigned/artifacts/mobile-ios/fips-linkage.json"
+    require(proof.get("historicalFipsMetadata") == load(metadata)
+            and proof.get("historicalFipsMetadataSha256") == digest(metadata)
+            and receipt.get("fipsCargoMetadataReceiptSha256") == digest(metadata)
+            and receipt.get("fipsCheckoutPathSha256") == load(metadata)["checkoutPathSha256"],
+            "join variant no longer binds its original hosted metadata")
+
+
 def prepare_ios_admission(input_path, receipt_path, args, signed_app):
     root = receipt_path.parent / "hosted"
     require(pathlib.Path(input_path).resolve() == (root / "hosted-inputs.json").resolve(),
@@ -316,29 +396,14 @@ def prepare_ios_admission(input_path, receipt_path, args, signed_app):
             (receipt_path.parent.parent / "NostrVpnIos.xcarchive").resolve(),
             "hosted archive must use the canonical retained archive location")
     unsigned_identity = verify_ios_lineage(unsigned_app, signed_app)
-    audit_script = pathlib.Path(__file__).with_name("lib-mobile-ios-release-artifact.sh")
-    app_executable = signed_app / "Nostr VPN"
-    tunnel_executable = signed_app / "PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"
-    subprocess.run(["bash", "-euo", "pipefail", "-c", '''
-source "$1"
-ios_release_network_audit_forbidden_runtime "$2" "hosted iOS Release app"
-ios_release_network_audit_forbidden_runtime "$3" "hosted iOS Release Packet Tunnel"
-ios_release_network_audit_packet_flow_binary "$3"
-''', "hosted-final-executable-audit", str(audit_script),
-        str(app_executable), str(tunnel_executable)], check=True)
+    audit = ios_executable_audit(signed_app)
     return {"receiptSchema": 1, "artifactType": "hosted iOS archive admission",
             "inputs": inputs, "unsignedIdentity": unsigned_identity,
             "historicalFipsMetadata": load(metadata),
             "historicalFipsMetadataSha256": digest(metadata),
             "hostedBuildLogSha256": digest(root / "artifact/output/build.log"),
             "hostedResourcesReceiptSha256": digest(root / "artifact/output/resources.json"),
-            "finalExecutableAudit": {"auditorSha256": digest(audit_script),
-                "appExecutableSha256": digest(app_executable),
-                "packetTunnelExecutableSha256": digest(tunnel_executable),
-                "forbiddenRuntimeAbsentFromAppAndTunnel": True,
-                "privateUtunAbsentFromAppAndTunnel": True,
-                "packetTunnelSupportedPacketFlowAbiPresent": True,
-                "staticArchiveAuditExecutedLocally": False},
+            "finalExecutableAudit": audit,
             "fipsDependencyRebuild": {"location": "hosted",
                 "evidence": "authenticated canonical Release recipe cleans the three FIPS crates before the locked device build",
                 "localRebuildMarkerCreated": False},
@@ -415,7 +480,7 @@ def validate_ios_admission(receipt_path, archive):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", type=int, required=True)
-    parser.add_argument("--platform", choices=("ios", "macos"), required=True)
+    parser.add_argument("--platform", choices=tuple(PRODUCERS), required=True)
     parser.add_argument("--destination", required=True)
     parser.add_argument("--max-bytes", type=int, required=True)
     parser.add_argument("--reserve-bytes", type=int, required=True)
