@@ -474,8 +474,9 @@ def validate_android(args: argparse.Namespace) -> None:
     companion = pathlib.Path(getattr(args, "hosted_admission", None)
         or os.environ.get("NVPN_ANDROID_HOSTED_ADMISSION")
         or receipt_path.parent / "android-hosted-admission.json")
+    from android_hosted_inputs import is_pinned_hosted_apk
     hosted_fields = {"buildOrigin", "builtOnHost", "signedOnHost", "fipsDependenciesBuildOrigin"}
-    if (hosted_fields.intersection(receipt)
+    if (is_pinned_hosted_apk(apk, args.app_head) or hosted_fields.intersection(receipt)
         or any(name.startswith(("hosted", "localFipsValidation")) for name in receipt)
         or companion.exists() or companion.is_symlink()):
         from android_hosted_admission import validate_physical_receipt

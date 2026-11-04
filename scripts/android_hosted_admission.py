@@ -27,7 +27,7 @@ def git(root, *arguments, raw=False):
     return output if raw else output.strip()
 
 
-def local_validation(source_root, fips_root, metadata_path):
+def local_validation(source_root, fips_root, metadata_path, realized_lock):
     require(git(source_root, "rev-parse", APP["commit"] + "^{tree}").decode() == APP["tree"],
             "Android validation source object differs")
     require(git(fips_root, "rev-parse", "HEAD").decode() == FIPS["commit"]
@@ -46,8 +46,11 @@ def local_validation(source_root, fips_root, metadata_path):
             "Android local validation metadata differs from its checkout")
     require(re.fullmatch(r"[0-9a-f]{64}", metadata.get("fipsCorePackageIdSha256", "")),
             "Android local validation lacks its package graph identity")
+    require(realized_lock.is_file() and not realized_lock.is_symlink()
+            and digest(realized_lock) == REALIZED_LOCK,
+            "Android local metadata validation resolved a different locked graph")
     return {"metadata": metadata, "metadataSha256": digest(metadata_path),
-            "application": APP, "fips": FIPS, "realizedLockSha256": REALIZED_LOCK,
+            "application": APP, "fips": FIPS, "realizedLockSha256": digest(realized_lock),
             "compilationPerformed": False}
 
 
@@ -92,7 +95,8 @@ def sibling(companion, name):
 def observe(companion, admission, aab, apk, bundle_path, source_root, fips_root):
     root = sibling(companion, admission["inputDirectory"])
     proof = verified_inputs(root)
-    local = local_validation(source_root, fips_root, sibling(companion, admission["localValidationFile"]))
+    local = local_validation(source_root, fips_root, sibling(companion, admission["localValidationFile"]),
+                             sibling(companion, admission["localRealizedLockFile"]))
     unsigned = root / "payload/unsigned/app-release.aab"
     content = aab_content_identity(unsigned, aab)
     runtime = apk_runtime_identity(aab, apk)
@@ -153,11 +157,14 @@ def admit(args):
     companion = pathlib.Path(args.admission).resolve()
     inputs = pathlib.Path(args.inputs).resolve()
     local_metadata = pathlib.Path(args.local_fips_metadata).resolve()
+    local_lock = pathlib.Path(args.local_realized_lock).resolve()
     require(inputs.name == "hosted-inputs.json" and inputs.parent.parent == companion.parent,
             "retain Android hosted inputs beside the admission")
-    require(local_metadata.parent == companion.parent, "retain separate local FIPS validation beside the admission")
+    require(local_metadata.parent == local_lock.parent == companion.parent,
+            "retain separate local FIPS validation and realized lock beside the admission")
     admission = {"receiptSchema": 1, "artifactType": TYPE, "contentContract": CONTRACT,
         "inputDirectory": inputs.parent.name, "localValidationFile": local_metadata.name,
+        "localRealizedLockFile": local_lock.name,
         "signerCertificateSha256": args.signer_sha}
     aab, apk, bundle = map(pathlib.Path, (args.aab, args.apk, args.bundle_receipt))
     validate_bundle_receipt(load(bundle), aab, apk, current_paths=True)
@@ -178,6 +185,7 @@ def main():
         if name == "admit":
             command.add_argument("--inputs", required=True)
             command.add_argument("--local-fips-metadata", required=True)
+            command.add_argument("--local-realized-lock", required=True)
         else:
             command.add_argument("--fips-metadata", required=True)
     args = parser.parse_args()

@@ -5,6 +5,7 @@ import base64
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -62,7 +63,8 @@ class AndroidAdmission(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(value)
         for name, value in (("COMMITTED_LOCK", hashlib.sha256(b"committed\n").hexdigest()),
-                            ("REALIZED_LOCK", hashlib.sha256(b"realized\n").hexdigest())):
+                            ("REALIZED_LOCK", hashlib.sha256(b"realized\n").hexdigest()),
+                            ("HOSTED_JNI_SHA256", digest(jni))):
             manager = patch.object(inputs, name, value)
             manager.start()
             self.addCleanup(manager.stop)
@@ -157,6 +159,74 @@ class AndroidAdmission(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires its exact AAB"):
             mobile.validate_android(args)
 
+        # All hosted flags, environment and companion are absent. Retagging
+        # metadata and resealing a legacy-shaped receipt cannot hide this JNI.
+        apk = self.root / "known-hosted.apk"
+        archive(apk, {"lib/arm64-v8a/libnostr_vpn_app_core.so": b"compiled JNI"})
+        retagged = self.root / "retagged-local-metadata.json"
+        local_hash = admission.path_digest(Path(args.fips_root))
+        save(retagged, {**self.metadata, "checkoutPathSha256": local_hash})
+        stripped = {**receipt, "apkSha256": digest(apk), "installedApkSha256": digest(apk),
+            "apkPathSha256": admission.path_digest(apk), "fipsCheckoutPathSha256": local_hash,
+            "fipsCargoMetadataReceiptSha256": digest(retagged),
+            "fipsCargoMetadataReceiptPathSha256": admission.path_digest(retagged)}
+        save(path, stripped)
+        args.apk, args.fips_metadata = str(apk), str(retagged)
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "requires its exact AAB"):
+                mobile.validate_android(args)
+            # A different legacy payload retains its previous semantics.
+            archive(apk, {"lib/arm64-v8a/libnostr_vpn_app_core.so": b"older local JNI"})
+            save(path, {**stripped, "apkSha256": digest(apk), "installedApkSha256": digest(apk)})
+            mobile.validate_android(args)
+
+    def test_hosted_service_cannot_open_without_an_authenticated_jni_pin(self):
+        with patch.object(inputs, "HOSTED_JNI_SHA256", None):
+            with self.assertRaisesRegex(ValueError, "JNI payload has not been pinned"):
+                inputs.require_service(self.service)
+        with patch.object(inputs, "HOSTED_JNI_SHA256", "0" * 64):
+            with self.assertRaisesRegex(ValueError, "admitted candidate"):
+                inputs.validate_producer(self.receipt, self.payload)
+
+    def test_local_validation_binds_its_own_paths_recipe_bytes_and_realized_graph(self):
+        source, fips = self.root / "application", self.root / "local-fips"
+        metadata_path, lock_path = self.root / "local.json", self.root / "local-Cargo.lock"
+        lock_path.write_bytes(b"local realized graph\n")
+        metadata = {**self.metadata, "checkoutPathSha256": admission.path_digest(fips),
+            "fipsCoreManifestPathSha256": admission.path_digest(fips / "crates/fips-core/Cargo.toml"),
+            "fipsCorePackageIdSha256": "7" * 64}
+        save(metadata_path, metadata)
+        recipe, committed = b"canonical source bytes\n", b"committed graph\n"
+        def git(root, *arguments, raw=False):
+            if arguments == ("rev-parse", inputs.APP["commit"] + "^{tree}"):
+                return inputs.APP["tree"].encode()
+            if arguments == ("rev-parse", "HEAD"):
+                return inputs.FIPS["commit"].encode()
+            if arguments == ("rev-parse", "HEAD^{tree}"):
+                return inputs.FIPS["tree"].encode()
+            if arguments == ("status", "--porcelain", "--untracked-files=all"):
+                return b""
+            self.assertTrue(raw, "canonical Git blob hashing must preserve trailing bytes")
+            if arguments == ("show", inputs.APP["commit"] + ":Cargo.lock"):
+                return committed
+            self.assertEqual(arguments, ("show", inputs.APP["commit"] + ":tools/run-android"))
+            return recipe
+        with patch.object(admission, "git", side_effect=git), \
+                patch.object(admission, "SCRIPTS", {"tools/run-android": hashlib.sha256(recipe).hexdigest()}), \
+                patch.object(admission, "COMMITTED_LOCK", hashlib.sha256(committed).hexdigest()), \
+                patch.object(admission, "REALIZED_LOCK", digest(lock_path)):
+            value = admission.local_validation(source, fips, metadata_path, lock_path)
+            self.assertFalse(value["compilationPerformed"])
+            self.assertEqual(value["realizedLockSha256"], digest(lock_path))
+            for key in ("checkoutPathSha256", "fipsCoreManifestPathSha256", "fipsCorePackageIdSha256"):
+                save(metadata_path, {**metadata, key: "wrong"})
+                with self.subTest(key=key), self.assertRaises(ValueError):
+                    admission.local_validation(source, fips, metadata_path, lock_path)
+            save(metadata_path, metadata)
+            lock_path.write_bytes(b"different graph\n")
+            with self.assertRaisesRegex(ValueError, "different locked graph"):
+                admission.local_validation(source, fips, metadata_path, lock_path)
+
     def test_hosted_gate_refuses_local_compilation_before_other_operations(self):
         script = Path(__file__).with_name("lib-mobile-android-release-gate.sh")
         result = subprocess.run(["bash", "-c", 'set -eu; source "$1"; build=1; '
@@ -164,6 +234,86 @@ class AndroidAdmission(unittest.TestCase):
             capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("local compilation is disabled", result.stderr)
+
+    def test_hosted_shell_branch_emits_metadata_bindings_under_nounset(self):
+        # Exercise the actual shell control flow and receipt writer. Device,
+        # signing and admission backends are fixtures; none can reach hardware.
+        root = self.root / "shell"
+        bundle_dir = root / "android/app/build/outputs/bundle/release"
+        bundle_dir.mkdir(parents=True)
+        aab, apk = bundle_dir / "app-release.aab", root / "app.apk"
+        aab.write_bytes(b"fixture AAB")
+        native = ("/build/fips-" + inputs.FIPS["commit"] + "/crates/fips-core/src/lib.rs\n"
+                  "fips_core::node\nfips_core::transport\n").encode()
+        archive(apk, {"lib/arm64-v8a/libnostr_vpn_app_core.so": native})
+        save(bundle_dir / "physical-gate-artifact.json", {
+            "schema": 1, "relationship": "universal-apk-derived-from-exact-aab",
+            "appGitSha": inputs.APP["commit"], "appGitTree": inputs.APP["tree"],
+            "aabSha256": digest(aab), "apkSha256": digest(apk),
+            "aabPathSha256": admission.path_digest(aab), "apkPathSha256": admission.path_digest(apk),
+            "bundletoolVersion": "1.18.3", "bundletoolSha256": inputs.BUNDLETOOL_SHA})
+        metadata = self.payload / "provenance/fips-linkage.json"
+        fields = root / "hosted-fields.json"
+        local_hash = admission.path_digest(root / "local-fips")
+        save(fields, {"buildOrigin": "github-actions", "builtOnHost": False, "signedOnHost": True,
+            "fipsCheckoutPathSha256": self.metadata["checkoutPathSha256"],
+            "localFipsValidationCheckoutPathSha256": local_hash})
+        signer = root / "fixture-apksigner"
+        signer.write_text('#!/bin/sh\nprintf "Signer #1 certificate SHA-256 digest: %s\\n" "$EXPECTED_ANDROID_SIGNER_CERT_SHA256"\n')
+        signer.chmod(0o700)
+        environment = {**os.environ, "ROOT": str(root), "APK_PATH": str(apk), "ADB": "fixture_adb",
+            "serial": "fixture-only", "PACKAGE_NAME": "fi.siriusbusiness.nvpn",
+            "NVPN_ANDROID_HOSTED_ADMISSION": str(root / "admission.json"),
+            "NVPN_ANDROID_FIPS_METADATA_RECEIPT": str(metadata), "NVPN_FIPS_REPO_PATH": str(root / "local-fips"),
+            "EXPECTED_ANDROID_SIGNER_CERT_SHA256": self.signer,
+            "EXPECTED_ANDROID_APP_GIT_HEAD": inputs.APP["commit"], "EXPECTED_ANDROID_APP_GIT_TREE": inputs.APP["tree"],
+            "EXPECTED_FIPS_GIT_SHA": inputs.FIPS["commit"], "EXPECTED_FIPS_GIT_TREE": inputs.FIPS["tree"],
+            "EXPECTED_FIPS_VERSION": inputs.FIPS_VERSION, "NVPN_EXPECTED_FIPS_GIT_SHA": inputs.FIPS["commit"],
+            "ANDROID_RELEASE_HARNESS_GIT_HEAD": "fixture", "ANDROID_RELEASE_HARNESS_GIT_TREE": "fixture",
+            "RUNTIME_STATE_RESULT_DIR": str(root / "result"), "TMPDIR": str(root),
+            "NVPN_MOBILE_ANDROID_RELEASE_RECEIPT": str(root / "result/mobile-android-release-artifact.json"),
+            "FIXTURE_PYTHON": sys.executable, "FIXTURE_SIGNER": str(signer), "FIXTURE_HOSTED_FIELDS": str(fields)}
+        script = r'''
+set -euo pipefail
+source "$1"
+android_release_apksigner() { printf '%s\n' "$FIXTURE_SIGNER"; }
+android_release_reuse_verified_artifact() { return 1; }
+assert_release_checkout_state() { return 0; }
+fixture_adb() {
+  shift 2
+  case "$1:$2" in
+    shell:pm) printf 'package:/fixture/installed.apk\n' ;;
+    shell:run-as) return 1 ;;
+    pull:*) cp "$APK_PATH" "$3" ;;
+    *) return 97 ;;
+  esac
+}
+git() {
+  case "${@: -1}" in
+    HEAD) printf '%s\n' "$EXPECTED_FIPS_GIT_SHA" ;;
+    'HEAD^{tree}') printf '%s\n' "$EXPECTED_FIPS_GIT_TREE" ;;
+    --untracked-files=all) : ;;
+    *) return 98 ;;
+  esac
+}
+python3() {
+  if [[ "$1" == "$ROOT/scripts/android_hosted_admission.py" ]]; then
+    cat "$FIXTURE_HOSTED_FIELDS"
+  else
+    "$FIXTURE_PYTHON" "$@"
+  fi
+}
+verify_android_release_install
+'''
+        result = subprocess.run(["bash", "-c", script, "fixture",
+            str(Path(__file__).with_name("lib-mobile-android-release-gate.sh"))],
+            env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = inputs.load(root / "result/mobile-android-release-artifact.json")
+        self.assertEqual(receipt["fipsCargoMetadataReceiptSha256"], digest(metadata))
+        self.assertEqual(receipt["fipsCargoMetadataReceiptPathSha256"], admission.path_digest(metadata))
+        self.assertEqual(receipt["fipsCheckoutPathSha256"], self.metadata["checkoutPathSha256"])
+        self.assertEqual(receipt["localFipsValidationCheckoutPathSha256"], local_hash)
 
     def test_admission_rejects_payload_substitution_and_retagged_historical_metadata(self):
         manifest = "Manifest-Version: 1.0\r\n\r\n"
@@ -184,7 +334,8 @@ class AndroidAdmission(unittest.TestCase):
         local = {"metadata": {"checkoutPathSha256": "a" * 64}, "metadataSha256": digest(local_path)}
         companion = self.root / "android-hosted-admission.json"
         value = {"receiptSchema": 1, "artifactType": admission.TYPE, "contentContract": admission.CONTRACT,
-                 "inputDirectory": "hosted", "localValidationFile": local_path.name, "signerCertificateSha256": self.signer}
+                 "inputDirectory": "hosted", "localValidationFile": local_path.name,
+                 "localRealizedLockFile": "local-Cargo.lock", "signerCertificateSha256": self.signer}
         with patch.object(admission, "local_validation", return_value=local), \
                 patch.object(admission, "verify_aab_signer"), patch.object(admission, "verify_apk_signer"):
             value.update(admission.observe(companion, value, aab, apk, bundle_path, self.root, self.root))

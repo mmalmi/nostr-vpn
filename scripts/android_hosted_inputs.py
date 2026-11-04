@@ -22,6 +22,9 @@ SCRIPTS = {
     "scripts/verify-cargo-path-patch-lock.py": "46debe878143664e33288494535aa95c9ebb9bbb68ad40405a4535befe64f653",
 }
 BUNDLETOOL_SHA = "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29"
+# Set only from the authenticated successful artifact. This identifies this
+# frozen hosted payload even if its mutable receipt loses all origin fields.
+HOSTED_JNI_SHA256 = None
 # Admission stays closed until the successful platform job and service artifact
 # are reviewed. A producer receipt cannot supply or override these pins.
 SERVICE = {
@@ -54,7 +57,18 @@ def write(path, value):
 def require_service(authentication):
     require(all(value is not None for value in SERVICE.values()),
             "successful Android hosted artifact has not been pinned")
+    require(isinstance(HOSTED_JNI_SHA256, str) and re.fullmatch(r"[0-9a-f]{64}", HOSTED_JNI_SHA256),
+            "successful Android hosted JNI payload has not been pinned")
     require(authentication == SERVICE, "Android hosted job/artifact differs from admitted producer")
+
+
+def is_pinned_hosted_apk(apk, application_commit):
+    """The frozen hosted candidate cannot downgrade itself to a legacy receipt."""
+    if application_commit != APP["commit"] or HOSTED_JNI_SHA256 is None:
+        return False
+    require(re.fullmatch(r"[0-9a-f]{64}", HOSTED_JNI_SHA256), "invalid hosted Android JNI pin")
+    native = zip_identity(apk).get("lib/arm64-v8a/libnostr_vpn_app_core.so", {})
+    return native.get("sha256") == HOSTED_JNI_SHA256
 
 
 def authenticate_service(run, job, artifact):
@@ -130,6 +144,7 @@ def validate_producer(receipt, payload):
                 and recorded["sha256"] == exported["sha256"] == identity["sha256"]
                 and recorded["size"] == exported["size"] == identity["bytes"], "Android JNI bytes differ")
     compiled = receipt["compiledJni"]
+    require(compiled["sha256"] == HOSTED_JNI_SHA256, "Android compiled JNI differs from the admitted candidate")
     require(all(compiled[key] == receipt["jniPayloads"]["base/lib/arm64-v8a/libnostr_vpn_app_core.so"][key]
                 for key in ("sha256", "size")), "Android compiled JNI differs from the AAB")
     resources = load(payload / "provenance/resources.json")
