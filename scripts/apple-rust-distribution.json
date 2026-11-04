@@ -1,0 +1,28 @@
+{
+  "version": "1.95.0",
+  "manifestUrl": "https://static.rust-lang.org/dist/channel-rust-1.95.0.toml",
+  "manifestSha256": "821ff14e4c4a1cbe1e8915f35aff0a3fbbdf8d293ad48ab8f31e3b0440c581f9",
+  "manifestDate": "2026-04-16",
+  "components": [
+    {
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rustc-1.95.0-aarch64-apple-darwin.tar.xz",
+      "sha256": "149e85a285b6eba58eb6c8bdf7deb1b93763890598e62cb635a712e3a8454f04"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2026-04-16/cargo-1.95.0-aarch64-apple-darwin.tar.xz",
+      "sha256": "6c2ffed8e1ac9cf4dc9e80f282a869a6b237a153e7c55cca039d33de29d80aaf"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-aarch64-apple-darwin.tar.xz",
+      "sha256": "9b30089b0f767cb91b2190ffec55a9beeb2a21a1405d8da0f664d7e09d08e6d8"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-aarch64-apple-ios.tar.xz",
+      "sha256": "6fcc42d8dbba4910a128ffa32d62a730339a7e3882a90341a881f2edf66ff55a"
+    },
+    {
+      "url": "https://static.rust-lang.org/dist/2026-04-16/rust-std-1.95.0-aarch64-apple-ios-sim.tar.xz",
+      "sha256": "4bfe5b0c74c10d121a8ac60f1833c7714b963f9130f6256ca313d94405267deb"
+    }
+  ]
+}

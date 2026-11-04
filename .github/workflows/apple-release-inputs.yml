@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/apple-release-inputs.yml
       - scripts/build-apple-release-inputs.py
+      - scripts/apple-rust-distribution.json
 
 permissions:
   contents: read
@@ -29,7 +30,7 @@ jobs:
       FIPS_COMMIT: d0b18f2d1b2e97d42fa8460a0c70a8dffeaa2552
       FIPS_TREE: 08ceced056b8592a2b2c840c4c276bf01cf28c85
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
-      RUSTUP_TOOLCHAIN: 1.95.0
+      RUSTUP_TOOLCHAIN: nvpn-apple-1.95.0
       CARGO_BUILD_JOBS: 2
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: never
@@ -72,10 +73,35 @@ jobs:
           test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = 26.5
           test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
           sudo xcode-select --switch "$DEVELOPER_DIR"
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
-        with:
-          toolchain: 1.95.0
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim,aarch64-apple-darwin
+      - name: Install Rust from the committed distribution payload checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, shutil, subprocess, tempfile, urllib.request
+          from pathlib import Path
+          pins = json.loads(Path('producer/scripts/apple-rust-distribution.json').read_text())
+          prefix = Path(os.environ['RUNNER_TEMP']) / 'nvpn-rust-1.95.0'
+          assert not prefix.exists()
+          for item in pins['components']:
+              assert shutil.disk_usage(prefix.parent).free > 4 * 1024**3
+              with tempfile.TemporaryDirectory(dir=prefix.parent, prefix='rust-component-') as tmp:
+                  root = Path(tmp)
+                  archive = root / 'component.tar.xz'
+                  digest = hashlib.sha256()
+                  with urllib.request.urlopen(item['url'], timeout=60) as source, archive.open('wb') as target:
+                      while block := source.read(1024 * 1024):
+                          digest.update(block)
+                          target.write(block)
+                  assert digest.hexdigest() == item['sha256'], 'Rust distribution checksum differs'
+                  subprocess.run(['tar', '-xJf', str(archive), '-C', str(root)], check=True)
+                  installers = list(root.glob('*/install.sh'))
+                  assert len(installers) == 1
+                  subprocess.run(['sh', str(installers[0]), '--prefix=' + str(prefix),
+                                  '--disable-ldconfig'], check=True)
+          subprocess.run(['rustup', 'toolchain', 'link', 'nvpn-apple-1.95.0', str(prefix)], check=True)
+          with open(os.environ['GITHUB_PATH'], 'a') as output:
+              output.write(str(prefix / 'bin') + '\n')
+          Path('qualification/rust-distribution.json').write_text(json.dumps(pins, indent=2)+'\n')
+          PY
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: app -> target
