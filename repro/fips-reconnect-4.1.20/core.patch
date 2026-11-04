@@ -1,0 +1,230 @@
+diff --git a/crates/fips-core/src/node/handlers/handshake.rs b/crates/fips-core/src/node/handlers/handshake.rs
+index 99e41bc94..94f673e0b 100644
+--- a/crates/fips-core/src/node/handlers/handshake.rs
++++ b/crates/fips-core/src/node/handlers/handshake.rs
+@@ -472,12 +472,7 @@ impl Node {
+                     // captured msg1 stays valid indefinitely. It must not be
+                     // allowed to destroy a peering that is still receiving
+                     // authenticated traffic, nor repeatedly churn one peer.
+-                    let dampened =
+-                        self.restart_dampener
+-                            .get(&peer_node_addr)
+-                            .is_some_and(|accepted_at| {
+-                                accepted_at.elapsed().as_secs() < EPOCH_RESTART_MIN_INTERVAL_SECS
+-                            });
++                    let dampened = self.epoch_restart_dampened(&peer_node_addr);
+                     let carrier_is_open = existing_peer
+                         .transport_id()
+                         .zip(existing_peer.current_addr())
+@@ -491,7 +486,19 @@ impl Node {
+                         });
+                     let peering_is_live =
+                         carrier_is_open && peering_idle_ms < EPOCH_RESTART_MIN_INTERVAL_SECS * 1000;
+-                    if peering_is_live || dampened {
++                    let websocket_over_udp = existing_peer.has_session()
++                        && existing_peer.our_index().is_some()
++                        && matches!(
++                            existing_peer
++                                .transport_id()
++                                .and_then(|id| self.transports.get(&id)),
++                            Some(crate::transport::TransportHandle::Udp(_))
++                        )
++                        && matches!(
++                            self.transports.get(&packet.transport_id),
++                            Some(crate::transport::TransportHandle::WebSocket(_))
++                        );
++                    if dampened || (peering_is_live && !websocket_over_udp) {
+                         debug!(
+                             peer = %self.peer_display_name(&peer_node_addr),
+                             idle_ms = peering_idle_ms,
+@@ -502,28 +509,13 @@ impl Node {
+                         return;
+                     }
+ 
+-                    // Epoch mismatch against a silent peer: accept a genuine
+-                    // restart. Schedule before removal so the fork retains
+-                    // its authenticated UDP recovery address.
+-                    // Routed FSP recovery may already have authenticated this
+-                    // new process while the obsolete direct FMP was retained.
+-                    // Removing that newer session would reset only our K bit.
+-                    let preserve_end_to_end = self
+-                        .sessions
+-                        .get(&peer_node_addr)
+-                        .is_some_and(|session| session.established_remote_epoch_matches(new_epoch));
+-                    info!(
+-                        peer = %self.peer_display_name(&peer_node_addr),
+-                        preserve_end_to_end,
+-                        "Peer restart detected (epoch mismatch), replacing stale direct peering"
+-                    );
+-                    self.schedule_reconnect(peer_node_addr, now_ms);
+-                    self.remove_active_peer_inner(&peer_node_addr, preserve_end_to_end);
+-                    let cutoff = Duration::from_secs(EPOCH_RESTART_MIN_INTERVAL_SECS);
+-                    self.restart_dampener
+-                        .retain(|_, accepted_at| accepted_at.elapsed() < cutoff);
+-                    self.restart_dampener.insert(peer_node_addr, Instant::now());
+-                    // Fall through to process as new connection
++                    if websocket_over_udp {
++                        // A sealed Msg1 can be replayed. Advertise only a bounded
++                        // candidate and keep the exact UDP owner until fresh proof.
++                        conn.bind_refresh_owner(existing_peer);
++                    } else {
++                        self.retire_peer_for_epoch_restart(peer_node_addr, new_epoch, now_ms);
++                    }
+                 }
+                 _ => {
+                     // Same epoch (or no epoch stored).
+diff --git a/crates/fips-core/src/node/handlers/handshake/candidate.rs b/crates/fips-core/src/node/handlers/handshake/candidate.rs
+index 7c3c17279..c0edae189 100644
+--- a/crates/fips-core/src/node/handlers/handshake/candidate.rs
++++ b/crates/fips-core/src/node/handlers/handshake/candidate.rs
+@@ -258,10 +258,14 @@ impl Node {
+             return false;
+         };
+         let outbound = conn.is_outbound();
+-        if self
+-            .peers
+-            .get(identity.node_addr())
+-            .is_some_and(|peer| peer.remote_epoch() != conn.remote_epoch())
++        let owner = self.peers.get(identity.node_addr());
++        let stale_owner = if conn.awaits_epoch_restart() {
++            !owner.is_some_and(|peer| conn.targets_refresh_owner(peer))
++                || self.epoch_restart_dampened(identity.node_addr())
++        } else {
++            owner.is_some_and(|peer| peer.remote_epoch() != conn.remote_epoch())
++        };
++        if stale_owner
+             || conn.handshake_confirmation().is_some_and(|first| {
+                 self.packet_predates_carrier_rebind(first.transport_id, first.timestamp_ms)
+             })
+@@ -388,6 +392,21 @@ impl Node {
+         let rotation = self
+             .prepare_neighbor_rotation_promotion(link_id, &peer_identity)
+             .await;
++        let connection = self.peers.get_connection(&link_id)?;
++        if connection.awaits_epoch_restart() {
++            let peer = peer_identity.node_addr();
++            if !confirmed
++                || !self
++                    .peers
++                    .get(peer)
++                    .is_some_and(|owner| connection.confirms_refresh_of(owner))
++                || self.epoch_restart_dampened(peer)
++            {
++                self.cleanup_stale_connection(link_id, Self::now_ms()).await;
++                return None;
++            }
++            self.retire_peer_for_epoch_restart(*peer, connection.remote_epoch(), Self::now_ms());
++        }
+         let (node_addr, loser_link_id) = match self.promote_connection_with_rotation(
+             link_id,
+             peer_identity,
+diff --git a/crates/fips-core/src/node/handlers/handshake/recovery.rs b/crates/fips-core/src/node/handlers/handshake/recovery.rs
+index f023b6915..681157ba8 100644
+--- a/crates/fips-core/src/node/handlers/handshake/recovery.rs
++++ b/crates/fips-core/src/node/handlers/handshake/recovery.rs
+@@ -1,6 +1,34 @@
+ use super::*;
+ 
+ impl Node {
++    pub(super) fn epoch_restart_dampened(&self, peer: &NodeAddr) -> bool {
++        self.restart_dampener.get(peer).is_some_and(|when| {
++            when.elapsed() < Duration::from_secs(EPOCH_RESTART_MIN_INTERVAL_SECS)
++        })
++    }
++
++    pub(super) fn retire_peer_for_epoch_restart(
++        &mut self,
++        peer: NodeAddr,
++        new_epoch: Option<[u8; 8]>,
++        now_ms: u64,
++    ) {
++        // Keep the recovery address and any routed FSP already authenticated
++        // to the restarted process. Remove all indices owned by the old FMP.
++        let preserve_end_to_end = self
++            .sessions
++            .get(&peer)
++            .is_some_and(|session| session.established_remote_epoch_matches(new_epoch));
++        info!(peer = %self.peer_display_name(&peer), preserve_end_to_end,
++            "Peer restart detected (epoch mismatch), replacing stale direct peering");
++        self.schedule_reconnect(peer, now_ms);
++        self.remove_active_peer_inner(&peer, preserve_end_to_end);
++        let cutoff = Duration::from_secs(EPOCH_RESTART_MIN_INTERVAL_SECS);
++        self.restart_dampener
++            .retain(|_, when| when.elapsed() < cutoff);
++        self.restart_dampener.insert(peer, Instant::now());
++    }
++
+     pub(in crate::node) fn same_epoch_msg1_is_direct_path_recovery(
+         &mut self,
+         peer_node_addr: &NodeAddr,
+diff --git a/crates/fips-core/src/peer/connection.rs b/crates/fips-core/src/peer/connection.rs
+index 46e948172..13edc760a 100644
+--- a/crates/fips-core/src/peer/connection.rs
++++ b/crates/fips-core/src/peer/connection.rs
+@@ -68,6 +68,14 @@ impl fmt::Display for HandshakeState {
+     }
+ }
+ 
++#[derive(Debug)]
++struct RefreshOwner {
++    link: LinkId,
++    generation: u64,
++    index: SessionIndex,
++    epoch: Option<[u8; 8]>,
++}
++
+ /// A connection in the handshake phase, before authentication completes.
+ ///
+ /// For outbound connections, we know the expected peer identity from config.
+@@ -148,7 +156,7 @@ pub struct PeerConnection {
+     handshake_confirmation: Option<ReceivedPacket>,
+ 
+     /// Current owner when this refresh was admitted. Retries cannot retarget it.
+-    refresh_owner: Option<(LinkId, u64, SessionIndex)>,
++    refresh_owner: Option<RefreshOwner>,
+ 
+     /// Number of resends performed so far.
+     resend_count: u32,
+@@ -431,18 +439,33 @@ impl PeerConnection {
+     }
+ 
+     pub(crate) fn bind_refresh_owner(&mut self, peer: &ActivePeer) {
+-        self.refresh_owner = peer
+-            .our_index()
+-            .map(|index| (peer.link_id(), peer.session_generation(), index));
++        self.refresh_owner = peer.our_index().map(|index| RefreshOwner {
++            link: peer.link_id(),
++            generation: peer.session_generation(),
++            index,
++            epoch: peer.remote_epoch(),
++        });
++    }
++
++    pub(crate) fn awaits_epoch_restart(&self) -> bool {
++        self.refresh_owner
++            .as_ref()
++            .and_then(|owner| owner.epoch)
++            .zip(self.remote_epoch)
++            .is_some_and(|(old, new)| old != new)
++    }
++
++    pub(crate) fn targets_refresh_owner(&self, peer: &ActivePeer) -> bool {
++        self.refresh_owner.as_ref().is_some_and(|owner| {
++            peer.link_id() == owner.link
++                && peer.session_generation() == owner.generation
++                && peer.our_index() == Some(owner.index)
++                && peer.remote_epoch() == owner.epoch
++        })
+     }
+ 
+     pub(crate) fn confirms_refresh_of(&self, peer: &ActivePeer) -> bool {
+-        self.handshake_confirmation.is_some()
+-            && self.refresh_owner.is_some_and(|(link, generation, index)| {
+-                peer.link_id() == link
+-                    && peer.session_generation() == generation
+-                    && peer.our_index() == Some(index)
+-            })
++        self.handshake_confirmation.is_some() && self.targets_refresh_owner(peer)
+     }
+ 
+     pub(crate) fn retain_handshake_confirmation(&mut self, packet: &ReceivedPacket) {
