@@ -34,6 +34,21 @@ jobs:
       CARGO_INCREMENTAL: 0
       CARGO_TERM_COLOR: never
     steps:
+      - name: Record actual hosted capacity before installing tools
+        run: |
+          mkdir -p qualification
+          python3 - <<'PY'
+          import json, os, shutil, subprocess
+          from pathlib import Path
+          value = {"freeBytes": shutil.disk_usage('.').free,
+                   "totalBytes": shutil.disk_usage('.').total,
+                   "memoryBytes": int(subprocess.check_output(['sysctl', '-n', 'hw.memsize'])),
+                   "imageVersion": os.environ.get('ImageVersion'),
+                   "imageOS": os.environ.get('ImageOS'),
+                   "rustBuildAdmitted": False}
+          Path('qualification/runner-capacity.json').write_text(json.dumps(value, indent=2)+'\n')
+          print(json.dumps(value))
+          PY
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           path: producer
@@ -79,6 +94,8 @@ jobs:
         if: always()
         with:
           name: apple-release-inputs-${{ matrix.platform }}-${{ env.APP_COMMIT }}
-          path: output/
+          path: |
+            output/
+            qualification/
           if-no-files-found: error
           retention-days: 14

@@ -57,7 +57,12 @@ def main():
                     for sdk in ("iphoneos", "iphonesimulator", "macosx")}
     assert sdk_versions == {"iphoneos": "26.5", "iphonesimulator": "26.5", "macosx": "26.5"}
     initial_free = shutil.disk_usage(app).free
-    assert initial_free >= 20 * 1024**3, "hosted builder needs 20 GiB initial space"
+    admission = {"freeBytes": initial_free, "entryRequiredBytes": 20 * 1024**3,
+                 "liveFloorBytes": 4 * 1024**3,
+                 "maximumGrowthBudgetBytes": 16 * 1024**3,
+                 "budgetIsMeasuredPeak": False, "admitted": initial_free >= 20 * 1024**3}
+    (output / "admission.json").write_text(json.dumps(admission, indent=2) + "\n")
+    assert admission["admitted"], "hosted space admission failed; see admission.json"
     committed_lock = (app / "Cargo.lock").read_bytes()
     specs = capture("python3", str(app / "scripts/verify-cargo-path-patch-lock.py"),
                     "--manifest-specs", str(fips)).splitlines()
@@ -141,6 +146,16 @@ def main():
     paths = [product]
     if selected == "macos":
         paths += [Path("macos/Bindings"), Path("macos/Resources/binaries/nvpn")]
+        cli_version = capture(str(app / "macos/Resources/binaries/nvpn"), "version", "--verbose")
+        assert "4.1.21" in cli_version and "0.4.117 (rev d0b18f2d1b)" in cli_version
+    else:
+        # Preserve the original hosted path-bound proof. A local importer must
+        # validate it as a NEW unsigned archive, not claim retained-archive reuse.
+        paths += [Path("artifacts/mobile-ios/fips-linkage.json")]
+        linkage = json.loads((app / paths[-1]).read_text())
+        assert linkage["checkoutHead"] == fips_identity["commit"]
+        assert linkage["checkoutTree"] == fips_identity["tree"]
+        assert linkage["fipsCoreVersion"] == "0.4.117"
     files = []
     for relative in paths:
         path = app / relative
