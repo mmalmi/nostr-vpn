@@ -51,9 +51,10 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def capture(*arguments):
-    completed = subprocess.run(arguments, capture_output=True, text=True, timeout=30)
-    require(completed.returncode == 0, "Installed native tool inventory failed")
+def capture(*arguments, env=None):
+    completed = subprocess.run(arguments, capture_output=True, text=True, timeout=30, env=env)
+    require(completed.returncode == 0, "Native tool failed: " + Path(arguments[0]).name + ": " +
+            (completed.stdout + completed.stderr)[-1200:])
     return (completed.stdout + completed.stderr).strip()
 
 
@@ -374,7 +375,8 @@ def install_tools(session, tools, pins, java):
     session.run(["tar", "-xf", str(crate), "-C", str(tools)])
     session.run([str(prefix / "bin/cargo"), "install", "--locked", "--path", str(tools / "cargo-ndk-4.1.2"),
                  "--root", str(tools / "cargo-ndk")], env=env)
-    require(capture(str(tools / "cargo-ndk/bin/cargo-ndk"), "--version") == "cargo-ndk 4.1.2",
+    require(capture(str(tools / "cargo-ndk/bin/cargo-ndk"), "ndk", "--version",
+                    env=dict(env, CARGO=str(prefix / "bin/cargo"))) == "cargo-ndk 4.1.2",
             "Pinned Cargo NDK helper differs")
     return env
 
