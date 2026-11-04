@@ -10401,6 +10401,21 @@
       },
       {
         "group": "org.jetbrains.kotlin",
+        "name": "kotlin-build-tools-impl",
+        "version": "2.2.0",
+        "artifacts": [
+          {
+            "name": "kotlin-build-tools-impl-2.2.0.jar",
+            "sha256": "4a87f3c0272f17285d60e98643ec219f53e9b5ad5a23f3bc4c543a8644f86f17"
+          },
+          {
+            "name": "kotlin-build-tools-impl-2.2.0.pom",
+            "sha256": "e83804205ab697ba722f4622a6b1b5192ef47a30cbdf90297701494378504eff"
+          }
+        ]
+      },
+      {
+        "group": "org.jetbrains.kotlin",
         "name": "kotlin-compiler-embeddable",
         "version": "2.2.0",
         "artifacts": [
@@ -10456,6 +10471,21 @@
           {
             "name": "kotlin-compiler-runner-2.2.0.jar",
             "sha256": "90706ae8671defba01408dd1c541ba30912c9070cdf1ddda18c51eae8d679304"
+          }
+        ]
+      },
+      {
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-compose-compiler-plugin-embeddable",
+        "version": "2.2.0",
+        "artifacts": [
+          {
+            "name": "kotlin-compose-compiler-plugin-embeddable-2.2.0.jar",
+            "sha256": "80c654f376ac474dabfb0f33441a41eb083143923d4b7b55a60ac36444e43fe5"
+          },
+          {
+            "name": "kotlin-compose-compiler-plugin-embeddable-2.2.0.pom",
+            "sha256": "74eb0604214217a55efd5ec9eac427fec46583fb034c64152184a183f7c6d817"
           }
         ]
       },
@@ -10851,6 +10881,66 @@
           {
             "name": "kotlin-script-runtime-2.4.10.pom",
             "sha256": "edcf0e2cd709646c4e5945be0f0a4920a0f3f417f328756746a29d92b23b1593"
+          }
+        ]
+      },
+      {
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-scripting-common",
+        "version": "2.2.0",
+        "artifacts": [
+          {
+            "name": "kotlin-scripting-common-2.2.0.jar",
+            "sha256": "7c9ac8499fa91b201ea7836537c625dd52a82549e57e6b3f175cc0c79e9ab604"
+          },
+          {
+            "name": "kotlin-scripting-common-2.2.0.pom",
+            "sha256": "d4cd6f8c7dad88e67d895cd3db7a8d4c7dc8e8ddd8e9678e1f5eb5f601d9b0ed"
+          }
+        ]
+      },
+      {
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-scripting-compiler-embeddable",
+        "version": "2.2.0",
+        "artifacts": [
+          {
+            "name": "kotlin-scripting-compiler-embeddable-2.2.0.pom",
+            "sha256": "5636a9512c48fcda8f826fb2a4ac173c29d6eb357464713d54d25a4d46ec6c13"
+          },
+          {
+            "name": "kotlin-scripting-compiler-embeddable-2.2.0.jar",
+            "sha256": "92c7d6ec7c5f05d8ac01c37e747ac677d892e99bac0de5e516683b8f3640772b"
+          }
+        ]
+      },
+      {
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-scripting-compiler-impl-embeddable",
+        "version": "2.2.0",
+        "artifacts": [
+          {
+            "name": "kotlin-scripting-compiler-impl-embeddable-2.2.0.jar",
+            "sha256": "1d26cbddaeeb6ffd458085396ecea0b080fc228fe006dcf8303da57711f33745"
+          },
+          {
+            "name": "kotlin-scripting-compiler-impl-embeddable-2.2.0.pom",
+            "sha256": "a1e329338c2af0b470781d040869e9b19752f8a4deb22f43f6a891ebc74f1f82"
+          }
+        ]
+      },
+      {
+        "group": "org.jetbrains.kotlin",
+        "name": "kotlin-scripting-jvm",
+        "version": "2.2.0",
+        "artifacts": [
+          {
+            "name": "kotlin-scripting-jvm-2.2.0.jar",
+            "sha256": "60a8c742d61f44f2311fbdc8a86b767d171ba09d97be72d6ba450d37f7e3fdbf"
+          },
+          {
+            "name": "kotlin-scripting-jvm-2.2.0.pom",
+            "sha256": "7628b49d5e7705e9e769d11260066d9a69573d6d80bf8230d0546f5a8e78c89e"
           }
         ]
       },
@@ -12080,6 +12170,18 @@
         "repository": "https://repo.maven.apache.org/maven2",
         "component": "org.bouncycastle:bcutil-jdk18on:1.79",
         "reason": "Strict producer verification41926206779 rejected missing entries before use"
+      },
+      {
+        "repository": "https://repo.maven.apache.org/maven2",
+        "components": [
+          "org.jetbrains.kotlin:kotlin-build-tools-impl:2.2.0",
+          "org.jetbrains.kotlin:kotlin-compose-compiler-plugin-embeddable:2.2.0",
+          "org.jetbrains.kotlin:kotlin-scripting-common:2.2.0",
+          "org.jetbrains.kotlin:kotlin-scripting-compiler-embeddable:2.2.0",
+          "org.jetbrains.kotlin:kotlin-scripting-compiler-impl-embeddable:2.2.0",
+          "org.jetbrains.kotlin:kotlin-scripting-jvm:2.2.0"
+        ],
+        "reason": "Strict producer41927029098 rejected late-bound Kotlin tooling entries; include retained exact2.2.0 tooling and matching Compose compiler before execution"
       }
     ]
   },
