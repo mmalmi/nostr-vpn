@@ -299,67 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn exit_node_masquerade_matches_only_connections_forwarded_from_the_mesh() {
-        // A local network inside the mesh source range must keep its own NAT.
-        assert_eq!(
-            linux_exit_node_ipv4_ingress_mark_rule("utun100", "enp41s0", "10.44.0.0/16"),
-            vec![
-                "FORWARD",
-                "-i",
-                "utun100",
-                "-o",
-                "enp41s0",
-                "-s",
-                "10.44.0.0/16",
-                "-m",
-                "comment",
-                "--comment",
-                "nvpn-exit-ingress",
-                "-j",
-                "CONNMARK",
-                "--set-xmark",
-                "0x1000000/0x1000000",
-            ]
-        );
-        assert_eq!(
-            linux_exit_node_ipv4_masquerade_rule("enp41s0", "10.44.0.0/16"),
-            vec![
-                "POSTROUTING",
-                "-o",
-                "enp41s0",
-                "-s",
-                "10.44.0.0/16",
-                "-m",
-                "connmark",
-                "--mark",
-                "0x1000000/0x1000000",
-                "-m",
-                "comment",
-                "--comment",
-                "nvpn-exit-masq",
-                "-j",
-                "MASQUERADE",
-            ]
-        );
-        assert_eq!(
-            linux_exit_node_ipv4_legacy_masquerade_rule("enp41s0", "10.44.0.0/16"),
-            vec![
-                "POSTROUTING",
-                "-o",
-                "enp41s0",
-                "-s",
-                "10.44.0.0/16",
-                "-m",
-                "comment",
-                "--comment",
-                "nvpn-exit-masq",
-                "-j",
-                "MASQUERADE",
-            ]
-        );
-    }
-
-    #[test]
     fn legacy_exit_node_forward_rules_match_old_unscoped_rules_for_cleanup() {
         assert_eq!(
             linux_exit_node_legacy_forward_in_rule("utun100", LinuxExitNodeIpFamily::V6),

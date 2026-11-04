@@ -497,19 +497,13 @@ pub(super) fn cleanup_linux_forwarding_state(
             outbound_iface,
             crate::LinuxExitNodeIpFamily::V4,
         );
-        let masquerade =
-            crate::linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
-        let legacy_masquerade =
-            crate::linux_exit_node_ipv4_legacy_masquerade_rule(outbound_iface, tunnel_source_cidr);
-        let ingress_mark = crate::linux_exit_node_ipv4_ingress_mark_rule(
-            iface,
-            outbound_iface,
-            tunnel_source_cidr,
-        );
+        if let Err(error) =
+            crate::linux_exit_node_remove_ipv4_nat(iface, outbound_iface, tunnel_source_cidr)
+        {
+            firewall_clean = false;
+            failures.push(format!("remove exit NAT: {error:#}"));
+        }
         for (label, table, rule) in [
-            ("masquerade", Some("nat"), &masquerade),
-            ("legacy masquerade", Some("nat"), &legacy_masquerade),
-            ("ingress mark", Some("mangle"), &ingress_mark),
             ("forward-out", None, &forward_out),
             ("forward-in", None, &forward_in),
         ] {
