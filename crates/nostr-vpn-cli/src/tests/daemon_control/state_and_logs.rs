@@ -626,6 +626,7 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
         }],
         auto_reconnect: true,
         discovery_fallback_transit: false,
+        live: None,
     }];
 
     crate::persist_daemon_runtime_state(

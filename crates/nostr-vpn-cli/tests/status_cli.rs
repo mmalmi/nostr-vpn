@@ -71,6 +71,23 @@ fn status_only_reports_fips_connections_from_platform_runtime_state() {
         "fips_direct_roster_peer_count": 2,
         "fips_other_peer_count": 3,
         "mesh_ready": false,
+        "fips_endpoint_peers": [
+            {
+                "npub": "configured-seed-with-sample",
+                "addresses": [{"addr": "tcp://192.0.2.1:443", "priority": 100}],
+                "auto_reconnect": true,
+                "live": {
+                    "connected": true,
+                    "transport_addr": "192.0.2.2:51820",
+                    "transport_type": "udp",
+                    "packets_sent": 11,
+                    "packets_recv": 12,
+                    "bytes_sent": 1100,
+                    "bytes_recv": 1200
+                }
+            },
+            {"npub": "configured-seed-without-sample"}
+        ],
     });
     fs::write(&state_path, serde_json::to_vec(&state).unwrap()).unwrap();
     let status = |json: bool| {
@@ -115,6 +132,10 @@ fn status_only_reports_fips_connections_from_platform_runtime_state() {
             2
         );
         assert_eq!(output["daemon"]["state"]["fips_other_peer_count"], 3);
+        let endpoints = &output["daemon"]["state"]["fips_endpoint_peers"];
+        assert_eq!(endpoints[0]["live"], state["fips_endpoint_peers"][0]["live"]);
+        assert!(endpoints[1].get("live").is_none());
+        assert!(endpoints[0]["live"].get("last_seen_at").is_none());
         assert!(text.contains("vpn_status: Paused"), "{text}");
         assert!(
             text.contains("fips_peers: 5 connected (2 direct roster, 3 other)"),
@@ -141,6 +162,7 @@ fn status_only_reports_fips_connections_from_platform_runtime_state() {
     let output: serde_json::Value = serde_json::from_str(&status(true)).unwrap();
     assert_eq!(output["status_source"], "config");
     assert!(output["mesh_ready"].is_null());
+    assert!(output["daemon"]["state"].is_null());
     assert!(
         !text.lines().any(|line| line.starts_with("fips_peers:")),
         "stopped daemon must not report stale links"

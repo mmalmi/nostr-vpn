@@ -479,7 +479,25 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
         network: network.clone(),
         port_mapping: port_mapping.clone(),
         relays: fips_relay_statuses.to_vec(),
-        fips_endpoint_peers: fips_endpoint_peers.to_vec(),
+        fips_endpoint_peers: fips_endpoint_peers
+            .iter()
+            .cloned()
+            .map(|mut peer| {
+                peer.live = normalize_nostr_pubkey(&peer.npub)
+                    .ok()
+                    .and_then(|pubkey| fips_status_by_pubkey.get(pubkey.as_str()).copied())
+                    .map(|status| DaemonFipsEndpointPeerLiveState {
+                        connected: status.connected,
+                        transport_addr: status.transport_addr.clone(),
+                        transport_type: status.transport_type.clone(),
+                        packets_sent: status.link_packets_sent,
+                        packets_recv: status.link_packets_recv,
+                        bytes_sent: status.link_bytes_sent,
+                        bytes_recv: status.link_bytes_recv,
+                    });
+                peer
+            })
+            .collect(),
         peers,
     }
 }

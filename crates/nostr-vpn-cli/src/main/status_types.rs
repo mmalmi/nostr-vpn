@@ -109,6 +109,22 @@ struct DaemonFipsEndpointPeerState {
     auto_reconnect: bool,
     #[serde(default)]
     discovery_fallback_transit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    live: Option<DaemonFipsEndpointPeerLiveState>,
+}
+
+/// The cached runtime sample, not a probe or a timestamped presence observation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct DaemonFipsEndpointPeerLiveState {
+    connected: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_addr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_type: Option<String>,
+    packets_sent: u64,
+    packets_recv: u64,
+    bytes_sent: u64,
+    bytes_recv: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

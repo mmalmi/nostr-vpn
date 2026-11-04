@@ -410,6 +410,7 @@ pub(crate) fn daemon_endpoint_peer_states_from_signature(
                         .collect(),
                     auto_reconnect: *auto_reconnect,
                     discovery_fallback_transit: *discovery_fallback_transit,
+                    live: None,
                 }
             },
         )

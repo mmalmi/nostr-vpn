@@ -125,6 +125,31 @@ status has unknown readiness. Then reach the intended service, for example
 service intentionally exposes HTTP on the mesh. Use its normal authentication.
 A successful mesh ping does not establish that DNS or the service works.
 
+Configured seed/bootstrap peers appear at
+`daemon.state.fips_endpoint_peers[]`. Each entry retains its configured addresses
+and may contain `live`: `connected`, optional `transport_addr` and
+`transport_type`, and link `packets_sent`, `packets_recv`, `bytes_sent`, and
+`bytes_recv`. These values are copied from the existing runtime snapshot matched
+by public key, including while the client VPN is paused. A missing `live` means
+there was no matching runtime sample; it does not mean disconnected. A sampled
+pending connection can legitimately report `connected: false`, zero counters,
+and no transport. Configured addresses never establish the live transport.
+
+For seeds outside the private roster, `connected` is FIPS's authenticated,
+sendable link state with its receive-recency check. Roster members retain the
+existing mesh liveness meaning, which can include recent routed activity.
+Neither establishes application-service health. Link counters count the FIPS
+link, including its protocol traffic, not private VPN payload totals. They can
+reset when a peer connection or runtime is recreated. Treat a counter decrease
+as a reset when computing deltas; this view has no connection-generation ID.
+
+`live` is a cached sample, normally refreshed by the existing two-second
+heartbeat. Refresh failures can retain the previous sample, and
+`daemon.state.updated_at` is the state-write time, not the link-sample time.
+There is no per-peer sample-age guarantee or `last_seen_at` in this projection.
+Check successive state updates and service traffic when qualifying a seed;
+unchanged counters alone do not prove failure or fresh connectivity.
+
 For a short demo, show the two public device IDs, the reviewed approval, daemon
 readiness, and the service response. Record install-to-first-response time and
 any manual steps. Exclude join links, secrets, and private host details from a
