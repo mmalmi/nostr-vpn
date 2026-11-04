@@ -10,6 +10,8 @@ import tempfile
 import unittest
 import warnings
 import zipfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.dont_write_bytecode = True
 import android_hosted_content as content
@@ -105,6 +107,29 @@ class AndroidContent(unittest.TestCase):
         self.assertEqual(entries, {"assets/é": {"x": "y"}})
         with self.assertRaisesRegex(ValueError, "duplicate"):
             content.manifest_sections(b"Manifest-Version: 1.0\n\nName: a\nX: y\n\nName: a\nX: z\n\n")
+
+    def test_signer_pin_and_complete_manifest_signature_are_mandatory(self):
+        files = self.signed_files()
+        files["META-INF/RELEASE.SF"] = ("Signature-Version: 1.0\r\nSHA-256-Digest-Manifest: "
+            + base64.b64encode(hashlib.sha256(files[content.MANIFEST]).digest()).decode() + "\r\n\r\n").encode()
+        signed = self.archive("signed.aab", files)
+        signer_der = b"fixture DER verified only by mocked CMS boundary"
+        expected = hashlib.sha256(signer_der).hexdigest()
+        def cms(command, **kwargs):
+            self.assertEqual(command[:4], ["openssl", "cms", "-verify", "-binary"])
+            self.assertNotIn("-nosigs", command)
+            self.assertNotIn("-no_content_verify", command)
+            Path(command[command.index("-signer") + 1]).write_bytes(b"-----BEGIN CERTIFICATE-----\n"
+                + base64.b64encode(signer_der) + b"\n-----END CERTIFICATE-----\n")
+            return SimpleNamespace(stdout=files["META-INF/RELEASE.SF"])
+        pair = ["META-INF/RELEASE.SF", "META-INF/RELEASE.RSA"]
+        with patch.object(content.subprocess, "run", side_effect=cms):
+            self.assertEqual(content.verify_aab_signer(signed, pair, expected), expected)
+            with self.assertRaisesRegex(ValueError, "different certificate"):
+                content.verify_aab_signer(signed, pair, "0" * 64)
+        files["META-INF/RELEASE.SF"] = b"Signature-Version: 1.0\r\nSHA-256-Digest-Manifest: wrong\r\n\r\n"
+        with self.assertRaisesRegex(ValueError, "complete manifest"):
+            content.verify_aab_signer(self.archive("wrong-signature.aab", files), pair, expected)
 
 
 if __name__ == "__main__":

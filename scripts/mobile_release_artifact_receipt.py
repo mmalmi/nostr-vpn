@@ -471,6 +471,18 @@ def validate_android(args: argparse.Namespace) -> None:
         )
     if path_sha256(app_root) == path_sha256(fips_root):
         raise ValueError("application and FIPS checkouts unexpectedly coincide")
+    companion = pathlib.Path(getattr(args, "hosted_admission", None)
+        or os.environ.get("NVPN_ANDROID_HOSTED_ADMISSION")
+        or receipt_path.parent / "android-hosted-admission.json")
+    hosted_fields = {"buildOrigin", "builtOnHost", "signedOnHost", "fipsDependenciesBuildOrigin"}
+    if (hosted_fields.intersection(receipt)
+        or any(name.startswith(("hosted", "localFipsValidation")) for name in receipt)
+        or companion.exists() or companion.is_symlink()):
+        from android_hosted_admission import validate_physical_receipt
+        if not aab_value or not bundle_value:
+            raise ValueError("hosted Android validation requires its exact AAB and derivation receipt")
+        validate_physical_receipt(receipt, companion, aab, apk, bundle_path, metadata,
+                                 app_root, fips_root, args.signer_sha)
     validate_fips_metadata(
         metadata,
         receipt["fipsCheckoutPathSha256"],
@@ -863,6 +875,7 @@ def parser() -> argparse.ArgumentParser:
         android.add_argument(f"--{name.replace('_', '-')}", required=True)
     android.add_argument("--aab")
     android.add_argument("--bundle-receipt")
+    android.add_argument("--hosted-admission")
 
     ios = subparsers.add_parser("validate-ios")
     for name in (

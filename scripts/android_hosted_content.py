@@ -6,7 +6,10 @@ import hashlib
 import json
 import pathlib
 import re
+import ssl
 import stat
+import subprocess
+import tempfile
 import zipfile
 
 MANIFEST = "META-INF/MANIFEST.MF"
@@ -164,3 +167,42 @@ def apk_runtime_identity(aab, apk):
         require({name for name in package if predicate(name)} == {name for name in mapped if predicate(name)},
                 "APK contains unexpected native, DEX or asset payloads")
     return {"nativeLibraries": native, "mappedPayloadManifestSha256": canonical_digest(mapped)}
+
+
+def verify_aab_signer(aab, signature_entries, expected_sha256):
+    """Verify the exact manifest's CMS signature against the pinned leaf certificate.
+
+    Android's upload certificate may be self-signed. The exact certificate pin
+    replaces PKI chain trust; CMS content and signature verification stay enabled.
+    """
+    require(re.fullmatch(r"[0-9a-f]{64}", expected_sha256), "invalid Android signer pin")
+    require(len(signature_entries) == 2, "missing AAB signature pair")
+    signature_file = next(name for name in signature_entries if name.endswith(".SF"))
+    signature_block = next(name for name in signature_entries if name != signature_file)
+    with zipfile.ZipFile(aab) as archive:
+        require(all(archive.getinfo(name).file_size <= 4 * 1024**2
+                    for name in (MANIFEST, signature_file, signature_block)),
+                "AAB signing metadata exceeds its comparison bound")
+        manifest = archive.read(MANIFEST)
+        signed_file = archive.read(signature_file)
+        block = archive.read(signature_block)
+    main, _entries = manifest_sections(signed_file)
+    require(main.get("signature-version") == "1.0"
+            and main.get("sha-256-digest-manifest")
+            == base64.b64encode(hashlib.sha256(manifest).digest()).decode("ascii"),
+            "AAB signature file does not cover the exact complete manifest")
+    with tempfile.TemporaryDirectory(prefix="nvpn-aab-signature-") as temporary:
+        root = pathlib.Path(temporary)
+        (root / "signature.sf").write_bytes(signed_file)
+        (root / "signature.cms").write_bytes(block)
+        verified = subprocess.run(["openssl", "cms", "-verify", "-binary", "-inform", "DER",
+            "-in", str(root / "signature.cms"), "-content", str(root / "signature.sf"),
+            "-noverify", "-signer", str(root / "signer.pem")], check=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        require(verified.stdout == signed_file, "CMS signature covers different content")
+        certificates = re.findall(rb"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+                                  (root / "signer.pem").read_bytes(), flags=re.S)
+        require(len(certificates) == 1, "AAB must have exactly one signing certificate")
+        actual = hashlib.sha256(ssl.PEM_cert_to_DER_cert(certificates[0].decode("ascii"))).hexdigest()
+        require(actual == expected_sha256, "AAB is signed by a different certificate")
+    return actual

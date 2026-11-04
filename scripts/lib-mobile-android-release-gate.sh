@@ -88,6 +88,10 @@ JS
 }
 
 android_release_require_inputs() {
+  if [[ -n "${NVPN_ANDROID_HOSTED_ADMISSION:-}" && "${build:-1}" -ne 0 ]]; then
+    echo "Hosted Android admission requires --no-build; local compilation is disabled" >&2
+    return 1
+  fi
   [[ "$PACKAGE_NAME" == "$CANONICAL_PACKAGE_NAME" ]] || {
     echo "Android Release black-box gate requires canonical package $CANONICAL_PACKAGE_NAME" >&2
     return 1
@@ -256,7 +260,7 @@ verify_android_release_install() {
   local apksigner remote_path pulled apk_sha installed_sha cert_sha receipt
   local native_lib native_strings target_root metadata_receipt rebuild_marker
   local dep_file metadata_sha metadata_path_sha fips_path_sha
-  local bundle_receipt aab_path
+  local bundle_receipt aab_path hosted_fields=""
   apksigner="$(android_release_apksigner)"
   [[ -x "$apksigner" ]] || {
     echo "Android Release black-box gate could not find apksigner" >&2
@@ -339,6 +343,20 @@ verify_android_release_install() {
     return 1
   fi
   rm -f "$native_strings"
+  metadata_receipt="${NVPN_ANDROID_FIPS_METADATA_RECEIPT:-$ROOT/artifacts/mobile-android/fips-linkage.json}"
+  if [[ -n "${NVPN_ANDROID_HOSTED_ADMISSION:-}" ]]; then
+    if ! hosted_fields="$(python3 "$ROOT/scripts/android_hosted_admission.py" verify \
+      --admission "$NVPN_ANDROID_HOSTED_ADMISSION" \
+      --aab "$ROOT/android/app/build/outputs/bundle/release/app-release.aab" \
+      --apk "$APK_PATH" \
+      --bundle-receipt "$ROOT/android/app/build/outputs/bundle/release/physical-gate-artifact.json" \
+      --app-root "$ROOT" --fips-root "$NVPN_FIPS_REPO_PATH" \
+      --fips-metadata "$metadata_receipt" --signer-sha "$EXPECTED_ANDROID_SIGNER_CERT_SHA256")"; then
+      rm -f "$native_lib"
+      echo "Android hosted compilation admission failed" >&2
+      return 1
+    fi
+  else
   target_root="${CARGO_TARGET_DIR:-$ROOT/target}"
   [[ "$target_root" = /* ]] || target_root="$ROOT/$target_root"
   dep_file="$(
@@ -408,6 +426,7 @@ PY
     echo "Android Release FIPS metadata/rebuild receipt failed" >&2
     return 1
   fi
+  fi
   if [[ "$(git -C "$NVPN_FIPS_REPO_PATH" rev-parse HEAD)" \
       != "$EXPECTED_FIPS_GIT_SHA" \
     || "$(git -C "$NVPN_FIPS_REPO_PATH" rev-parse 'HEAD^{tree}')" \
@@ -454,7 +473,7 @@ PY
     "$EXPECTED_FIPS_VERSION" "$metadata_sha" \
     "$metadata_path_sha" "$fips_path_sha" \
     "$EXPECTED_ANDROID_SIGNER_CERT_SHA256" \
-    "$bundle_receipt" "$aab_path" <<'PY'
+    "$bundle_receipt" "$aab_path" "$hosted_fields" <<'PY'
 import hashlib
 import json
 import os
@@ -477,6 +496,7 @@ import sys
     signer_sha,
     bundle_receipt_path,
     aab_path,
+    hosted_fields,
 ) = sys.argv[1:]
 bundle_receipt_file = pathlib.Path(bundle_receipt_path)
 aab_file = pathlib.Path(aab_path)
@@ -534,6 +554,7 @@ with open(path, "w", encoding="utf-8") as handle:
             "package": package,
             "replacementInstall": True,
             "debuggable": False,
+            **json.loads(hosted_fields or "{}"),
         },
         handle,
         indent=2,
