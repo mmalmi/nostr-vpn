@@ -153,7 +153,7 @@
             ..FakeLinuxNetworkCleanupActions::default()
         };
 
-        let error = super::cleanup_linux_network_state_with_actions(&mut actions)
+        let error = super::cleanup_linux_network_state_with_actions(&mut actions, true)
             .expect_err("forwarding and route-cache failures remain reportable");
 
         assert_eq!(
@@ -177,6 +177,17 @@
     }
 
     #[test]
+    fn linux_cleanup_without_owned_network_state_still_cleans_firewall_rules() {
+        let mut actions = FakeLinuxNetworkCleanupActions {
+            fail_route_cache_flush: true,
+            ..FakeLinuxNetworkCleanupActions::default()
+        };
+        super::cleanup_linux_network_state_with_actions(&mut actions, false).unwrap();
+        assert!(actions.events.contains(&"forwarding-wireguard"));
+        assert!(!actions.events.contains(&"flush-route-cache"));
+    }
+
+    #[test]
     fn linux_cleanup_rechecks_default_after_forwarding_restores_alternate() {
         let mut actions = FakeLinuxNetworkCleanupActions {
             ipv4_restore_unblocked_by_forwarding_cleanup: true,
@@ -185,7 +196,7 @@
             ..FakeLinuxNetworkCleanupActions::default()
         };
 
-        super::cleanup_linux_network_state_with_actions(&mut actions)
+        super::cleanup_linux_network_state_with_actions(&mut actions, true)
             .expect("post-WireGuard secondary default completes saved-route cleanup");
 
         assert_eq!(
@@ -210,7 +221,7 @@
             ..FakeLinuxNetworkCleanupActions::default()
         };
 
-        let error = super::cleanup_linux_network_state_with_actions(&mut actions)
+        let error = super::cleanup_linux_network_state_with_actions(&mut actions, true)
             .expect_err("persistent default-route failure remains reportable");
 
         assert_eq!(

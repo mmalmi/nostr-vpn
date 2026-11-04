@@ -454,6 +454,9 @@ impl FipsPrivateTunnelRuntime {
 
     fn cleanup_linux_network_state(&mut self) -> Result<()> {
         self.linux_network_state_initialized = false;
-        cleanup_linux_network_state_with_actions(self)
+        // Cleanup consumes ownership as it restores routes and forwarding.
+        let had_network_ownership = LinuxNetworkCleanupState::from_runtime(self)
+            .is_some_and(|state| state.has_network_ownership());
+        cleanup_linux_network_state_with_actions(self, had_network_ownership)
     }
 }

@@ -87,6 +87,7 @@ trait LinuxNetworkCleanupActions {
 #[cfg(any(test, target_os = "linux"))]
 fn cleanup_linux_network_state_with_actions(
     actions: &mut impl LinuxNetworkCleanupActions,
+    had_network_ownership: bool,
 ) -> anyhow::Result<()> {
     let mut failures = Vec::new();
     let mut endpoint_cleanup_error = None;
@@ -159,7 +160,7 @@ fn cleanup_linux_network_state_with_actions(
         failures.push("failed to restore original IPv6 default route".to_string());
     }
 
-    if let Err(error) = actions.flush_route_cache() {
+    if had_network_ownership && let Err(error) = actions.flush_route_cache() {
         failures.push(format!("failed to flush Linux route cache: {error:#}"));
     }
 
@@ -623,7 +624,7 @@ pub(crate) fn repair_linux_network_cleanup_state(
 ) -> Result<()> {
     let network_error = state
         .has_network_ownership()
-        .then(|| cleanup_linux_network_state_with_actions(state).err())
+        .then(|| cleanup_linux_network_state_with_actions(state, true).err())
         .flatten();
     let dns_error =
         crate::secure_dns_runtime::repair_linux_secure_dns_cleanup_state(&mut state.secure_dns)

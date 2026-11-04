@@ -16,6 +16,8 @@ All notable changes to this project are documented in this file.
   files are available from the inbox.
 - Upgraded seeds can reconnect a restarted peer over a secure WebSocket
   when its UDP path is unavailable.
+- On Linux, a VPN session that did not change system routes or forwarding
+  can pause even when the kernel's route-cache control is read-only.
 - The built-in updater uses Hashtree 0.3.0 to read signed releases.
 
 ## 4.1.20 - 2026-11-03
