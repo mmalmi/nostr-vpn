@@ -12,6 +12,7 @@ on:
           - '["ios"]'
           - '["macos"]'
           - '["ios-join"]'
+          - '["macos-support"]'
   push:
     branches: [codex/nvpn-hosted-apple-producer]
     paths:
@@ -117,7 +118,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: app -> target
-          key: apple-release-${{ matrix.platform == 'macos' && 'macos' || 'ios' }}-xcode17F113-rust1.95.0
+          key: apple-release-${{ startsWith(matrix.platform, 'macos') && 'macos' || 'ios' }}-xcode17F113-rust1.95.0
           cache-bin: false
           cache-on-failure: true
       - name: Install the pinned project generator

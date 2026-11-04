@@ -43,7 +43,7 @@ def exact_source(root, prefix):
 
 def main():
     selected, app_arg, fips_arg, output_arg = sys.argv[1:]
-    assert selected in {"ios", "ios-join", "macos"}
+    assert selected in {"ios", "ios-join", "macos", "macos-support"}
     assert platform.system() == "Darwin" and platform.machine() == "arm64"
     app, fips, output = (Path(p).resolve() for p in (app_arg, fips_arg, output_arg))
     assert not output.exists(), "output must be fresh"
@@ -102,6 +102,11 @@ def main():
             recipes[-1] += ["ARCHS=arm64",
                            "OTHER_SWIFT_FLAGS=$(inherited) -DNVPN_RELEASE_JOIN_TESTING",
                            "build-for-testing"]
+    elif selected == "macos-support":
+        product = Path("macos/.build/hosted-gate-support")
+        env.update(NVPN_MACOS_HOST_TARGET="aarch64-apple-darwin",
+                   NVPN_MACOS_GATE_SUPPORT_DIR=str(app / product))
+        recipes = [["scripts/macos-build", "macos-gate-support"]]
     else:
         product = Path("macos/.build/ReleaseDerivedData/Build/Products/Release/Nostr VPN.app")
         recipes = [["scripts/macos-build", "macos-xcframework"],
@@ -147,7 +152,7 @@ def main():
             "exitCode": code, "abortReason": reason}, indent=2) + "\n")
     # Generated macOS bindings are included explicitly, never silently discarded.
     changed = capture("git", "diff", "--name-only", cwd=app).splitlines()
-    allowed_project = ("ios/NostrVpnIos.xcodeproj/project.pbxproj" if selected != "macos"
+    allowed_project = ("ios/NostrVpnIos.xcodeproj/project.pbxproj" if selected.startswith("ios")
                        else "macos/NostrVpnMac.xcodeproj/project.pbxproj")
     assert all(p == allowed_project or
                (selected == "macos" and p.startswith("macos/Bindings/")) for p in changed)
@@ -157,7 +162,7 @@ def main():
         paths += [Path("macos/Bindings"), Path("macos/Resources/binaries/nvpn")]
         cli_version = capture(str(app / "macos/Resources/binaries/nvpn"), "version", "--verbose")
         assert "4.1.21" in cli_version and "0.4.117 (rev d0b18f2d1b)" in cli_version
-    else:
+    elif selected.startswith("ios"):
         # Preserve the original hosted path-bound proof. A local importer must
         # validate it as a NEW unsigned archive, not claim retained-archive reuse.
         paths += [Path("artifacts/mobile-ios/fips-linkage.json")]
@@ -181,6 +186,11 @@ def main():
         paths = [product / "Release-iphoneos/Nostr VPN.app",
                  product / "Release-iphoneos/NostrVpnIosUITests-Runner.app",
                  plans[0].relative_to(app), Path("artifacts/mobile-ios/fips-linkage.json")]
+    if selected == "macos-support":
+        expected = {"fixtures/desktop_manual_join_e2e_fixture",
+                    "drivers/desktop-manual-join-ax", "drivers/macos-service-toggle-ax"}
+        assert {str(p.relative_to(app / product)) for p in (app / product).rglob("*")
+                if p.is_file()} == expected, "support producer changed its output contract"
     files = []
     for relative in paths:
         path = app / relative
