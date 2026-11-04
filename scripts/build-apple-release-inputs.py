@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import plistlib
 import shutil
 import signal
 import subprocess
@@ -42,7 +43,7 @@ def exact_source(root, prefix):
 
 def main():
     selected, app_arg, fips_arg, output_arg = sys.argv[1:]
-    assert selected in {"ios", "macos"}
+    assert selected in {"ios", "ios-join", "macos"}
     assert platform.system() == "Darwin" and platform.machine() == "arm64"
     app, fips, output = (Path(p).resolve() for p in (app_arg, fips_arg, output_arg))
     assert not output.exists(), "output must be fresh"
@@ -82,17 +83,25 @@ def main():
     env["NVPN_BUILD_TIMESTAMP_UTC"] = datetime.fromtimestamp(
         int(env["SOURCE_DATE_EPOCH"]), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     env["SWIFTC_MAXIMUM_DETERMINISM"] = "1"
-    if selected == "ios":
-        product = Path("dist/ios/NostrVpnIos.xcarchive")
+    if selected in {"ios", "ios-join"}:
+        product = (Path("dist/ios/NostrVpnIos.xcarchive") if selected == "ios"
+                   else Path("ios/.build/JoinReleaseDerivedData/Build/Products"))
         recipes = [["tools/run-ios", "xcframework"], ["tools/run-ios", "project"],
                    ["xcodebuild", "-jobs", "2", "-project", "ios/NostrVpnIos.xcodeproj",
                     "-scheme", "NostrVpnIos", "-configuration", "Release",
-                    "-destination", "generic/platform=iOS", "-archivePath", str(product),
-                    "-derivedDataPath", "ios/.build/ReleaseDerivedData",
+                    "-destination", "generic/platform=iOS",
+                    "-derivedDataPath", ("ios/.build/ReleaseDerivedData" if selected == "ios"
+                                         else "ios/.build/JoinReleaseDerivedData"),
                     "CODE_SIGNING_ALLOWED=NO", "CODE_SIGNING_REQUIRED=NO",
                     "CODE_SIGN_IDENTITY=", "DEVELOPMENT_TEAM=",
                     "NVPN_BUILD_GIT_SHA=" + env["NVPN_BUILD_GIT_SHA"],
-                    "NVPN_BUILD_TIMESTAMP_UTC=" + env["NVPN_BUILD_TIMESTAMP_UTC"], "archive"]]
+                    "NVPN_BUILD_TIMESTAMP_UTC=" + env["NVPN_BUILD_TIMESTAMP_UTC"]]]
+        if selected == "ios":
+            recipes[-1] += ["-archivePath", str(product), "archive"]
+        else:
+            recipes[-1] += ["ARCHS=arm64",
+                           "OTHER_SWIFT_FLAGS=$(inherited) -DNVPN_RELEASE_JOIN_TESTING",
+                           "build-for-testing"]
     else:
         product = Path("macos/.build/ReleaseDerivedData/Build/Products/Release/Nostr VPN.app")
         recipes = [["scripts/macos-build", "macos-xcframework"],
@@ -138,7 +147,7 @@ def main():
             "exitCode": code, "abortReason": reason}, indent=2) + "\n")
     # Generated macOS bindings are included explicitly, never silently discarded.
     changed = capture("git", "diff", "--name-only", cwd=app).splitlines()
-    allowed_project = ("ios/NostrVpnIos.xcodeproj/project.pbxproj" if selected == "ios"
+    allowed_project = ("ios/NostrVpnIos.xcodeproj/project.pbxproj" if selected != "macos"
                        else "macos/NostrVpnMac.xcodeproj/project.pbxproj")
     assert all(p == allowed_project or
                (selected == "macos" and p.startswith("macos/Bindings/")) for p in changed)
@@ -156,6 +165,22 @@ def main():
         assert linkage["checkoutHead"] == fips_identity["commit"]
         assert linkage["checkoutTree"] == fips_identity["tree"]
         assert linkage["fipsCoreVersion"] == "0.4.117"
+    if selected == "ios-join":
+        # The existing physical join gate uses this separate test-only app;
+        # production's signed archive and Info.plist remain unchanged.
+        info = app / product / "Release-iphoneos/Nostr VPN.app/Info.plist"
+        with info.open("rb") as stream:
+            values = plistlib.load(stream)
+        values.update(CFBundleDisplayName="Nostr VPN Test Files",
+                      UIFileSharingEnabled=True,
+                      LSSupportsOpeningDocumentsInPlace=True)
+        info.write_bytes(plistlib.dumps(values))
+        plans = list((app / product).glob("*.xctestrun"))
+        assert len(plans) == 1, "expected one exact join test plan"
+        assert (app / product / "Release-iphoneos/NostrVpnIosUITests-Runner.app").is_dir()
+        paths = [product / "Release-iphoneos/Nostr VPN.app",
+                 product / "Release-iphoneos/NostrVpnIosUITests-Runner.app",
+                 plans[0].relative_to(app), Path("artifacts/mobile-ios/fips-linkage.json")]
     files = []
     for relative in paths:
         path = app / relative
@@ -191,6 +216,11 @@ def main():
                "archiveSha256": digest(archive), "distributionSigned": False,
                "signingIdentityProvided": False,
                "runtimeTestsExecuted": False, "releaseAccepted": False}
+    if selected == "ios-join":
+        receipt["testOnlyJoinVariant"] = True
+        receipt["joinTestingCompilationCondition"] = "NVPN_RELEASE_JOIN_TESTING"
+        receipt["fixtureInfo"] = {key: values[key] for key in (
+            "CFBundleDisplayName", "UIFileSharingEnabled", "LSSupportsOpeningDocumentsInPlace")}
     (output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 

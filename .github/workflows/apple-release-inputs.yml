@@ -2,6 +2,16 @@ name: Apple Release inputs
 
 on:
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: Unsigned products to prepare
+        type: choice
+        default: '["ios","macos"]'
+        options:
+          - '["ios","macos"]'
+          - '["ios"]'
+          - '["macos"]'
+          - '["ios-join"]'
   push:
     branches: [codex/nvpn-hosted-apple-producer]
     paths:
@@ -18,12 +28,14 @@ concurrency:
 
 jobs:
   inputs:
+    # Source pushes register the workflow; expensive builds are explicit.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        platform: [ios, macos]
+        platform: ${{ fromJSON(inputs.platforms || '["ios","macos"]') }}
     env:
       APP_COMMIT: 52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4
       APP_TREE: 2f722bd2e0f34e7b71cae665cce74c3080c99661
@@ -105,7 +117,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: app -> target
-          key: apple-release-${{ matrix.platform }}-xcode17F113-rust1.95.0
+          key: apple-release-${{ matrix.platform == 'macos' && 'macos' || 'ios' }}-xcode17F113-rust1.95.0
           cache-bin: false
           cache-on-failure: true
       - name: Install the pinned project generator
