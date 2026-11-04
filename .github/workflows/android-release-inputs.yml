@@ -98,7 +98,7 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
-          ref: 15872d0ee5572a6ffb340806ed68875a4f4a3a82
+          ref: 3f6dbc53c40d319c01e25ed177769d398d81bd1f
           path: admission
           persist-credentials: false
           sparse-checkout-cone-mode: false
