@@ -88,6 +88,16 @@ class HostedSupport(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "link"):
             support.support_evidence(self.package, self.signing)
 
+    def test_support_root_must_be_real_and_contained_in_package(self):
+        retained = self.package / "retained-support"
+        self.inputs.rename(retained)
+        with tempfile.TemporaryDirectory(prefix="nvpn-external-support-fixture-") as external:
+            for target in (retained, Path(external)):
+                self.inputs.symlink_to(target, target_is_directory=True)
+                with self.subTest(target=target), self.assertRaisesRegex(ValueError, "support directory"):
+                    support.support_evidence(self.package, self.signing)
+                self.inputs.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

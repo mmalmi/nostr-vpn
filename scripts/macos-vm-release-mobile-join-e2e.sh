@@ -1281,10 +1281,12 @@ python3 - \
   "$APP_GIT_TREE" \
   "$ANDROID_ARTIFACT_RECEIPT" \
   "$ANDROID_INSTALL_RECEIPT" \
-  "$MACOS_MOBILE_DIRECTIONS" "$REUSED_PIXEL_RECEIPT_SHA256" <<'PY'
+  "$MACOS_MOBILE_DIRECTIONS" "$REUSED_PIXEL_RECEIPT_SHA256" \
+  "$ROOT" "$RESULT_DIR/macos/verification.json" <<'PY'
 import hashlib
 import json
 import pathlib
+import subprocess
 import sys
 
 timings = {}
@@ -1317,6 +1319,24 @@ if set(timings) != expected_timings or any(
     raise SystemExit("macOS/mobile join timing receipt is incomplete or slow")
 artifact_path = pathlib.Path(sys.argv[3])
 artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+import_verification = json.loads(pathlib.Path(sys.argv[14]).read_text(encoding="utf-8"))
+if (
+    import_verification.get("receiptSchema") != 1
+    or import_verification.get("remoteImportVerified") is not True
+    or import_verification.get("artifactReceiptSha256")
+    != hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+):
+    raise SystemExit("macOS join artifact differs from the verified import")
+# Reuse the mandatory schema/origin/hosted-producer validator without repeating
+# signing or executable comparison after the runtime gate.
+subprocess.run([
+    "node", "--input-type=module", "-e",
+    "import {readFileSync} from 'node:fs'; import {pathToFileURL} from 'node:url';"
+    "const [root,path]=process.argv.slice(1);"
+    "const {validateMacosBuildProvenance}=await import(pathToFileURL(root+'/scripts/macos-hosted-provenance.mjs'));"
+    "validateMacosBuildProvenance(JSON.parse(readFileSync(path,'utf8')));",
+    sys.argv[13], str(artifact_path),
+], check=True)
 component_proof = artifact.get("componentInputProof") or {}
 ios_artifact_path = None if selected == "pixel" else pathlib.Path(sys.argv[4])
 ios_artifact = None if selected == "pixel" else json.loads(
@@ -1344,7 +1364,7 @@ if selected == "all" and (
 ):
     raise SystemExit("macOS/iPhone directional relaunch evidence is incomplete")
 if (
-    artifact.get("receiptSchema") != 1
+    artifact.get("receiptSchema") not in (1, 2)
     or component_proof.get("candidate_app_git_sha") != app_sha
     or component_proof.get("candidate_app_git_tree") != app_tree
     or not artifact.get("appGitSha")

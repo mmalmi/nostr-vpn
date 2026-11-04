@@ -25,8 +25,10 @@ SUPPORT_FILES = {
 
 def support_evidence(package, signing):
     from macos_release_join_artifact import inspect_signature, verify_signature
-    package = pathlib.Path(package)
+    package = pathlib.Path(package).resolve(strict=True)
     root = package / "hosted-support"
+    require(root.is_dir() and not root.is_symlink() and root.resolve().parent == package,
+            "hosted support directory must be real and contained in its package")
     proof = verified_inputs(root, "macos-support")
     require(all(proof["authentication"].get(key) == value
                 for key, value in SUPPORT_AUTHENTICATION.items()),
