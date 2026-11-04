@@ -7,7 +7,7 @@ on:
         description: Inspect hosted inputs before admitting unsigned compilation
         type: choice
         default: inventory
-        options: [inventory, qualify-ndk]
+        options: [inventory, qualify-ndk, build]
   push:
     branches: [codex/nvpn-hosted-apple-producer, codex/nvpn-hosted-android-producer]
     paths:
@@ -24,10 +24,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  producer-checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/build-android-release-inputs.py
+            scripts/android-release-inputs.json
+            scripts/test-android-release-inputs.py
+      - name: Verify producer boundaries without compiling products
+        run: python3 scripts/test-android-release-inputs.py
   inputs:
     if: github.event_name == 'workflow_dispatch'
+    needs: producer-checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 100
     steps:
       - name: Check capacity before source checkout
         run: |
@@ -45,14 +60,33 @@ jobs:
           sparse-checkout: |
             scripts/build-android-release-inputs.py
             scripts/android-release-inputs.json
+      - name: Check frozen application source
+        if: inputs.operation == 'build'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4
+          path: app
+          persist-credentials: false
+      - name: Check frozen FIPS source
+        if: inputs.operation == 'build'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: mmalmi/fips
+          ref: d0b18f2d1b2e97d42fa8460a0c70a8dffeaa2552
+          path: fips
+          persist-credentials: false
       - name: Qualify inputs without compiling or signing
+        if: inputs.operation != 'build'
         env:
           ANDROID_INPUT_OPERATION: ${{ inputs.operation }}
         run: python3 scripts/build-android-release-inputs.py "$ANDROID_INPUT_OPERATION" qualification
+      - name: Produce the unsigned frozen Android bundle
+        if: inputs.operation == 'build'
+        run: python3 scripts/build-android-release-inputs.py build android-release-inputs --app app --fips fips
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:
-          name: android-release-input-inventory
-          path: qualification/
+          name: ${{ inputs.operation == 'build' && 'android-release-inputs-52a1f8ee' || 'android-release-input-inventory' }}
+          path: ${{ inputs.operation == 'build' && 'android-release-inputs/' || 'qualification/' }}
           if-no-files-found: error
           retention-days: 14
