@@ -7,7 +7,7 @@ on:
         description: Inspect hosted inputs before admitting unsigned compilation
         type: choice
         default: inventory
-        options: [inventory]
+        options: [inventory, qualify-ndk]
   push:
     branches: [codex/nvpn-hosted-apple-producer, codex/nvpn-hosted-android-producer]
     paths:
@@ -45,8 +45,10 @@ jobs:
           sparse-checkout: |
             scripts/build-android-release-inputs.py
             scripts/android-release-inputs.json
-      - name: Inventory native tools without compiling or signing
-        run: python3 scripts/build-android-release-inputs.py inventory qualification
+      - name: Qualify inputs without compiling or signing
+        env:
+          ANDROID_INPUT_OPERATION: ${{ inputs.operation }}
+        run: python3 scripts/build-android-release-inputs.py "$ANDROID_INPUT_OPERATION" qualification
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: always()
         with:

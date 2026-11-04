@@ -13,6 +13,9 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import tempfile
+import urllib.request
+import zipfile
 
 PINS = Path(__file__).with_name("android-release-inputs.json")
 SIGNING_VARIABLES = (
@@ -147,14 +150,69 @@ def inventory(output, pins):
                       ("imageVersion", "freeBytes", "requiredBuildEntryBytes", "cpuCount", "memory", "compiled")}))
 
 
+def qualify_ndk(output, pins):
+    require(os.environ.get("GITHUB_ACTIONS") == "true" and platform.system() == "Linux",
+            "NDK input qualification runs on the hosted producer")
+    require(not output.exists(), "Qualification output must be new")
+    output.mkdir()
+    initial_free = shutil.disk_usage(output).free
+    require(initial_free >= required_free_bytes(pins["capacity"]),
+            "20 GiB reserve plus the declared growth budget is unavailable")
+    archive_pin = pins["ndkArchive"]
+    minimum_free = initial_free
+    with tempfile.TemporaryDirectory(prefix="ndk-input-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+        archive = Path(temporary) / "ndk.zip"
+        sha1, sha256, total = hashlib.sha1(), hashlib.sha256(), 0
+        with urllib.request.urlopen(archive_pin["url"], timeout=60) as response, archive.open("xb") as target:
+            require(response.geturl().startswith("https://"), "NDK download left HTTPS")
+            while block := response.read(1024 * 1024):
+                total += len(block)
+                require(total <= archive_pin["size"], "NDK archive exceeded the published size")
+                minimum_free = min(minimum_free, shutil.disk_usage(output).free)
+                require(minimum_free >= pins["capacity"]["physicalFloorBytes"] + 1024**3,
+                        "NDK download reached the reserve abort margin")
+                target.write(block)
+                sha1.update(block)
+                sha256.update(block)
+        require(total == archive_pin["size"] and sha1.hexdigest() == archive_pin["publishedSha1"],
+                "NDK archive differs from Android's published r28c identity")
+        with zipfile.ZipFile(archive) as package:
+            properties_bytes = package.read("android-ndk-r28c/source.properties")
+            require(b"Pkg.Revision = 28.2.13676358" in properties_bytes, "NDK package revision differs")
+            expanded_bytes = sum(entry.file_size for entry in package.infolist())
+            clang_name = "android-ndk-r28c/toolchains/llvm/prebuilt/linux-x86_64/bin/clang-19"
+            with package.open(clang_name) as stream:
+                clang_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+        sdk = Path(os.environ.get("ANDROID_HOME") or os.environ["ANDROID_SDK_ROOT"])
+        sdk_files = {}
+        for name in ("android.jar", "core-for-system-modules.jar", "framework.aidl"):
+            path = sdk / "platforms/android-36" / name
+            if path.is_file():
+                sdk_files[name] = digest(path)
+        record = {"schema": 1, "source": archive_pin, "size": total,
+                  "sha1": sha1.hexdigest(), "sha256": sha256.hexdigest(),
+                  "expandedBytes": expanded_bytes, "clangSha256": clang_hash,
+                  "sourcePropertiesSha256": hashlib.sha256(properties_bytes).hexdigest(),
+                  "sdk36Files": sdk_files,
+                  "initialFreeBytes": initial_free, "minimumFreeBytes": minimum_free,
+                  "extracted": False, "executed": False, "compiled": False,
+                  "producerCommit": os.environ["GITHUB_SHA"], "runId": os.environ["GITHUB_RUN_ID"]}
+        (output / "ndk-qualification.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        print(json.dumps({key: record[key] for key in
+                          ("sha256", "expandedBytes", "minimumFreeBytes", "executed", "compiled")}))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("inventory",))
+    parser.add_argument("operation", choices=("inventory", "qualify-ndk"))
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     pins = json.loads(PINS.read_text())
     unsigned_environment(os.environ)
-    inventory(args.output, pins)
+    if args.operation == "inventory":
+        inventory(args.output, pins)
+    else:
+        qualify_ndk(args.output, pins)
 
 
 if __name__ == "__main__":
