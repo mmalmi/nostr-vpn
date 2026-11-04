@@ -60,6 +60,9 @@ const harnessOnlyPaths = new Set([
   // Authenticates existing hosted outputs and binds their signing/runtime
   // evidence; it never compiles or changes product content.
   'scripts/apple_hosted_admission.py',
+  'scripts/android_hosted_admission.py',
+  'scripts/android_hosted_content.py',
+  'scripts/android_hosted_inputs.py',
   'scripts/macos_hosted_admission.py',
   'scripts/macos_hosted_support.py',
   'scripts/macos-hosted-provenance.mjs',
