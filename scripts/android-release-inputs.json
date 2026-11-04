@@ -6521,6 +6521,21 @@
       },
       {
         "group": "com.android.tools",
+        "name": "play-sdk-proto",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "play-sdk-proto-31.11.0.jar",
+            "sha256": "c6fc15a5c203064cfd2c8a176fdeac72ae0a2d743ec47a2e66a0238d8d870b6b"
+          },
+          {
+            "name": "play-sdk-proto-31.11.0.pom",
+            "sha256": "4c4c29ea3f38b2175cc98bb8d3b7e03c0fc5a9606695c8e68806c9908d302050"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools",
         "name": "repository",
         "version": "31.11.0",
         "artifacts": [
@@ -6928,6 +6943,51 @@
         ]
       },
       {
+        "group": "com.android.tools.external.com-intellij",
+        "name": "intellij-core",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "intellij-core-31.11.0.jar",
+            "sha256": "36815dd436cb9c02cb255e43e9c971422d10c33e6fd9c4fe1e48c71e92b180c6"
+          },
+          {
+            "name": "intellij-core-31.11.0.pom",
+            "sha256": "a707d169609039c21b4423531e9bcbbdb0444478e4f1cdb2f08e5471fab36ac8"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools.external.com-intellij",
+        "name": "kotlin-compiler",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "kotlin-compiler-31.11.0.jar",
+            "sha256": "b24d171f6ccaeaba526d7de6d9f94149ee12bad9a48098c558d1f47dfd3e0bb5"
+          },
+          {
+            "name": "kotlin-compiler-31.11.0.pom",
+            "sha256": "9eec204e65f5fd012fb661dd63bd6d5564d7ad55bea1fce2d217d8f8fe9799a4"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools.external.org-jetbrains",
+        "name": "uast",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "uast-31.11.0.jar",
+            "sha256": "97ba20c9eaf66f5dd00c787b817b39992838155f96065e6629d08e18633ff55f"
+          },
+          {
+            "name": "uast-31.11.0.pom",
+            "sha256": "a6991340dff4a2dfe5269027aabe64c84801a145b71a0fb0d3f7682af81eb3d5"
+          }
+        ]
+      },
+      {
         "group": "com.android.tools.layoutlib",
         "name": "layoutlib-api",
         "version": "31.11.0",
@@ -6939,6 +6999,66 @@
           {
             "name": "layoutlib-api-31.11.0.pom",
             "sha256": "c17d4244223d4649c8af48da61263b1be35836ffe276f7fc809b96224659befe"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools.lint",
+        "name": "lint",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "lint-31.11.0.jar",
+            "sha256": "5453d4519d7cb1fe729fe353b11ca9c14b4573baac4b5a191708f8721e7e303b"
+          },
+          {
+            "name": "lint-31.11.0.pom",
+            "sha256": "dcbe3dd5c565af4314c754d61b232be28ee560a4fc9268fa0c5a0d9ae36eaa7f"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools.lint",
+        "name": "lint-api",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "lint-api-31.11.0.jar",
+            "sha256": "bce7f154e8dc63d23684e997148350d4ee260bb0f55f2d17842a618ff813b19a"
+          },
+          {
+            "name": "lint-api-31.11.0.pom",
+            "sha256": "eb82110d53ccb87db94aaa5fcaabfe2c44c00798ed51ed8c8436762f128cfec9"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools.lint",
+        "name": "lint-checks",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "lint-checks-31.11.0.jar",
+            "sha256": "268dfa6f53da439480f18f79bf881b9183ea2ea8a062819076d138210ddfa953"
+          },
+          {
+            "name": "lint-checks-31.11.0.pom",
+            "sha256": "7da352eecb1d98954f7bb3f5cf383af6b6dfd208c2d067977856b13e1ca77fce"
+          }
+        ]
+      },
+      {
+        "group": "com.android.tools.lint",
+        "name": "lint-gradle",
+        "version": "31.11.0",
+        "artifacts": [
+          {
+            "name": "lint-gradle-31.11.0.jar",
+            "sha256": "a42b6a41c436d90ca31a13d67afba1157b157efc892a7496f67432bf8a831cbd"
+          },
+          {
+            "name": "lint-gradle-31.11.0.pom",
+            "sha256": "a6c30f5e119d64cc16a86ebb59659163a5478ed146e2638ffda4feaadab2ff9a"
           }
         ]
       },
@@ -10020,6 +10140,21 @@
         ]
       },
       {
+        "group": "org.codehaus.groovy",
+        "name": "groovy",
+        "version": "3.0.22",
+        "artifacts": [
+          {
+            "name": "groovy-3.0.22.jar",
+            "sha256": "c92c92c4b9b183f9981ba7399f36592e5e3ad6f4cdac7101b5a22cc17998d13f"
+          },
+          {
+            "name": "groovy-3.0.22.pom",
+            "sha256": "51b731e5cff121efd6d320f4a801cd616869c5bed4e9c0e353b29060b1d2355f"
+          }
+        ]
+      },
+      {
         "group": "org.codehaus.mojo",
         "name": "animal-sniffer-annotations",
         "version": "1.17",
@@ -12182,6 +12317,20 @@
           "org.jetbrains.kotlin:kotlin-scripting-jvm:2.2.0"
         ],
         "reason": "Strict producer41927029098 rejected late-bound Kotlin tooling entries; include retained exact2.2.0 tooling and matching Compose compiler before execution"
+      },
+      {
+        "components": [
+          "org.codehaus.groovy:groovy:3.0.22",
+          "com.android.tools.external.com-intellij:intellij-core:31.11.0",
+          "com.android.tools.external.com-intellij:kotlin-compiler:31.11.0",
+          "com.android.tools.lint:lint:31.11.0",
+          "com.android.tools.lint:lint-api:31.11.0",
+          "com.android.tools.lint:lint-checks:31.11.0",
+          "com.android.tools.lint:lint-gradle:31.11.0",
+          "com.android.tools:play-sdk-proto:31.11.0",
+          "com.android.tools.external.org-jetbrains:uast:31.11.0"
+        ],
+        "reason": "Strict release lint41928001897 rejected missing entries before execution; retained public artifacts checked against content-addressed identities, with official repository reads for any absent cache item"
       }
     ]
   },
