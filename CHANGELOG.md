@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.21 - 2026-11-03
+## 4.1.21 - 2026-11-04
 
 ### Release notes
 
@@ -14,6 +14,8 @@ All notable changes to this project are documented in this file.
   the amount they can provide.
 - Send files to a network peer and resume interrupted transfers. Received
   files are available from the inbox.
+- Upgraded seeds can reconnect a restarted peer over a secure WebSocket
+  when its UDP path is unavailable.
 - The built-in updater uses Hashtree 0.3.0 to read signed releases.
 
 ## 4.1.20 - 2026-11-03

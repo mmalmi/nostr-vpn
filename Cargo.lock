@@ -3885,9 +3885,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.46"
+version = "0.5.49"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08cf630008abbc4b2d60e524e9165af4b2f79513fcb519eedac513f6863066d0"
+checksum = "177367fab2d93428bd30d16f6dd432cfe9312e45bfb7f025533a2969a68177fc"
 dependencies = [
  "async-trait",
  "nostr",
@@ -4385,9 +4385,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.115"
+version = "0.4.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6909318f877a31517d29d1ba923dab19a73abd6c7f8a0421f2b7f83492d0080"
+checksum = "4700fa515dd1b191b52f6377a3510ed15f81f0284cfbd6cb3e51b95893ea9ad9"
 dependencies = [
  "async-wsocket",
  "base64 0.22.1",
@@ -4421,6 +4421,7 @@ dependencies = [
  "sha2 0.10.9",
  "simple-dns",
  "socket2 0.6.4",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
@@ -4435,18 +4436,18 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.115"
+version = "0.4.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c667a0ab8bc373e581b59fc5688bfe1b2ca57ffdb419f8da1d0746834ce582f9"
+checksum = "864792f02b3a7ff5491765cdf22eb3d5390eb1cb0007f31ab44186389e901b37"
 dependencies = [
  "nvpn-fips-core",
 ]
 
 [[package]]
 name = "nvpn-fips-file-transfer"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2004aae502cb19c48bea1c001eaece94c9bfc1b4862e3d452efe68a6d61dc5bf"
+checksum = "70c83f0f5e88d5dfce1e1f5972c67608fd4d4504564f9ed8130f04c1d665ccdf"
 dependencies = [
  "flume",
  "libc",
@@ -4483,9 +4484,9 @@ checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.50"
+version = "0.2.52"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e4a40810bbc2f39388d68fdecde5f9d43c5ea98428a89928ac264bde552cb14"
+checksum = "8b13bd8228c73247fa0396b6c2103502f8b315c9c12626ee9bb6e67e53a2f124"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
