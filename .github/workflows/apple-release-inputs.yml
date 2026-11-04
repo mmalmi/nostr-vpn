@@ -1,0 +1,84 @@
+name: Apple Release inputs
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/nvpn-hosted-apple-producer]
+    paths:
+      - .github/workflows/apple-release-inputs.yml
+      - scripts/build-apple-release-inputs.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-release-inputs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  inputs:
+    runs-on: macos-26
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, macos]
+    env:
+      APP_COMMIT: 52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4
+      APP_TREE: 2f722bd2e0f34e7b71cae665cce74c3080c99661
+      FIPS_COMMIT: d0b18f2d1b2e97d42fa8460a0c70a8dffeaa2552
+      FIPS_TREE: 08ceced056b8592a2b2c840c4c276bf01cf28c85
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      RUSTUP_TOOLCHAIN: 1.95.0
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: producer
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.APP_COMMIT }}
+          path: app
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: mmalmi/fips
+          ref: ${{ env.FIPS_COMMIT }}
+          path: fips
+          persist-credentials: false
+      - name: Select and verify the qualified Apple SDK
+        run: |
+          test "$(uname -m)" = arm64
+          test "$(xcodebuild -version)" = $'Xcode 26.6\nBuild version 17F113'
+          test "$(xcrun --sdk iphoneos --show-sdk-version)" = 26.5
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = 26.5
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+        with:
+          toolchain: 1.95.0
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: app -> target
+          key: apple-release-${{ matrix.platform }}-xcode17F113-rust1.95.0
+          cache-bin: false
+          cache-on-failure: true
+      - name: Install the pinned project generator
+        run: |
+          curl --fail --location --retry 2 https://github.com/yonaskolb/XcodeGen/releases/download/2.45.4/xcodegen.zip -o "$RUNNER_TEMP/xcodegen.zip"
+          echo "090ec29491aad50aec10631bf6e62253fed733c50f3aab0f5ffc86bc170bdbef  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/pinned-xcodegen"
+          echo "$RUNNER_TEMP/pinned-xcodegen/xcodegen/bin" >> "$GITHUB_PATH"
+      - name: Build the exact source's unsigned Release products
+        run: python3 producer/scripts/build-apple-release-inputs.py "${{ matrix.platform }}" app fips output
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: apple-release-inputs-${{ matrix.platform }}-${{ env.APP_COMMIT }}
+          path: output/
+          if-no-files-found: error
+          retention-days: 14
