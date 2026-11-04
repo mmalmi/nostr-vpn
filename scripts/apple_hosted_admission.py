@@ -27,6 +27,12 @@ APP = {"commit": "52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4",
 FIPS = {"commit": "d0b18f2d1b2e97d42fa8460a0c70a8dffeaa2552",
         "tree": "08ceced056b8592a2b2c840c4c276bf01cf28c85"}
 REALIZED_LOCK = "41067773c75d291993622ac7d0a66ac77e3ce050ff6b9a646466a413f5cb065a"
+IOS_SIGNING_NORMALIZATION = "codesign-remove-signature-linkedit-allocation-v1"
+IOS_EXECUTABLES = {
+    "appNormalizedExecutableSha256": "Nostr VPN",
+    "packetTunnelNormalizedExecutableSha256": "PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel",
+    "shareFilesNormalizedExecutableSha256": "PlugIns/ShareFiles.appex/ShareFiles",
+}
 
 
 def require(condition, message):
@@ -375,12 +381,30 @@ def local_build_contract(source, fips, receipt):
             "xcode": receipt["xcode"], "sdks": receipt["sdks"]}
 
 
+def ios_executable_identity(path):
+    segment, signature = macho_linkedit(path)
+    if signature is None:
+        require(segment["allocation"] == (segment["fileSize"] + 16383) // 16384 * 16384,
+                "unsigned iOS LINKEDIT allocation differs from its content")
+        return digest(path)
+    with tempfile.TemporaryDirectory(prefix="nvpn-ios-hosted-signature-") as temporary:
+        stripped = pathlib.Path(temporary) / "executable"
+        shutil.copy2(path, stripped)
+        subprocess.run(["codesign", "--remove-signature", str(stripped)], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        canonicalize_stripped_linkedit(path, stripped)
+        return digest(stripped)
+
+
 def verify_ios_lineage(unsigned_app, signed_app):
     from ios_frozen_archive import bundle_identity, unsigned_content_manifest
     unsigned_identity = bundle_identity(unsigned_app, require_profiles=False)
     signed_identity = bundle_identity(signed_app)
-    # Only plist serialization and code signatures may differ during signing.
+    # Only plist serialization, code signatures, and their proven LINKEDIT
+    # allocation may differ. Legacy frozen-archive identities stay unchanged.
     for app, identity in ((unsigned_app, unsigned_identity), (signed_app, signed_identity)):
+        for key, relative in IOS_EXECUTABLES.items():
+            identity[key] = ios_executable_identity(app / relative)
         sha, count = unsigned_content_manifest(app, canonicalize_plists=True)
         identity["unsignedContentManifestSha256"] = sha
         identity["unsignedContentFileCount"] = count
@@ -414,6 +438,7 @@ def prepare_ios_join_admission(root, signed_app):
     unsigned_app = root / "unsigned/ios/.build/JoinReleaseDerivedData/Build/Products/Release-iphoneos/Nostr VPN.app"
     metadata = root / "unsigned/artifacts/mobile-ios/fips-linkage.json"
     return {"receiptSchema": 1, "artifactType": "hosted iOS join variant admission",
+            "normalization": IOS_SIGNING_NORMALIZATION,
             "inputs": inputs, "unsignedIdentity": verify_ios_lineage(unsigned_app, signed_app),
             "finalExecutableAudit": ios_executable_audit(signed_app),
             "historicalFipsMetadata": load(metadata), "historicalFipsMetadataSha256": digest(metadata)}
@@ -423,7 +448,8 @@ def validate_ios_join_admission(receipt_path, receipt, signed_app):
     root = receipt_path.parent / "hosted-join"
     proof = receipt.get("hostedJoinBuild", {})
     require(proof.get("receiptSchema") == 1
-            and proof.get("artifactType") == "hosted iOS join variant admission",
+            and proof.get("artifactType") == "hosted iOS join variant admission"
+            and proof.get("normalization") == IOS_SIGNING_NORMALIZATION,
             "join variant has no independent hosted admission")
     require(proof.get("inputs") == verified_inputs(root, "ios-join"),
             "hosted join input binding changed")
@@ -464,6 +490,7 @@ def prepare_ios_admission(input_path, receipt_path, args, signed_app):
     unsigned_identity = verify_ios_lineage(unsigned_app, signed_app)
     audit = ios_executable_audit(signed_app)
     return {"receiptSchema": 1, "artifactType": "hosted iOS archive admission",
+            "normalization": IOS_SIGNING_NORMALIZATION,
             "inputs": inputs, "unsignedIdentity": unsigned_identity,
             "historicalFipsMetadata": load(metadata),
             "historicalFipsMetadataSha256": digest(metadata),
@@ -497,7 +524,8 @@ def validate_ios_admission(receipt_path, archive):
             and canonical_digest(proof) == archive.get("hostedBuildSha256"),
             "hosted admission is absent, changed or bound to another frozen archive")
     require(proof.get("receiptSchema") == 1
-            and proof.get("artifactType") == "hosted iOS archive admission",
+            and proof.get("artifactType") == "hosted iOS archive admission"
+            and proof.get("normalization") == IOS_SIGNING_NORMALIZATION,
             "wrong hosted admission proof")
     inputs = verified_inputs(receipt_path.parent / "hosted", "ios")
     require(proof["inputs"] == inputs, "hosted input binding changed")
@@ -520,9 +548,14 @@ def validate_ios_admission(receipt_path, archive):
     rebuild = proof.get("fipsDependencyRebuild", {})
     require(rebuild.get("location") == "hosted" and rebuild.get("localRebuildMarkerCreated") is False,
             "hosted FIPS rebuild was misrepresented as a local rebuild")
+    from ios_frozen_archive import bundle_identity
+    signed_identity = bundle_identity(signed_app)
     for key, value in proof["unsignedIdentity"].items():
         if key not in {"unsignedContentManifestSha256", "unsignedContentFileCount"}:
-            require(archive.get("identity", {}).get(key) == value,
+            # The frozen receipt keeps its original signing-dependent hashes;
+            # bind them to the current signed bytes as well as proving lineage.
+            expected = signed_identity[key] if key in IOS_EXECUTABLES else value
+            require(archive.get("identity", {}).get(key) == expected,
                     "frozen archive identity differs from hosted input at " + key)
     evidence_root = receipt_path.parent / "hosted/artifact/output"
     require(proof.get("hostedBuildLogSha256") == digest(evidence_root / "build.log")

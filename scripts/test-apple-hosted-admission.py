@@ -7,6 +7,7 @@ import io
 import plistlib
 import shutil
 import struct
+import subprocess
 from pathlib import Path
 import sys
 import tarfile
@@ -161,13 +162,20 @@ class HostedAdmission(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "uses the platform's Mach-O signature remover")
     def test_current_executables_and_content_must_match_immutable_inputs(self):
         unsigned, signed = self.root / "unsigned.app", self.root / "signed.app"
+        executable_fixture = self.root / "arm64-executable"
+        subprocess.run(["lipo", "/usr/bin/true", "-thin", "arm64e",
+                        "-output", str(executable_fixture)], check=True)
         for app in (unsigned, signed):
             for relative, executable in (("", "Nostr VPN"),
                     ("PlugIns/Nostr VPN Tunnel.appex", "Nostr VPN Tunnel"),
                     ("PlugIns/ShareFiles.appex", "ShareFiles")):
                 bundle = app / relative
                 bundle.mkdir(parents=True)
-                shutil.copyfile("/usr/bin/true", bundle / executable)
+                shutil.copyfile(executable_fixture, bundle / executable)
+                if app == unsigned:
+                    subprocess.run(["codesign", "--remove-signature", str(bundle / executable)],
+                                   check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    hosted.canonicalize_stripped_linkedit(executable_fixture, bundle / executable)
                 (bundle / executable).chmod(0o755)
                 (bundle / "Info.plist").write_bytes(plistlib.dumps({
                     "CFBundleIdentifier": "fixture." + executable.replace(" ", ""),
