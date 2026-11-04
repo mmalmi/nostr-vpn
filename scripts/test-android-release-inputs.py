@@ -4,6 +4,8 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import zipfile
@@ -66,6 +68,19 @@ class AndroidInputBoundary(unittest.TestCase):
         for name in ("META-INF/SIGNER.RSA", "base/lib/x86_64/libother.so", "base/lib/arm64-v8a/../other.so"):
             with self.subTest(name=name), self.bundle(name) as package, self.assertRaises(ValueError):
                 producer.bundle_native_entries(package, "arm64-v8a")
+
+    def test_binary_download_stdout_is_not_mixed_with_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            pins = {"capacity": {"physicalFloorBytes": 20 * 1024**3,
+                    "maximumOwnGrowthBudgetBytes": 128 * 1024**2, "concurrentGrowthBudgetBytes": 0}}
+            session = producer.BuildSession(root, pins)
+            target = root / "download.zip"
+            session.run([sys.executable, "-c",
+                         "import os;os.write(1,b'PK\\x00\\x01fixture');os.write(2,b'diagnostic\\n')"],
+                        stdout_path=target)
+            self.assertEqual(target.read_bytes(), b"PK\x00\x01fixture")
+            self.assertEqual((root / "build.log").read_text(), "diagnostic\n")
 
 
 if __name__ == "__main__":

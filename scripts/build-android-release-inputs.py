@@ -6,6 +6,7 @@ The first phase only reads installed tools and their identities.
 """
 
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -259,14 +260,16 @@ class BuildSession:
             self.abort_reason = reason
             raise ValueError(reason)
 
-    def run(self, args, cwd=None, env=None):
+    def run(self, args, cwd=None, env=None, stdout_path=None):
         self.guard()
         entry = {"argv": [str(arg) for arg in args], "exitCode": None}
         self.commands.append(entry)
         print("Producer command:", Path(str(args[0])).name, flush=True)
-        with (self.output / "build.log").open("a") as log:
-            child = subprocess.Popen(args, cwd=cwd, env=env, stdout=log,
-                                     stderr=subprocess.STDOUT, start_new_session=True)
+        with ExitStack() as stack:
+            log = stack.enter_context((self.output / "build.log").open("a"))
+            destination = stack.enter_context(stdout_path.open("xb")) if stdout_path else log
+            child = subprocess.Popen(args, cwd=cwd, env=env, stdout=destination,
+                                     stderr=log, start_new_session=True)
             try:
                 while child.poll() is None:
                     self.guard()
@@ -545,12 +548,95 @@ def build(output, pins, app, fips):
                 shutil.copytree(report, output / "verification-failure")
 
 
+def collect_receipts(output, pins, run_id, producer_commit):
+    """Read an authenticated hosted artifact; never run or admit its products."""
+    from android_hosted_content import zip_identity
+    require(os.environ.get("GITHUB_ACTIONS") == "true", "Artifact receipt collection stays off the Mac")
+    require(run_id > 0 and len(producer_commit) == 40 and
+            all(c in "0123456789abcdef" for c in producer_commit), "Exact producer identity is required")
+    require(not output.exists(), "Receipt collection output must be new")
+    output.mkdir()
+    session = BuildSession(output, pins)
+    repository = "mmalmi/nostr-vpn"
+    def api(path):
+        return json.loads(capture("gh", "api", "repos/" + repository + path))
+    run = api("/actions/runs/" + str(run_id))
+    require(run["id"] == run_id and run["head_sha"] == producer_commit and
+            run["path"] == ".github/workflows/android-release-inputs.yml" and
+            run["repository"]["full_name"] == repository and run["event"] == "workflow_dispatch" and
+            run["status"] == "completed" and run["conclusion"] == "success", "Producer run is not the exact successful run")
+    jobs = [job for job in api("/actions/runs/" + str(run_id) + "/jobs?per_page=100")["jobs"] if job["name"] == "inputs"]
+    require(len(jobs) == 1, "Producer platform job is ambiguous")
+    job = jobs[0]
+    require(job["head_sha"] == producer_commit and job["run_id"] == run_id and
+            job["run_attempt"] == run["run_attempt"] and job["status"] == "completed" and
+            job["conclusion"] == "success", "Producer platform job did not succeed on this attempt")
+    artifacts = [item for item in api("/actions/runs/" + str(run_id) + "/artifacts")["artifacts"]
+                 if item["name"] == "android-release-inputs-52a1f8ee" and not item["expired"]]
+    require(len(artifacts) == 1, "Producer service artifact is ambiguous")
+    artifact = artifacts[0]
+    require(artifact["workflow_run"]["id"] == run_id and artifact["workflow_run"]["head_sha"] == producer_commit
+            and artifact["created_at"] >= job["started_at"] and 0 < artifact["size_in_bytes"] <= 512 * 1024**2,
+            "Service artifact identity, attempt or size differs")
+    with tempfile.TemporaryDirectory(prefix="android-artifact-proof-", dir=os.environ["RUNNER_TEMP"]) as temporary:
+        root = Path(temporary)
+        package = root / "github-artifact.zip"
+        session.run(["gh", "api", "repos/" + repository + "/actions/artifacts/" + str(artifact["id"]) + "/zip"],
+                    stdout_path=package)
+        require(package.stat().st_size == artifact["size_in_bytes"] and "sha256:" + digest(package) == artifact["digest"],
+                "Service ZIP bytes differ from GitHub's authenticated digest")
+        identities = zip_identity(package)
+        require(identities["provenance/receipt.json"]["bytes"] <= 2 * 1024**2, "Producer receipt exceeds its bound")
+        with zipfile.ZipFile(package) as archive:
+            receipt_bytes = archive.read("provenance/receipt.json")
+            receipt = json.loads(receipt_bytes)
+            require(receipt["source"] == {key: {name: pins[key][name] for name in ("commit", "tree")}
+                                          for key in ("app", "fips")}, "Artifact source graph differs")
+            require(receipt["producer"] == {"commit": producer_commit, "runId": str(run_id), "attempt": str(run["run_attempt"]),
+                                          "job": "inputs", "repository": repository}, "Artifact producer identity differs")
+            require(receipt["buildExitCode"] == 0 and receipt["signed"] is False and receipt["releaseAccepted"] is False,
+                    "Artifact is not the expected unsigned producer output")
+            require(set(identities) == set(receipt["files"]) | {"provenance/receipt.json"}, "ZIP export manifest differs")
+            for name, expected in receipt["files"].items():
+                require(identities[name] == {"sha256": expected["sha256"], "bytes": expected["size"]},
+                        "Exported file does not match its recorded identity")
+            aab = root / "app-release.aab"
+            with archive.open("unsigned/app-release.aab") as source, aab.open("xb") as destination:
+                shutil.copyfileobj(source, destination)
+        bundle = zip_identity(aab)
+        native = {name: identity for name, identity in bundle.items() if name.startswith("base/lib/") and name.endswith(".so")}
+        require(set(native) == set(receipt["jniPayloads"]), "AAB native payload set differs")
+        for name, identity in native.items():
+            exported = identities["unsigned/jni/" + name.removeprefix("base/lib/")]
+            require(identity == exported and identity == {"sha256": receipt["jniPayloads"][name]["sha256"],
+                    "bytes": receipt["jniPayloads"][name]["size"]}, "AAB and exported JNI bytes differ")
+        jni = native["base/lib/arm64-v8a/libnostr_vpn_app_core.so"]
+        require(jni == {"sha256": receipt["compiledJni"]["sha256"], "bytes": receipt["compiledJni"]["size"]},
+                "AAB does not contain the recorded compiled JNI")
+        session.guard()
+        (output / "producer-receipt.json").write_bytes(receipt_bytes)
+        proof = {"schema": 1, "productExecuted": False, "nativeAdmissionPerformed": False,
+                 "authentication": {"repository": repository, "workflow": run["path"], "producerCommit": producer_commit,
+                 "runId": str(run_id), "runAttempt": str(run["run_attempt"]), "jobId": job["id"], "jobName": "inputs",
+                 "jobConclusion": "success", "artifactId": artifact["id"], "artifactName": artifact["name"],
+                 "artifactBytes": artifact["size_in_bytes"], "artifactSha256": digest(package)},
+                 "producerReceiptSha256": identities["provenance/receipt.json"]["sha256"],
+                 "aabSha256": identities["unsigned/app-release.aab"]["sha256"], "jniSha256": jni["sha256"],
+                 "verifiedExportFiles": len(receipt["files"]), "collectorCommit": os.environ["GITHUB_SHA"],
+                 "collectorRunId": os.environ["GITHUB_RUN_ID"], "validatorCommit": "3f6dbc53c40d319c01e25ed177769d398d81bd1f"}
+        (output / "artifact-proof.json").write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n")
+        session.save_resources()
+        print(json.dumps(proof, sort_keys=True))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("inventory", "qualify-ndk", "build"))
+    parser.add_argument("operation", choices=("inventory", "qualify-ndk", "build", "collect-receipts"))
     parser.add_argument("output", type=Path)
     parser.add_argument("--app", type=Path)
     parser.add_argument("--fips", type=Path)
+    parser.add_argument("--run-id", type=int)
+    parser.add_argument("--producer-commit")
     args = parser.parse_args()
     pins = json.loads(PINS.read_text())
     unsigned_environment(os.environ)
@@ -558,9 +644,12 @@ def main():
         inventory(args.output, pins)
     elif args.operation == "qualify-ndk":
         qualify_ndk(args.output, pins)
-    else:
+    elif args.operation == "build":
         require(args.app and args.fips, "Frozen product and FIPS checkouts are required")
         build(args.output.resolve(), pins, args.app.resolve(), args.fips.resolve())
+    else:
+        require(args.run_id and args.producer_commit, "An exact successful producer run and commit are required")
+        collect_receipts(args.output.resolve(), pins, args.run_id, args.producer_commit)
 
 
 if __name__ == "__main__":

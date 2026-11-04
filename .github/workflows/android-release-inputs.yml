@@ -7,7 +7,15 @@ on:
         description: Qualify inputs, build the unsigned bundle, or check admission fixtures
         type: choice
         default: inventory
-        options: [inventory, qualify-ndk, build, admission-check]
+        options: [inventory, qualify-ndk, build, admission-check, collect-receipts]
+      producer_run:
+        description: Exact successful producer run for receipt collection
+        type: string
+        default: ''
+      producer_commit:
+        description: Full reviewed producer commit for receipt collection
+        type: string
+        default: ''
   push:
     branches: [codex/nvpn-hosted-apple-producer, codex/nvpn-hosted-android-producer]
     paths:
@@ -20,7 +28,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-release-inputs-${{ github.ref }}${{ github.event_name == 'push' && '-checks' || inputs.operation == 'admission-check' && '-admission' || '' }}
+  group: android-release-inputs-${{ github.ref }}${{ github.event_name == 'push' && '-checks' || inputs.operation == 'admission-check' && '-admission' || inputs.operation == 'collect-receipts' && '-receipts' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +47,7 @@ jobs:
       - name: Verify producer boundaries without compiling products
         run: python3 scripts/test-android-release-inputs.py
   inputs:
-    if: github.event_name == 'workflow_dispatch' && inputs.operation != 'admission-check'
+    if: github.event_name == 'workflow_dispatch' && (inputs.operation == 'inventory' || inputs.operation == 'qualify-ndk' || inputs.operation == 'build')
     needs: producer-checks
     runs-on: ubuntu-24.04
     timeout-minutes: 100
@@ -115,3 +123,40 @@ jobs:
         run: |
           python3 -B scripts/test-android-hosted-content.py
           python3 -B scripts/test-android-hosted-admission.py
+  artifact-receipts:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'collect-receipts'
+    needs: producer-checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            scripts/build-android-release-inputs.py
+            scripts/android-release-inputs.json
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: 3f6dbc53c40d319c01e25ed177769d398d81bd1f
+          path: validator
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts/android_hosted_content.py
+      - name: Authenticate the service ZIP and return only small receipts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: validator/scripts
+          PRODUCER_RUN: ${{ inputs.producer_run }}
+          PRODUCER_COMMIT: ${{ inputs.producer_commit }}
+        run: python3 -B scripts/build-android-release-inputs.py collect-receipts receipts --run-id "$PRODUCER_RUN" --producer-commit "$PRODUCER_COMMIT"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        if: always()
+        with:
+          name: android-release-receipts-${{ inputs.producer_run }}
+          path: receipts/
+          if-no-files-found: error
+          retention-days: 14
