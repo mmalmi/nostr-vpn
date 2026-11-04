@@ -106,7 +106,11 @@ def main():
         product = Path("macos/.build/hosted-gate-support")
         env.update(NVPN_MACOS_HOST_TARGET="aarch64-apple-darwin",
                    NVPN_MACOS_GATE_SUPPORT_DIR=str(app / product))
-        recipes = [["scripts/macos-build", "macos-gate-support"]]
+        recipes = [["scripts/macos-build", "macos-gate-support"],
+                   ["xcrun", "swiftc", "-O", "-framework", "AppKit",
+                    "-framework", "ApplicationServices", "-framework", "Foundation",
+                    "-o", str(product / "drivers/macos-exit-dns-ax"),
+                    "scripts/macos-exit-dns-ax.swift"]]
     else:
         product = Path("macos/.build/ReleaseDerivedData/Build/Products/Release/Nostr VPN.app")
         recipes = [["scripts/macos-build", "macos-xcframework"],
@@ -188,7 +192,8 @@ def main():
                  plans[0].relative_to(app), Path("artifacts/mobile-ios/fips-linkage.json")]
     if selected == "macos-support":
         expected = {"fixtures/desktop_manual_join_e2e_fixture",
-                    "drivers/desktop-manual-join-ax", "drivers/macos-service-toggle-ax"}
+                    "drivers/desktop-manual-join-ax", "drivers/macos-service-toggle-ax",
+                    "drivers/macos-exit-dns-ax"}
         assert {str(p.relative_to(app / product)) for p in (app / product).rglob("*")
                 if p.is_file()} == expected, "support producer changed its output contract"
     files = []
