@@ -1862,6 +1862,28 @@ test('release receipt collection requires exact source and strict public UI gate
       ['android', 'ios', 'linux', 'macos', 'windows'],
     )
 
+    const localIosText = readFileSync(paths.ios.mobile_artifact, 'utf8')
+    const localSealText = readFileSync(paths.ios.frozen_archive, 'utf8')
+    const hostedMobile = { ...JSON.parse(localIosText),
+      fipsDependenciesRebuildLocation: 'hosted', hostedAdmissionReceiptSha256: 'a'.repeat(64) }
+    const hostedSeal = { ...JSON.parse(localSealText), hostedAdmissionReceiptSha256: 'a'.repeat(64) }
+    paths.ios.hosted_admission = join(root, 'missing-hosted-admission.json')
+    writeFileSync(paths.ios.mobile_artifact, JSON.stringify(hostedMobile))
+    writeFileSync(paths.ios.frozen_archive, JSON.stringify(hostedSeal))
+    assert.throws(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }), /Hosted iOS archive admission|ENOENT/)
+    writeFileSync(paths.ios.hosted_admission, JSON.stringify({
+      receiptSchema: 1, artifactType: 'signed hosted iOS archive admission',
+      archiveReceiptSha256: '0'.repeat(64),
+    }))
+    assert.throws(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }), /Staged iOS evidence does not bind/)
+    writeFileSync(paths.ios.mobile_artifact, localIosText)
+    writeFileSync(paths.ios.frozen_archive, localSealText)
+    delete paths.ios.hosted_admission
+
     const fullMacosText = readFileSync(paths.macos.public_ui_join, 'utf8')
     const pixelReceipt = JSON.parse(fullMacosText)
     pixelReceipt.selectedDirections = 'pixel'

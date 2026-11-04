@@ -1606,6 +1606,11 @@ function buildIosArtifacts({
   }
   return {
     receipt_schema: receipt.receiptSchema,
+    ...(archiveReceipt.receiptSchema === 2 ? {
+      hosted_admission_receipt_sha256: sha256FileSync(
+        join(repoRoot, 'dist', 'ios', 'frozen', 'hosted-admission.json'),
+      ),
+    } : {}),
     app_git_sha: receipt.appGitSha,
     app_git_tree: receipt.appGitTree,
     bundle_id: identity.appBundleIdentifier,
@@ -2267,6 +2272,11 @@ function main() {
       ),
     },
     ios: {
+      ...(existsSync(join(repoRoot, 'dist', 'ios', 'frozen', 'archive-receipt.json'))
+        && readRequiredJson(join(repoRoot, 'dist', 'ios', 'frozen', 'archive-receipt.json'),
+          'Frozen iOS archive receipt').receiptSchema === 2
+        ? { hosted_admission: join(repoRoot, 'dist', 'ios', 'frozen', 'hosted-admission.json') }
+        : {}),
       frozen_archive: join(
         repoRoot,
         'dist',

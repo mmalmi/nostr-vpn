@@ -56,6 +56,7 @@ commands:
   ios-xcframework       build the app-core xcframework
   ios-project           regenerate the Xcode project from project.yml
   ios-archive           create or verify the one frozen App Store archive
+  ios-admit-hosted      verify and freeze an already signed hosted archive
   ios-release-testing   export an Ad Hoc app from that frozen archive
   ios-export            export App Store IPA from the verified frozen archive
   ios-upload-preflight  validate the exact upload without contacting Apple
@@ -302,7 +303,19 @@ write_frozen_archive_receipt() {
   python3 "$FROZEN_TOOL" freeze \
     --archive "$ARCHIVE_PATH" \
     --receipt "$FROZEN_ARCHIVE_RECEIPT" \
-    "${FROZEN_REVISION_ARGS[@]}"
+    "${FROZEN_REVISION_ARGS[@]}" "$@"
+}
+
+run_ios_admit_hosted() {
+  [[ -d "$ARCHIVE_PATH" && -f "$FROZEN_DIR/hosted/hosted-inputs.json" ]] || {
+    echo "Hosted admission requires the original verified inputs and signed archive." >&2
+    return 1
+  }
+  if [[ -e "$FROZEN_ARCHIVE_RECEIPT" ]]; then
+    validate_frozen_archive
+    return
+  fi
+  write_frozen_archive_receipt --hosted-inputs "$FROZEN_DIR/hosted/hosted-inputs.json"
 }
 
 restore_generated_ios_project() {
@@ -638,6 +651,7 @@ run_ios_testflight() {
 case "${1:-}" in
   ios-rust) run_ios_rust ;;
   ios-xcframework) run_ios_xcframework ;;
+  ios-admit-hosted) run_ios_admit_hosted ;;
   ios-project) run_ios_project ;;
   ios-archive) run_ios_archive ;;
   ios-release-testing) run_ios_release_testing_export ;;

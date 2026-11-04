@@ -148,6 +148,7 @@ receipt_derived="$TMP_ROOT/receipt-derived"
 receipt_xctestrun="$receipt_derived/Build/Products/NostrVpnIos_fixture.xctestrun"
 mkdir -p \
   "$receipt_app/PlugIns/Nostr VPN Tunnel.appex" \
+  "$receipt_app/PlugIns/ShareFiles.appex" \
   "$receipt_derived/Build/Products"
 printf 'app profile\n' >"$receipt_app/embedded.mobileprovision"
 printf 'tunnel profile\n' \
@@ -155,6 +156,8 @@ printf 'tunnel profile\n' \
 printf 'app executable\n' >"$receipt_app/Nostr VPN"
 printf 'tunnel executable\n' \
   >"$receipt_app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"
+printf 'share executable\n' >"$receipt_app/PlugIns/ShareFiles.appex/ShareFiles"
+printf 'share profile\n' >"$receipt_app/PlugIns/ShareFiles.appex/embedded.mobileprovision"
 python3 - "$info" "$installed" "$device" "$receipt_xctestrun" "$app_head" <<'PY'
 import json
 import plistlib
@@ -319,7 +322,7 @@ for required in (
     if required not in receipt:
         raise SystemExit(f"iOS artifact receipt omitted {required}")
 PY
-python3 "$ROOT_DIR/scripts/mobile_release_artifact_receipt.py" \
+ios_validator=(python3 "$ROOT_DIR/scripts/mobile_release_artifact_receipt.py" \
   validate-ios \
   --receipt "$receipt" \
   --app "$receipt_app" \
@@ -336,7 +339,15 @@ python3 "$ROOT_DIR/scripts/mobile_release_artifact_receipt.py" \
   --signer-sha "$hash64" \
   --app-cdhash cdhash \
   --tunnel-cdhash tunnelcd \
-  --device-identifier-sha "$hash64"
+  --device-identifier-sha "$hash64")
+"${ios_validator[@]}"
+printf '{"receiptSchema":2,"hostedBuildSha256":"%s"}\n' "$hash64" >"$TMP_ROOT/hosted-archive.json"
+if "${ios_validator[@]}" --frozen-archive-receipt "$TMP_ROOT/hosted-archive.json" \
+    >"$TMP_ROOT/missing-hosted-admission.log" 2>&1; then
+  echo "Standalone physical validation accepted schema2 after mobile hosted fields were removed" >&2
+  exit 1
+fi
+grep -Fq 'hosted-admission.json' "$TMP_ROOT/missing-hosted-admission.log"
 grep -Fq 'if ! ios_release_network_write_artifact_receipt' \
   "$ROOT_DIR/scripts/lib-mobile-ios-release-artifact.sh"
 grep -Fq 'actual_signer_sha != expected_signer_sha' \

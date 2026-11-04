@@ -294,7 +294,8 @@ PY
     --app-cdhash "$app_cdhash" \
     --tunnel-cdhash "$tunnel_cdhash" \
     --device-identifier-sha "$device_identifier_sha" \
-    --production-receipt "$NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT"
+    --production-receipt "$NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT" \
+    --frozen-archive-receipt "$ROOT/dist/ios/frozen/archive-receipt.json"
   then
     echo "Reused iOS Release artifact receipt validation failed" >&2
     return 1

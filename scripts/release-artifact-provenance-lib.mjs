@@ -1867,6 +1867,20 @@ function collectReleaseGateEvidence({
     platformReceiptPaths.ios.mobile_artifact,
     'Sealed physical iOS artifact receipt',
   )
+  if (ios.hostedAdmissionReceiptSha256 || iosArtifact.fipsDependenciesRebuildLocation === 'hosted') {
+    const admission = readRequiredJson(
+      platformReceiptPaths.ios.hosted_admission, 'Hosted iOS archive admission',
+    )
+    const admissionSha = sha256FileSync(platformReceiptPaths.ios.hosted_admission)
+    if (admission.receiptSchema !== 1
+      || admission.artifactType !== 'signed hosted iOS archive admission'
+      || admission.archiveReceiptSha256 !== ios.archiveReceiptSha256
+      || ios.hostedAdmissionReceiptSha256 !== admissionSha
+      || iosArtifact.hostedAdmissionReceiptSha256 !== admissionSha
+      || iosArtifact.fipsDependenciesRebuildLocation !== 'hosted') {
+      throw new Error('Staged iOS evidence does not bind its exact hosted build admission.')
+    }
+  }
   const iosSource = platformSource(
     'ios', iosArtifact, 'Sealed physical iOS artifact receipt',
   )
