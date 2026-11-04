@@ -21,7 +21,7 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { normalizeTag, readWorkspaceVersionTag, splitCsv } from './local-release-lib.mjs'
+import { deterministicBuildEnv, normalizeTag, readWorkspaceVersionTag, splitCsv } from './local-release-lib.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
@@ -483,6 +483,7 @@ function buildAndPushImage({ beforeMutation, dryRun, imageRepo, platforms, tag }
   const metadataPath = join(tempDir, 'buildx-metadata.json')
 
   try {
+    const { SOURCE_DATE_EPOCH } = deterministicBuildEnv(process.env)
     beforeMutation?.()
     run(
       'docker',
@@ -493,11 +494,14 @@ function buildAndPushImage({ beforeMutation, dryRun, imageRepo, platforms, tag }
         platforms.join(','),
         '--file',
         'umbrel/Dockerfile',
+        '--build-arg',
+        `SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}`,
         '--tag',
         `${imageRepo}:${tag}`,
         '--metadata-file',
         metadataPath,
-        '--push',
+        '--output',
+        'type=image,push=true,rewrite-timestamp=true',
         '.',
       ],
       { cwd: repoRoot, dryRun },
