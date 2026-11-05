@@ -13,8 +13,9 @@ LOCAL_ARTIFACT_DIR="${NVPN_DESKTOP_DNS_UI_ARTIFACT_DIR:-$ROOT/artifacts/desktop-
   echo "set NVPN_WINDOWS_SSH_HOST or pass the Windows VM SSH target" >&2
   exit 2
 }
-app_sha="$(git -C "$ROOT" rev-parse HEAD)"
-app_tree="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+RELEASE_APP_ROOT="${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}"
+app_sha="$(git -C "$RELEASE_APP_ROOT" rev-parse HEAD)"
+app_tree="$(git -C "$RELEASE_APP_ROOT" rev-parse 'HEAD^{tree}')"
 [[ "$app_sha" =~ ^[0-9a-f]{40}$ && "$app_tree" =~ ^[0-9a-f]{40}$ ]] || {
   echo "could not resolve the exact Windows candidate source" >&2
   exit 2
@@ -49,7 +50,8 @@ run_ps() {
 
 case "${NVPN_WINDOWS_SKIP_GIT_SYNC:-0}" in
   1|true|TRUE|True|yes|YES|Yes|on|ON|On) ;;
-  *) "$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST" ;;
+  *) NVPN_WINDOWS_GIT_SYNC_EXACT_APP_COMMIT="$app_sha" \
+     "$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST" ;;
 esac
 
 run_ps "\$ErrorActionPreference = 'Stop'
