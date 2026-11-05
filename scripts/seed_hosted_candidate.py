@@ -91,12 +91,16 @@ def source_and_producer(runner, producer, source):
         "df954f33ba442a245957cfb6eae1ce36b458f255",
     )
     product = runner.pins["product"]["commit"]
-    require(git(producer, "show", "-s", "--format=%P", "HEAD").split() == [chain[0], product],
+    parent = "5d0fffeba4aa87ed49d56ebb2c062ead5fa2016a"
+    recipe_parent = "2c2a3a9b0788f26f68c8f56bcb91f648e4298a5c"
+    require(git(producer, "show", "-s", "--format=%P", "HEAD").split() == [parent, product] and
+            git(producer, "show", "-s", "--format=%P", parent).split() == [chain[0], recipe_parent],
             "Producer must merge only the reviewed support and recipe commits")
     for child, parent in zip(chain, chain[1:]):
         require(git(producer, "show", "-s", "--format=%P", child).strip() == parent,
                 "Producer support lineage changed")
-    require(git(producer, "show", "-s", "--format=%P", product).strip() == chain[-1] and
+    require(git(producer, "show", "-s", "--format=%P", product).strip() == recipe_parent and
+            git(producer, "show", "-s", "--format=%P", recipe_parent).strip() == chain[-1] and
             git(producer, "diff", "--name-only", "--no-renames", chain[-1], product).splitlines() ==
             ["umbrel/Dockerfile"], "Product successor must change only the acquisition recipe")
     changes = set(git(producer, "diff", "--name-only", "--no-renames",

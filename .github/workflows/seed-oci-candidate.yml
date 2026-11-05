@@ -50,13 +50,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: producer
-          fetch-depth: 8
+          fetch-depth: 9
           persist-credentials: false
       - name: Check out frozen product separately
         timeout-minutes: 5
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: 2c2a3a9b0788f26f68c8f56bcb91f648e4298a5c
+          ref: 8863915106ba51b5f6c9618165110ef2b218228b
           path: product
           fetch-depth: 1
           persist-credentials: false

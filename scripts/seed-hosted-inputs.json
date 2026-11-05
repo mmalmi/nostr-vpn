@@ -1,14 +1,14 @@
 {
   "schema": 1,
   "product": {
-    "commit": "2c2a3a9b0788f26f68c8f56bcb91f648e4298a5c",
-    "tree": "a87b57371034bfc955c862861eb45f09ece04c1f",
-    "sourceDateEpoch": 1793905176,
-    "contextManifestSha256": "09790d73bacd032ba00f0e7a1bc87068ca5edb901f643dcb692f8d701365d673",
+    "commit": "8863915106ba51b5f6c9618165110ef2b218228b",
+    "tree": "4fd6d64a688315d2beb80ea76e17ecaf9ab60b2e",
+    "sourceDateEpoch": 1793914894,
+    "contextManifestSha256": "5dc085255eddf572ddbd0a61fbcdeabbf1bb6cb06a86a0582b106b4aad5b5728",
     "fileCount": 1394,
-    "fileBytes": 20076298,
+    "fileBytes": 20077618,
     "files": {
-      "umbrel/Dockerfile": "264b7d3527715b1b01210562a6bc7db91f09402ff4c2233e426ebc292a8c4fb8",
+      "umbrel/Dockerfile": "9a93511efb4caa12645c48ab63940f0661b75a700b877cada9e9270b0b87f9c1",
       "Cargo.toml": "b01c3c369b3e7b87074affeaa73f0ee5d48be248b4f5535624a2a6f910faff6f",
       "Cargo.lock": "1d72aac7e6e5355dc5c903a7f39ae376172739e1c6cd954cadcc88bec33bfb79",
       "web/control-panel/package.json": "44275fe93dc97b62158dca9ea9970e4a1168ca03a036ee821afc7ea897538c45",

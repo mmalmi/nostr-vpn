@@ -13,6 +13,8 @@ import os
 import sys
 import subprocess
 import time
+import re
+import tempfile
 from unittest.mock import patch
 from pathlib import Path
 
@@ -332,6 +334,55 @@ class SourceTests(unittest.TestCase):
 
 
 class ProducerTests(unittest.TestCase):
+    def test_runtime_archive_copy_and_cleanup_without_apt_hooks(self):
+        recipe = (Path(__file__).resolve().parents[1] / "umbrel/Dockerfile").read_text()
+        snapshot = recipe.split(" AS bookworm-index\n", 1)[1].split("\nFROM rust:", 1)[0]
+        archives = re.findall(r"^ADD --checksum=sha256:[0-9a-f]{64} "
+                              r"https://snapshot\.debian\.org/file/[0-9a-f]{40}/\S+ "
+                              r"/packages/([a-zA-Z0-9_.+-]+\.deb)$", snapshot, re.M)
+        self.assertEqual(len(archives), 3)
+        self.assertEqual(len(set(archives)), 3)
+        runtime = recipe.split(" AS runtime\n", 1)[1]
+        command = runtime.split("RUN --mount=type=bind,from=bookworm-index,target=/snapshot \\\n", 1)[1].split("\n\n", 1)[0]
+        self.assertNotIn("*.deb", command)
+        for failure in (0, 100):
+            with self.subTest(apt_exit=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                sources, cache, lists, binaries = (root / name for name in ("source", "cache", "lists", "bin"))
+                for path in (sources, lists, binaries):
+                    path.mkdir()
+                for name in archives:
+                    (sources / name).write_text(name)
+                (lists / "index").touch()
+                # PATH contains only these stubs and two ordinary file utilities:
+                # neither real apt nor any network/download command can be called.
+                for utility, target in (("install", "/usr/bin/install"), ("rm", "/bin/rm")):
+                    (binaries / utility).symlink_to(target)
+                config = binaries / "apt-config"
+                config.write_text("#!/bin/sh\nprintf 'offline configuration stub\\n'\n")
+                config.chmod(0o755)
+                apt = binaries / "apt-get"
+                apt.write_text("#!" + sys.executable + "\nimport pathlib,sys\n"
+                               "if '--version' in sys.argv: print('offline APT stub'); sys.exit(0)\n"
+                               "cache=pathlib.Path(" + repr(str(cache)) + ")\n"
+                               "names=" + repr(archives) + "\n"
+                               "assert sorted(p.name for p in cache.iterdir()) == sorted(names)\n"
+                               "assert all((cache/n).read_text()==n and (cache/n).stat().st_mode & 0o777 == 0o644 for n in names)\n"
+                               "print('exact archive cache verified')\n"
+                               "sys.exit(" + str(failure) + ")\n")
+                apt.chmod(0o755)
+                scoped = command.replace("/snapshot/packages", str(sources)).replace(
+                    "/snapshot/apt.conf", str(root / "apt.conf")).replace(
+                    "/var/cache/apt/archives", str(cache)).replace("/var/lib/apt/lists", str(lists))
+                self.assertNotIn("/snapshot/", scoped)
+                self.assertNotIn("/var/", scoped.replace(str(root), ""))
+                result = subprocess.run(["/bin/sh", "-ec", scoped], env={"PATH": str(binaries)},
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, failure, result.stderr)
+                self.assertIn("exact archive cache verified", result.stdout)
+                self.assertEqual(sorted(p.name for p in cache.iterdir()), sorted(archives) if failure else [])
+                self.assertEqual((lists / "index").exists(), bool(failure))
+
     def test_command_uses_frozen_recipe_epoch_and_never_publishes(self):
         runner = types.SimpleNamespace(buildx=Path("/tools/buildx"), name="job",
                                        pins={"product": {"sourceDateEpoch": 1793838134}})
