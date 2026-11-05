@@ -2,8 +2,7 @@ import CryptoKit
 import Foundation
 import XCTest
 
-/// The host prepares an isolated recipient snapshot and verifies the durable
-/// command and copied bytes through USB after this real Files share-sheet flow.
+/// The entitled test runner owns a reversible fixture; the release app is unchanged.
 final class NostrVpnFileShareUITests: XCTestCase {
     func testFilesShareQueuesWithMainAppClosed() throws {
         guard let recipient = ProcessInfo.processInfo.environment["NVPN_XCUITEST_FILE_SHARE_PEER_NAME"],
@@ -18,7 +17,8 @@ final class NostrVpnFileShareUITests: XCTestCase {
         let name = "nvpn-share-check-\(UUID().uuidString.prefix(8)).txt"
         let bytes = Data(String(repeating: "nvpn file transfer verification\n", count: 6000).utf8)
         let source = documents.appendingPathComponent(name)
-        try bytes.write(to: source, options: .withoutOverwriting)
+        let fixture = try FileShareFixture.prepare(recipient: recipient, filename: name, bytes: bytes)
+        addTeardownBlock { try fixture.restore() }
         let receipt: [String: Any] = [
             "filename": name,
             "bytes": bytes.count,
@@ -53,7 +53,21 @@ final class NostrVpnFileShareUITests: XCTestCase {
         tap("Done", in: files)
         XCTAssertEqual(nvpn.state, .notRunning, "Sharing must not require launching the main app")
         XCTAssertEqual(try Data(contentsOf: source), bytes, "Sharing must preserve the original")
+        try fixture.verifyQueued(bytes: bytes)
         PhysicalGateMarker.emit("NVPN_FILE_SHARE_QUEUED=1")
+    }
+
+    /// Explicit recovery after an interrupted test, before the host resumes the app.
+    func testRestoreInterruptedFileShareFixture() throws {
+        guard ProcessInfo.processInfo.environment["NVPN_XCUITEST_FILE_SHARE_RESTORE"] == "1" else {
+            throw XCTSkip("Explicit interrupted-fixture recovery only")
+        }
+        continueAfterFailure = false
+        guard XCUIApplication(bundleIdentifier: "fi.siriusbusiness.nvpn").state == .notRunning else {
+            throw CocoaError(.fileWriteFileExists)
+        }
+        let fixture = try FileShareFixture.pending()
+        try fixture.restore()
     }
 
     private func tap(_ label: String, in app: XCUIApplication) {
