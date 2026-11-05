@@ -32,7 +32,7 @@ test('release preflight rejects old tools and missing workspace keys before pack
   const invocationLog = join(directory, 'invocations')
   mkdirSync(scripts, { recursive: true })
   mkdirSync(bin)
-  for (const name of ['startos-release.mjs', 'local-release-lib.mjs', 'release-artifact-provenance-lib.mjs', 'release-component-source.mjs']) {
+  for (const name of ['startos-release.mjs', 'local-release-lib.mjs', 'release-artifact-provenance-lib.mjs', 'release-component-source.mjs', 'macos-hosted-provenance.mjs']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name))
   }
   const executable = join(bin, 'start-cli')

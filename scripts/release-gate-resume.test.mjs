@@ -101,6 +101,29 @@ test('resumed completion validates every concrete receipt before writing a bound
       }),
       /not bound to the exact candidate, validator, and concrete receipts/i,
     )
+    unlinkSync(value.releaseGateSummary)
+    const validatorSource = { commit: 'c'.repeat(40), tree: 'd'.repeat(40) }
+    completeReleaseGateFromReceipts({
+      commit, tree, validatorSource,
+      releaseGateSummaryPath: value.releaseGateSummary,
+      platformReceiptPaths: value.platforms,
+    })
+    const separate = JSON.parse(readFileSync(value.releaseGateSummary, 'utf8'))
+    assert.equal(separate.appGitSha, commit)
+    assert.equal(separate.validatorGitSha, validatorSource.commit)
+    assert.equal(separate.validatorGitTree, validatorSource.tree)
+    const args = {
+      commit, tree, validatorSource,
+      releaseGateSummaryPath: value.releaseGateSummary,
+      platformReceiptPaths: value.platforms,
+    }
+    assert.doesNotThrow(() => collectReleaseGateReceipts(args))
+    assert.throws(() => collectReleaseGateReceipts({
+      ...args, validatorSource: { commit: validatorSource.commit, tree },
+    }), /not bound to the exact candidate, validator, and concrete receipts/)
+    assert.throws(() => collectReleaseGateReceipts({
+      ...args, validatorSource: { commit: '', tree: '' },
+    }), /validator lacks exact Git identities/)
   } finally {
     rmSync(value.root, { recursive: true, force: true })
   }

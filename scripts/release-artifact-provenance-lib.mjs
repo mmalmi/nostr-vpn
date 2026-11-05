@@ -1006,6 +1006,36 @@ export function validateAndroidForegroundIdleCpuSample(sample, packageName) {
   }
 }
 
+function requireAndroidCpuWaiver(receipt, artifact, artifactReceiptSha256) {
+  const keys = [
+    'receiptSchema', 'artifactType', 'gate', 'status', 'performancePassClaimed',
+    'authorization', 'reason', 'appGitSha', 'appGitTree', 'fipsGitSha',
+    'fipsGitTree', 'artifactReceiptSha256', 'artifactIdentity',
+  ].sort()
+  if (!isDeepStrictEqual(Object.keys(receipt).sort(), keys)
+    || receipt.receiptSchema !== 1
+    || receipt.artifactType !== 'Android exact Release CPU gate waiver'
+    || receipt.gate !== 'android-foreground-vpn-off-idle-cpu'
+    || receipt.status !== 'waived'
+    || receipt.performancePassClaimed !== false
+    || receipt.authorization?.authority !== 'user'
+    || typeof receipt.authorization?.instruction !== 'string'
+    || !receipt.authorization.instruction.trim()
+    || !isDeepStrictEqual(Object.keys(receipt.authorization).sort(), ['authority', 'instruction'])
+    || typeof receipt.reason !== 'string' || !receipt.reason.trim()
+    || receipt.artifactReceiptSha256 !== artifactReceiptSha256
+    || artifact.companySigningVerified !== true
+    || artifact.debuggable !== false
+    || artifact.apkSha256 !== artifact.installedApkSha256) {
+    throw new Error('Android CPU waiver is not an explicit exact-artifact release decision.')
+  }
+  requireIdentityFieldsMatch(receipt, artifact,
+    ['appGitSha', 'appGitTree', 'fipsGitSha', 'fipsGitTree'], 'Android CPU waiver source')
+  requireIdentityFieldsMatch(receipt.artifactIdentity, artifact,
+    ['apkSha256', 'installedApkSha256', 'package', 'signerCertificateSha256'],
+    'Android CPU waiver artifact')
+}
+
 function requireAndroidForegroundIdleReceipt({
   receipt,
   rawReceipt,
@@ -1517,6 +1547,7 @@ function requireDesktopNetworkReceipt({
 function requireReleaseGateSummary(summary, {
   commit,
   tree,
+  validatorSource = { commit, tree },
   platformGateReceipts,
   platformSourceEquivalence,
 }) {
@@ -1566,8 +1597,8 @@ function requireReleaseGateSummary(summary, {
     || summary.targetStatus !== 'not-measured'
     || summary.appGitSha !== commit
     || summary.appGitTree !== tree
-    || summary.validatorGitSha !== commit
-    || summary.validatorGitTree !== tree
+    || summary.validatorGitSha !== validatorSource.commit
+    || summary.validatorGitTree !== validatorSource.tree
   ) {
     throw new Error(
       'Resumed release-gate completion receipt is not bound to the exact candidate, validator, and concrete receipts.',
@@ -1592,6 +1623,7 @@ function requireReleaseGateSummary(summary, {
 function collectReleaseGateEvidence({
   commit,
   tree,
+  validatorSource = { commit, tree },
   candidateRoot,
   releaseGateSummaryPath = null,
   platformReceiptPaths,
@@ -1611,7 +1643,11 @@ function collectReleaseGateEvidence({
       'Release-gate completion receipt',
     )
     : null
-  if (summary) requireReleaseGateSummary(summary, { commit, tree })
+  if (!/^[0-9a-f]{40}$/.test(validatorSource.commit)
+    || !/^[0-9a-f]{40}$/.test(validatorSource.tree)) {
+    throw new Error('Release validator lacks exact Git identities.')
+  }
+  if (summary) requireReleaseGateSummary(summary, { commit, tree, validatorSource })
 
   const android = readRequiredJson(
     platformReceiptPaths.android.physical,
@@ -1637,6 +1673,27 @@ function collectReleaseGateEvidence({
   const androidReceiptSha256 = sha256FileSync(
     platformReceiptPaths.android.physical,
   )
+  let previousAndroidReceiptSha256
+  if (platformReceiptPaths.android.previous_physical) {
+    const previous = readRequiredJson(platformReceiptPaths.android.previous_physical,
+      'Previous physical Android artifact receipt')
+    // Re-signing an AAB and recovering paths may change its admission receipts.
+    // Retain the original runtime evidence only when every APK/source/signing
+    // field is identical; the current AAB still needs its own staging validation.
+    const metadata = new Set(['aabSha256', 'apkPathSha256', 'bundleReceiptSha256',
+      'hostedAdmissionCanonicalSha256', 'hostedAdmissionReceiptSha256'])
+    const runtime = (value) => Object.fromEntries(
+      Object.entries(value).filter(([name]) => !metadata.has(name)),
+    )
+    if (!isDeepStrictEqual(runtime(previous), runtime(android))
+      || [...metadata].some((name) => !/^[0-9a-f]{64}$/.test(previous[name] ?? '')
+        || !/^[0-9a-f]{64}$/.test(android[name] ?? ''))) {
+      throw new Error('Previous Android physical receipt differs from the exact tested APK identity.')
+    }
+    previousAndroidReceiptSha256 = sha256FileSync(platformReceiptPaths.android.previous_physical)
+  }
+  const runtimeAndroidReceiptSha256 = (digest) => previousAndroidReceiptSha256
+    && digest === previousAndroidReceiptSha256 ? previousAndroidReceiptSha256 : androidReceiptSha256
   const androidInstall = readRequiredJson(
     platformReceiptPaths.android.install,
     'Canonical Android Release install receipt',
@@ -1648,23 +1705,33 @@ function collectReleaseGateEvidence({
   const androidInstallReceiptSize = readFileSync(
     platformReceiptPaths.android.install,
   ).byteLength
-  const androidForegroundIdleRaw = readRequiredJson(
-    platformReceiptPaths.android.foreground_idle_cpu_raw,
-    'Android foreground VPN-off idle CPU raw receipt',
-  )
-  const androidForegroundIdle = readRequiredJson(
-    platformReceiptPaths.android.foreground_idle_cpu,
-    'Android foreground VPN-off idle CPU receipt',
-  )
-  requireAndroidForegroundIdleReceipt({
-    receipt: androidForegroundIdle,
-    rawReceipt: androidForegroundIdleRaw,
-    rawReceiptSha256: sha256FileSync(
+  if (platformReceiptPaths.android.foreground_idle_cpu_waiver) {
+    if (Object.hasOwn(platformReceiptPaths.android, 'foreground_idle_cpu')
+      || Object.hasOwn(platformReceiptPaths.android, 'foreground_idle_cpu_raw')) {
+      throw new Error('CPU waiver cannot be combined with measured CPU receipts.')
+    }
+    requireAndroidCpuWaiver(readRequiredJson(
+      platformReceiptPaths.android.foreground_idle_cpu_waiver, 'Android CPU waiver',
+    ), android, androidReceiptSha256)
+  } else {
+    const androidForegroundIdleRaw = readRequiredJson(
       platformReceiptPaths.android.foreground_idle_cpu_raw,
-    ),
-    artifact: android,
-    artifactReceiptSha256: androidReceiptSha256,
-  })
+      'Android foreground VPN-off idle CPU raw receipt',
+    )
+    const androidForegroundIdle = readRequiredJson(
+      platformReceiptPaths.android.foreground_idle_cpu,
+      'Android foreground VPN-off idle CPU receipt',
+    )
+    requireAndroidForegroundIdleReceipt({
+      receipt: androidForegroundIdle,
+      rawReceipt: androidForegroundIdleRaw,
+      rawReceiptSha256: sha256FileSync(
+        platformReceiptPaths.android.foreground_idle_cpu_raw,
+      ),
+      artifact: android,
+      artifactReceiptSha256: androidReceiptSha256,
+    })
+  }
   const androidNetworkReceiptPaths = {
     wireguard_dns: platformReceiptPaths.android.wireguard_dns,
     underlay_lifecycle: existsSync(
@@ -1687,7 +1754,7 @@ function collectReleaseGateEvidence({
       platform: 'android',
       mode,
       artifact: android,
-      artifactReceiptSha256: androidReceiptSha256,
+      artifactReceiptSha256: runtimeAndroidReceiptSha256(receipt.artifactReceiptSha256),
       ...androidSource,
     })
   }
@@ -1832,7 +1899,7 @@ function collectReleaseGateEvidence({
         platformReceiptPaths[platform].artifact,
       ),
       androidArtifact: android,
-      androidArtifactReceiptSha256: androidReceiptSha256,
+      androidArtifactReceiptSha256: runtimeAndroidReceiptSha256(receipt.artifact?.android?.artifactReceiptSha256),
     })
     const network = readRequiredJson(
       platformReceiptPaths[platform].network,
@@ -1958,7 +2025,7 @@ function collectReleaseGateEvidence({
     commit,
     tree,
     androidArtifact: android,
-    androidArtifactReceiptSha256: androidReceiptSha256,
+    androidArtifactReceiptSha256: runtimeAndroidReceiptSha256(mobileJoin.artifact?.android?.artifactReceiptSha256),
     iosJoinVariant,
     iosJoinVariantReceiptSha256,
     iosProductionArtifactReceiptSha256: iosArtifactReceiptSha256,
@@ -1997,7 +2064,7 @@ function collectReleaseGateEvidence({
       platformReceiptPaths.macos.artifact,
     ),
     androidArtifact: android,
-    androidArtifactReceiptSha256: androidReceiptSha256,
+    androidArtifactReceiptSha256: runtimeAndroidReceiptSha256(macosJoin.artifact?.android?.artifactReceiptSha256),
     iosJoinVariant,
     iosJoinVariantReceiptSha256,
     commit: macosSource.commit,
@@ -2087,6 +2154,7 @@ function collectReleaseGateEvidence({
     requireReleaseGateSummary(summary, {
       commit,
       tree,
+      validatorSource,
       ...evidence,
     })
     evidence.releaseGateSummarySha256 = sha256FileSync(

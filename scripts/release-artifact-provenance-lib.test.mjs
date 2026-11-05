@@ -1137,6 +1137,9 @@ test('release receipt collection requires exact source and strict public UI gate
       aabSha256: '0'.repeat(64),
       apkDerivedFromAab: true,
       bundleReceiptSha256: 'f'.repeat(64),
+      apkPathSha256: 'a'.repeat(64),
+      hostedAdmissionCanonicalSha256: 'b'.repeat(64),
+      hostedAdmissionReceiptSha256: 'c'.repeat(64),
       bundletoolVersion: '1.18.3',
       bundletoolSha256:
         'a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29',
@@ -2312,6 +2315,90 @@ test('release receipt collection requires exact source and strict public UI gate
       },
       /foreground VPN-off idle CPU raw receipt SHA-256 differs/,
     )
+    const measuredCpuPaths = {
+      foreground_idle_cpu: paths.android.foreground_idle_cpu,
+      foreground_idle_cpu_raw: paths.android.foreground_idle_cpu_raw,
+    }
+    const waiverPath = join(root, 'android-cpu-waiver.json')
+    const waiver = {
+      receiptSchema: 1,
+      artifactType: 'Android exact Release CPU gate waiver',
+      gate: 'android-foreground-vpn-off-idle-cpu',
+      status: 'waived',
+      performancePassClaimed: false,
+      authorization: { authority: 'user', instruction: 'Release despite the failed CPU check.' },
+      reason: 'Explicit release decision; no passing CPU measurement is claimed.',
+      appGitSha: androidArtifact.appGitSha,
+      appGitTree: androidArtifact.appGitTree,
+      fipsGitSha: androidArtifact.fipsGitSha,
+      fipsGitTree: androidArtifact.fipsGitTree,
+      artifactReceiptSha256: sha256(readFileSync(paths.android.physical)),
+      artifactIdentity: androidForegroundIdle.artifactIdentity,
+    }
+    writeFileSync(waiverPath, JSON.stringify(waiver))
+    paths.android.foreground_idle_cpu_waiver = waiverPath
+    assert.throws(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }), /CPU waiver cannot be combined with measured CPU receipts/)
+    delete paths.android.foreground_idle_cpu
+    delete paths.android.foreground_idle_cpu_raw
+    const waived = collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    })
+    assert.equal(waived.platformGateReceipts.android.foreground_idle_cpu_waiver,
+      sha256(readFileSync(waiverPath)))
+    assert.equal(Object.hasOwn(waived.platformGateReceipts.android, 'foreground_idle_cpu'), false)
+    for (const mutate of [
+      (r) => { r.appGitSha = '0'.repeat(40) },
+      (r) => { r.fipsGitTree = '0'.repeat(40) },
+      (r) => { r.artifactReceiptSha256 = '0'.repeat(64) },
+      (r) => { r.artifactIdentity.apkSha256 = '0'.repeat(64) },
+      (r) => { r.artifactIdentity.signerCertificateSha256 = '0'.repeat(64) },
+      (r) => { r.gate = 'android-network' },
+      (r) => { r.performancePassClaimed = true },
+      (r) => { r.status = 'passed' },
+      (r) => { delete r.authorization },
+      (r) => { r.authorization.instruction = '' },
+      (r) => { r.sample = { cpuPercent: 0 } },
+    ]) assertRejectedReceiptMutation(waiverPath, mutate, /CPU waiver/)
+    assertRejectedReceiptMutation(paths.android.wireguard_dns,
+      (r) => { r.appGitSha = '0'.repeat(40) }, /not exact source\/artifact evidence/)
+    const originalPhysical = readFileSync(paths.android.physical, 'utf8')
+    const originalReplacement = readFileSync(paths.android.replacement_singleton, 'utf8')
+    const previousPath = join(root, 'previous-android.json')
+    writeFileSync(previousPath, originalPhysical)
+    const renewed = JSON.parse(originalPhysical)
+    for (const name of ['aabSha256', 'apkPathSha256', 'bundleReceiptSha256',
+      'hostedAdmissionCanonicalSha256', 'hostedAdmissionReceiptSha256']) renewed[name] = '8'.repeat(64)
+    const renewedText = JSON.stringify(renewed)
+    writeFileSync(paths.android.physical, renewedText)
+    const renewedReplacement = JSON.parse(originalReplacement)
+    renewedReplacement.artifactReceiptSha256 = sha256(renewedText)
+    writeFileSync(paths.android.replacement_singleton, JSON.stringify(renewedReplacement))
+    writeFileSync(waiverPath, JSON.stringify({ ...waiver, artifactReceiptSha256: sha256(renewedText) }))
+    const collect = () => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    })
+    assert.throws(collect, /not exact source\/artifact evidence/)
+    paths.android.previous_physical = previousPath
+    assert.equal(collect().platformGateReceipts.android.previous_physical,
+      sha256(originalPhysical))
+    for (const key of ['apkSha256', 'installedApkSha256', 'appGitSha', 'fipsGitTree',
+      'signerCertificateSha256', 'bundletoolSha256', 'fipsCargoMetadataReceiptSha256']) {
+      assertRejectedReceiptMutation(previousPath,
+        (r) => { r[key] = '9'.repeat(64) }, /differs from the exact tested APK identity/)
+    }
+    assertRejectedReceiptMutation(previousPath,
+      (r) => { r.unreviewed = true }, /differs from the exact tested APK identity/)
+    assertRejectedReceiptMutation(previousPath,
+      (r) => { r.aabSha256 = 'invalid' }, /differs from the exact tested APK identity/)
+    assertRejectedReceiptMutation(paths.android.wireguard_dns,
+      (r) => { r.artifactReceiptSha256 = '9'.repeat(64) }, /not exact source\/artifact evidence/)
+    delete paths.android.previous_physical
+    writeFileSync(paths.android.physical, originalPhysical)
+    writeFileSync(paths.android.replacement_singleton, originalReplacement)
+    delete paths.android.foreground_idle_cpu_waiver
+    Object.assign(paths.android, measuredCpuPaths)
     assertRejectedReceiptMutation(
       paths.linux.public_ui_join,
       (receipt) => {

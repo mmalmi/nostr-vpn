@@ -271,6 +271,7 @@ export function preflightIosPublication({
 
 export function publishExactIosDistribution({
   repoRoot,
+  validatorRoot = repoRoot,
   stagedManifest,
   mutationEnv,
   preflight,
@@ -296,7 +297,7 @@ export function publishExactIosDistribution({
     commit: stagedManifest.commit,
     tree: stagedManifest.release_gate_attestation?.app_git_tree,
     env: mutationEnv,
-  }, (context) => run('bash', [join(repoRoot, 'scripts', 'ios-build'), command], context))
+  }, (context) => run('bash', [join(validatorRoot, 'scripts', 'ios-build'), command], context))
 
   let uploaded = preflight.testflight
   let receipts = {

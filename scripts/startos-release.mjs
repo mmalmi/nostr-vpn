@@ -18,11 +18,12 @@ import {
   normalizeTag,
   parseReleaseRevision,
   readWorkspaceVersionTag,
+  resolveReleaseProductRoot,
   semverFromTag,
 } from './local-release-lib.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const repoRoot = resolve(__dirname, '..')
+const repoRoot = resolveReleaseProductRoot(resolve(__dirname, '..'))
 const cargoTomlPath = join(repoRoot, 'Cargo.toml')
 const startosVersionPath = join(repoRoot, 'startos', 'versions', 'current.ts')
 const startosCliVersion = '1.1.0'

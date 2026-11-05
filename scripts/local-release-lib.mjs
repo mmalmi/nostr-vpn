@@ -1,15 +1,45 @@
+import { spawnSync } from 'node:child_process'
 import {
   constants,
   copyFileSync,
   lstatSync,
+  realpathSync,
   rmSync,
   statSync,
 } from 'node:fs'
-import { basename, join, posix as pathPosix } from 'node:path'
+import { basename, isAbsolute, join, posix as pathPosix, resolve } from 'node:path'
 
 import { sha256FileSync, validateReleaseGateAttestation } from './release-artifact-provenance-lib.mjs'
 
 export { sha256FileSync }
+
+export function resolveReleaseProductRoot(validatorRoot, env = process.env) {
+  const configured = env.NVPN_RELEASE_APP_REPO_PATH
+  if (configured === undefined) return validatorRoot
+  if (!isAbsolute(configured) || resolve(configured) !== configured
+    || realpathSync(configured) !== configured) {
+    throw new Error('Release product root must be an absolute canonical checkout path.')
+  }
+  const result = spawnSync('git', ['rev-parse', '--show-toplevel'], {
+    cwd: configured, encoding: 'utf8',
+  })
+  if (result.status !== 0 || realpathSync(result.stdout.trim()) !== configured) {
+    throw new Error('Release product root must be the exact Git checkout root.')
+  }
+  return configured
+}
+
+export function cleanReleaseSourceIdentity(root) {
+  const git = (args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    if (result.status !== 0) throw new Error('Release source identity could not be verified.')
+    return result.stdout.trim()
+  }
+  if (git(['status', '--porcelain=v1', '--untracked-files=all'])) {
+    throw new Error('Release source or validator checkout is dirty.')
+  }
+  return { commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']) }
+}
 
 export function replaceWithExactFileCopy(source, destination) {
   const sourceMetadata = lstatSync(source)

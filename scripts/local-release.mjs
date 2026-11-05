@@ -27,6 +27,7 @@ import {
   androidReleaseAssetName,
   buildReleaseManifest,
   buildReleaseManifestFiles,
+  cleanReleaseSourceIdentity,
   bumpAndroidGradleVersion,
   bumpCargoPackageVersion,
   bumpPbxprojMarketingVersion,
@@ -37,6 +38,7 @@ import {
   parseEnvFile,
   readWorkspaceVersionTag,
   replaceWithExactFileCopy,
+  resolveReleaseProductRoot,
   semverFromTag,
   sha256FileSync,
   splitCsv,
@@ -93,7 +95,18 @@ import {
 import { completeReleaseGateFromReceipts } from './release-gate-resume.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const repoRoot = resolve(__dirname, '..')
+const validatorRoot = resolve(__dirname, '..')
+const repoRoot = resolveReleaseProductRoot(validatorRoot)
+let validatorSource
+
+function assertValidatorSource() {
+  const current = cleanReleaseSourceIdentity(validatorRoot)
+  if (validatorSource && (current.commit !== validatorSource.commit
+    || current.tree !== validatorSource.tree)) {
+    throw new Error('Release validator source changed during the operation.')
+  }
+  validatorSource = current
+}
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const changelogPath = join(repoRoot, 'CHANGELOG.md')
 const distDir = join(repoRoot, 'dist')
@@ -149,7 +162,11 @@ Options:
 
 The script auto-loads .env.release.local and .env.zapstore.local when present.
 Shell environment variables override values from those files.
-NVPN_RELEASE_REQUIRE_ZAPSTORE=true is equivalent to --require-zapstore.`)
+NVPN_RELEASE_REQUIRE_ZAPSTORE=true is equivalent to --require-zapstore.
+NVPN_RELEASE_APP_REPO_PATH selects a clean product checkout separately from
+the clean validator checkout; staging then requires --reuse-gate-receipts.
+NVPN_RELEASE_ANDROID_FOREGROUND_CPU_WAIVER selects an explicit artifact-bound
+user waiver instead of the measured foreground CPU receipts.`)
 }
 
 function parseArgs(argv) {
@@ -378,7 +395,7 @@ function verifyStagedPublicationBundle({
   tree,
 }) {
   run(process.execPath, [
-    join(repoRoot, 'scripts', 'verify-release-publication-bundle.mjs'),
+    join(validatorRoot, 'scripts', 'verify-release-publication-bundle.mjs'),
     '--stage-dir',
     stageDir,
     '--tag',
@@ -1394,7 +1411,7 @@ function buildMacosArtifacts({
     run(
       'python3',
       [
-        join(repoRoot, 'scripts', 'macos_release_join_artifact.py'),
+        join(validatorRoot, 'scripts', 'macos_release_join_artifact.py'),
         'validate-published-app',
         '--receipt',
         gateReceiptPath,
@@ -1454,14 +1471,14 @@ function buildMacosArtifacts({
   run(
     'bash',
     [
-      join(repoRoot, 'scripts', 'verify-macos-release-publication-artifacts.sh'),
+      join(validatorRoot, 'scripts', 'verify-macos-release-publication-artifacts.sh'),
       gateReceiptPath,
       releaseApp,
       updater,
       dmg,
       gateSource.commit,
       gateSource.tree,
-      join(repoRoot, 'scripts', 'macos_release_join_artifact.py'),
+      join(validatorRoot, 'scripts', 'macos_release_join_artifact.py'),
       ...(receipt.receiptSchema === 2
         ? [join(dirname(gatedAppPath), 'hosted-admission.json')] : []),
     ],
@@ -1521,9 +1538,10 @@ function buildIosArtifacts({
     throw new SkipStepError('Skipping iOS artifacts because the host is not macOS.')
   }
   if (dryRun) {
-    run('bash', [join(repoRoot, 'scripts', 'ios-build'), 'ios-export'], {
+    run('bash', [join(validatorRoot, 'scripts', 'ios-build'), 'ios-export'], {
       env: {
         ...process.env,
+        NVPN_IOS_RELEASE_SOURCE_ROOT: repoRoot,
         NVPN_RELEASE_TAG: tag,
         NVPN_IOS_INTERNAL_ONLY: 'false',
         NVPN_RELEASE_IOS_FROZEN_ARCHIVE: '1',
@@ -1559,7 +1577,7 @@ function buildIosArtifacts({
     repoRoot, receipt: archiveReceipt,
     commit: candidateCommit, tree: candidateTree, env,
   }, (context) => {
-    run('bash', [join(repoRoot, 'scripts', 'ios-build'), 'ios-export'], context)
+    run('bash', [join(validatorRoot, 'scripts', 'ios-build'), 'ios-export'], context)
   })
   builtLines.push(`Verified and exported iOS ${tag} without uploading it.`)
 
@@ -2135,6 +2153,7 @@ function replayCanonicalMutationGate({
   env,
   requireTag,
 }) {
+  assertValidatorSource()
   return validateReleaseMutationGate({
     stageDir: resolve(stageDir),
     expectedTag: tag,
@@ -2215,6 +2234,9 @@ function main() {
   const { loaded, loadedPaths } = readOptionalEnvFiles([...defaultEnvFiles, ...options.envFiles])
   const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH || loaded.SOURCE_DATE_EPOCH || gitHeadEpoch() || '0'
   const env = deterministicBuildEnv({ ...loaded, ...process.env }, { sourceDateEpoch })
+  if (resolveReleaseProductRoot(validatorRoot, env) !== repoRoot) {
+    throw new Error('Release product root must be selected in the process environment before loading dotenv files.')
+  }
   Object.assign(process.env, env)
 
   const tag = options.tag || readWorkspaceVersionTag(readFileSync(rootCargoToml, 'utf8'))
@@ -2378,6 +2400,18 @@ function main() {
     androidReleaseAssetName(tag),
   )
   const allowPartial = options.allowPartial || envFlagEnabled(env.NVPN_RELEASE_ALLOW_PARTIAL)
+  if (env.NVPN_RELEASE_ANDROID_PREVIOUS_PHYSICAL_RECEIPT) {
+    platformReceiptPaths.android.previous_physical = resolve(
+      env.NVPN_RELEASE_ANDROID_PREVIOUS_PHYSICAL_RECEIPT,
+    )
+  }
+  if (env.NVPN_RELEASE_ANDROID_FOREGROUND_CPU_WAIVER) {
+    delete platformReceiptPaths.android.foreground_idle_cpu
+    delete platformReceiptPaths.android.foreground_idle_cpu_raw
+    platformReceiptPaths.android.foreground_idle_cpu_waiver = resolve(
+      env.NVPN_RELEASE_ANDROID_FOREGROUND_CPU_WAIVER,
+    )
+  }
   const finalPublication = options.publish && !options.draft
   const requireZapstore = zapstorePublicationRequired({
     cliRequired: options.requireZapstore || finalPublication,
@@ -2484,6 +2518,12 @@ function main() {
     )
   }
 
+  if (repoRoot !== validatorRoot && !options.completeGateFromReceipts
+    && !options.reuseGateReceipts && !options.publishStagedDraft && !options.promoteDraft) {
+    throw new Error('A separate product checkout requires receipt completion, receipt reuse, or staged publication.')
+  }
+  if (!options.dryRun) assertValidatorSource()
+
   console.log(`Release tag: ${tag}`)
   console.log(`Release tree: ${releaseTree}`)
   if (requireZapstore) {
@@ -2581,6 +2621,7 @@ function main() {
     const result = completeReleaseGateFromReceipts({
       commit: candidateCommit,
       tree: candidateTree,
+      validatorSource,
       candidateRoot: repoRoot,
       releaseGateSummaryPath,
       platformReceiptPaths,
@@ -2676,6 +2717,7 @@ function main() {
     })
     const apple = publishExactIosDistribution({
       repoRoot,
+      validatorRoot,
       stagedManifest,
       mutationEnv,
       preflight: iosPublication,
@@ -2831,6 +2873,7 @@ function main() {
         releaseGateEvidence = collectReleaseGateReceipts({
           commit: candidateCommit,
           tree: candidateTree,
+          validatorSource,
           candidateRoot: repoRoot,
           releaseGateSummaryPath,
           platformReceiptPaths,
@@ -2965,6 +3008,7 @@ function main() {
 
   if (!options.dryRun) {
     assertCleanReleaseSource(tag, candidateCommit)
+    assertValidatorSource()
   }
 
   const commit = resolveReleaseCommit(tag, { dryRun: options.dryRun })

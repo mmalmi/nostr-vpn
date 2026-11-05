@@ -11,12 +11,13 @@ import { fileURLToPath } from 'node:url'
 
 import {
   normalizeTag,
+  resolveReleaseProductRoot,
   validatePromotableReleaseManifest,
   validateStagedReleaseTree,
 } from './local-release-lib.mjs'
 import { inspectStartosReleasePackage } from './startos-release.mjs'
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const repoRoot = resolveReleaseProductRoot(resolve(dirname(fileURLToPath(import.meta.url)), '..'))
 
 function fail(message) {
   throw new Error(`Release publication bundle rejected: ${message}`)

@@ -21,10 +21,10 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { deterministicBuildEnv, normalizeTag, readWorkspaceVersionTag, splitCsv } from './local-release-lib.mjs'
+import { deterministicBuildEnv, normalizeTag, readWorkspaceVersionTag, resolveReleaseProductRoot, splitCsv } from './local-release-lib.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const repoRoot = resolve(__dirname, '..')
+const repoRoot = resolveReleaseProductRoot(resolve(__dirname, '..'))
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const umbrelDir = join(repoRoot, 'umbrel')
 const baseComposePath = join(umbrelDir, 'docker-compose.yml')

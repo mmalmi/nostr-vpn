@@ -28,6 +28,7 @@ export function unlinkIfSameFile(path, expected) {
 export function completeReleaseGateFromReceipts({
   commit,
   tree,
+  validatorSource = { commit, tree },
   candidateRoot,
   releaseGateSummaryPath,
   platformReceiptPaths,
@@ -43,6 +44,7 @@ export function completeReleaseGateFromReceipts({
   const args = {
     commit,
     tree,
+    validatorSource,
     candidateRoot,
     releaseGateSummaryPath,
     platformReceiptPaths,
@@ -65,8 +67,8 @@ export function completeReleaseGateFromReceipts({
     targetStatus: 'not-measured',
     appGitSha: commit,
     appGitTree: tree,
-    validatorGitSha: commit,
-    validatorGitTree: tree,
+    validatorGitSha: validatorSource.commit,
+    validatorGitTree: validatorSource.tree,
     platformGateReceipts: concrete.platformGateReceipts,
     platformSourceEquivalence: concrete.platformSourceEquivalence,
   }

@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   chmodSync,
+  cpSync,
   copyFileSync,
   existsSync,
   realpathSync,
@@ -30,6 +31,7 @@ import {
   bumpCargoPackageVersion,
   bumpPbxprojMarketingVersion,
   bumpStartosSourceVersion,
+  cleanReleaseSourceIdentity,
   deterministicBuildEnv,
   describeAsset,
   extractChangelogSection,
@@ -38,6 +40,7 @@ import {
   readWorkspaceVersionTag,
   replaceWithExactFileCopy,
   renderReleaseNotes,
+  resolveReleaseProductRoot,
   semverFromTag,
   shouldBlockLocalLinuxAmd64Qemu,
   splitCsv,
@@ -55,6 +58,44 @@ import {
   zapstorePublicationPrerequisites,
   zapstorePublicationRequired,
 } from './local-release-lib.mjs'
+
+test('separate release product root rejects aliases, subdirectories and dirty sources', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'nvpn-release-roots-')))
+  const product = join(root, 'product')
+  const validator = join(root, 'validator')
+  mkdirSync(product)
+  mkdirSync(validator)
+  const git = (cwd, args) => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  try {
+    for (const cwd of [product, validator]) {
+      git(cwd, ['init', '-q'])
+      writeFileSync(join(cwd, 'source'), cwd === product ? 'product' : 'validator')
+      git(cwd, ['add', 'source'])
+      git(cwd, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid',
+        'commit', '-qm', 'fixture'])
+    }
+    assert.equal(resolveReleaseProductRoot(validator, {}), validator)
+    assert.equal(resolveReleaseProductRoot(validator, { NVPN_RELEASE_APP_REPO_PATH: product }), product)
+    assert.notDeepEqual(cleanReleaseSourceIdentity(product), cleanReleaseSourceIdentity(validator))
+    const alias = join(root, 'alias')
+    symlinkSync(product, alias)
+    mkdirSync(join(product, 'subdir'))
+    for (const path of ['product', '', alias, product + '/.', join(product, 'subdir')]) {
+      assert.throws(() => resolveReleaseProductRoot(validator, { NVPN_RELEASE_APP_REPO_PATH: path }),
+        /Release product root/)
+    }
+    writeFileSync(join(product, 'source'), 'changed product')
+    assert.throws(() => cleanReleaseSourceIdentity(product), /dirty/)
+    writeFileSync(join(validator, 'untracked'), 'changed validator')
+    assert.throws(() => cleanReleaseSourceIdentity(validator), /dirty/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 import {
   githubRepositoryFromRemote,
   githubReleaseRepairPlan,
@@ -1273,6 +1314,7 @@ test('staged draft publication publishes only the already validated bytes', () =
     'local-release-lib.mjs',
     'release-source-verification.mjs',
     'release-artifact-provenance-lib.mjs',
+    'macos-hosted-provenance.mjs',
     'release-gate-resume.mjs',
     'release-component-source.mjs',
     'github-release-publication.mjs',
@@ -1666,6 +1708,37 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
       ),
     )
   }
+  const validator = join(root, 'validator')
+  cpSync(scripts, join(validator, 'scripts'), { recursive: true })
+  for (const args of [
+    ['init', '-q'], ['add', '.'],
+    ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'validator'],
+  ]) {
+    const command = spawnSync('git', args, { cwd: validator, encoding: 'utf8' })
+    assert.equal(command.status, 0, command.stderr)
+  }
+  const separateArgs = [join(validator, 'scripts/local-release.mjs'), ...releaseArgs.slice(1)]
+  const separateOptions = {
+    ...releaseOptions,
+    env: { ...releaseOptions.env, NVPN_RELEASE_APP_REPO_PATH: realpathSync(repo) },
+  }
+  const separate = spawnSync(process.execPath, separateArgs, separateOptions)
+  assert.equal(separate.status, 0, separate.stderr)
+  assert.match(separate.stdout, /Published staged draft v4\.1\.5/)
+  for (const [path, before] of stagedBefore) {
+    assert.deepEqual(readFileSync(join(stage, path)), before)
+  }
+  for (const cwd of [repo, validator]) {
+    writeFileSync(htreeLog, '')
+    const dirty = join(cwd, 'unreviewed')
+    writeFileSync(dirty, 'must block publication')
+    const rejected = spawnSync(process.execPath, separateArgs, separateOptions)
+    assert.equal(rejected.status, 1, rejected.stderr)
+    assert.match(rejected.stderr, /dirty|uncommitted/)
+    assert.equal(readFileSync(htreeLog, 'utf8'), '')
+    unlinkSync(dirty)
+  }
+
   const staleTag = spawnSync('git', ['tag', 'v4.1.5', 'HEAD^'], {
     cwd: repo,
     encoding: 'utf8',

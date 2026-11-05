@@ -12,11 +12,12 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
   normalizeTag,
+  resolveReleaseProductRoot,
   validatePromotableReleaseManifest,
   validateStagedReleaseTree,
 } from './local-release-lib.mjs'
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const repoRoot = resolveReleaseProductRoot(resolve(dirname(fileURLToPath(import.meta.url)), '..'))
 
 function fail(message) {
   throw new Error(`Release mutation gate rejected: ${message}`)
