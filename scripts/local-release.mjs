@@ -1146,15 +1146,6 @@ function findAndroidBuildTool(env, toolName) {
   return null
 }
 
-function androidSigningIsComplete(env) {
-  return Boolean(
-    env.ANDROID_KEYSTORE_PATH &&
-      env.ANDROID_KEYSTORE_PASSWORD &&
-      env.ANDROID_KEY_ALIAS &&
-      env.ANDROID_KEY_PASSWORD,
-  )
-}
-
 function buildAndroidArtifacts({
   env,
   tag,
@@ -1165,184 +1156,139 @@ function buildAndroidArtifacts({
   candidateTree,
 }) {
   const androidEnv = ensureAndroidSdkEnv(env)
-  const sdkRoot = androidEnv.ANDROID_SDK_ROOT || androidEnv.ANDROID_HOME
-  if (!sdkRoot) {
-    throw new SkipStepError('Skipping Android artifacts because ANDROID_SDK_ROOT/ANDROID_HOME is not configured.')
-  }
-  if (!commandExists('cargo-ndk')) {
-    throw new SkipStepError('Skipping Android artifacts because cargo-ndk is not on PATH.')
+  const apksigner = findAndroidBuildTool(androidEnv, 'apksigner')
+  if (!apksigner) {
+    throw new Error('Android staging requires apksigner to verify the retained release APK.')
   }
 
-  const installedTargets = run('rustup', ['target', 'list', '--installed'], {
-    capture: true,
-    dryRun,
-  })
-  if (!installedTargets.includes('aarch64-linux-android')) {
-    run('rustup', ['target', 'add', 'aarch64-linux-android'], { dryRun })
+  // The release gate built the Play AAB first, derived the installable APK
+  // from it with pinned bundletool, and physically exercised that APK.
+  // Reuse both sealed artifacts; rebuilding either here would break the
+  // relationship proven on the Pixel.
+  const testedApkPath = join(
+    repoRoot,
+    'android',
+    'app',
+    'build',
+    'outputs',
+    'apk',
+    'release',
+    'app-release.apk',
+  )
+  const bundleReceiptPath = join(
+    repoRoot,
+    'android',
+    'app',
+    'build',
+    'outputs',
+    'bundle',
+    'release',
+    'physical-gate-artifact.json',
+  )
+  const aabPath = findFirstFile(
+    join(repoRoot, 'android', 'app', 'build', 'outputs', 'bundle', 'release'),
+    (entry) => entry.endsWith('.aab'),
+  )
+  if (
+    !dryRun
+    && (
+      !existsSync(testedApkPath)
+      || !aabPath
+      || !existsSync(bundleReceiptPath)
+    )
+  ) {
+    throw new Error(
+      'Expected gate-tested AAB-derived Android APK and signed AAB were not produced.',
+    )
   }
 
-  const tempRoot = dryRun ? null : mkdtempSync(join(os.tmpdir(), 'nvpn-android-release-'))
-  let wroteTempKeystore = false
-  try {
-    if (!androidEnv.ANDROID_KEYSTORE_PATH && androidEnv.ANDROID_KEYSTORE_B64 && tempRoot) {
-      androidEnv.ANDROID_KEYSTORE_PATH = join(tempRoot, 'upload-keystore.jks')
-      writeFileSync(androidEnv.ANDROID_KEYSTORE_PATH, Buffer.from(androidEnv.ANDROID_KEYSTORE_B64, 'base64'))
-      wroteTempKeystore = true
-    }
-
-    const signed = androidSigningIsComplete(androidEnv)
-    if (!signed && !envFlagEnabled(androidEnv.NVPN_ALLOW_UNSIGNED_ANDROID)) {
+  const apkDest = join(distDir, androidReleaseAssetName(tag, { extension: 'apk' }))
+  const aabDest = join(distDir, androidReleaseAssetName(tag, { extension: 'aab' }))
+  let gate
+  if (!dryRun) {
+    if (!gateReceiptPath || !existsSync(gateReceiptPath)) {
       throw new Error(
-        'Android release signing is not configured. Set ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD, or set NVPN_ALLOW_UNSIGNED_ANDROID=1 for an explicitly unsigned dev artifact.',
+        'Physical Android release-gate receipt is missing; refusing to publish an untested APK.',
       )
     }
-
-    // The release gate built the Play AAB first, derived the installable APK
-    // from it with pinned bundletool, and physically exercised that APK.
-    // Reuse both sealed artifacts; rebuilding either here would break the
-    // relationship proven on the Pixel.
-    const testedApkPath = join(
-      repoRoot,
-      'android',
-      'app',
-      'build',
-      'outputs',
-      'apk',
-      'release',
-      'app-release.apk',
-    )
-    const bundleReceiptPath = join(
-      repoRoot,
-      'android',
-      'app',
-      'build',
-      'outputs',
-      'bundle',
-      'release',
-      'physical-gate-artifact.json',
-    )
-    const aabPath = findFirstFile(
-      join(repoRoot, 'android', 'app', 'build', 'outputs', 'bundle', 'release'),
-      (entry) => entry.endsWith('.aab'),
-    )
-    if (
-      !dryRun
-      && (
-        !existsSync(testedApkPath)
-        || !aabPath
-        || !existsSync(bundleReceiptPath)
-      )
-    ) {
-      throw new Error(
-        'Expected gate-tested AAB-derived Android APK and signed AAB were not produced.',
-      )
+    for (const [path, label] of [
+      [gateReceiptPath, 'Physical Android release-gate receipt'],
+      [bundleReceiptPath, 'Android AAB-derived APK receipt'],
+      [testedApkPath, 'Gate-tested Android APK'],
+      [aabPath, 'Signed Android AAB'],
+    ]) exactRegularFile(path, label)
+    let receipt
+    try {
+      receipt = JSON.parse(readFileSync(gateReceiptPath, 'utf8'))
+    } catch {
+      throw new Error('Physical Android release-gate receipt is not valid JSON.')
     }
+    let bundleReceipt
+    try {
+      bundleReceipt = JSON.parse(readFileSync(bundleReceiptPath, 'utf8'))
+    } catch {
+      throw new Error('Android AAB-derived APK receipt is not valid JSON.')
+    }
+    const aabSha256 = sha256FileSync(aabPath)
+    const apkSha256 = sha256FileSync(testedApkPath)
+    const sourceEquivalence = requireReceiptSource(receipt, {
+      commit: candidateCommit,
+      tree: candidateTree,
+      candidateRoot: repoRoot,
+      platform: 'android',
+      label: 'Physical Android release-gate receipt',
+    })
+    validateAndroidBundleRelationship(bundleReceipt, {
+      receipt,
+      receiptSha256: sha256FileSync(bundleReceiptPath),
+      apkSha256,
+      aabSha256,
+    })
+    gate = validateAndroidReleaseGateReceipt(receipt, {
+      apkSha256,
+      aabSha256,
+      expectedAppGitSha: receipt.appGitSha,
+      expectedAppGitTree: receipt.appGitTree,
+      expectedPackage:
+        String(androidEnv.NVPN_ANDROID_PACKAGE_ID || '').trim()
+        || 'fi.siriusbusiness.nvpn',
+    })
+    if (sourceEquivalence) {
+      gate.sourceEquivalence = sourceEquivalence
+    }
+    mkdirSync(distDir, { recursive: true })
+    copyFileSync(testedApkPath, apkDest)
+    copyFileSync(aabPath, aabDest)
+    if (sha256FileSync(apkDest) !== gate.apkSha256) {
+      throw new Error('Copied Android release APK differs from the physical-gate artifact.')
+    }
+    if (sha256FileSync(aabDest) !== gate.aabSha256) {
+      throw new Error('Copied Android Play AAB differs from the physical-gate artifact.')
+    }
+  }
 
-    const apkDest = join(distDir, androidReleaseAssetName(tag, { extension: 'apk', signed }))
-    const aabDest = join(distDir, androidReleaseAssetName(tag, { extension: 'aab', signed }))
-    let gate
-    if (!dryRun) {
-      if (!gateReceiptPath || !existsSync(gateReceiptPath)) {
-        throw new Error(
-          'Physical Android release-gate receipt is missing; refusing to publish an untested APK.',
-        )
-      }
-      for (const [path, label] of [
-        [gateReceiptPath, 'Physical Android release-gate receipt'],
-        [bundleReceiptPath, 'Android AAB-derived APK receipt'],
-        [testedApkPath, 'Gate-tested Android APK'],
-        [aabPath, 'Signed Android AAB'],
-      ]) exactRegularFile(path, label)
-      let receipt
-      try {
-        receipt = JSON.parse(readFileSync(gateReceiptPath, 'utf8'))
-      } catch {
-        throw new Error('Physical Android release-gate receipt is not valid JSON.')
-      }
-      let bundleReceipt
-      try {
-        bundleReceipt = JSON.parse(readFileSync(bundleReceiptPath, 'utf8'))
-      } catch {
-        throw new Error('Android AAB-derived APK receipt is not valid JSON.')
-      }
-      const aabSha256 = sha256FileSync(aabPath)
-      const apkSha256 = sha256FileSync(testedApkPath)
-      const sourceEquivalence = requireReceiptSource(receipt, {
-        commit: candidateCommit,
-        tree: candidateTree,
-        candidateRoot: repoRoot,
+  run(apksigner, ['verify', '--verbose', apkDest], { dryRun })
+  builtLines.push('Reused the signed Play AAB and its physical-gate-sealed bundletool-derived APK.')
+  if (dryRun) {
+    return { gate: null, proofs: {} }
+  }
+  const runtimePayloads = androidRuntimePayloads(apkDest, aabDest)
+  return {
+    gate,
+    proofs: {
+      [basename(apkDest)]: exactArtifactProof({
+        artifactPath: apkDest,
         platform: 'android',
-        label: 'Physical Android release-gate receipt',
-      })
-      validateAndroidBundleRelationship(bundleReceipt, {
-        receipt,
-        receiptSha256: sha256FileSync(bundleReceiptPath),
-        apkSha256,
-        aabSha256,
-      })
-      gate = validateAndroidReleaseGateReceipt(receipt, {
-        apkSha256,
-        aabSha256,
-        expectedAppGitSha: receipt.appGitSha,
-        expectedAppGitTree: receipt.appGitTree,
-        expectedPackage:
-          String(androidEnv.NVPN_ANDROID_PACKAGE_ID || '').trim()
-          || 'fi.siriusbusiness.nvpn',
-      })
-      if (sourceEquivalence) {
-        gate.sourceEquivalence = sourceEquivalence
-      }
-      mkdirSync(distDir, { recursive: true })
-      copyFileSync(testedApkPath, apkDest)
-      copyFileSync(aabPath, aabDest)
-      if (sha256FileSync(apkDest) !== gate.apkSha256) {
-        throw new Error('Copied Android release APK differs from the physical-gate artifact.')
-      }
-      if (sha256FileSync(aabDest) !== gate.aabSha256) {
-        throw new Error('Copied Android Play AAB differs from the physical-gate artifact.')
-      }
-    }
-
-    if (signed) {
-      const apksigner = findAndroidBuildTool(androidEnv, 'apksigner')
-      if (apksigner) {
-        run(apksigner, ['verify', '--verbose', apkDest], { dryRun })
-      }
-    }
-
-    builtLines.push(
-      signed
-        ? 'Reused the signed Play AAB and its physical-gate-sealed bundletool-derived APK.'
-        : 'Reused the Play AAB and its physical-gate-sealed bundletool-derived APK.',
-    )
-    if (dryRun) {
-      return { gate: null, proofs: {} }
-    }
-    const runtimePayloads = androidRuntimePayloads(apkDest, aabDest)
-    return {
-      gate,
-      proofs: {
-        [basename(apkDest)]: exactArtifactProof({
-          artifactPath: apkDest,
-          platform: 'android',
-          gateReceiptPath,
-          payloads: runtimePayloads,
-        }),
-        [basename(aabDest)]: exactArtifactProof({
-          artifactPath: aabDest,
-          platform: 'android',
-          gateReceiptPath,
-          payloads: runtimePayloads,
-        }),
-      },
-    }
-  } finally {
-    if (wroteTempKeystore && androidEnv.ANDROID_KEYSTORE_PATH) {
-      rmSync(androidEnv.ANDROID_KEYSTORE_PATH, { force: true })
-    }
-    if (tempRoot) {
-      rmSync(tempRoot, { recursive: true, force: true })
-    }
+        gateReceiptPath,
+        payloads: runtimePayloads,
+      }),
+      [basename(aabDest)]: exactArtifactProof({
+        artifactPath: aabDest,
+        platform: 'android',
+        gateReceiptPath,
+        payloads: runtimePayloads,
+      }),
+    },
   }
 }
 

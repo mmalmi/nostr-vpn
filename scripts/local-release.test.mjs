@@ -2331,6 +2331,43 @@ test('release-gate attestation seals every staged asset and all real platforms',
   )
 })
 
+test('Android staging verifies retained artifacts without signing keys or build tools', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-android-staging-'))
+  try {
+    const sdk = join(root, 'sdk')
+    const buildTools = join(sdk, 'build-tools', '35.0.0')
+    mkdirSync(buildTools, { recursive: true })
+    const apksigner = join(buildTools, 'apksigner')
+    writeFileSync(apksigner, '#!/bin/sh\nexit 99\n')
+    chmodSync(apksigner, 0o755)
+    const env = { ...process.env, ANDROID_SDK_ROOT: sdk, ANDROID_HOME: sdk }
+    for (const name of [
+      'ANDROID_KEYSTORE_PATH', 'ANDROID_KEYSTORE_B64', 'ANDROID_KEYSTORE_PASSWORD',
+      'ANDROID_KEY_ALIAS', 'ANDROID_KEY_PASSWORD', 'NVPN_ALLOW_UNSIGNED_ANDROID',
+      'NVPN_RELEASE_APP_REPO_PATH',
+    ]) delete env[name]
+    const result = spawnSync(process.execPath, [
+      join(process.cwd(), 'scripts/local-release.mjs'),
+      '--dry-run', '--only', 'android', '--stage-dir', join(root, 'stage'),
+    ], { env, encoding: 'utf8', timeout: 10000 })
+    assert.equal(result.status, 0, result.stderr)
+    assert.ok(result.stdout.includes(`${apksigner} verify --verbose`), result.stdout)
+    assert.doesNotMatch(result.stdout, /\$ rustup|cargo-ndk|gradlew/)
+    assert.equal(existsSync(join(root, 'stage')), false)
+    const missingVerifier = spawnSync(process.execPath, [
+      join(process.cwd(), 'scripts/local-release.mjs'),
+      '--dry-run', '--only', 'android', '--stage-dir', join(root, 'stage'),
+    ], {
+      env: { ...env, ANDROID_SDK_ROOT: join(root, 'missing-sdk'), ANDROID_HOME: join(root, 'missing-sdk') },
+      encoding: 'utf8', timeout: 10000,
+    })
+    assert.equal(missingVerifier.status, 1)
+    assert.match(missingVerifier.stderr, /requires apksigner/)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('release script binds Android publication to the physical-gate receipt and staged APK', () => {
   const localRelease = readFileSync(join(process.cwd(), 'scripts/local-release.mjs'), 'utf8')
   const androidBuildStart = localRelease.indexOf('function buildAndroidArtifacts(')
