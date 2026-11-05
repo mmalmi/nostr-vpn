@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "product": {
+    "commit": "df954f33ba442a245957cfb6eae1ce36b458f255",
+    "tree": "3b033257b3a6f7e5e6a36c82434781fcdddb05ed",
+    "sourceDateEpoch": 1793838134,
+    "contextManifestSha256": "d32bb761319896de46cef14b0c96ad7e93bacdffdc4472639590490ae84ec035",
+    "fileCount": 1394,
+    "fileBytes": 20075962,
+    "files": {
+      "umbrel/Dockerfile": "76d51f89a312dcab9b4e014a065d44505abbbc4e8b97d6ac80e07609b6b74e61",
+      "Cargo.toml": "b01c3c369b3e7b87074affeaa73f0ee5d48be248b4f5535624a2a6f910faff6f",
+      "Cargo.lock": "1d72aac7e6e5355dc5c903a7f39ae376172739e1c6cd954cadcc88bec33bfb79",
+      "web/control-panel/package.json": "44275fe93dc97b62158dca9ea9970e4a1168ca03a036ee821afc7ea897538c45",
+      "web/control-panel/pnpm-lock.yaml": "8df619ca7897594e80401c5732fbb0a8b59daab2173a7677a4acac36c1288451",
+      ".dockerignore": "4ff92aa7e87307b0bbaba33d1dc0733aa4ee6437de83f44fb085e72ee584de2d"
+    }
+  },
+  "buildx": {
+    "version": "v0.38.2",
+    "commit": "3c4cbd35852fc1a476923627a780a7836c28b654",
+    "url": "https://github.com/docker/buildx/releases/download/v0.38.2/buildx-v0.38.2.linux-amd64",
+    "bytes": 68374690,
+    "sha256": "7992ec09413b80ff57ba4e081f56fc833d7bac1d5e71143c6c809e7e6065f6d6",
+    "checksumsSha256": "726d5f7e7f79d5848c2cd5f59f368f4bb3eeec3697a40f6363753ab1cc298afe"
+  },
+  "buildkit": {
+    "version": "v0.34.2",
+    "commit": "8c579433824224dc64a158cf8734495b6e2b186a",
+    "image": "moby/buildkit@sha256:97719ccb2ac86fb44fd36f330a6d302f63dddd5326f3ada24f9c05ccac0d9098",
+    "indexDigest": "sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe",
+    "configDigest": "sha256:e0eaf1662033859b0b7c643e456061567d3c4eec7c7ced0e2952c5301b0d2814"
+  },
+  "toolchain": {
+    "rustRelease": "1.94.1",
+    "rustCommitPrefix": "e408947b",
+    "llvm": "21.1.8",
+    "cargo": "1.94.1",
+    "gcc": "12.2.0",
+    "debian": "bookworm"
+  },
+  "limits": {
+    "diskFloorGiB": 20,
+    "coldGrowthGiB": 24,
+    "foreignGrowthGiB": 1,
+    "responseGiB": 1,
+    "cpu": 2,
+    "buildMemoryGiB": 6,
+    "helperMemoryMiB": 512,
+    "pids": 512,
+    "timeoutSeconds": 1800,
+    "cleanupSeconds": 60,
+    "ociBytes": 536870912,
+    "stageArchiveBytes": 6442450944,
+    "logBytes": 16777216,
+    "metadataBytes": 16777216
+  },
+  "scope": "Distinct nonpublishing Linux/amd64 seed candidate only. Cold budget is conservative admission, not measured peak or inherited artifact acceptance."
+}

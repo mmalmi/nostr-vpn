@@ -1,0 +1,108 @@
+name: Frozen seed OCI candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: seed-oci-candidate-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Verify dedicated runner and prepare finite cold-build capacity
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$GITHUB_REPOSITORY" = mmalmi/nostr-vpn
+          test "$(uname -m)" = x86_64
+          # Same unused SDK allowlist as release.yml, on this disposable runner only.
+          # No Docker prune, cache import, local-host operation or shared data removal.
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            if [[ -e "$path" ]]; then
+              test ! -L "$path"
+              sudo rm -rf --one-file-system -- "$path"
+            fi
+          done
+          python3 - <<'PY'
+          import os
+          for path in (os.environ["GITHUB_WORKSPACE"], os.environ["RUNNER_TEMP"], "/var/lib/docker"):
+              stat = os.statvfs(path)
+              free = stat.f_bavail * stat.f_frsize
+              print(path, "free_bytes", free)
+              if free < 46 * 1024**3:
+                  raise SystemExit("Cold admission requires 20 GiB reserve + 24 GiB own + 1 GiB foreign + 1 GiB response")
+          PY
+      - name: Check out immutable producer
+        id: producer
+        timeout-minutes: 5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: producer
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Check out frozen product separately
+        timeout-minutes: 5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: df954f33ba442a245957cfb6eae1ce36b458f255
+          path: product
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Focused producer contract checks
+        timeout-minutes: 2
+        run: python3 -B producer/scripts/test_seed_hosted_candidate.py
+      - name: Produce one nonpublishing candidate with resource guards
+        timeout-minutes: 33
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The helper cgroup is separate from the 6 GiB / 2 CPU / 512 PID BuildKit cgroup.
+          unit="nvpn-seed-producer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cpus="$(python3 -c 'import os; print(" ".join(map(str, sorted(os.sched_getaffinity(0))[:2])))')"
+          sudo systemd-run --quiet --wait --pipe --collect --unit "$unit" \
+            --property User="$(id -un)" --property Group="$(id -gn)" \
+            --property CPUQuota=200% --property "CPUAffinity=$cpus" \
+            --property MemoryMax=512M --property MemorySwapMax=0 --property TasksMax=128 \
+            --property RuntimeMaxSec=1865 --property TimeoutStopSec=5 --property KillMode=control-group \
+            --setenv "GITHUB_ACTIONS=$GITHUB_ACTIONS" \
+            --setenv "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT" \
+            --setenv "GITHUB_REPOSITORY=$GITHUB_REPOSITORY" \
+            --setenv "GITHUB_SHA=$GITHUB_SHA" --setenv "GITHUB_WORKFLOW_SHA=$GITHUB_WORKFLOW_SHA" \
+            --setenv "GITHUB_RUN_ID=$GITHUB_RUN_ID" --setenv "GITHUB_RUN_ATTEMPT=$GITHUB_RUN_ATTEMPT" \
+            --setenv "GITHUB_WORKFLOW_REF=$GITHUB_WORKFLOW_REF" \
+            --setenv "GITHUB_WORKSPACE=$GITHUB_WORKSPACE" --setenv "RUNNER_TEMP=$RUNNER_TEMP" \
+            --setenv "ImageOS=$ImageOS" --setenv "ImageVersion=$ImageVersion" \
+            --setenv PYTHONDONTWRITEBYTECODE=1 \
+            /usr/bin/python3 -B "$GITHUB_WORKSPACE/producer/scripts/seed_hosted_candidate.py"
+      - name: Close only this producer's recorded resources
+        if: always() && steps.producer.outcome == 'success'
+        timeout-minutes: 2
+        run: python3 -B producer/scripts/seed_hosted_candidate.py --cleanup
+      - name: Preserve bounded proof and failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: seed-producer-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/nvpn-seed-${{ github.run_id }}-${{ github.run_attempt }}/output/*.json
+            ${{ runner.temp }}/nvpn-seed-${{ github.run_id }}-${{ github.run_attempt }}/output/producer.log
+            ${{ runner.temp }}/nvpn-seed-${{ github.run_id }}-${{ github.run_attempt }}/owned-resources.json
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 30
+      - name: Export accepted candidate archive only
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: seed-oci-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nvpn-seed-${{ github.run_id }}-${{ github.run_attempt }}/output/candidate.oci.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
