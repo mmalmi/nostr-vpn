@@ -13,7 +13,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from seed_hosted_proof import canonical, require, sha256, verify_cached_export, verify_source, verify_toolchain
+from seed_hosted_proof import CachedRunGuard, canonical, require, sha256, verify_source, verify_toolchain
 from seed_hosted_runtime import Runner, capture
 from seed_oci_proof import verify_oci
 
@@ -80,8 +80,10 @@ def source_and_producer(runner, producer, source):
             "Producer checkout identity mismatch")
     require(not git(producer, "status", "--porcelain", "--untracked-files=all").strip(),
             "Producer checkout is not clean")
-    require(git(producer, "show", "-s", "--format=%P", "HEAD").strip() ==
-            runner.pins["product"]["commit"], "Producer must have the frozen product as its sole parent")
+    parent = "6431b80c17185cf1981be97d9ee358d8faec1f4f"
+    require(git(producer, "show", "-s", "--format=%P", "HEAD").strip() == parent and
+            git(producer, "show", "-s", "--format=%P", parent).strip() ==
+            runner.pins["product"]["commit"], "Producer lineage differs from the reviewed support parent")
     changes = set(git(producer, "diff", "--name-only", "--no-renames",
                       runner.pins["product"]["commit"], "HEAD").splitlines())
     require(changes == set(FILES), "Producer changes extend beyond support-only scope")
@@ -89,11 +91,12 @@ def source_and_producer(runner, producer, source):
     return git, rows, {name: sha256((producer / name).read_bytes()) for name in FILES}
 
 
-def build_arguments(runner, source, output, metadata, target=None, load=False):
+def build_arguments(runner, source, output, metadata, target=None, load=False,
+                    progress="plain"):
     args = [str(runner.buildx), "build", "--builder", runner.name, "--platform", "linux/amd64",
             "--file", str(source / "umbrel/Dockerfile"), "--provenance=false",
             "--build-arg", "SOURCE_DATE_EPOCH=" + str(runner.pins["product"]["sourceDateEpoch"]),
-            "--metadata-file", str(metadata), "--progress", "plain"]
+            "--metadata-file", str(metadata), "--progress", progress]
     if target:
         args += ["--target", target, "--tag", runner.name + "-toolchain"]
     exporter = "docker" if load else "oci"
@@ -105,11 +108,16 @@ def build_arguments(runner, source, output, metadata, target=None, load=False):
 def inspect_realized_builder(runner, source):
     stage = runner.work / "toolchain-stage.tar"
     metadata = runner.output / "toolchain-stage-metadata.json"
-    text = runner.run(build_arguments(runner, source, stage, metadata,
-                                      target="rust-builder", load=True),
-                      timeout=300)
-    # This is a second export of the already-built target, never a second compile.
-    cached_steps = verify_cached_export(text)
+    guard = CachedRunGuard()
+    runner.run(build_arguments(runner, source, stage, metadata,
+                               target="rust-builder", load=True, progress="rawjson"),
+               timeout=300, capture_output=False, progress_guard=guard)
+    cached_steps = guard.finish()
+    # Free and verify the 6 GiB builder scope before the 256 MiB inspection scope.
+    builder_closure = runner.stop_builder()
+    require(builder_closure["closed"] and runner.container is None and runner.group is None,
+            "BuildKit must be closed before toolchain inspection")
+    runner.check()
     tag = runner.name + "-toolchain"
     require(not runner.run(["docker", "image", "ls", "-q", "--no-trunc", tag]).strip(),
             "Inspection image tag already exists")
@@ -135,6 +143,7 @@ def inspect_realized_builder(runner, source):
         timeout=30)
     verified = verify_toolchain(result, runner.pins["toolchain"])
     return {"stageImageId": image["Id"], "observations": verified, "cachedRunSteps": cached_steps,
+            "builderClosureBeforeInspection": builder_closure,
             "method": "cached export of the exact completed rust-builder target; no source changes"}
 
 

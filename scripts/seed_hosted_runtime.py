@@ -158,7 +158,8 @@ class Runner:
         require(len(self.samples) <= self.limits["timeoutSeconds"] * 2,
                 "Resource evidence exceeded bound")
 
-    def run(self, arguments, cwd=None, timeout=120, capture_output=True, guarded=True):
+    def run(self, arguments, cwd=None, timeout=120, capture_output=True, guarded=True,
+            progress_guard=None):
         deadline = time.monotonic() + timeout
         if guarded:
             deadline = min(deadline, self.started + self.limits["timeoutSeconds"])
@@ -188,12 +189,19 @@ class Runner:
                                     "Producer log exceeded bound")
                             log.write(data)
                             log.flush()
+                        if progress_guard is not None:
+                            progress_guard.feed(data)
                         if capture_output:
                             require(len(result) + len(data) <= 1024 * 1024,
                                     "Command output exceeded bound")
                             result.extend(data)
                 require(process.wait(timeout=1) == 0, "Command failed: " + arguments[0])
             return result.decode()
+        except BaseException:
+            if progress_guard is not None:
+                # Cancel the server-side RUN before waiting for the client process group.
+                self.stop_builder()
+            raise
         finally:
             selector.close()
             # A child may outlive its parent and keep stdout open; close the whole owned group.
@@ -252,6 +260,25 @@ class Runner:
         self.save_state()
         self.run([str(buildx), "inspect", "--builder", self.name, "--bootstrap"])
         return {"version": version, "image": info["Image"], "limits": info["HostConfig"]}
+
+    def stop_builder(self):
+        """Terminate and verify the owned BuildKit scope before toolchain inspection."""
+        require(self.container == self.name, "Missing owned builder to stop")
+        old_group = self.group
+        info = self.inspect("container", self.name, guarded=False, timeout=5)
+        owned_resource(info, self.name, self.owner, self.pins["product"]["commit"])
+        self.run(["docker", "rm", "-f", self.name], guarded=False, timeout=10)
+        require(not self.run(["docker", "ps", "-aq", "--filter", "name=^/" + self.name + "$"],
+                             guarded=False, timeout=5).strip(), "Builder container remains")
+        if old_group is not None and old_group.exists():
+            events = dict(line.split() for line in
+                          (old_group / "cgroup.events").read_text().splitlines())
+            require(events.get("populated") == "0" and
+                    (old_group / "pids.current").read_text().strip() == "0",
+                    "Builder cgroup still has processes")
+        self.container, self.group = None, None
+        self.save_state()
+        return {"closed": True, "containerAbsent": True, "cgroupHasProcesses": False}
 
     def cleanup(self, buildx):
         signal.setitimer(signal.ITIMER_REAL, 0)

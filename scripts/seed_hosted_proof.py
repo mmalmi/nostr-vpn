@@ -167,8 +167,57 @@ def owned_resource(inspect, name, owner, product):
             "Resource ownership mismatch")
 
 
+class CachedRunGuard:
+    """Consume BuildKit v0.34.2 SolveStatus rawjson while the export is running."""
+    def __init__(self):
+        self.pending = bytearray()
+        self.vertices = {}
+        self.runs = set()
+        self.completed = set()
+
+    def feed(self, data):
+        self.pending.extend(data)
+        require(len(self.pending) <= 256 * 1024, "Raw progress line exceeded bound")
+        while b"\n" in self.pending:
+            line, _, remaining = self.pending.partition(b"\n")
+            self.pending = bytearray(remaining)
+            require(line, "Empty raw progress event")
+            event = json.loads(line)
+            require(isinstance(event, dict), "Invalid raw progress event")
+            vertices = event.get("vertexes", [])
+            require(isinstance(vertices, list) and len(vertices) <= 2048,
+                    "Invalid progress vertices")
+            for vertex in vertices:
+                require(isinstance(vertex, dict), "Invalid progress vertex")
+                identity = vertex.get("digest", "")
+                require(re.fullmatch(r"sha256:[0-9a-f]{64}", identity), "Invalid vertex identity")
+                previous = self.vertices.get(identity, {})
+                if "name" in vertex:
+                    require(isinstance(vertex["name"], str) and
+                            ("name" not in previous or previous["name"] == vertex["name"]),
+                            "Progress vertex name changed")
+                merged = {**previous, **vertex}
+                self.vertices[identity] = merged
+                require(len(self.vertices) <= 2048, "Progress vertex bound exceeded")
+                name = merged.get("name", "")
+                if re.search(r"\] RUN ", name):
+                    self.runs.add(identity)
+                    # Cached completion is explicitly marked in the same Vertex update.
+                    # Never wait for a RUN to complete before rejecting an actual start.
+                    if vertex.get("started") or vertex.get("completed"):
+                        require(vertex.get("cached") is True,
+                                "Uncached RUN started during cache-only export")
+                    if vertex.get("cached") is True and vertex.get("completed"):
+                        self.completed.add(identity)
+            require(not event.get("logs"), "Execution logs in cache-only export")
+
+    def finish(self):
+        require(not self.pending, "Truncated raw progress event")
+        require(self.runs and self.runs == self.completed, "Incomplete cached RUN proof")
+        return sorted(self.runs)
+
+
 def verify_cached_export(text):
-    steps = set(re.findall(r"(?m)^#([0-9]+) \[(?:rust-builder|bookworm-index)[^\]]*\] RUN ", text))
-    cached = set(re.findall(r"(?m)^#([0-9]+) CACHED$", text))
-    require(steps and steps <= cached, "Toolchain export executed a builder RUN step")
-    return sorted(steps, key=int)
+    guard = CachedRunGuard()
+    guard.feed(text.encode())
+    return guard.finish()

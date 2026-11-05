@@ -9,13 +9,17 @@ import stat
 import tarfile
 import types
 import unittest
+import os
+import sys
+import subprocess
+import time
 from unittest.mock import patch
 from pathlib import Path
 
-from seed_hosted_candidate import build_arguments
+from seed_hosted_candidate import build_arguments, inspect_realized_builder
 from seed_hosted_runtime import Runner
 
-from seed_hosted_proof import (GIB, admission, canonical, owned_resource,
+from seed_hosted_proof import (CachedRunGuard, GIB, admission, canonical, owned_resource,
                                resource_check, sha256, verify_cached_export, verify_source, verify_toolchain)
 from seed_oci_proof import TARGETS, verify_oci
 
@@ -200,15 +204,77 @@ class ResourceTests(unittest.TestCase):
                 owned_resource(resource, name, owner, product)
 
 
+def raw_vertex(number, name, cached=None, started=False, completed=False):
+    row = {"digest": "sha256:" + format(number, "064x"), "name": name}
+    if cached is not None:
+        row["cached"] = cached
+    if started:
+        row["started"] = "2026-11-05T00:00:00Z"
+    if completed:
+        row["completed"] = "2026-11-05T00:00:00Z"
+    return canonical({"vertexes": [row]}) + b"\n"
+
+
 class CachedExportTests(unittest.TestCase):
     def test_actual_run_steps_must_be_cached(self):
-        good = "#12 [bookworm-index 3/3] RUN apt-get update\n#12 CACHED\n" \
-               "#19 [rust-builder 6/6] RUN cargo build --release --locked\n#19 CACHED\n"
-        self.assertEqual(verify_cached_export(good), ["12", "19"])
-        for bad in (good.replace("#19 CACHED", "#19 0.15     Compiling nvpn"),
-                    "#1 CACHED\n", good.replace("#12 CACHED", "#12 DONE 3.0s")):
+        good = raw_vertex(12, "[bookworm-index 3/3] RUN apt-get update", True, True, True) + \
+               raw_vertex(19, "[rust-builder 6/6] RUN cargo build", True, True, True)
+        self.assertEqual(verify_cached_export(good.decode()),
+                         ["sha256:" + format(n, "064x") for n in (12, 19)])
+        for bad in (raw_vertex(19, "[rust-builder 6/6] RUN cargo build", False, True),
+                    raw_vertex(1, "exporting to image", True, True, True),
+                    raw_vertex(19, "[rust-builder 6/6] RUN cargo build", True, True)):
             with self.assertRaises(ValueError):
-                verify_cached_export(bad)
+                verify_cached_export(bad.decode())
+
+    def test_fragmented_updates_reject_uncached_start_before_completion(self):
+        guard = CachedRunGuard()
+        scheduled = raw_vertex(19, "[rust-builder 6/6] RUN cargo build")
+        for byte in scheduled:
+            guard.feed(bytes([byte]))
+        started = canonical({"vertexes": [{"digest": "sha256:" + format(19, "064x"),
+                                           "started": "2026-11-05T00:00:00Z"}]}) + b"\n"
+        with self.assertRaisesRegex(ValueError, "Uncached RUN started"):
+            guard.feed(started)
+
+    def test_progress_bounds_and_execution_logs_fail_closed(self):
+        for data in (b"x" * (256 * 1024 + 1), b"not json\n",
+                     canonical({"logs": [{"data": "RUN output"}]}) + b"\n"):
+            with self.subTest(length=len(data)), self.assertRaises(ValueError):
+                CachedRunGuard().feed(data)
+
+    def test_actual_process_is_cancelled_before_delayed_completion(self):
+        runner = Runner.__new__(Runner)
+        runner.started = time.monotonic()
+        runner.limits = {"timeoutSeconds": 10, "logBytes": 1024 * 1024}
+        runner.environment = {"PATH": "/usr/bin:/bin"}
+        runner.check = lambda: None
+        stopped = []
+        runner.stop_builder = lambda: stopped.append(time.monotonic())
+        class LogPath:
+            def __truediv__(self, name):
+                return self
+            def open(self, mode):
+                return io.BytesIO()
+        runner.output = LogPath()
+        row = raw_vertex(19, "[rust-builder 6/6] RUN cargo build", False, True)
+        program = "import sys,time;sys.stdout.buffer.write(" + repr(row) + \
+                  ");sys.stdout.flush();time.sleep(10)"
+        processes = []
+        original = subprocess.Popen
+        def launch(*args, **kwargs):
+            process = original(*args, **kwargs)
+            processes.append(process)
+            return process
+        before = time.monotonic()
+        with patch("seed_hosted_runtime.subprocess.Popen", side_effect=launch):
+            with self.assertRaisesRegex(ValueError, "Uncached RUN started"):
+                runner.run([sys.executable, "-c", program], timeout=10,
+                           progress_guard=CachedRunGuard())
+        self.assertLess(time.monotonic() - before, 2)
+        self.assertEqual(len(stopped), 1)
+        self.assertEqual(len(processes), 1)
+        self.assertIsNotNone(processes[0].poll())
 
 
 class SourceTests(unittest.TestCase):
@@ -277,6 +343,76 @@ class ProducerTests(unittest.TestCase):
         self.assertNotIn("--push", args)
         self.assertNotIn("--load", args)
         self.assertFalse(any("push=true" in arg or "cache-from" in arg for arg in args))
+
+    def test_inspection_only_starts_after_verified_builder_closure(self):
+        for close in (True, False):
+            with self.subTest(close=close):
+                events = []
+                class FilePath:
+                    def __init__(self, value):
+                        self.value = value
+                    def __truediv__(self, name):
+                        return FilePath(self.value + "/" + name)
+                    def __str__(self):
+                        return self.value
+                    def read_text(self):
+                        return json.dumps({"containerimage.config.digest": "sha256:" + "a" * 64})
+                runner = types.SimpleNamespace(
+                    work=FilePath("/work"), output=FilePath("/out"), buildx=Path("/tools/buildx"),
+                    name="job", owner="owner", container="job", group="active",
+                    pins={"product": {"sourceDateEpoch": 1793838134, "commit": "source"},
+                          "toolchain": {}}, save_state=lambda: None,
+                    check=lambda: events.append("check"),
+                    inspect=lambda *args: {"Id": "sha256:" + "a" * 64})
+                def stop():
+                    events.append("builder-closed" if close else "builder-not-closed")
+                    if close:
+                        runner.container, runner.group = None, None
+                    return {"closed": close}
+                runner.stop_builder = stop
+                def run(args, **kwargs):
+                    if "progress_guard" in kwargs:
+                        self.assertIn("rawjson", args)
+                        kwargs["progress_guard"].feed(raw_vertex(
+                            19, "[rust-builder 6/6] RUN cargo build", True, True, True))
+                    if args[:2] == ["docker", "run"]:
+                        self.assertIsNone(runner.container)
+                        self.assertIsNone(runner.group)
+                        self.assertIn("--memory=256m", args)
+                        self.assertIn("--memory-swap=256m", args)
+                        self.assertIn("--pids-limit=32", args)
+                        events.append("inspection")
+                    return ""
+                runner.run = run
+                with patch("seed_hosted_candidate.verify_toolchain", return_value={}):
+                    if close:
+                        result = inspect_realized_builder(runner, Path("/product"))
+                        self.assertTrue(result["builderClosureBeforeInspection"]["closed"])
+                        self.assertLess(events.index("builder-closed"), events.index("inspection"))
+                    else:
+                        with self.assertRaises(ValueError):
+                            inspect_realized_builder(runner, Path("/product"))
+                        self.assertNotIn("inspection", events)
+
+    def test_populated_builder_cgroup_prevents_scope_release(self):
+        runner = Runner.__new__(Runner)
+        runner.container = runner.name = "job"
+        runner.owner = "owner"
+        runner.pins = {"product": {"commit": "source"}}
+        runner.run = lambda *args, **kwargs: ""
+        runner.inspect = lambda *args, **kwargs: {"Name": "/job", "Config": {"Labels": {
+            "io.nostr-vpn.seed-job": "owner", "io.nostr-vpn.seed-source": "source"}}}
+        runner.save_state = lambda: None
+        class Group:
+            def exists(self):
+                return True
+            def __truediv__(self, name):
+                return types.SimpleNamespace(read_text=lambda: "populated 1\n" if
+                                             name == "cgroup.events" else "1")
+        runner.group = Group()
+        with self.assertRaisesRegex(ValueError, "still has processes"):
+            runner.stop_builder()
+        self.assertEqual(runner.container, "job")
 
     def cleanup_fixture(self, foreign=False, image=False):
         runner = Runner.__new__(Runner)
