@@ -11,7 +11,9 @@ ROOT_DIR="$(
 )"
 LINUX_DIR="$ROOT_DIR/linux"
 ARTIFACT_DIR="${ARTIFACT_ROOT:-$ROOT_DIR/artifacts/linux-manual-join-ui}"
-E2E_ROOT="/tmp/nostr-vpn-linux-manual-join-ui"
+run_id="${NVPN_LINUX_UI_RUN_ID:-}"
+[[ -z "$run_id" || "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
+E2E_ROOT="/tmp/nostr-vpn-linux-manual-join-ui${run_id:+-$run_id}"
 ADMIN_DATA_DIR="$E2E_ROOT/admin"
 JOINER_DATA_DIR="$E2E_ROOT/joiner"
 RESULT="$ARTIFACT_DIR/result.json"

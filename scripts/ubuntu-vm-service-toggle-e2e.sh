@@ -37,13 +37,17 @@ ubuntu_vm_import_ssh_command
   "$GUEST_REPO" \
   "$NVPN_UBUNTU_IMPORTED_APP" \
   "$NVPN_UBUNTU_IMPORTED_CLI" \
-  "$NVPN_UBUNTU_IMPORTED_FIXTURE" <<'GUEST'
+  "$NVPN_UBUNTU_IMPORTED_FIXTURE" \
+  "${NVPN_UBUNTU_UI_RUN_ID:-}" <<'GUEST'
 set -euo pipefail
 repo="$1"
 app="$2"
 cli="$3"
 fixture="$4"
+run_id="$5"
+[[ -z "$run_id" || "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
 cd "$repo"
+repo="$(pwd -P)"
 
 backup="$(mktemp)"
 had_unit=0
@@ -108,6 +112,7 @@ if [[ "$had_unit" == 1 ]]; then
   sudo -n systemctl daemon-reload
 fi
 env \
+  ARTIFACT_ROOT="$repo/artifacts/linux-service-toggle-real${run_id:+-$run_id}" \
   NVPN_LINUX_APP_PATH="$app" \
   NVPN_LINUX_NVPN_PATH="$cli" \
   NVPN_LINUX_FIXTURE_PATH="$fixture" \

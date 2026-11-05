@@ -36,25 +36,32 @@ ubuntu_vm_import_ssh_command
   "$GUEST_REPO" \
   "$NVPN_UBUNTU_IMPORTED_APP" \
   "$NVPN_UBUNTU_IMPORTED_CLI" \
-  "$NVPN_UBUNTU_IMPORTED_FIXTURE" <<'GUEST'
+  "$NVPN_UBUNTU_IMPORTED_FIXTURE" \
+  "${NVPN_UBUNTU_UI_RUN_ID:-}" <<'GUEST'
 set -euo pipefail
 repo="$1"
 app="$2"
 cli="$3"
 fixture="$4"
+run_id="$5"
+[[ -z "$run_id" || "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
 cd "$repo"
 repo="$(pwd -P)"
+artifact="$repo/artifacts/linux-manual-join-ui${run_id:+-$run_id}"
 env \
+  ARTIFACT_ROOT="$artifact" \
+  NVPN_LINUX_UI_RUN_ID="$run_id" \
   NVPN_REPO_ROOT="$repo" \
   NVPN_LINUX_APP_PATH="$app" \
   NVPN_LINUX_NVPN_PATH="$cli" \
   NVPN_LINUX_FIXTURE_PATH="$fixture" \
   xvfb-run -a dbus-run-session -- ./linux/scripts/e2e-manual-join-ui.sh
-python3 - <<'PY'
+python3 - "$artifact" <<'PY'
 import json
+import sys
 from pathlib import Path
 
-artifact = Path("artifacts/linux-manual-join-ui")
+artifact = Path(sys.argv[1])
 result = json.loads((artifact / "result.json").read_text(encoding="utf-8"))
 required = {
     "ok": True,
