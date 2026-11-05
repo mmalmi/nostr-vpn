@@ -38,8 +38,9 @@ final class NostrVpnFileShareUITests: XCTestCase {
             format: "label BEGINSWITH %@ OR identifier BEGINSWITH %@", displayName, displayName
         )).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 8), files.debugDescription)
-        file.press(forDuration: 1)
+        file.tap()
         tap("Share", in: files)
+        screenshot("file-share-system-sheet")
         let activity = files.buttons["nvpn"].firstMatch
         if !activity.waitForExistence(timeout: 3) { tap("More", in: files) }
         tap("nvpn", in: files)
