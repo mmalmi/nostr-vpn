@@ -296,6 +296,9 @@ for (const [helper, nearbyHelper] of [
   ['verify-cargo-registry-dependency.py', 'verify-cargo-build.py'],
   ['ios-artifact-source.mjs', 'ios-artifact-build.mjs'],
   ['e2e-exit-node-docker.sh', 'exit-node-build.sh'],
+  ['linux_release_profile.py', 'linux_release_build.py'],
+  ['ubuntu-vm-manual-join-e2e.sh', 'ubuntu-vm-manual-join-build.sh'],
+  ['ubuntu-vm-service-toggle-e2e.sh', 'ubuntu-vm-service-build.sh'],
 ]) {
   test(`component proof treats only ${helper} as harness-only`, () => {
     const root = mkdtempSync(join(tmpdir(), 'nvpn-native-lab-component-proof-'))
@@ -351,6 +354,36 @@ for (const [helper, nearbyHelper] of [
     }
   })
 }
+
+test('ARM Linux build pins invalidate Linux receipts but not other native platforms', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-linux-pins-proof-'))
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  try {
+    git('init', '-q')
+    git('config', 'user.name', 'Release Test')
+    git('config', 'user.email', 'release@example.invalid')
+    write(join(root, 'scripts/linux-arm64-release-inputs.json'), '{"builder":"before"}\n')
+    git('add', '.')
+    git('commit', '-qm', 'base pins')
+    const receiptCommit = git('rev-parse', 'HEAD')
+    const receiptTree = git('rev-parse', 'HEAD^{tree}')
+    write(join(root, 'scripts/linux-arm64-release-inputs.json'), '{"builder":"after"}\n')
+    git('commit', '-qam', 'changed pins')
+    const args = { candidateRoot: root, receiptCommit, receiptTree,
+      candidateCommit: git('rev-parse', 'HEAD'), candidateTree: git('rev-parse', 'HEAD^{tree}') }
+    assert.throws(() => proveUnchangedPlatformInputs({ ...args, platform: 'linux' }),
+      /changed product\/build input scripts\/linux-arm64-release-inputs.json/)
+    for (const platform of ['android', 'ios', 'macos', 'windows']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({ ...args, platform }))
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 test('component proof separates Umbrel deployment and web inputs from native platforms', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-umbrel-publisher-component-proof-'))

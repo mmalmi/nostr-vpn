@@ -149,7 +149,9 @@ sync_and_import_candidates() {
   } >"$ARTIFACT_DIR/source-provenance.txt"
 
   # Windows and Linux may have been built at different candidate revisions.
-  # Bind each artifact to the current candidate using its own platform inputs.
+  # Bind Windows to the harness inputs and the imported Linux peer to its
+  # explicit product checkout. The import below verifies that peer's bytes
+  # and receipt against this same checkout, independently of the harness.
   node --input-type=module - "$ROOT" "${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}" \
     "$ARTIFACT_APP_SHA" "$ARTIFACT_APP_TREE" \
     "$harness_sha" "$harness_tree" \
@@ -167,7 +169,8 @@ console.log(JSON.stringify({
     receiptCommit: windowsCommit, receiptTree: windowsTree,
   }),
   linux: proveUnchangedPlatformInputs({
-    ...candidate, platform: 'linux',
+    candidateRoot: peerRoot, candidateCommit: git('HEAD'), candidateTree: git('HEAD^{tree}'),
+    platform: 'linux',
     receiptCommit: git('HEAD'), receiptTree: git('HEAD^{tree}'),
   }),
 }, null, 2))

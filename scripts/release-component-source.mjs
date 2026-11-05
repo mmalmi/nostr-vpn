@@ -86,6 +86,7 @@ const harnessOnlyPaths = new Set([
   'scripts/lib-mobile-wireguard-fixture.sh',
   'scripts/lib-macos-release-app-ownership.sh',
   'scripts/linux-release-mobile-join-remote.sh',
+  'scripts/linux_release_profile.py',
   'scripts/mobile-android-smoke.sh',
   // Test orchestration only; each product's actual build scripts stay inputs.
   'scripts/mobile-test-kit.sh',
@@ -120,6 +121,8 @@ const harnessOnlyPaths = new Set([
   'scripts/startos-release.mjs',
   'web/control-panel/e2e/umbrel-web.spec.ts',
   'scripts/ubuntu-vm-release-mobile-join-e2e.sh',
+  'scripts/ubuntu-vm-manual-join-e2e.sh',
+  'scripts/ubuntu-vm-service-toggle-e2e.sh',
   'scripts/validate-mobile-underlay-continuity.py',
   'scripts/verify-host-linux-peer-artifact.py',
   'scripts/verify.sh',
@@ -221,6 +224,7 @@ function isProductInput(path, platform) {
     return root === platform && !/\/(?:UI)?Tests?\//.test(`/${path}/`)
   }
   if (path.startsWith('scripts/')) {
+    if (path === 'scripts/linux-arm64-release-inputs.json') return platform === 'linux'
     for (const [owner, patterns] of Object.entries(buildScripts)) {
       if (patterns.some((pattern) => pattern.test(path))) return owner === platform
     }
