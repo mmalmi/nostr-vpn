@@ -33,6 +33,10 @@ RUN install -D -m 0644 /tmp/nvpn-ca.pem /etc/ssl/certs/ca-certificates.crt \
       'Acquire::https::Timeout "30";' \
       'Acquire::https::CaInfo "/snapshot/etc/ssl/certs/ca-certificates.crt";' > /apt.conf
 
+ADD --checksum=sha256:65f1539238f60fcc85d115acd640474f45c77bfddcf402eb7d75965a783c2bc8 https://snapshot.debian.org/file/88c8f414f0551f6847521cd35a5b0868bd293cb7/libnetfilter-conntrack3_1.0.9-3_amd64.deb /packages/libnetfilter-conntrack3_1.0.9-3_amd64.deb
+ADD --checksum=sha256:3a8223f9bfba99d97bf25296ac83de307ab036e1df63e5965f88809266851947 https://snapshot.debian.org/file/a7175e13117533dedcddb5d76485b4b487d7c588/libnftables1_1.0.6-2%2Bdeb12u2_amd64.deb /packages/libnftables1_1.0.6-2+deb12u2_amd64.deb
+ADD --checksum=sha256:56d2d255d7a8b7cab200de84f510f61a9a6e83dde75e747fc6eeab03c0e1dd47 https://snapshot.debian.org/file/2c1be3c709e6fcb5e5ac89a6ce1d17921a9c0337/wireguard-tools_1.0.20210914-1%2Bb1_amd64.deb /packages/wireguard-tools_1.0.20210914-1+b1_amd64.deb
+
 FROM rust:1.94-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS rust-builder
 ARG TARGETPLATFORM
 WORKDIR /work
@@ -65,7 +69,13 @@ LABEL org.opencontainers.image.source="https://github.com/mmalmi/nostr-vpn" \
       org.opencontainers.image.licenses="MIT"
 
 RUN --mount=type=bind,from=bookworm-index,target=/snapshot \
-    apt-config -c /snapshot/apt.conf shell Retries Acquire::Retries Timeout Acquire::https::Timeout \
+    install -d -m 0755 /var/cache/apt/archives \
+    && install -m 0644 \
+      /snapshot/packages/libnetfilter-conntrack3_1.0.9-3_amd64.deb \
+      /snapshot/packages/libnftables1_1.0.6-2+deb12u2_amd64.deb \
+      /snapshot/packages/wireguard-tools_1.0.20210914-1+b1_amd64.deb \
+      /var/cache/apt/archives/ \
+    && apt-config -c /snapshot/apt.conf shell Retries Acquire::Retries Timeout Acquire::https::Timeout \
     && apt-get --version \
     && apt-get -c /snapshot/apt.conf install -y --no-install-recommends \
       ca-certificates \
@@ -76,6 +86,10 @@ RUN --mount=type=bind,from=bookworm-index,target=/snapshot \
       nftables \
       procps \
       wireguard-tools \
+    && rm -f \
+      /var/cache/apt/archives/libnetfilter-conntrack3_1.0.9-3_amd64.deb \
+      /var/cache/apt/archives/libnftables1_1.0.6-2+deb12u2_amd64.deb \
+      /var/cache/apt/archives/wireguard-tools_1.0.20210914-1+b1_amd64.deb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=rust-builder /out/nvpn /usr/local/bin/nvpn
