@@ -12,7 +12,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 endpoint_family="${NVPN_MOBILE_WG_REMOTE_ENDPOINT_FAMILY:-dns}"
 
 validate_names() {
-  [[ "$state_dir" == /tmp/nvpn-mobile-wg-exit.* ]] \
+  [[ "$state_dir" =~ ^(/var)?/tmp/nvpn-mobile-wg-exit\.[a-zA-Z0-9][a-zA-Z0-9._-]*(/fixture)?$ \
+      && -d "$state_dir" && ! -L "$state_dir" \
+      && ( "$state_dir" != */fixture || ! -L "${state_dir%/*}" ) ]] \
     && [[ "$interface" =~ ^[a-zA-Z][a-zA-Z0-9]{1,14}$ ]] \
     && [[ "$nft_table" =~ ^[a-zA-Z][a-zA-Z0-9]{1,20}$ ]]
 }
@@ -65,8 +67,9 @@ ip_forward_state_valid_locked() {
     lease_interface="${lease_file##*/}"
     lease_owner="$(<"$lease_file")"
     [[ "$lease_interface" =~ ^[a-zA-Z][a-zA-Z0-9]{1,14}$ \
-      && "$lease_owner" =~ ^/tmp/nvpn-mobile-wg-exit\.[a-zA-Z0-9._-]+(/[a-zA-Z0-9._-]+)?$ \
-      && -d "$lease_owner" ]] || return 1
+      && "$lease_owner" =~ ^(/var)?/tmp/nvpn-mobile-wg-exit\.[a-zA-Z0-9][a-zA-Z0-9._-]*(/fixture)?$ \
+      && -d "$lease_owner" && ! -L "$lease_owner" \
+      && ( "$lease_owner" != */fixture || ! -L "${lease_owner%/*}" ) ]] || return 1
     case $'\n'"$seen_owners"$'\n' in
       *$'\n'"$lease_owner"$'\n'*) return 1 ;;
     esac

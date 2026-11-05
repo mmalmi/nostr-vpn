@@ -138,6 +138,7 @@ mobile_wg_remote_exec() {
 
 mobile_wg_fixture_recover_inactive_remote_dir() {
   local first_entry="" marker="$MOBILE_WG_FIXTURE_REMOTE_DIR/.nvpn-fixture-owner"
+  mobile_wg_fixture_validate_remote_dir || return 1
   mobile_wg_remote_exec test ! -e "$MOBILE_WG_FIXTURE_REMOTE_DIR" && return 0
   mobile_wg_remote_exec test -d "$MOBILE_WG_FIXTURE_REMOTE_DIR" \
     && mobile_wg_remote_exec test ! -L "$MOBILE_WG_FIXTURE_REMOTE_DIR" \
@@ -162,6 +163,16 @@ mobile_wg_fixture_recover_inactive_remote_dir() {
       -xdev -depth -mindepth 1 -delete \
     && mobile_wg_remote_exec sudo -n rmdir "$MOBILE_WG_FIXTURE_REMOTE_DIR" \
     && mobile_wg_remote_exec --fresh test ! -e "$MOBILE_WG_FIXTURE_REMOTE_DIR"
+}
+
+mobile_wg_fixture_validate_remote_dir() {
+  [[ "$MOBILE_WG_FIXTURE_REMOTE_DIR" =~ ^(/var)?/tmp/nvpn-mobile-wg-exit\.[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || return 1
+  mobile_wg_remote_exec sh -c '
+    root=${1%/*}
+    [ -d "$root" ] && [ ! -L "$root" ] &&
+      { [ "$root" != /var/tmp ] || [ ! -L /var ]; } &&
+      [ ! -L "$1" ] && [ ! -L "$1/fixture" ]
+  ' sh "$MOBILE_WG_FIXTURE_REMOTE_DIR"
 }
 
 mobile_wg_remote_close_control() {
@@ -238,6 +249,7 @@ mobile_wg_fixture_stage_remote_docker_context() {
 mobile_wg_fixture_initialize() {
   local root="$1" local_fixture_dir="$2"
   local remote_host="${NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST:-}"
+  local remote_temp_root="${NVPN_MOBILE_WG_EXIT_REMOTE_TEMP_ROOT:-/tmp}"
   if [[ -z "$remote_host" ]]; then
     command -v docker >/dev/null 2>&1 || {
       echo "local mobile WireGuard fixture requires docker" >&2
@@ -246,6 +258,11 @@ mobile_wg_fixture_initialize() {
     MOBILE_WG_FIXTURE_VOLUME_DIR="$local_fixture_dir"
     return 0
   fi
+
+  case "$remote_temp_root" in
+    /tmp|/var/tmp) ;;
+    *) echo "remote fixture temp root must be /tmp or /var/tmp" >&2; return 2 ;;
+  esac
 
   MOBILE_WG_FIXTURE_REMOTE=1
   MOBILE_WG_FIXTURE_REMOTE_MODE="${NVPN_MOBILE_WG_EXIT_REMOTE_MODE:-native}"
@@ -316,7 +333,7 @@ mobile_wg_fixture_initialize() {
   if [[ "$MOBILE_WG_FIXTURE_REMOTE_MODE" == "native" ]]; then
     MOBILE_WG_FIXTURE_REMOTE_INTERFACE="nwg$HOST_PORT"
     MOBILE_WG_FIXTURE_REMOTE_NFT_TABLE="nvpnwg$HOST_PORT"
-    MOBILE_WG_FIXTURE_REMOTE_DIR="/tmp/nvpn-mobile-wg-exit.port-$HOST_PORT"
+    MOBILE_WG_FIXTURE_REMOTE_DIR="$remote_temp_root/nvpn-mobile-wg-exit.port-$HOST_PORT"
     mobile_wg_fixture_recover_inactive_remote_dir || {
       echo "remote mobile WireGuard fixture found active or foreign same-port state" >&2
       return 1
@@ -327,17 +344,14 @@ mobile_wg_fixture_initialize() {
       "$MOBILE_WG_FIXTURE_REMOTE_DIR/.nvpn-fixture-owner" || return 1
   else
     MOBILE_WG_FIXTURE_REMOTE_DIR="$(
-      mobile_wg_remote_exec mktemp -d /tmp/nvpn-mobile-wg-exit.XXXXXX
+      mobile_wg_remote_exec mktemp -d "$remote_temp_root/nvpn-mobile-wg-exit.XXXXXX"
     )"
   fi
-  case "$MOBILE_WG_FIXTURE_REMOTE_DIR" in
-    /tmp/nvpn-mobile-wg-exit.*) ;;
-    *)
-      echo "remote mobile WireGuard fixture returned an unsafe temp path" >&2
-      MOBILE_WG_FIXTURE_REMOTE_DIR=""
-      return 1
-      ;;
-  esac
+  mobile_wg_fixture_validate_remote_dir || {
+    echo "remote mobile WireGuard fixture returned an unsafe temp path" >&2
+    MOBILE_WG_FIXTURE_REMOTE_DIR=""
+    return 1
+  }
   mobile_wg_remote_exec mkdir -p "$MOBILE_WG_FIXTURE_REMOTE_DIR/fixture"
   if [[ "$MOBILE_WG_FIXTURE_REMOTE_MODE" == "native" ]]; then
     scp -q \
@@ -798,6 +812,11 @@ mobile_wg_fixture_cleanup() {
   local cleanup_failed=0 inspect_status=0 remote_dir=""
   local native_stop_failed=0 native_clean_failed=0
   if [[ -n "$MOBILE_WG_FIXTURE_REMOTE_DIR" ]]; then
+    mobile_wg_fixture_validate_remote_dir || {
+      echo "remote fixture cleanup refuses an unsafe path" >&2
+      mobile_wg_remote_close_control
+      return 1
+    }
     remote_dir="$MOBILE_WG_FIXTURE_REMOTE_DIR"
     if ! mobile_wg_remote_exec sudo -n rm -f \
       "$remote_dir/fixture/server.key" \

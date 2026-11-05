@@ -6,7 +6,7 @@ REMOTE_NATIVE="$ROOT/scripts/mobile-wireguard-exit-remote-native.sh"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib-mobile-wireguard-fixture.sh"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-wg-cleanup-harness.XXXXXX")"
-REMOTE_STATE="$(mktemp -d /tmp/nvpn-mobile-wg-exit.cleanup-harness.XXXXXX)"
+REMOTE_STATE="$(mktemp -d /var/tmp/nvpn-mobile-wg-exit.cleanup-harness.XXXXXX)"
 CALLS="$TMP_ROOT/calls"
 trap 'rm -rf "$TMP_ROOT" "$REMOTE_STATE" "${LEASE_A:-}" "${LEASE_B:-}" "${LEASE_C:-}" "${LEASE_HUP:-}"' EXIT
 
@@ -64,6 +64,7 @@ mobile_wg_remote_native() {
 mobile_wg_remote_exec() {
   [[ "${1:-}" == --fresh ]] && shift
   case "$*" in
+    "sh -c "*) return 0 ;;
     "test ! -e $MOBILE_WG_FIXTURE_REMOTE_DIR")
       [[ "$stale_owner_state" == absent ]]
       ;;
@@ -747,7 +748,7 @@ env \
   "$REMOTE_RUNNER"
 
 LEASE_A="$(mktemp -d /tmp/nvpn-mobile-wg-exit.lease-a.XXXXXX)"
-LEASE_B="$(mktemp -d /tmp/nvpn-mobile-wg-exit.lease-b.XXXXXX)"
+LEASE_B="$(mktemp -d /var/tmp/nvpn-mobile-wg-exit.lease-b.XXXXXX)"
 LEASE_C="$(mktemp -d /tmp/nvpn-mobile-wg-exit.lease-c.XXXXXX)"
 LEASE_HUP="$(mktemp -d /tmp/nvpn-mobile-wg-exit.lease-hup.XXXXXX)"
 MOCK_IP_STATE="$TMP_ROOT/interfaces"
