@@ -41,8 +41,15 @@ final class NostrVpnFileShareUITests: XCTestCase {
         file.tap()
         tap("Share", in: files)
         screenshot("file-share-system-sheet")
-        let activity = files.buttons["nvpn"].firstMatch
-        if !activity.waitForExistence(timeout: 3) { tap("More", in: files) }
+        let sheet = files.otherElements["ActivityListView"].firstMatch
+        XCTAssertTrue(sheet.waitForExistence(timeout: 5), files.debugDescription)
+        let activity = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "nvpn")).firstMatch
+        let more = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "More")).firstMatch
+        for _ in 0..<4 {
+            if (activity.exists && activity.isHittable) || (more.exists && more.isHittable) { break }
+            sheet.scrollViews.firstMatch.swipeLeft()
+        }
+        if !(activity.exists && activity.isHittable) { tap("More", in: sheet) }
         tap("nvpn", in: files)
         XCTAssertTrue(files.staticTexts["Send files with nvpn"].waitForExistence(timeout: 8), files.debugDescription)
         screenshot("file-share-device-picker")
@@ -71,7 +78,7 @@ final class NostrVpnFileShareUITests: XCTestCase {
         try fixture.restore()
     }
 
-    private func tap(_ label: String, in app: XCUIApplication) {
+    private func tap(_ label: String, in app: XCUIElement) {
         let target = app.descendants(matching: .any).matching(NSPredicate(
             format: "label == %@ OR identifier == %@", label, label
         )).firstMatch
