@@ -35,6 +35,19 @@ def archive(path, files):
 
 
 class AndroidAdmission(unittest.TestCase):
+    def test_apksigner_labels_keep_single_exact_certificate_requirement(self):
+        signer = "a" * 64
+        for label in ("Signer #1", "V3.0 Signer:"):
+            line = label + " certificate SHA-256 digest: " + signer + "\n"
+            with self.subTest(label=label), patch.dict(os.environ, {"NVPN_ANDROID_APKSIGNER": "fixture-apksigner"}), \
+                    patch.object(admission.subprocess, "run", return_value=SimpleNamespace(stdout=line)):
+                admission.verify_apk_signer(Path("fixture.apk"), signer)
+            for output in (line.replace(signer, "b" * 64), line + line, "Source Stamp" + line):
+                with self.subTest(output=output), patch.dict(os.environ, {"NVPN_ANDROID_APKSIGNER": "fixture-apksigner"}), \
+                        patch.object(admission.subprocess, "run", return_value=SimpleNamespace(stdout=output)), \
+                        self.assertRaisesRegex(ValueError, "signer differs"):
+                    admission.verify_apk_signer(Path("fixture.apk"), signer)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="nvpn-android-admission-fixture-")
         self.addCleanup(self.temporary.cleanup)

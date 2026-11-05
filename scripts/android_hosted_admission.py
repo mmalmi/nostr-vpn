@@ -79,7 +79,8 @@ def verify_apk_signer(apk, expected_sha256):
         executable = str(paths[-1])
     result = subprocess.run([executable, "verify", "--verbose", "--print-certs", str(apk)],
                             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    signers = re.findall(r"Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-fA-F]{64})", result.stdout)
+    signers = re.findall(r"^(?:Signer #[0-9]+|V3\.0 Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$",
+                        result.stdout, flags=re.M)
     require(len(signers) == 1 and signers[0].lower() == expected_sha256, "Android APK signer differs")
 
 
