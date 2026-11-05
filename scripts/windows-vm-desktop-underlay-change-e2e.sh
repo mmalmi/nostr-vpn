@@ -43,7 +43,8 @@ FIXTURE_DNS_NAME="${NVPN_DESKTOP_UNDERLAY_FIXTURE_DNS_NAME:-underlay-gate.nvpn.t
 PROBE_URL="${NVPN_DESKTOP_UNDERLAY_PROBE_URL:-https://example.com/}"
 RUN_TOKEN="windows-$$-$RANDOM"
 NETWORK_NAME="nvpn-underlay-$RUN_TOKEN"
-PEER_STATE_DIR="/tmp/nvpn-underlay-peer-$RUN_TOKEN"
+# Keep host peer payloads off constrained RAM-backed /tmp mounts.
+PEER_STATE_DIR="/var/tmp/nvpn-underlay-peer-$RUN_TOKEN"
 GUEST_STATE_DIR="C:\\nvpn-underlay-$RUN_TOKEN"
 GUEST_CONFIG="$GUEST_STATE_DIR\\config.toml"
 PEER_TUN_IFACE="nvup${RANDOM}"

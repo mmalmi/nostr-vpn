@@ -60,7 +60,7 @@ require_tokens "$HELPER" "shared host-peer importer" \
   '$0 == "[workspace.package]"' \
   'prepare-macos-release-fips-peer.sh' \
   'verify-host-linux-peer-artifact.py' \
-  'mktemp -d /tmp/nvpn-desktop-underlay-peer.XXXXXX' \
+  'mktemp -d /var/tmp/nvpn-desktop-underlay-peer.XXXXXX' \
   'host-peer-local-receipt.json' \
   'host-peer-import-receipt.txt' \
   'desktop-linux-underlay-peer-e2e.sh.copy' \
@@ -419,8 +419,8 @@ fake_sha="$(git -C "$fake_root" rev-parse HEAD)"
     return "${FAKE_SCP_STATUS:-0}"
   }
   ssh() {
-    if [[ "$*" == *'mktemp -d /tmp/nvpn-desktop-underlay-peer.XXXXXX'* ]]; then
-      printf '%s\n' /tmp/nvpn-desktop-underlay-peer.failure-injection
+    if [[ "$*" == *'mktemp -d /var/tmp/nvpn-desktop-underlay-peer.XXXXXX'* ]]; then
+      printf '%s\n' /var/tmp/nvpn-desktop-underlay-peer.failure-injection
       return 0
     fi
     return "${FAKE_SSH_STATUS:-0}"
@@ -465,7 +465,7 @@ fake_sha="$(git -C "$fake_root" rev-parse HEAD)"
   export FAKE_SCP_STATUS FAKE_SSH_STATUS
   expect_import_failure
 
-  DESKTOP_UNDERLAY_HOST_PEER_REMOTE_DIR=/tmp/nvpn-desktop-underlay-peer.cleanup-failure
+  DESKTOP_UNDERLAY_HOST_PEER_REMOTE_DIR=/var/tmp/nvpn-desktop-underlay-peer.cleanup-failure
   rm -f "$ARTIFACT_DIR/host-peer-cleanup-audit.txt"
   cleanup_status=0
   desktop_underlay_cleanup_host_peer >/dev/null 2>&1 \
@@ -473,7 +473,7 @@ fake_sha="$(git -C "$fake_root" rev-parse HEAD)"
   [[ "$cleanup_status" -ne 0 ]] \
     || fail "host-peer cleanup swallowed an injected SSH failure"
   [[ "$DESKTOP_UNDERLAY_HOST_PEER_REMOTE_DIR" == \
-    /tmp/nvpn-desktop-underlay-peer.cleanup-failure ]] \
+    /var/tmp/nvpn-desktop-underlay-peer.cleanup-failure ]] \
     || fail "failed host-peer cleanup discarded retry state"
   [[ ! -e "$ARTIFACT_DIR/host-peer-cleanup-audit.txt" ]] \
     || fail "failed host-peer cleanup wrote a false removal audit"

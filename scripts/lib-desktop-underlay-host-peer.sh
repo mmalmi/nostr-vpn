@@ -216,15 +216,16 @@ desktop_underlay_import_host_peer() {
     return 1
   }
 
+  # The binary and packet-capture state belong on disk-backed scratch space.
   remote_dir="$(
     ssh "${DESKTOP_UNDERLAY_SSH_OPTIONS[@]}" "$HYPERVISOR_SSH" \
-      mktemp -d /tmp/nvpn-desktop-underlay-peer.XXXXXX
+      mktemp -d /var/tmp/nvpn-desktop-underlay-peer.XXXXXX
   )" || {
     desktop_underlay_host_peer_error "could not create remote import directory"
     return 1
   }
   case "$remote_dir" in
-    /tmp/nvpn-desktop-underlay-peer.*) ;;
+    /var/tmp/nvpn-desktop-underlay-peer.*) ;;
     *)
       desktop_underlay_host_peer_error "Vader returned an unsafe import directory"
       return 1
@@ -286,7 +287,7 @@ app_version="${10}"
 peer_runner_sha="${11}"
 listener_audit_sha="${12}"
 case "$remote_dir" in
-  /tmp/nvpn-desktop-underlay-peer.*) ;;
+  /var/tmp/nvpn-desktop-underlay-peer.*) ;;
   *) exit 2 ;;
 esac
 [[ -d "$remote_dir" && -O "$remote_dir" && ! -L "$remote_dir" ]]
@@ -386,7 +387,7 @@ desktop_underlay_cleanup_host_peer() {
   local remote_dir="${DESKTOP_UNDERLAY_HOST_PEER_REMOTE_DIR:-}"
   [[ -n "$remote_dir" ]] || return 0
   case "$remote_dir" in
-    /tmp/nvpn-desktop-underlay-peer.*) ;;
+    /var/tmp/nvpn-desktop-underlay-peer.*) ;;
     *)
       echo "refusing unsafe desktop-underlay peer cleanup path: $remote_dir" >&2
       return 1
@@ -402,7 +403,7 @@ desktop_underlay_cleanup_host_peer() {
 set -euo pipefail
 remote_dir="$1"
 case "$remote_dir" in
-  /tmp/nvpn-desktop-underlay-peer.*) ;;
+  /var/tmp/nvpn-desktop-underlay-peer.*) ;;
   *) exit 2 ;;
 esac
 find "$remote_dir" -xdev -depth -mindepth 1 -delete
