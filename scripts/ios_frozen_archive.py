@@ -763,6 +763,71 @@ def freeze_archive(args: argparse.Namespace) -> None:
         })
 
 
+def hosted_signing_entitlements(source, current, profile, app_group_id):
+    """Restore source-requested capabilities omitted by unsigned archive export."""
+    allowed = {"com.apple.security.application-groups",
+               "com.apple.developer.networking.networkextension"}
+    require(isinstance(source, dict) and source and source.keys() <= allowed,
+            "unsupported hosted source entitlements")
+    generic = {"application-identifier", "com.apple.developer.team-identifier",
+               "beta-reports-active", "get-task-allow"}
+    require(isinstance(current, dict) and current.keys() <= generic | source.keys(),
+            "unexpected capability in existing hosted signature")
+    result = dict(current)
+    for key, values in source.items():
+        require(isinstance(values, list) and values and all(isinstance(v, str) for v in values),
+                "malformed hosted source entitlement")
+        result[key] = [v.replace("$(NVPN_IOS_APP_GROUP_IDENTIFIER)", app_group_id) for v in values]
+        require(all("$(" not in v for v in result[key]), "unresolved hosted entitlement variable")
+        require(key not in current or current[key] == result[key],
+                "existing hosted capability conflicts with frozen source")
+    authorized = profile.get("Entitlements", {})
+    for key, value in result.items():
+        permitted = authorized.get(key)
+        require((isinstance(value, list) and isinstance(permitted, list)
+                 and all(item in permitted for item in value))
+                or (not isinstance(value, list) and value == permitted),
+                "hosted entitlement is not authorized by the embedded profile: " + key)
+    return result
+
+
+def sign_hosted_archive(args: argparse.Namespace) -> None:
+    receipt = pathlib.Path(args.receipt)
+    require(not receipt.exists(), "cannot re-sign a frozen archive")
+    app = archive_app(pathlib.Path(args.archive).resolve())
+    hosted = prepare_ios_admission(args.hosted_inputs, receipt, args, app)
+    validate_source_and_fips(args, hosted_build=hosted)
+    verify_build_path_privacy(app, args)
+    paths = app_paths(app)
+    plans = []
+    for bundle, source, bundle_id in (
+        (paths["tunnel"], "ios/PacketTunnel/PacketTunnel.entitlements", args.tunnel_bundle_id),
+        (paths["share"], "ios/ShareFiles/ShareFiles.entitlements", args.app_bundle_id + ".ShareFiles"),
+        (app, "ios/NostrVpnIos.entitlements", args.app_bundle_id),
+    ):
+        run(["codesign", "--verify", "--strict", str(bundle)])
+        require(certificate_sha256(bundle) == args.signer_sha,
+                "existing hosted signature does not use the pinned certificate")
+        profile = decoded_profile(bundle / "embedded.mobileprovision")
+        source_value = plistlib.loads((pathlib.Path(args.source_root) / source).read_bytes())
+        entitlements = hosted_signing_entitlements(
+            source_value, signed_entitlements(bundle), profile, args.app_group_id)
+        validate_profile(profile, entitlements, distribution="app-store-connect",
+                         team_id=args.team_id, bundle_id=bundle_id,
+                         app_group_id=args.app_group_id, signer_sha=args.signer_sha, device_udid="")
+        plans.append((bundle, entitlements))
+    # Preflight all three profiles before changing any signature; nested bundles first.
+    with tempfile.TemporaryDirectory(prefix="nvpn-hosted-entitlements-") as temporary:
+        for index, (bundle, entitlements) in enumerate(plans):
+            path = pathlib.Path(temporary) / f"{index}.plist"
+            path.write_bytes(plistlib.dumps(entitlements))
+            run(["codesign", "--force", "--sign", args.signing_identity,
+                 "--entitlements", str(path), "--generate-entitlement-der",
+                 "--timestamp=none", str(bundle)])
+    # Includes the unchanged source, executable lineage, profile and signer gates.
+    freeze_archive(args)
+
+
 def validate_archive_receipt(
     args: argparse.Namespace,
 ) -> tuple[dict[str, Any], pathlib.Path, dict[str, Any]]:
@@ -932,6 +997,13 @@ def parser() -> argparse.ArgumentParser:
     freeze.add_argument("--hosted-inputs")
     add_revision_arguments(freeze)
 
+    sign_hosted = subparsers.add_parser("sign-hosted")
+    sign_hosted.add_argument("--archive", required=True)
+    sign_hosted.add_argument("--receipt", required=True)
+    sign_hosted.add_argument("--hosted-inputs", required=True)
+    sign_hosted.add_argument("--signing-identity", required=True)
+    add_revision_arguments(sign_hosted)
+
     validate_archive = subparsers.add_parser("validate-archive")
     validate_archive.add_argument("--archive", required=True)
     validate_archive.add_argument("--archive-receipt", required=True)
@@ -997,6 +1069,8 @@ def main() -> int:
             rewrite_xctestrun(args)
         elif args.command == "freeze":
             freeze_archive(args)
+        elif args.command == "sign-hosted":
+            sign_hosted_archive(args)
         elif args.command == "validate-archive":
             validate_archive_receipt(args)
         elif args.command == "validate-export":

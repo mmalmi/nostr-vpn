@@ -16,9 +16,38 @@ import unittest
 
 sys.dont_write_bytecode = True
 import apple_hosted_admission as hosted
+from ios_frozen_archive import hosted_signing_entitlements
 
 
 class HostedAdmission(unittest.TestCase):
+    def test_exported_archive_restores_only_source_capabilities_authorized_by_profile(self):
+        group = "com.apple.security.application-groups"
+        network = "com.apple.developer.networking.networkextension"
+        current = {"application-identifier": "TEAM.example.app", "get-task-allow": False}
+        source = {group: ["$(NVPN_IOS_APP_GROUP_IDENTIFIER)"], network: ["packet-tunnel-provider"]}
+        authorized = {**current, group: ["group.example.shared"], network: ["packet-tunnel-provider"],
+                      "keychain-access-groups": ["TEAM.*"]}
+        profile = {"Entitlements": authorized}
+        restored = hosted_signing_entitlements(source, current, profile, "group.example.shared")
+        self.assertEqual(restored, {**current, group: ["group.example.shared"], network: ["packet-tunnel-provider"]})
+        self.assertNotIn("keychain-access-groups", restored)
+        for unexpected in (
+            {**current, "keychain-access-groups": ["TEAM.*"]},
+            {**current, group: ["group.conflicting"]},
+        ):
+            with self.subTest(current=unexpected), self.assertRaises(ValueError):
+                hosted_signing_entitlements(source, unexpected, profile, "group.example.shared")
+        self.assertEqual(hosted_signing_entitlements(source, restored, profile, "group.example.shared"), restored)
+        for changed_source, changed_profile in (
+            (source, {"Entitlements": current}),
+            ({group: ["group.unrelated"]}, profile),
+            ({network: ["$(UNRESOLVED)"]}, profile),
+            ({"get-task-allow": True}, profile),
+            ({group: "group.example.shared"}, profile),
+        ):
+            with self.subTest(source=changed_source), self.assertRaises(ValueError):
+                hosted_signing_entitlements(changed_source, current, changed_profile, "group.example.shared")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
