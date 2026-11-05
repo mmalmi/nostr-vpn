@@ -2,6 +2,8 @@
 """One owned hosted build, bounded commands, and exact-resource cleanup."""
 import json
 import os
+import re
+import stat
 import selectors
 import signal
 import subprocess
@@ -52,10 +54,47 @@ def process_group(pid):
     return path
 
 
+def process_identity(pid):
+    require(type(pid) is int and pid > 0, "Invalid builder PID")
+    value = Path("/proc/" + str(pid) + "/stat").read_text()
+    require(value.startswith(str(pid) + " (") and ")" in value, "Invalid process identity")
+    fields = value.rsplit(")", 1)[1].split()
+    require(len(fields) >= 20 and re.fullmatch(r"[0-9]+", fields[19]),
+            "Missing process start time")
+    return int(fields[19])
+
+
+def container_group(leaf, container_id):
+    """Bind only Docker's exact container scope or pinned BuildKit's /init child.
+
+    BuildKit 8c579433 executor/resources/monitor.go moves root processes into init;
+    inherited limits and aggregate descendant counters remain at the container scope.
+    Never climb until an unrelated ancestor happens to have matching numeric limits.
+    """
+    root = Path("/sys/fs/cgroup")
+    require(isinstance(container_id, str) and re.fullmatch(r"[0-9a-f]{64}", container_id),
+            "Invalid full container ID")
+    require(leaf.is_absolute() and leaf.is_relative_to(root) and
+            not any(p in (".", "..") for p in leaf.parts), "Invalid container cgroup path")
+    parts = leaf.relative_to(root).parts
+    names = {container_id, "docker-" + container_id + ".scope"}
+    indexes = [i for i, name in enumerate(parts) if name in names]
+    require(len(indexes) == 1, "Container cgroup identity is ambiguous or absent")
+    index = indexes[0]
+    require(parts[index + 1:] in ((), ("init",)), "Unexpected builder cgroup descendant")
+    return root.joinpath(*parts[:index + 1])
+
+
+def directory_identity(path):
+    value = path.lstat()
+    require(stat.S_ISDIR(value.st_mode), "Cgroup scope is not a real directory")
+    return (value.st_dev, value.st_ino)
+
+
 def group_sample(path):
     def number(name):
         value = (path / name).read_text().strip()
-        require(value.isdigit(), "Invalid cgroup counter")
+        require(re.fullmatch(r"[0-9]+", value), "Invalid cgroup counter: " + name)
         return int(value)
     events = dict(line.split() for line in (path / "memory.events").read_text().splitlines())
     return {"memoryMax": number("memory.max"), "memoryCurrent": number("memory.current"),
@@ -75,6 +114,9 @@ class Runner:
         self.name = "nvpn-seed-" + self.owner
         self.container = None
         self.group = None
+        self.group_binding = None
+        self.builder_process = None
+        self.cgroup_proof = None
         self.helper_group = process_group(os.getpid())
         self.inspection_container = None
         self.inspection_image = None
@@ -84,6 +126,7 @@ class Runner:
         self.started = time.monotonic()
         self.cancelled = False
         self.samples = []
+        self.last_sample_at = None
         self.buildx = work / "tools" / "buildx"
         self.output = work / "output"
         self.output.mkdir()
@@ -118,7 +161,9 @@ class Runner:
                  "inspectionContainer": self.inspection_container,
                  "inspectionImage": self.inspection_image, "inspectionImageId": self.inspection_image_id,
                  "volumeCreated": self.volume_created,
-                 "builderCreated": self.builder_created, "closed": closed}
+                 "builderCreated": self.builder_created,
+                 "builderCgroup": getattr(self, "cgroup_proof", None),
+                 "closed": closed}
         temporary = self.work / "owned-resources.next"
         temporary.write_text(json.dumps(state, sort_keys=True) + "\n")
         temporary.replace(self.work / "owned-resources.json")
@@ -147,14 +192,31 @@ class Runner:
         }
         sample["helperGroup"] = group_sample(self.helper_group)
         if self.group is not None:
+            require(directory_identity(self.group) == self.group_binding,
+                    "Builder cgroup directory identity changed")
+            pid, started, container_id = self.builder_process
+            require(process_identity(pid) == started, "Builder PID identity changed")
+            leaf = process_group(pid)
+            require(container_group(leaf, container_id) == self.group,
+                    "Builder left its inspected container scope")
+            sample["buildPidCgroup"] = str(leaf)
             sample["buildGroup"] = group_sample(self.group)
         return sample
 
-    def check(self):
+    def check(self, force=False):
         require(not self.cancelled, "Producer cancellation requested")
+        now = time.monotonic()
+        elapsed = now - self.started
+        require(elapsed <= self.limits["timeoutSeconds"], "Producer deadline exceeded")
+        # Download/output chunks still check cancellation/deadline immediately.
+        # Full filesystem/cgroup observations have one global one-second cadence.
+        if not force and self.last_sample_at is not None and now - self.last_sample_at < 1:
+            return
         sample = self.sample()
-        resource_check(sample, self.initial, self.limits, time.monotonic() - self.started)
+        resource_check(sample, self.initial, self.limits, elapsed)
+        sample["elapsedSeconds"] = elapsed
         self.samples.append(sample)
+        self.last_sample_at = now
         require(len(self.samples) <= self.limits["timeoutSeconds"] * 2,
                 "Resource evidence exceeded bound")
 
@@ -249,8 +311,28 @@ class Runner:
         require(info["Config"]["Image"] == self.pins["buildkit"]["image"] and
                 info["Image"] == self.pins["buildkit"]["configDigest"] and
                 info["HostConfig"]["CgroupnsMode"] == "private", "Wrong BuildKit realization")
-        self.group = process_group(info["State"]["Pid"])
-        self.check()
+        host = info["HostConfig"]
+        require(host["Memory"] == self.limits["buildMemoryGiB"] * GIB and
+                host["MemorySwap"] == host["Memory"] and host["NanoCpus"] == 2 * 10**9 and
+                host["PidsLimit"] == self.limits["pids"] and
+                host["CpusetCpus"] == ",".join(map(str, cpus)) and
+                info["State"]["Running"] is True, "Wrong configured BuildKit resource bounds")
+        pid, container_id = info["State"]["Pid"], info["Id"]
+        started = process_identity(pid)
+        leaf = process_group(pid)
+        self.group = container_group(leaf, container_id)
+        self.group_binding = directory_identity(self.group)
+        require(process_identity(pid) == started, "Builder PID changed during cgroup binding")
+        self.builder_process = (pid, started, container_id)
+        self.cgroup_proof = {
+            "containerId": container_id, "pid": pid, "pidStartTime": started,
+            "observedPidCgroup": str(leaf), "aggregateScope": str(self.group),
+            "scopeDevice": self.group_binding[0], "scopeInode": self.group_binding[1],
+        }
+        self.save_state()
+        self.check(force=True)
+        self.cgroup_proof["initialCounters"] = self.samples[-1]["buildGroup"]
+        self.save_state()
         version = self.run(["docker", "exec", self.name, "buildkitd", "--version"]).strip()
         require(self.pins["buildkit"]["version"] in version and
                 self.pins["buildkit"]["commit"] in version, "BuildKit version mismatch")
@@ -259,7 +341,8 @@ class Runner:
         self.builder_created = True
         self.save_state()
         self.run([str(buildx), "inspect", "--builder", self.name, "--bootstrap"])
-        return {"version": version, "image": info["Image"], "limits": info["HostConfig"]}
+        return {"version": version, "image": info["Image"], "limits": info["HostConfig"],
+                "cgroup": self.cgroup_proof}
 
     def stop_builder(self):
         """Terminate and verify the owned BuildKit scope before toolchain inspection."""
@@ -271,12 +354,15 @@ class Runner:
         require(not self.run(["docker", "ps", "-aq", "--filter", "name=^/" + self.name + "$"],
                              guarded=False, timeout=5).strip(), "Builder container remains")
         if old_group is not None and old_group.exists():
+            require(directory_identity(old_group) == self.group_binding,
+                    "Builder cgroup identity changed before closure")
             events = dict(line.split() for line in
                           (old_group / "cgroup.events").read_text().splitlines())
             require(events.get("populated") == "0" and
                     (old_group / "pids.current").read_text().strip() == "0",
                     "Builder cgroup still has processes")
         self.container, self.group = None, None
+        self.group_binding, self.builder_process = None, None
         self.save_state()
         return {"closed": True, "containerAbsent": True, "cgroupHasProcesses": False}
 

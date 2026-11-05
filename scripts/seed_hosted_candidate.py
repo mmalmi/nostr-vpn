@@ -80,11 +80,13 @@ def source_and_producer(runner, producer, source):
             "Producer checkout identity mismatch")
     require(not git(producer, "status", "--porcelain", "--untracked-files=all").strip(),
             "Producer checkout is not clean")
-    parent = "a99bfd9b9dcb5ebf2857d77bfab8bf7c3f26d2b8"
-    support_parent = "6431b80c17185cf1981be97d9ee358d8faec1f4f"
+    parent = "00de452acf4b3a15852272bbb99de9f99c464276"
+    support_parent = "a99bfd9b9dcb5ebf2857d77bfab8bf7c3f26d2b8"
+    support_base = "6431b80c17185cf1981be97d9ee358d8faec1f4f"
     require(git(producer, "show", "-s", "--format=%P", "HEAD").strip() == parent and
             git(producer, "show", "-s", "--format=%P", parent).strip() == support_parent and
-            git(producer, "show", "-s", "--format=%P", support_parent).strip() ==
+            git(producer, "show", "-s", "--format=%P", support_parent).strip() == support_base and
+            git(producer, "show", "-s", "--format=%P", support_base).strip() ==
             runner.pins["product"]["commit"], "Producer lineage differs from the reviewed support parent")
     changes = set(git(producer, "diff", "--name-only", "--no-renames",
                       runner.pins["product"]["commit"], "HEAD").splitlines())
@@ -119,7 +121,7 @@ def inspect_realized_builder(runner, source):
     builder_closure = runner.stop_builder()
     require(builder_closure["closed"] and runner.container is None and runner.group is None,
             "BuildKit must be closed before toolchain inspection")
-    runner.check()
+    runner.check(force=True)
     tag = runner.name + "-toolchain"
     require(not runner.run(["docker", "image", "ls", "-q", "--no-trunc", tag]).strip(),
             "Inspection image tag already exists")
@@ -235,7 +237,7 @@ def main():
         receipt["archive"] = {"sha256": digest.hexdigest(), "bytes": candidate.stat().st_size}
         receipt["producer"]["python"] = sys.version
         receipt["docker"] = json.loads(runner.run(["docker", "version", "--format", "{{json .}}"]))
-        runner.check()
+        runner.check(force=True)
         receipt["accepted"] = True
     except Exception as error:
         failure = type(error).__name__ + ": " + str(error)

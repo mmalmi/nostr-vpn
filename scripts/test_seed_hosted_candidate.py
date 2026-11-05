@@ -17,7 +17,8 @@ from unittest.mock import patch
 from pathlib import Path
 
 from seed_hosted_candidate import build_arguments, inspect_realized_builder
-from seed_hosted_runtime import Runner
+from seed_hosted_runtime import (Runner, container_group, directory_identity,
+                                  group_sample, process_identity)
 
 from seed_hosted_proof import (CachedRunGuard, GIB, admission, canonical, owned_resource,
                                resource_check, sha256, verify_cached_export, verify_source, verify_toolchain)
@@ -362,7 +363,7 @@ class ProducerTests(unittest.TestCase):
                     name="job", owner="owner", container="job", group="active",
                     pins={"product": {"sourceDateEpoch": 1793838134, "commit": "source"},
                           "toolchain": {}}, save_state=lambda: None,
-                    check=lambda: events.append("check"),
+                    check=lambda **kwargs: events.append("check"),
                     inspect=lambda *args: {"Id": "sha256:" + "a" * 64})
                 def stop():
                     events.append("builder-closed" if close else "builder-not-closed")
@@ -410,6 +411,9 @@ class ProducerTests(unittest.TestCase):
                 return types.SimpleNamespace(read_text=lambda: "populated 1\n" if
                                              name == "cgroup.events" else "1")
         runner.group = Group()
+        runner.group_binding = (1, 2)
+        runner.group.lstat = lambda: types.SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o755, st_dev=1, st_ino=2)
         with self.assertRaisesRegex(ValueError, "still has processes"):
             runner.stop_builder()
         self.assertEqual(runner.container, "job")
@@ -471,6 +475,166 @@ class ProducerTests(unittest.TestCase):
         receipt, calls = self.cleanup_fixture(image=True)
         self.assertFalse(receipt["closed"])
         self.assertFalse(any(call[1:3] == ["image", "rm"] for call in calls))
+
+
+class CgroupBindingTests(unittest.TestCase):
+    def test_exact_systemd_container_and_init_use_same_aggregate_scope(self):
+        identity = "a" * 64
+        root = Path("/sys/fs/cgroup/system.slice/docker-" + identity + ".scope")
+        self.assertEqual(container_group(root, identity), root)
+        self.assertEqual(container_group(root / "init", identity), root)
+
+    def test_exact_cgroupfs_container_and_init_use_same_aggregate_scope(self):
+        identity = "a" * 64
+        root = Path("/sys/fs/cgroup/docker") / identity
+        self.assertEqual(container_group(root / "init", identity), root)
+
+    def test_no_arbitrary_ancestor_or_unexpected_descendant(self):
+        identity = "a" * 64
+        root = Path("/sys/fs/cgroup/docker") / identity
+        invalid = (
+            root / "other", root / "init" / "nested", root / identity,
+            Path("/sys/fs/cgroup/system.slice/other.scope/init"),
+            Path("/sys/fs/cgroup"), Path("/tmp") / identity,
+            root / ".." / identity,
+        )
+        for path in invalid:
+            with self.subTest(path=str(path)), self.assertRaises(ValueError):
+                container_group(path, identity)
+        with self.assertRaises(ValueError):
+            container_group(root, identity[:12])
+
+    def test_pid_identity_parses_comm_with_spaces_and_parenthesis(self):
+        value = "123 (buildkit ) daemon) S " + "0 " * 18 + "456 0 0\n"
+        with patch("seed_hosted_runtime.Path.read_text", return_value=value):
+            self.assertEqual(process_identity(123), 456)
+        for bad in (value.replace("123 (", "124 ("), value.replace("456", "max"), "123 short"):
+            with patch("seed_hosted_runtime.Path.read_text", return_value=bad):
+                with self.assertRaises(ValueError):
+                    process_identity(123)
+        with self.assertRaises(ValueError):
+            process_identity(True)
+
+    def test_binding_rejects_symlink(self):
+        path = types.SimpleNamespace(lstat=lambda: types.SimpleNamespace(
+            st_mode=stat.S_IFLNK | 0o777, st_dev=1, st_ino=2))
+        with self.assertRaises(ValueError):
+            directory_identity(path)
+
+    def test_unbounded_selected_scope_is_still_rejected(self):
+        class Group:
+            def __truediv__(self, name):
+                value = "oom 0\noom_kill 0\n" if name == "memory.events" else "max"
+                return types.SimpleNamespace(read_text=lambda: value)
+        with self.assertRaisesRegex(ValueError, "memory.max"):
+            group_sample(Group())
+
+    def test_parent_aggregate_is_sampled_when_init_limits_are_inherited(self):
+        identity = "a" * 64
+        root = Path("/sys/fs/cgroup/system.slice/docker-" + identity + ".scope")
+        leaf = root / "init"
+        values = {"memory.events": "oom 0\noom_kill 0\n", "memory.max": str(6 * GIB),
+                  "memory.current": "123456", "memory.swap.max": "0",
+                  "memory.swap.current": "0", "pids.max": "512", "pids.current": "9",
+                  "cpu.max": "200000 100000"}
+        def read(path):
+            if path.parent == leaf and path.name.endswith(".max"):
+                return "max"
+            return values[path.name]
+        runner = Runner.__new__(Runner)
+        runner.work = Path("/nonexistent")
+        runner.filesystems = {}
+        runner.helper_group = Path("/sys/fs/cgroup/helper")
+        runner.group = container_group(leaf, identity)
+        runner.group_binding = (1, 2)
+        runner.builder_process = (123, 456, identity)
+        with patch("seed_hosted_runtime.meminfo", return_value=(9 * GIB, 0)), \
+                patch("seed_hosted_runtime.os.sched_getaffinity", return_value={0, 1}, create=True), \
+                patch("seed_hosted_runtime.directory_identity", return_value=(1, 2)), \
+                patch("seed_hosted_runtime.process_identity", return_value=456), \
+                patch("seed_hosted_runtime.process_group", return_value=leaf), \
+                patch("seed_hosted_runtime.Path.read_text", autospec=True, side_effect=read):
+            with self.assertRaisesRegex(ValueError, "memory.max"):
+                group_sample(leaf)
+            sample = runner.sample()
+        self.assertEqual(sample["buildPidCgroup"], str(leaf))
+        self.assertEqual(sample["buildGroup"]["memoryMax"], 6 * GIB)
+        self.assertEqual(sample["buildGroup"]["memoryCurrent"], 123456)
+        self.assertEqual(sample["buildGroup"]["pidsCurrent"], 9)
+
+    def test_cgroup_scope_replacement_fails_before_sampling(self):
+        runner = Runner.__new__(Runner)
+        runner.work = Path("/nonexistent")
+        runner.filesystems = {}
+        runner.helper_group = "helper"
+        runner.group = types.SimpleNamespace(lstat=lambda: types.SimpleNamespace(
+            st_mode=stat.S_IFDIR | 0o755, st_dev=1, st_ino=99))
+        runner.group_binding = (1, 2)
+        with patch("seed_hosted_runtime.meminfo", return_value=(9 * GIB, 0)), \
+                patch("seed_hosted_runtime.os.sched_getaffinity", return_value={0, 1}, create=True), \
+                patch("seed_hosted_runtime.group_sample", return_value={}):
+            with self.assertRaisesRegex(ValueError, "directory identity changed"):
+                runner.sample()
+
+
+class SampleCadenceTests(unittest.TestCase):
+    setUp = ResourceTests.setUp
+
+    def runner(self):
+        runner = Runner.__new__(Runner)
+        runner.cancelled = False
+        runner.started = 10.0
+        runner.last_sample_at = None
+        runner.samples = []
+        runner.limits = self.limits
+        runner.initial = copy.deepcopy(self.sample)
+        runner.sample = lambda: copy.deepcopy(self.sample)
+        return runner
+
+    def test_bulk_chunks_are_one_global_sample_per_second(self):
+        runner = self.runner()
+        with patch("seed_hosted_runtime.time.monotonic", return_value=10.0):
+            for _ in range(1078):
+                runner.check()
+        self.assertEqual(len(runner.samples), 1)
+        with patch("seed_hosted_runtime.time.monotonic", return_value=10.999):
+            runner.check()
+        self.assertEqual(len(runner.samples), 1)
+        with patch("seed_hosted_runtime.time.monotonic", return_value=11.0):
+            runner.check()
+        self.assertEqual(len(runner.samples), 2)
+        self.assertEqual(runner.samples[-1]["elapsedSeconds"], 1.0)
+
+    def test_cancellation_and_deadline_are_never_throttled(self):
+        runner = self.runner()
+        runner.last_sample_at = 10.0
+        runner.cancelled = True
+        with patch("seed_hosted_runtime.time.monotonic", return_value=10.001):
+            with self.assertRaisesRegex(ValueError, "cancellation"):
+                runner.check()
+        runner.cancelled = False
+        runner.started = -2000.0
+        with patch("seed_hosted_runtime.time.monotonic", return_value=10.001):
+            with self.assertRaisesRegex(ValueError, "deadline"):
+                runner.check()
+        self.assertEqual(runner.samples, [])
+
+    def test_phase_transition_forces_guard_inside_cadence(self):
+        runner = self.runner()
+        runner.last_sample_at = 10.0
+        self.sample["swapUsed"] = 1
+        with patch("seed_hosted_runtime.time.monotonic", return_value=10.001):
+            with self.assertRaisesRegex(ValueError, "swap"):
+                runner.check(force=True)
+
+    def test_whole_deadline_cadence_fits_existing_evidence_bound(self):
+        runner = self.runner()
+        for second in range(1801):
+            with patch("seed_hosted_runtime.time.monotonic", return_value=10.0 + second):
+                for _ in range(3):
+                    runner.check()
+        self.assertEqual(len(runner.samples), 1801)
+        self.assertLessEqual(len(runner.samples), self.limits["timeoutSeconds"] * 2)
 
 
 if __name__ == "__main__":
