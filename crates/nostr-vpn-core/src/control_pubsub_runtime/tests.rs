@@ -23,6 +23,9 @@ use super::*;
 #[path = "tests/persistence.rs"]
 mod persistence;
 
+#[path = "tests/discovery_isolation.rs"]
+mod discovery_isolation;
+
 #[path = "tests/relay_ingress.rs"]
 mod relay_ingress;
 
