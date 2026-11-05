@@ -132,9 +132,19 @@ function Normalize-ComparableWindowsPath {
   return [IO.Path]::GetFullPath($Value).TrimEnd('\')
 }
 
+function Get-ServiceCommandExecutable {
+  param([string]$CommandLine)
+  $Match = [regex]::Match(
+    $CommandLine,
+    '^(?:"(?<binary>[^"]+)"|(?<binary>[^\s"]+))(?<arguments> .*)$'
+  )
+  if (!$Match.Success) { return $null }
+  return $Match.Groups['binary'].Value
+}
+
 function Test-OwnedServiceConfig {
   param([string]$CommandLine, [string]$ExpectedConfig)
-  $match = [regex]::Match($CommandLine, '^"[^"]+" daemon --service --config "(?<config>[^"]+)" --iface "[^"]+" --mesh-refresh-interval-secs [1-9][0-9]*\s*$')
+  $match = [regex]::Match($CommandLine, '^(?:"[^"]+"|[^\s"]+) daemon --service --config "(?<config>[^"]+)" --iface (?:"nvpn"|nvpn) --mesh-refresh-interval-secs [1-9][0-9]*\s*$')
   if (!$match.Success) { return $false }
   return [string]::Equals(
     (Normalize-ComparableWindowsPath $match.Groups['config'].Value),
@@ -359,17 +369,13 @@ switch ($Mode) {
       -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
     if ($Service) {
       $Config = Resolve-CanonicalConfig
-      $Command = [regex]::Match(
-        [string]$Service.PathName,
-        '^"(?<binary>[^"]+)"(?<arguments> .*)$'
-      )
+      $ServiceExecutable = Get-ServiceCommandExecutable ([string]$Service.PathName)
       if (
-        !$Command.Success -or
+        [string]::IsNullOrWhiteSpace($ServiceExecutable) -or
         !(Test-OwnedServiceConfig ([string]$Service.PathName) $Config)
       ) {
         throw "refusing to remove a Windows service outside this candidate profile"
       }
-      $ServiceExecutable = $Command.Groups['binary'].Value
       if (
         !(Test-Path -LiteralPath $ServiceExecutable -PathType Leaf) -or
         (Get-Sha256 $ServiceExecutable) -ne (Get-Sha256 $CliExe)
