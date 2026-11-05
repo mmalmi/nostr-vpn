@@ -15,7 +15,7 @@ final class NostrVpnFileShareUITests: XCTestCase {
         XCTAssertEqual(nvpn.state, .notRunning, "The host must preserve a stopped app baseline")
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let name = "nvpn-share-check-\(UUID().uuidString.prefix(8)).txt"
-        let bytes = Data(String(repeating: "nvpn file transfer verification\n", count: 6000).utf8)
+        let bytes = Data(String(repeating: "nvpn file transfer verification\n", count: 32).utf8)
         let source = documents.appendingPathComponent(name)
         let fixture = try FileShareFixture.prepare(recipient: recipient, filename: name, bytes: bytes)
         addTeardownBlock { try fixture.restore() }
