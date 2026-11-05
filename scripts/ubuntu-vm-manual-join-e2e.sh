@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH_HOST="${NVPN_UBUNTU_SSH_HOST:-${1:-}}"
 GUEST_SRC_ROOT="${NVPN_UBUNTU_GUEST_SRC_ROOT:-src}"
 GUEST_REPO="$GUEST_SRC_ROOT/nostr-vpn-release-gate"
+RUN_ID="${NVPN_UBUNTU_UI_RUN_ID:-}"
+[[ -z "$RUN_ID" || "$RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
 [[ -n "$SSH_HOST" ]] || {
   echo "set NVPN_UBUNTU_SSH_HOST or pass the Linux VM SSH target" >&2
   exit 2
@@ -13,7 +15,7 @@ GUEST_REPO="$GUEST_SRC_ROOT/nostr-vpn-release-gate"
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib-ubuntu-vm-imported-release.sh"
-export NVPN_UBUNTU_IMPORT_EVIDENCE_DIR="$ROOT/artifacts/ubuntu-vm-import/manual-join"
+export NVPN_UBUNTU_IMPORT_EVIDENCE_DIR="$ROOT/artifacts/ubuntu-vm-import/manual-join${RUN_ID:+-$RUN_ID}"
 
 cleanup() {
   local status="$?"
@@ -37,13 +39,13 @@ ubuntu_vm_import_ssh_command
   "$NVPN_UBUNTU_IMPORTED_APP" \
   "$NVPN_UBUNTU_IMPORTED_CLI" \
   "$NVPN_UBUNTU_IMPORTED_FIXTURE" \
-  "${NVPN_UBUNTU_UI_RUN_ID:-}" <<'GUEST'
+  "$RUN_ID" <<'GUEST'
 set -euo pipefail
 repo="$1"
 app="$2"
 cli="$3"
 fixture="$4"
-run_id="$5"
+run_id="${5:-}"
 [[ -z "$run_id" || "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] || exit 2
 cd "$repo"
 repo="$(pwd -P)"

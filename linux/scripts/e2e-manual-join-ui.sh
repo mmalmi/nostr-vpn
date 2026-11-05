@@ -67,7 +67,7 @@ stop_app() {
   window_id=""
   # A manual join starts the real approval transport. Stop only daemons whose
   # command line names one of this fixture's isolated config directories.
-  pkill -f "nvpn.*$E2E_ROOT" >/dev/null 2>&1 || true
+  pkill -f "nvpn.*${E2E_ROOT//./[.]}/" >/dev/null 2>&1 || true
 }
 
 cleanup() {
