@@ -92,7 +92,19 @@ enum PhysicalGateMarker { static func emit(_ marker: String) {} }
             require(!fm.fileExists(atPath: copy.deletingLastPathComponent().path), "empty owned batch survived recovery")
             try restored(c)
         }
-        print("6 file-share fixture cases passed: foreign source, source replacement, foreign batch, normal restoration and two interrupted deletions")
+        let replacedBatch = try context(root, "replaced-empty-batch"); suites.append(replacedBatch.group)
+        let batchFixture = try prepare(replacedBatch), (command, copy) = try queue(replacedBatch)
+        try batchFixture.verifyQueued(bytes: bytes)
+        try fm.removeItem(at: command)
+        try fm.removeItem(at: copy)
+        let batch = copy.deletingLastPathComponent()
+        // Keep the original directory alive so inode reuse cannot mask replacement.
+        try fm.moveItem(at: batch, to: root.appendingPathComponent("original-owned-batch"))
+        try fm.createDirectory(at: batch, withIntermediateDirectories: false)
+        rejected { try FileShareFixture.pending(context: replacedBatch).restore() }
+        require(fm.fileExists(atPath: batch.path), "replacement empty batch removed")
+        require(fm.fileExists(atPath: replacedBatch.journal.path), "replacement empty batch lost journal")
+        print("7 file-share fixture cases passed: foreign source, source replacement, foreign batch, normal restoration, two interrupted deletions and empty batch replacement")
     }
 }
 SWIFT

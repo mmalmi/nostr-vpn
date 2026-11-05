@@ -38,10 +38,26 @@ private struct FileShareFileIdentity: Codable, Equatable {
     }
 }
 
+private struct FileShareDirectoryIdentity: Codable, Equatable {
+    let device: UInt64
+    let inode: UInt64
+    static func read(_ url: URL) throws -> Self {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard attributes[.type] as? FileAttributeType == .typeDirectory,
+              let device = attributes[.systemNumber] as? NSNumber,
+              let inode = attributes[.systemFileNumber] as? NSNumber,
+              url.resolvingSymlinksInPath().path == url.standardizedFileURL.path else {
+            throw CocoaError(.fileReadInvalidFileName)
+        }
+        return Self(device: device.uint64Value, inode: inode.uint64Value)
+    }
+}
+
 private struct FileShareOwnedTransfer: Codable {
     let commandName: String
     let command: FileShareFileIdentity
     let batchName: String
+    let batch: FileShareDirectoryIdentity
     let copy: FileShareFileIdentity
 }
 
@@ -163,7 +179,8 @@ final class FileShareFixture {
                   UUID(uuidString: batch.lastPathComponent) != nil, !backup.batches.contains(batch.lastPathComponent),
                   try Self.names(batch) == [backup.filename] else { throw CocoaError(.fileReadInvalidFileName) }
             backup.ownedTransfers.append(FileShareOwnedTransfer(commandName: name, command: identity,
-                batchName: batch.lastPathComponent, copy: try FileShareFileIdentity.read(copy)))
+                batchName: batch.lastPathComponent, batch: try FileShareDirectoryIdentity.read(batch),
+                copy: try FileShareFileIdentity.read(copy)))
         }
         // Persist exact ownership before deleting either command or payload.
         try saveJournal()
@@ -202,6 +219,9 @@ final class FileShareFixture {
         guard Set(try Self.names(outboxURL)).subtracting(backup.batches).isSubset(of: owned) else { throw CocoaError(.fileWriteFileExists) }
         for transfer in backup.ownedTransfers {
             let batch = outboxURL.appendingPathComponent(transfer.batchName)
+            if fm.fileExists(atPath: batch.path) {
+                guard try FileShareDirectoryIdentity.read(batch) == transfer.batch else { throw CocoaError(.fileWriteFileExists) }
+            }
             guard Set(try Self.names(batch)).isSubset(of: [backup.filename]) else { throw CocoaError(.fileWriteFileExists) }
             try removeOwned(commandsURL.appendingPathComponent(transfer.commandName), identity: transfer.command)
             try removeOwned(batch.appendingPathComponent(backup.filename), identity: transfer.copy)
