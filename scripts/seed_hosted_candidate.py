@@ -81,12 +81,14 @@ def source_and_producer(runner, producer, source):
             "Producer checkout identity mismatch")
     require(not git(producer, "status", "--porcelain", "--untracked-files=all").strip(),
             "Producer checkout is not clean")
-    parent = "093a1ec93dcd9295859b5e5fdb69bac3d70b10ac"
+    parent = "2192322079609c33b8cf776b3414f4df3d1cf44f"
+    retry_parent = "093a1ec93dcd9295859b5e5fdb69bac3d70b10ac"
     runtime_parent = "00de452acf4b3a15852272bbb99de9f99c464276"
     support_parent = "a99bfd9b9dcb5ebf2857d77bfab8bf7c3f26d2b8"
     support_base = "6431b80c17185cf1981be97d9ee358d8faec1f4f"
     require(git(producer, "show", "-s", "--format=%P", "HEAD").strip() == parent and
-            git(producer, "show", "-s", "--format=%P", parent).strip() == runtime_parent and
+            git(producer, "show", "-s", "--format=%P", parent).strip() == retry_parent and
+            git(producer, "show", "-s", "--format=%P", retry_parent).strip() == runtime_parent and
             git(producer, "show", "-s", "--format=%P", runtime_parent).strip() == support_parent and
             git(producer, "show", "-s", "--format=%P", support_parent).strip() == support_base and
             git(producer, "show", "-s", "--format=%P", support_base).strip() ==

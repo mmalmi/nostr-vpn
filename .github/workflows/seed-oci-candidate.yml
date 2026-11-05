@@ -17,7 +17,7 @@ jobs:
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - name: Verify dedicated runner and prepare finite cold-build capacity
-        timeout-minutes: 3
+        timeout-minutes: 6
         shell: bash
         run: |
           set -euo pipefail
@@ -29,7 +29,9 @@ jobs:
           for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
             if [[ -e "$path" ]]; then
               test ! -L "$path"
+              printf 'Preparing %s at %ss\n' "$path" "$SECONDS"
               sudo rm -rf --one-file-system -- "$path"
+              printf 'Prepared %s at %ss\n' "$path" "$SECONDS"
             fi
           done
           python3 - <<'PY'
@@ -48,7 +50,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: producer
-          fetch-depth: 6
+          fetch-depth: 7
           persist-credentials: false
       - name: Check out frozen product separately
         timeout-minutes: 5
