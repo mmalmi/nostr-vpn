@@ -17,5 +17,15 @@
     "memoryPlusSwapBytes": 6442450944,
     "pids": 512,
     "cargoJobs": 2
+  },
+  "dependencyPreparation": {
+    "source": "Read-only clean product checkout and its committed Cargo.lock",
+    "cache": "Use the same named Docker cache volume as scripts/build-nvpn-linux-musl, serialized with /tmp/nvpn-cache/build.lock",
+    "command": "env -u CARGO_BUILD_TARGET cargo fetch --locked",
+    "environment": {
+      "CARGO_HOME": "/tmp/nvpn-cache/cargo",
+      "CARGO_TARGET_DIR": "/tmp/nvpn-cache/target"
+    },
+    "verification": "Require the product Cargo.lock hash unchanged before and after fetch. This downloads all locked target dependencies without compiling or resolving new versions; the canonical build remains --frozen."
   }
 }
