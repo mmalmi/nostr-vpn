@@ -1,5 +1,7 @@
 name: Frozen seed OCI candidate
 on:
+  push:
+    branches: [codex/nvpn-seed-hosted-producer]
   workflow_dispatch:
 permissions:
   contents: read
@@ -8,6 +10,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   candidate:
+    if: github.ref == 'refs/heads/codex/nvpn-seed-hosted-producer' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -45,7 +48,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: producer
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - name: Check out frozen product separately
         timeout-minutes: 5
