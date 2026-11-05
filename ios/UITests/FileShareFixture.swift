@@ -156,7 +156,7 @@ final class FileShareFixture {
         do {
             // Prevent expiring real recipients' Siri donations during the fixture send.
             context.defaults.set([String](), forKey: fixture.recentKey)
-            guard context.defaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
+            guard context.defaults.stringArray(forKey: fixture.recentKey) == [] else { throw CocoaError(.fileWriteUnknown) }
             try fixture.fixtureSnapshot().write(to: snapshotURL, options: .atomic)
             try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshotURL.path)
         } catch { try fixture.restore(); throw error }
@@ -235,7 +235,6 @@ final class FileShareFixture {
         } else if fm.fileExists(atPath: snapshotURL.path) { try fm.removeItem(at: snapshotURL) }
         if let recents = backup.recents { context.defaults.set(recents, forKey: recentKey) }
         else { context.defaults.removeObject(forKey: recentKey) }
-        guard context.defaults.synchronize() else { throw CocoaError(.fileWriteUnknown) }
         for path in Self.directories where !backup.existingDirectories.contains(path) {
             let url = context.support.appendingPathComponent(path)
             if fm.fileExists(atPath: url.path), try Self.names(url).isEmpty { try fm.removeItem(at: url) }
