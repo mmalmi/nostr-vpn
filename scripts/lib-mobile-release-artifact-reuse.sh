@@ -60,6 +60,16 @@ release_join_validate_android_reuse() {
   local receipt="${NVPN_RELEASE_JOIN_ANDROID_RECEIPT:-}"
   local metadata="${NVPN_RELEASE_JOIN_ANDROID_FIPS_METADATA_RECEIPT:-}"
   local apksigner apkanalyzer cert_sha actual_package app_sha app_tree
+  local -a bundle_args=()
+  if [[ -n "${NVPN_ANDROID_RELEASE_REUSE_AAB_PATH:-}${NVPN_ANDROID_RELEASE_REUSE_BUNDLE_RECEIPT:-}" ]]; then
+    [[ -n "${NVPN_ANDROID_RELEASE_REUSE_AAB_PATH:-}" \
+      && -n "${NVPN_ANDROID_RELEASE_REUSE_BUNDLE_RECEIPT:-}" ]] || {
+      echo "Android join reuse requires the AAB and derivation receipt together" >&2
+      return 1
+    }
+    bundle_args=(--aab "$NVPN_ANDROID_RELEASE_REUSE_AAB_PATH" \
+      --bundle-receipt "$NVPN_ANDROID_RELEASE_REUSE_BUNDLE_RECEIPT")
+  fi
   for name in \
     NVPN_RELEASE_JOIN_ANDROID_APK \
     NVPN_RELEASE_JOIN_ANDROID_RECEIPT \
@@ -121,7 +131,8 @@ release_join_validate_android_reuse() {
     --fips-version "$RELEASE_JOIN_FIPS_VERSION" \
     --package "$package" \
     --actual-package "$actual_package" \
-    --signer-sha "$cert_sha"
+    --signer-sha "$cert_sha" \
+    ${bundle_args[@]+"${bundle_args[@]}"}
   then
     echo "Reused Android Release artifact receipt validation failed" >&2
     return 1
