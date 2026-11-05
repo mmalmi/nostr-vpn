@@ -15,9 +15,9 @@ receipt=/tmp/nvpn-linux-vm-release.fixture/receipt.json
 package_receipt=/tmp/nvpn-linux-vm-release.fixture/debian-package-install.json
 service_binary=/usr/local/bin/nvpn
 service_unit=/etc/systemd/system/nvpn.service
-config=/root/.local/share/nostr-vpn/config.toml
-cashu_dir=/root/.local/share/nostr-vpn/cashu
-daemon_log=/root/.local/share/nostr-vpn/daemon.log
+config=/root/.config/nvpn/config.toml
+cashu_dir=/root/.config/nvpn/cashu
+daemon_log=/root/.config/nvpn/daemon.log
 mkdir -p "$artifact_root" "$(dirname "$config")" /usr/local/test-bin
 printf '#!/usr/bin/env bash\nexit 0\n' >/usr/bin/nostr-vpn
 printf '#!/usr/bin/env bash\nif [[ "$*" == *"service uninstall"* ]]; then\n  if [[ -e /tmp/nvpn-uninstall-fail-once ]]; then rm -f /tmp/nvpn-uninstall-fail-once; exit 1; fi\n  rm -f /etc/systemd/system/nvpn.service\nfi\n' >/usr/bin/nvpn
@@ -51,6 +51,12 @@ printf 'preserved diagnostic\n' >"$daemon_log"
 
 # A unit written before the binary copy completed is still exactly attributable
 # to this already-armed candidate attempt and must be removable.
+if run_cleanup; then
+  echo "candidate cleanup removed a profile without gate ownership" >&2
+  exit 1
+fi
+grep -Fxq profile "$config"
+printf '%s' "${config%/config.toml}" >"$artifact_root/canonical-profile-path"
 write_candidate_unit
 run_cleanup
 [[ ! -e "$service_unit" && ! -e "$service_binary" ]]

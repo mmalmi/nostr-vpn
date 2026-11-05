@@ -43,7 +43,7 @@ STOP_PATH="$ARTIFACT_ROOT/stop"
 DRIVER="$ROOT/scripts/desktop-mobile-manual-join-atspi.py"
 SERVICE_BINARY=/usr/local/bin/nvpn
 SERVICE_UNIT=/etc/systemd/system/nvpn.service
-CONFIG="${XDG_DATA_HOME:-$HOME/.local/share}/nostr-vpn/config.toml"
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nvpn/config.toml"
 PROFILE_ROOT="${CONFIG%/config.toml}"
 
 assert_imported_artifacts() {
@@ -165,12 +165,18 @@ cleanup_candidate_service() {
 }
 
 cleanup_release_test_profile() {
-  local expected="$HOME/.local/share/nostr-vpn"
+  local expected="$HOME/.config/nvpn"
   [[ "$PROFILE_ROOT" == "$expected" ]] || {
     echo "Refusing to remove a profile outside the dedicated release-test path" >&2
     return 1
   }
   if sudo -n test -e "$PROFILE_ROOT" || sudo -n test -L "$PROFILE_ROOT"; then
+    [[ -f "$ARTIFACT_ROOT/canonical-profile-path" \
+      && ! -L "$ARTIFACT_ROOT/canonical-profile-path" \
+      && "$(cat "$ARTIFACT_ROOT/canonical-profile-path")" == "$PROFILE_ROOT" ]] || {
+      echo "Refusing to remove a profile not created by this gate" >&2
+      return 1
+    }
     if ! sudo -n test -d "$PROFILE_ROOT" || sudo -n test -L "$PROFILE_ROOT"; then
       echo "Refusing to remove a non-directory or symlinked release-test profile" >&2
       return 1

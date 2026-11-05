@@ -529,12 +529,14 @@ def screenshot(root: pathlib.Path, label: str) -> None:
 
 
 def canonical_data_dir() -> pathlib.Path:
-    override = os.environ.get("XDG_DATA_HOME", "").strip()
+    override = os.environ.get("XDG_CONFIG_HOME", "").strip()
     if override:
+        if not pathlib.Path(override).is_absolute():
+            raise RuntimeError("public-UI gate requires an absolute XDG config root")
         base = pathlib.Path(override).expanduser().resolve()
     else:
-        base = pathlib.Path.home().resolve() / ".local" / "share"
-    return base / "nostr-vpn"
+        base = pathlib.Path.home().resolve() / ".config"
+    return base / "nvpn"
 
 
 def exact_app_pids(app: pathlib.Path) -> list[int]:
@@ -593,17 +595,28 @@ class Driver:
     def reset(self) -> None:
         if os.environ.get("NVPN_APP_DATA_DIR") or os.environ.get("NVPN_CLI_PATH"):
             raise RuntimeError("public-UI gate refuses app data or CLI overrides")
-        stop_exact_app_instances(self.app)
         data_dir = canonical_data_dir()
-        expected_parent = (
+        legacy_parent = (
             pathlib.Path(os.environ.get("XDG_DATA_HOME", "")).expanduser().resolve()
             if os.environ.get("XDG_DATA_HOME", "").strip()
             else pathlib.Path.home().resolve() / ".local" / "share"
         )
-        if data_dir.parent != expected_parent or data_dir.name != "nostr-vpn":
-            raise RuntimeError("refusing unsafe canonical Linux app-data reset")
+        legacy = legacy_parent / "nostr-vpn"
+        if legacy.exists() or legacy.is_symlink():
+            raise RuntimeError("preserve the existing legacy desktop profile before this gate")
         if data_dir.is_symlink():
             raise RuntimeError("refusing symlinked canonical Linux app-data reset")
+        ownership = self.artifact_root / "canonical-profile-path"
+        if ownership.exists() or ownership.is_symlink():
+            if (ownership.is_symlink() or not ownership.is_file()
+                    or ownership.read_text() != str(data_dir)):
+                raise RuntimeError("canonical Linux test-profile ownership changed")
+        else:
+            if data_dir.exists():
+                raise RuntimeError("preserve the existing CLI profile before this gate")
+            with ownership.open("x") as output:
+                output.write(str(data_dir))
+        stop_exact_app_instances(self.app)
         if data_dir.exists():
             shutil.rmtree(data_dir)
         self.evidence["resetComplete"] = True
