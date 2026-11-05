@@ -47,6 +47,7 @@ def manage_profile(profile: Path, ownership: Path, *, cleanup=False):
             or proof.get("parents") != parent_identities(profile)):
         raise RuntimeError("test-profile ownership or parent identity changed")
     if cleanup and not profile.exists() and not profile.is_symlink():
+        ownership.unlink()
         return
     parent_fd = os.open(profile.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
@@ -70,6 +71,7 @@ def manage_profile(profile: Path, ownership: Path, *, cleanup=False):
                 if identity(current) != proof["directory"]:
                     raise RuntimeError("test-profile directory changed before removal")
                 os.rmdir(profile.name, dir_fd=parent_fd)
+                ownership.unlink()
         finally:
             os.close(descriptor)
     finally:

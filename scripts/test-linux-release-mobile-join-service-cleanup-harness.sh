@@ -70,10 +70,8 @@ run_cleanup
 # The root daemon writes the release-test Cashu wallet below the dedicated
 # desktop profile. Cleanup must remove that root-owned state so the next
 # public-UI Reset starts from the same empty profile.
-# The preceding cleanup removed the owned directory. Start the next independent
-# fixture with fresh ownership, just as a new artifact directory would do.
-rm -rf "${config%/config.toml}"
-rm "$artifact_root/canonical-profile.json"
+# Both roles use the same artifact root: Cleanup must retire its old claim.
+[[ ! -e "$artifact_root/canonical-profile.json" ]]
 python3 /workspace/scripts/linux_release_profile.py reset \
   "${config%/config.toml}" "$artifact_root/canonical-profile.json"
 mkdir -p "$cashu_dir"

@@ -50,7 +50,18 @@ class ProfileReset(unittest.TestCase):
         self.assertFalse((self.profile / "config.toml").exists())
         driver.manage_profile(self.profile, self.owner, cleanup=True)
         self.assertFalse(self.profile.exists())
+        self.assertFalse(self.owner.exists())
         driver.manage_profile(self.profile, self.owner, cleanup=True)
+        self.subject.reset()
+        self.assertTrue(self.profile.is_dir())
+        self.assertEqual(json.loads(self.owner.read_text())["path"], str(self.profile))
+
+    def test_foreign_profile_after_cleanup_cannot_be_reset_or_cleaned(self):
+        self.subject.reset()
+        driver.manage_profile(self.profile, self.owner, cleanup=True)
+        self.make_profile()
+        self.assert_foreign_profile_preserved()
+        self.assertFalse(self.owner.exists())
 
     def test_existing_identity_is_preserved_without_ownership(self):
         self.make_profile()
