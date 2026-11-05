@@ -255,6 +255,10 @@ remote() {
   for argument in "$@"; do
     printf -v remote_command '%s %q' "$remote_command" "$argument"
   done
+  if [[ -n "${NVPN_MACOS_GUEST_TMPDIR:-}" ]]; then
+    printf -v remote_command 'export NVPN_MACOS_GUEST_TMPDIR=%q TMPDIR=%q; %s' \
+      "$NVPN_MACOS_GUEST_TMPDIR" "$NVPN_MACOS_GUEST_TMPDIR" "$remote_command"
+  fi
   ssh -o BatchMode=yes "$MAC_HOST" "$remote_command"
 }
 

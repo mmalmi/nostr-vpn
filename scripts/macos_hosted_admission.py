@@ -84,8 +84,16 @@ def comparison_scratch(copy_bytes):
     """Use the host reserve, or a separately admitted, identified RAM volume."""
     growth = 2 * copy_bytes + 1024**2  # copy plus possible codesign rewrite and metadata
     contract_path = os.environ.get(SCRATCH_ADMISSION_ENV)
+    guest_tmp = os.environ.get("NVPN_MACOS_GUEST_TMPDIR")
+    require(not (contract_path and guest_tmp), "comparison scratch has conflicting admissions")
     if not contract_path:
-        root = pathlib.Path(tempfile.gettempdir())
+        if guest_tmp:
+            root = pathlib.Path(guest_tmp)
+            require(root.is_absolute() and root.is_dir() and root.resolve() == root
+                    and os.access(root, os.W_OK | os.X_OK),
+                    "guest comparison scratch must be an existing canonical writable directory")
+        else:
+            root = pathlib.Path(tempfile.gettempdir())
         reserve = HOST_RESERVE
     else:
         contract = load(pathlib.Path(contract_path))

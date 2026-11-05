@@ -21,6 +21,47 @@ REAL_NORMALIZER = mac.normalized_executable
 
 
 class HostedMacAdmission(unittest.TestCase):
+    def test_guest_scratch_uses_exact_path_and_preserves_physical_reserve(self):
+        scratch = self.root / "guest scratch"
+        scratch.mkdir()
+        alias = self.root / "alias"
+        alias.symlink_to(scratch, target_is_directory=True)
+        growth = 2 * 113329624 + 1024**2
+        with patch.dict(os.environ, {"NVPN_MACOS_GUEST_TMPDIR": str(scratch)}), \
+                patch.object(mac.shutil, "disk_usage", return_value=SimpleNamespace(free=mac.HOST_RESERVE + growth)) as usage:
+            self.assertEqual(mac.comparison_scratch(113329624), scratch)
+            usage.assert_called_with(scratch)
+            usage.return_value.free -= 1
+            with self.assertRaisesRegex(ValueError, "scratch reserve"):
+                mac.comparison_scratch(113329624)
+            for invalid in (str(alias), str(self.root / "missing"), "relative"):
+                with self.subTest(path=invalid), patch.dict(os.environ, {"NVPN_MACOS_GUEST_TMPDIR": invalid}):
+                    with self.assertRaisesRegex(ValueError, "canonical writable directory"):
+                        mac.comparison_scratch(113329624)
+            with patch.dict(os.environ, {mac.SCRATCH_ADMISSION_ENV: "other-admission"}):
+                with self.assertRaisesRegex(ValueError, "conflicting admissions"):
+                    mac.comparison_scratch(113329624)
+
+    def test_remote_verification_forwards_guest_scratch_without_shell_interpretation(self):
+        script = Path(__file__).with_name("macos-vm-release-mobile-join-e2e.sh").read_text()
+        remote = "remote() {" + script.split("\nremote() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
+        probe = self.root / "probe.sh"
+        probe.write_text('#!/bin/bash\n/usr/bin/printf "%s\\n" "$NVPN_MACOS_GUEST_TMPDIR" "$TMPDIR" "$@"\n')
+        probe.chmod(0o755)
+        scratch = self.root / "scratch ' $literal"
+        scratch.mkdir()
+        env = dict(os.environ, GUEST_REPO=str(self.root), REMOTE_SCRIPT_REL="probe.sh",
+                   HOME=str(self.root), NVPN_MACOS_GUEST_TMPDIR=str(scratch), MAC_HOST="fixture")
+        for name in ("REMOTE_ARTIFACT_DIR", "REMOTE_HARNESS_DIGEST", "PRODUCT_GIT_SHA",
+                     "PRODUCT_GIT_TREE", "APP_GIT_SHA", "APP_GIT_TREE", "RELEASE_JOIN_FIPS_SHA",
+                     "RELEASE_JOIN_FIPS_TREE", "RELEASE_JOIN_FIPS_VERSION", "MACOS_SIGNING_IDENTITY",
+                     "EXPECTED_MACOS_TEAM", "EXPECTED_MACOS_CERT", "RELEASE_JOIN_IOS_SETUP_WAIT_SECS"):
+            env[name] = "fixture"
+        command = remote + '\nssh() { /bin/bash -c "${@: -1}"; }\nremote verify "argument with spaces"\n'
+        result = subprocess.run(["/bin/bash", "-eu", "-c", command], env=env,
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout.splitlines(), [str(scratch), str(scratch), "verify", "argument with spaces"])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nvpn-macos-admission-test-")
         self.addCleanup(self.temp.cleanup)
