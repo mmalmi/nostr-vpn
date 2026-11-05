@@ -29,6 +29,8 @@ RUN install -D -m 0644 /tmp/nvpn-ca.pem /etc/ssl/certs/ca-certificates.crt \
       'Dir::Etc::sourcelist "/snapshot/etc/apt/sources.list";' \
       'Dir::Etc::sourceparts "-";' \
       'Dir::State::lists "/snapshot/var/lib/apt/lists";' \
+      'Acquire::Retries "5";' \
+      'Acquire::https::Timeout "30";' \
       'Acquire::https::CaInfo "/snapshot/etc/ssl/certs/ca-certificates.crt";' > /apt.conf
 
 FROM rust:1.94-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS rust-builder
@@ -36,7 +38,9 @@ ARG TARGETPLATFORM
 WORKDIR /work
 
 RUN --mount=type=bind,from=bookworm-index,target=/snapshot \
-    apt-get -c /snapshot/apt.conf install -y --no-install-recommends \
+    apt-config -c /snapshot/apt.conf shell Retries Acquire::Retries Timeout Acquire::https::Timeout \
+    && apt-get --version \
+    && apt-get -c /snapshot/apt.conf install -y --no-install-recommends \
       clang \
       libclang-dev \
       libdbus-1-dev \
@@ -61,7 +65,9 @@ LABEL org.opencontainers.image.source="https://github.com/mmalmi/nostr-vpn" \
       org.opencontainers.image.licenses="MIT"
 
 RUN --mount=type=bind,from=bookworm-index,target=/snapshot \
-    apt-get -c /snapshot/apt.conf install -y --no-install-recommends \
+    apt-config -c /snapshot/apt.conf shell Retries Acquire::Retries Timeout Acquire::https::Timeout \
+    && apt-get --version \
+    && apt-get -c /snapshot/apt.conf install -y --no-install-recommends \
       ca-certificates \
       iproute2 \
       iptables \
