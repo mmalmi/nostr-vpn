@@ -44,17 +44,14 @@ final class NostrVpnFileShareUITests: XCTestCase {
         let sheet = files.otherElements["ActivityListView"].firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), files.debugDescription)
         let sharing = XCUIApplication(bundleIdentifier: "com.apple.SharingUIService")
-        let activity = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Nostr VPN")).firstMatch
         let more = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "More")).firstMatch
         for _ in 0..<4 {
-            if (activity.exists && activity.isHittable) || (more.exists && more.isHittable) { break }
+            if more.exists && more.isHittable { break }
             sheet.scrollViews.firstMatch.swipeLeft()
         }
-        if activity.exists && activity.isHittable { activity.tap() }
-        else {
-            tap("More", in: sheet)
-            tap("Nostr VPN", in: sharing)
-        }
+        tap("More", in: sheet)
+        tap("Nostr VPN", in: sharing)
+        screenshot("file-share-selected")
         XCTAssertTrue(sharing.staticTexts["Send files with nvpn"].waitForExistence(timeout: 8), sharing.debugDescription)
         screenshot("file-share-device-picker")
         tap(recipient, in: sharing)
