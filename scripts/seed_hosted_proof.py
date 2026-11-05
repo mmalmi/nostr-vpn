@@ -167,6 +167,36 @@ def owned_resource(inspect, name, owner, product):
             "Resource ownership mismatch")
 
 
+def initial_apt_504(log):
+    """Recognize only the frozen rust-builder package install's complete 504 failure."""
+    command = ('process "/bin/sh -c apt-get -c /snapshot/apt.conf install -y '
+               '--no-install-recommends       clang       libclang-dev       '
+               'libdbus-1-dev       pkg-config     && rm -rf /var/lib/apt/lists/*" '
+               'did not complete successfully: exit code: 100')
+    lines = log.splitlines()
+    final = "ERROR: failed to build: failed to solve: " + command
+    if not lines or lines[-1] != final or [l for l in lines if l.startswith("ERROR:")] != [final]:
+        return False
+    if any(re.match(r"#\d+ CANCELED(?:\s|$)", line) for line in lines):
+        return False
+    failures = [l for l in lines if re.match(r"#\d+ ERROR:", l)]
+    if len(failures) != 1:
+        return False
+    failure = re.fullmatch(r"#(\d+) ERROR: " + re.escape(command), failures[0])
+    if failure is None:
+        return False
+    errors = [m.groups() for l in lines
+              if (m := re.fullmatch(r"#(\d+) [0-9]+\.[0-9]+ (E: .+)", l))]
+    if len(errors) < 2 or any(step != failure[1] for step, _ in errors):
+        return False
+    if errors[-1][1] != "E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?":
+        return False
+    package_504 = (r"E: Failed to fetch https://snapshot\.debian\.org/archive/debian/"
+                   r"20261027T000000Z/pool/[A-Za-z0-9_./%+~:-]+\.deb  "
+                   r"504  Gateway Timeout \[IP: [0-9a-fA-F:.]+ 443\]")
+    return all(re.fullmatch(package_504, message) for _, message in errors[:-1])
+
+
 class CachedRunGuard:
     """Consume BuildKit v0.34.2 SolveStatus rawjson while the export is running."""
     def __init__(self):

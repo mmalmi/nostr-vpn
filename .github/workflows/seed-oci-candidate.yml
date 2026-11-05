@@ -48,7 +48,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: producer
-          fetch-depth: 5
+          fetch-depth: 6
           persist-credentials: false
       - name: Check out frozen product separately
         timeout-minutes: 5
