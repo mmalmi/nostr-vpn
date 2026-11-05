@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "platform": "linux/arm64",
+  "target": "aarch64-unknown-linux-musl",
+  "builder": {
+    "image": "messense/rust-musl-cross:aarch64-musl@sha256:df3a237bd30b35c63398598d15165bf7ff7a32c263fac6227f727256a274fabb",
+    "configDigest": "sha256:f2b62a3f8f1bfd5456113b629bbb9824974de1d11465f01f4ceae91923bd50e5"
+  },
+  "smoke": {
+    "image": "ubuntu:24.04@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e",
+    "configDigest": "sha256:1f1aeedbd16d617d1e09524c511cbbfb3b9748526f73ef36325366eee8347f8c"
+  },
+  "recipe": "Run scripts/build-linux-arm64-cli-gate.sh from the clean product source with NVPN_LINUX_MUSL_IMAGE set to builder.image and NVPN_LINUX_ARM64_SMOKE_IMAGE set to smoke.image. Use an ARM64 Docker engine and verify both realized image IDs and architectures before execution. The native image is the ARM64 sibling of the existing pinned AMD64 cross-builder; no product source or target flags change.",
+  "resourceLimits": {
+    "cpu": 2,
+    "memoryBytes": 6442450944,
+    "memoryPlusSwapBytes": 6442450944,
+    "pids": 512,
+    "cargoJobs": 2
+  }
+}
