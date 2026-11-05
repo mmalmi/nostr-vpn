@@ -43,22 +43,26 @@ final class NostrVpnFileShareUITests: XCTestCase {
         screenshot("file-share-system-sheet")
         let sheet = files.otherElements["ActivityListView"].firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 5), files.debugDescription)
-        let activity = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "nvpn")).firstMatch
+        let sharing = XCUIApplication(bundleIdentifier: "com.apple.SharingUIService")
+        let activity = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Nostr VPN")).firstMatch
         let more = sheet.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "More")).firstMatch
         for _ in 0..<4 {
             if (activity.exists && activity.isHittable) || (more.exists && more.isHittable) { break }
             sheet.scrollViews.firstMatch.swipeLeft()
         }
-        if !(activity.exists && activity.isHittable) { tap("More", in: sheet) }
-        tap("nvpn", in: files)
-        XCTAssertTrue(files.staticTexts["Send files with nvpn"].waitForExistence(timeout: 8), files.debugDescription)
+        if activity.exists && activity.isHittable { activity.tap() }
+        else {
+            tap("More", in: sheet)
+            tap("Nostr VPN", in: sharing)
+        }
+        XCTAssertTrue(sharing.staticTexts["Send files with nvpn"].waitForExistence(timeout: 8), sharing.debugDescription)
         screenshot("file-share-device-picker")
-        tap(recipient, in: files)
-        let queued = files.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Queued for \(recipient)")).firstMatch
-        XCTAssertTrue(queued.waitForExistence(timeout: 15), files.debugDescription)
+        tap(recipient, in: sharing)
+        let queued = sharing.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Queued for \(recipient)")).firstMatch
+        XCTAssertTrue(queued.waitForExistence(timeout: 15), sharing.debugDescription)
         XCTAssertTrue(queued.label.contains("If VPN is off"))
         screenshot("file-share-queued")
-        tap("Done", in: files)
+        tap("Done", in: sharing)
         XCTAssertEqual(nvpn.state, .notRunning, "Sharing must not require launching the main app")
         XCTAssertEqual(try Data(contentsOf: source), bytes, "Sharing must preserve the original")
         try fixture.verifyQueued(bytes: bytes)
