@@ -3,9 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${NVPN_LINUX_SERVICE_CLEANUP_TEST_IMAGE:-ubuntu:24.04}"
+# Python 3.11+ supports descriptor-relative cleanup, as on the release-test VM.
+IMAGE="${NVPN_LINUX_SERVICE_CLEANUP_TEST_IMAGE:-python:3.13-slim-bookworm@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f}"
 
-docker run --rm -i \
+docker run --rm -i --cpus 1 --memory 256m --memory-swap 256m --pids-limit 64 \
   -v "$ROOT:/workspace:ro" \
   "$IMAGE" bash -s <<'SH'
 set -euo pipefail
@@ -56,7 +57,9 @@ if run_cleanup; then
   exit 1
 fi
 grep -Fxq profile "$config"
-printf '%s' "${config%/config.toml}" >"$artifact_root/canonical-profile-path"
+rm -rf "${config%/config.toml}"
+python3 /workspace/scripts/linux_release_profile.py reset \
+  "${config%/config.toml}" "$artifact_root/canonical-profile.json"
 write_candidate_unit
 run_cleanup
 [[ ! -e "$service_unit" && ! -e "$service_binary" ]]
@@ -67,6 +70,12 @@ run_cleanup
 # The root daemon writes the release-test Cashu wallet below the dedicated
 # desktop profile. Cleanup must remove that root-owned state so the next
 # public-UI Reset starts from the same empty profile.
+# The preceding cleanup removed the owned directory. Start the next independent
+# fixture with fresh ownership, just as a new artifact directory would do.
+rm -rf "${config%/config.toml}"
+rm "$artifact_root/canonical-profile.json"
+python3 /workspace/scripts/linux_release_profile.py reset \
+  "${config%/config.toml}" "$artifact_root/canonical-profile.json"
 mkdir -p "$cashu_dir"
 printf 'wallet\n' >"$cashu_dir/wallet.sqlite"
 run_cleanup

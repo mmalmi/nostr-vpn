@@ -45,6 +45,11 @@ SERVICE_BINARY=/usr/local/bin/nvpn
 SERVICE_UNIT=/etc/systemd/system/nvpn.service
 CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nvpn/config.toml"
 PROFILE_ROOT="${CONFIG%/config.toml}"
+[[ "${XDG_CONFIG_HOME:-$HOME/.config}" == "$HOME/.config" \
+  && "${XDG_DATA_HOME:-$HOME/.local/share}" == "$HOME/.local/share" ]] || {
+  echo "Linux release join requires the default XDG roots" >&2
+  exit 1
+}
 
 assert_imported_artifacts() {
   local app_hash cli_hash
@@ -170,19 +175,8 @@ cleanup_release_test_profile() {
     echo "Refusing to remove a profile outside the dedicated release-test path" >&2
     return 1
   }
-  if sudo -n test -e "$PROFILE_ROOT" || sudo -n test -L "$PROFILE_ROOT"; then
-    [[ -f "$ARTIFACT_ROOT/canonical-profile-path" \
-      && ! -L "$ARTIFACT_ROOT/canonical-profile-path" \
-      && "$(cat "$ARTIFACT_ROOT/canonical-profile-path")" == "$PROFILE_ROOT" ]] || {
-      echo "Refusing to remove a profile not created by this gate" >&2
-      return 1
-    }
-    if ! sudo -n test -d "$PROFILE_ROOT" || sudo -n test -L "$PROFILE_ROOT"; then
-      echo "Refusing to remove a non-directory or symlinked release-test profile" >&2
-      return 1
-    fi
-    sudo -n find "$PROFILE_ROOT" -xdev -depth -delete
-  fi
+  sudo -n python3 "$ROOT/scripts/linux_release_profile.py" cleanup \
+    "$PROFILE_ROOT" "$ARTIFACT_ROOT/canonical-profile.json" || return 1
   sudo -n test ! -e "$PROFILE_ROOT"
 }
 
