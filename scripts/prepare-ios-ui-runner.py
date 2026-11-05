@@ -4,6 +4,7 @@
 import hashlib
 import json
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import tarfile
@@ -29,9 +30,6 @@ targets:
         PRODUCT_NAME: '$(TARGET_NAME)'
         PRODUCT_MODULE_NAME: '$(TARGET_NAME)'
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Nostr VPN Test Files
-        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
-        INFOPLIST_KEY_UIFileSharingEnabled: YES
 schemes:
   NostrVpnIosUITests:
     build:
@@ -42,6 +40,12 @@ schemes:
       targets:
         - NostrVpnIosUITests
 """
+
+FILE_SHARING_INFO = {
+    "CFBundleDisplayName": "Nostr VPN Test Files",
+    "LSSupportsOpeningDocumentsInPlace": True,
+    "UIFileSharingEnabled": True,
+}
 
 
 def digest(path):
@@ -54,14 +58,27 @@ def main():
         OUT.mkdir(parents=True, exist_ok=False)
         (OUT / "project.yml").write_text(SPEC)
         return
-    if sys.argv[1:] != ["--receipt"]:
-        raise SystemExit("usage: prepare-ios-ui-runner.py [--receipt]")
+    if sys.argv[1:] not in (["--file-sharing"], ["--receipt"]):
+        raise SystemExit("usage: prepare-ios-ui-runner.py [--file-sharing|--receipt]")
     products = OUT / "DerivedData/Build/Products"
     runner = products / "Release-iphoneos/NostrVpnIosUITests-Runner.app"
     if not runner.is_dir() or list(products.rglob("Nostr VPN.app")):
         raise SystemExit("Expected only the test runner, without an application build")
     if len(list(products.glob("*.xctestrun"))) != 1:
         raise SystemExit("Expected exactly one test plan")
+    info_path = runner / "Info.plist"
+    info = plistlib.loads(info_path.read_bytes())
+    if info.get("CFBundleIdentifier") != "fi.siriusbusiness.nvpn.UITests.xctrunner":
+        raise SystemExit("Refusing to modify an unexpected application")
+    if sys.argv[1:] == ["--file-sharing"]:
+        # Xcode's INFOPLIST_KEY settings affect the .xctest plug-in, not its
+        # generated host. Apply this to the host before its final developer sign.
+        info.update(FILE_SHARING_INFO)
+        info_path.write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
+        return
+    if any(type(info.get(key)) is not type(value) or info[key] != value
+           for key, value in FILE_SHARING_INFO.items()):
+        raise SystemExit("Prepare the runner host's Files access before packaging")
     archive = OUT / "ios-ui-runner.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
         tar.add(products, arcname="Products")
@@ -72,6 +89,7 @@ def main():
         "uiSourceTree": git("rev-parse", "HEAD:ios/UITests"),
         "platform": "ios", "architecture": "arm64", "configuration": "Release",
         "signed": False, "testsExecuted": False, "releasePackage": False,
+        "runnerFileSharingPrepared": True,
         "appBuilt": False, "rustBuilt": False,
         "archive": archive.name, "archiveBytes": archive.stat().st_size,
         "archiveSHA256": digest(archive), "projectSHA256": digest(OUT / "project.yml"),

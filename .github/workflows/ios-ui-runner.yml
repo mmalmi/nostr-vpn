@@ -34,6 +34,7 @@ jobs:
             -configuration Release -derivedDataPath work/ios-ui-runner/DerivedData \
             -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO build-for-testing
+          python3 scripts/prepare-ios-ui-runner.py --file-sharing
           python3 scripts/prepare-ios-ui-runner.py --receipt
       - uses: actions/upload-artifact@v6
         with:
