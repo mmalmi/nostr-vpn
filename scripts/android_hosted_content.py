@@ -153,6 +153,9 @@ def apk_runtime_identity(aab, apk):
             target = name.removeprefix("base/dex/")
         elif name.startswith(("base/assets/", "base/root/")):
             target = name.removeprefix("base/") if name.startswith("base/assets/") else name.removeprefix("base/root/")
+        elif name in ("BUNDLE-METADATA/com.android.tools.build.profiles/baseline.prof",
+                      "BUNDLE-METADATA/com.android.tools.build.profiles/baseline.profm"):
+            target = "assets/dexopt/" + name.rsplit("/", 1)[1]
         elif name.startswith("base/res/") and not name.endswith(".xml"):
             target = name.removeprefix("base/")
         else:

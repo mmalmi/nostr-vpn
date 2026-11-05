@@ -102,6 +102,26 @@ class AndroidContent(unittest.TestCase):
             with self.subTest(changes=list(changes)), self.assertRaises(ValueError):
                 content.apk_runtime_identity(aab, self.archive("wrong.apk", {**files, **changes}))
 
+    def test_bundletool_baseline_profiles_preserve_bytes_and_reject_extras(self):
+        profiles = {"baseline.prof": b"exact runtime profile", "baseline.profm": b"exact profile metadata"}
+        bundle = {**self.payload, **{"BUNDLE-METADATA/com.android.tools.build.profiles/" + name: data
+                                    for name, data in profiles.items()}}
+        files = {"lib/arm64-v8a/libnostr_vpn_app_core.so": b"exact JNI",
+                 "classes.dex": b"exact DEX", "assets/help.txt": b"exact asset",
+                 **{"assets/dexopt/" + name: data for name, data in profiles.items()}}
+        aab = self.archive("profiled.aab", bundle)
+        content.apk_runtime_identity(aab, self.archive("profiled.apk", files))
+        for name in profiles:
+            target = "assets/dexopt/" + name
+            for changed in ({**files, target: b"tampered"}, {key: value for key, value in files.items() if key != target}):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "runtime bytes differ"):
+                    content.apk_runtime_identity(aab, self.archive("wrong-profile.apk", changed))
+        with self.assertRaisesRegex(ValueError, "unexpected"):
+            content.apk_runtime_identity(aab, self.archive("extra-profile.apk", {**files, "assets/dexopt/extra.prof": b"extra"}))
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            content.apk_runtime_identity(self.archive("collision.aab", {**bundle,
+                "base/assets/dexopt/baseline.prof": profiles["baseline.prof"]}), self.archive("profiled.apk", files))
+
     def test_manifest_continuations_preserve_utf8_and_reject_duplicate_names(self):
         main, entries = content.manifest_sections(b"Manifest-Version: 1.0\r\n\r\nName: assets/\xc3\r\n \xa9\r\nX: y\r\n\r\n")
         self.assertEqual(entries, {"assets/é": {"x": "y"}})
