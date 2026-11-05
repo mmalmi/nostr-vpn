@@ -73,9 +73,9 @@ nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
 nostr-pubsub = "0.1.19"
 nostr-pubsub-fips = "=0.5.47"
 nostr-pubsub-relay = "0.1.14"
-nostr-pubsub-social-graph = "0.2.4"
-nostr-social-graph = "0.1.4"
-nostr-social-memory = "0.1.1"
+nostr-pubsub-social-graph = "0.3.0"
+nostr-social-graph = "0.2.0"
+nostr-social-memory = "0.2.0"
 nostr-identity = "0.4.0"
 nostr-vpn-core = { version = "=4.1.19", path = "crates/nostr-vpn-core", default-features = false }
 nostr-vpn-wintun = { version = "=4.1.19", path = "crates/nostr-vpn-wintun" }
