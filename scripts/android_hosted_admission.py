@@ -79,9 +79,14 @@ def verify_apk_signer(apk, expected_sha256):
         executable = str(paths[-1])
     result = subprocess.run([executable, "verify", "--verbose", "--print-certs", str(apk)],
                             check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    signers = re.findall(r"^(?:Signer #[0-9]+|V3\.0 Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$",
+    require(re.findall(r"^Number of signers: (.*)$", result.stdout, flags=re.M) == ["1"],
+            "Android APK signer count differs")
+    signers = re.findall(r"^(?:Signer #1|V3\.0 Signer:) certificate SHA-256 digest: ([0-9a-fA-F]{64})$",
                         result.stdout, flags=re.M)
-    require(len(signers) == 1 and signers[0].lower() == expected_sha256, "Android APK signer differs")
+    signer_lines = [line for line in result.stdout.splitlines()
+                    if "signer" in line.lower() and "certificate SHA-256 digest:" in line]
+    require(len(signer_lines) == len(signers) == 1 and signers[0].lower() == expected_sha256,
+            "Android APK signer differs")
 
 
 def sibling(companion, name):

@@ -38,14 +38,19 @@ class AndroidAdmission(unittest.TestCase):
     def test_apksigner_labels_keep_single_exact_certificate_requirement(self):
         signer = "a" * 64
         for label in ("Signer #1", "V3.0 Signer:"):
-            line = label + " certificate SHA-256 digest: " + signer + "\n"
+            line = "Number of signers: 1\n" + label + " certificate SHA-256 digest: " + signer + "\n"
             with self.subTest(label=label), patch.dict(os.environ, {"NVPN_ANDROID_APKSIGNER": "fixture-apksigner"}), \
                     patch.object(admission.subprocess, "run", return_value=SimpleNamespace(stdout=line)):
                 admission.verify_apk_signer(Path("fixture.apk"), signer)
-            for output in (line.replace(signer, "b" * 64), line + line, "Source Stamp" + line):
+            for output in (line.replace(signer, "b" * 64), line + line,
+                           line.replace(label, "Source Stamp" + label),
+                           line.replace("Number of signers: 1", "Number of signers: 2"),
+                           line.replace("Number of signers: 1\n", ""),
+                           line.replace(label, "Signer #2"),
+                           line + "Unknown Signer: certificate SHA-256 digest: " + signer + "\n"):
                 with self.subTest(output=output), patch.dict(os.environ, {"NVPN_ANDROID_APKSIGNER": "fixture-apksigner"}), \
                         patch.object(admission.subprocess, "run", return_value=SimpleNamespace(stdout=output)), \
-                        self.assertRaisesRegex(ValueError, "signer differs"):
+                        self.assertRaisesRegex(ValueError, "signer(?: count)? differs"):
                     admission.verify_apk_signer(Path("fixture.apk"), signer)
 
     def setUp(self):
