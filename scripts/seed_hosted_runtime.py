@@ -104,12 +104,6 @@ def group_sample(path):
             "oom": int(events["oom"]), "oomKill": int(events["oom_kill"])}
 
 
-class CommandFailure(ValueError):
-    def __init__(self, executable, returncode):
-        super().__init__("Command failed: " + str(executable))
-        self.returncode = returncode
-
-
 class Runner:
     def __init__(self, work, pins, identity):
         self.work = work
@@ -263,9 +257,7 @@ class Runner:
                             require(len(result) + len(data) <= 1024 * 1024,
                                     "Command output exceeded bound")
                             result.extend(data)
-                returncode = process.wait(timeout=1)
-                if returncode != 0:
-                    raise CommandFailure(arguments[0], returncode)
+                require(process.wait(timeout=1) == 0, "Command failed: " + arguments[0])
             return result.decode()
         except BaseException:
             if progress_guard is not None:

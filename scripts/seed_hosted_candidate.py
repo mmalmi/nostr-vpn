@@ -13,9 +13,9 @@ import time
 import urllib.request
 from pathlib import Path
 
-from seed_hosted_proof import (CachedRunGuard, canonical, initial_apt_504, require,
+from seed_hosted_proof import (CachedRunGuard, canonical, require,
                                sha256, verify_source, verify_toolchain)
-from seed_hosted_runtime import CommandFailure, Runner, capture
+from seed_hosted_runtime import Runner, capture
 from seed_oci_proof import verify_oci
 
 FILES = (
@@ -81,18 +81,24 @@ def source_and_producer(runner, producer, source):
             "Producer checkout identity mismatch")
     require(not git(producer, "status", "--porcelain", "--untracked-files=all").strip(),
             "Producer checkout is not clean")
-    parent = "2192322079609c33b8cf776b3414f4df3d1cf44f"
-    retry_parent = "093a1ec93dcd9295859b5e5fdb69bac3d70b10ac"
-    runtime_parent = "00de452acf4b3a15852272bbb99de9f99c464276"
-    support_parent = "a99bfd9b9dcb5ebf2857d77bfab8bf7c3f26d2b8"
-    support_base = "6431b80c17185cf1981be97d9ee358d8faec1f4f"
-    require(git(producer, "show", "-s", "--format=%P", "HEAD").strip() == parent and
-            git(producer, "show", "-s", "--format=%P", parent).strip() == retry_parent and
-            git(producer, "show", "-s", "--format=%P", retry_parent).strip() == runtime_parent and
-            git(producer, "show", "-s", "--format=%P", runtime_parent).strip() == support_parent and
-            git(producer, "show", "-s", "--format=%P", support_parent).strip() == support_base and
-            git(producer, "show", "-s", "--format=%P", support_base).strip() ==
-            runner.pins["product"]["commit"], "Producer lineage differs from the reviewed support parent")
+    chain = (
+        "abedfa8420f1cffc424d9dc7fb6cec600933dc31",
+        "2192322079609c33b8cf776b3414f4df3d1cf44f",
+        "093a1ec93dcd9295859b5e5fdb69bac3d70b10ac",
+        "00de452acf4b3a15852272bbb99de9f99c464276",
+        "a99bfd9b9dcb5ebf2857d77bfab8bf7c3f26d2b8",
+        "6431b80c17185cf1981be97d9ee358d8faec1f4f",
+        "df954f33ba442a245957cfb6eae1ce36b458f255",
+    )
+    product = runner.pins["product"]["commit"]
+    require(git(producer, "show", "-s", "--format=%P", "HEAD").split() == [chain[0], product],
+            "Producer must merge only the reviewed support and recipe commits")
+    for child, parent in zip(chain, chain[1:]):
+        require(git(producer, "show", "-s", "--format=%P", child).strip() == parent,
+                "Producer support lineage changed")
+    require(git(producer, "show", "-s", "--format=%P", product).strip() == chain[-1] and
+            git(producer, "diff", "--name-only", "--no-renames", chain[-1], product).splitlines() ==
+            ["umbrel/Dockerfile"], "Product successor must change only the acquisition recipe")
     changes = set(git(producer, "diff", "--name-only", "--no-renames",
                       runner.pins["product"]["commit"], "HEAD").splitlines())
     require(changes == set(FILES), "Producer changes extend beyond support-only scope")
@@ -112,35 +118,6 @@ def build_arguments(runner, source, output, metadata, target=None, load=False,
     args += ["--output", "type=" + exporter + ",dest=" + str(output) + ",rewrite-timestamp=true",
              str(source)]
     return args
-
-
-def initial_solve(runner, source, candidate, metadata, evidence):
-    # Same builder, recipe, cache and global deadline; never retry inspection/export.
-    arguments = build_arguments(runner, source, candidate, metadata)
-    log_path = runner.output / "producer.log"
-    for attempt in (1, 2):
-        runner.check(force=True)
-        start = log_path.stat().st_size
-        row = {"attempt": attempt, "logStart": start, "accepted": False}
-        evidence.append(row)
-        try:
-            runner.run(arguments, timeout=runner.limits["timeoutSeconds"], capture_output=False)
-            row["accepted"] = True
-            return
-        except CommandFailure as error:
-            row["returncode"] = error.returncode
-            runner.check(force=True)
-            end = log_path.stat().st_size
-            row["logEnd"] = end
-            require(start <= end <= runner.limits["logBytes"], "Invalid initial solve log bounds")
-            with log_path.open("rb") as log:
-                log.seek(start)
-                failed_log = log.read(end - start)
-            row["logSha256"] = sha256(failed_log)
-            if (attempt != 1 or error.returncode != 1 or candidate.exists() or metadata.exists() or
-                    not initial_apt_504(failed_log.decode("utf-8", errors="strict"))):
-                raise
-            row["retryReason"] = "Pinned snapshot package fetch returned only HTTP 504"
 
 
 def inspect_realized_builder(runner, source):
@@ -254,8 +231,9 @@ def main():
         receipt["buildkit"] = runner.create_builder(runner.buildx)
         candidate = runner.output / "candidate.oci.tar"
         metadata_path = runner.output / "build-metadata.json"
-        receipt["initialSolve"] = []
-        initial_solve(runner, source, candidate, metadata_path, receipt["initialSolve"])
+        receipt["initialSolveAttempts"] = 1
+        runner.run(build_arguments(runner, source, candidate, metadata_path),
+                   timeout=pins["limits"]["timeoutSeconds"], capture_output=False)
         receipt["toolchain"] = inspect_realized_builder(runner, source)
         verify_source(source, pins["product"], git)
         metadata = json.loads(metadata_path.read_text())

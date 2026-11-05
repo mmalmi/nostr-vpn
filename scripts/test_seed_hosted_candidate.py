@@ -13,15 +13,14 @@ import os
 import sys
 import subprocess
 import time
-import tempfile
 from unittest.mock import patch
 from pathlib import Path
 
-from seed_hosted_candidate import build_arguments, initial_solve, inspect_realized_builder
-from seed_hosted_runtime import (CommandFailure, Runner, container_group, directory_identity,
+from seed_hosted_candidate import build_arguments, inspect_realized_builder
+from seed_hosted_runtime import (Runner, container_group, directory_identity,
                                   group_sample, process_identity)
 
-from seed_hosted_proof import (CachedRunGuard, GIB, admission, canonical, initial_apt_504, owned_resource,
+from seed_hosted_proof import (CachedRunGuard, GIB, admission, canonical, owned_resource,
                                resource_check, sha256, verify_cached_export, verify_source, verify_toolchain)
 from seed_oci_proof import TARGETS, verify_oci
 
@@ -330,105 +329,6 @@ class SourceTests(unittest.TestCase):
         self.expected["contextManifestSha256"] = "0" * 64
         with self.assertRaises(ValueError):
             self.check()
-
-
-def apt_failure():
-    # Pinned Buildx/BuildKit plain-progress shape, with a documentation-only IP.
-    command = ('process "/bin/sh -c apt-get -c /snapshot/apt.conf install -y '
-               '--no-install-recommends       clang       libclang-dev       '
-               'libdbus-1-dev       pkg-config     && rm -rf /var/lib/apt/lists/*" '
-               'did not complete successfully: exit code: 100')
-    return ("#19 127.1 E: Failed to fetch https://snapshot.debian.org/archive/debian/"
-            "20261027T000000Z/pool/main/d/dbus/libdbus-1-dev_1.14.10-1%7edeb12u1_amd64.deb  "
-            "504  Gateway Timeout [IP: 192.0.2.1 443]\n"
-            "#19 127.1 E: Unable to fetch some archives, maybe run apt-get update or try with --fix-missing?\n"
-            "#19 ERROR: " + command + "\nERROR: failed to build: failed to solve: " + command + "\n")
-
-
-class InitialSolveTests(unittest.TestCase):
-    def test_only_complete_pinned_package_504(self):
-        good = apt_failure()
-        self.assertTrue(initial_apt_504(good))
-        second = good.splitlines()[0].replace("libdbus-1-dev", "clang-14") + "\n"
-        self.assertTrue(initial_apt_504(second + good))
-        for bad in (good.replace("504", "503"), good.replace("Gateway Timeout", "Hash Sum mismatch"),
-                    good.replace("20261027", "20261028"), good.replace("https://", "http://"),
-                    good.replace("snapshot.debian.org", "mirror.example"),
-                    good.replace("exit code: 100", "exit code: 137"),
-                    good.replace("install -y", "update -y"),
-                    good.replace("#19 127.1 E:", "#20 127.1 E:", 1),
-                    good.replace("#19 ERROR:", "#20 ERROR:"),
-                    good.replace(" 443]", " 80]"), good.replace(".deb  504", ".deb  404", 1),
-                    good.rsplit("\nERROR:", 1)[0], good + "unexpected failure\n",
-                    "#20 ERROR: compilation failed\n" + good,
-                    "#20 CANCELED\n" + good,
-                    "#20 CANCELED context canceled\n" + good,
-                    "ERROR: unrelated failure\n" + good,
-                    "#19 127.1 E: Invalid signature\n" + good,
-                    second.replace("504", "404") + good):
-            with self.subTest(log=bad):
-                self.assertFalse(initial_apt_504(bad))
-
-    def run_solve(self, failures, artifact=None, guard_failure=None, prefix=""):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            log = root / "producer.log"
-            log.write_text(prefix)
-            candidate, metadata = root / "image.tar", root / "metadata.json"
-            if artifact:
-                {"candidate": candidate, "metadata": metadata}[artifact].touch()
-            self.calls, self.checks, self.evidence = [], [], []
-            def check(force=False):
-                self.checks.append(force)
-                if guard_failure == len(self.checks):
-                    raise ValueError("Resource or deadline limit")
-            def run(arguments, **kwargs):
-                self.calls.append((list(arguments), kwargs))
-                item = failures[len(self.calls) - 1]
-                if item:
-                    with log.open("a") as output:
-                        output.write(apt_failure())
-                    raise item
-            runner = types.SimpleNamespace(
-                buildx=Path("/tools/buildx"), name="same-builder", output=root,
-                pins={"product": {"sourceDateEpoch": 1793838134}},
-                limits={"timeoutSeconds": 1800, "logBytes": 1024 * 1024}, check=check, run=run)
-            initial_solve(runner, Path("/product"), candidate, metadata, self.evidence)
-
-    def test_retry_once_same_arguments_and_preserve_first_failure(self):
-        self.run_solve([CommandFailure("buildx", 1), None], prefix="unrelated prior command\n")
-        self.assertEqual(len(self.calls), 2)
-        self.assertEqual(self.calls[0], self.calls[1])
-        self.assertEqual(self.checks, [True, True, True])
-        self.assertEqual(self.evidence[0]["logSha256"], sha256(apt_failure().encode()))
-        self.assertFalse(self.evidence[0]["accepted"])
-        self.assertIn("retryReason", self.evidence[0])
-        self.assertTrue(self.evidence[1]["accepted"])
-
-    def test_success_never_retried(self):
-        self.run_solve([None])
-        self.assertEqual(len(self.calls), 1)
-
-    def test_second_504_is_terminal(self):
-        with self.assertRaises(CommandFailure):
-            self.run_solve([CommandFailure("buildx", 1), CommandFailure("buildx", 1)])
-        self.assertEqual(len(self.calls), 2)
-        self.assertNotIn("retryReason", self.evidence[1])
-
-    def test_resource_deadline_signal_unknown_error_or_outputs_never_retry(self):
-        for error in (CommandFailure("buildx", -15), CommandFailure("buildx", 2),
-                      ValueError("log bound"), TimeoutError("deadline")):
-            with self.subTest(error=repr(error)), self.assertRaises(type(error)):
-                self.run_solve([error])
-            self.assertEqual(len(self.calls), 1)
-        for artifact in ("candidate", "metadata"):
-            with self.subTest(artifact=artifact), self.assertRaises(CommandFailure):
-                self.run_solve([CommandFailure("buildx", 1)], artifact=artifact)
-            self.assertEqual(len(self.calls), 1)
-        for check_number in (2, 3):
-            with self.subTest(check=check_number), self.assertRaisesRegex(ValueError, "Resource"):
-                self.run_solve([CommandFailure("buildx", 1)], guard_failure=check_number)
-            self.assertEqual(len(self.calls), 1)
 
 
 class ProducerTests(unittest.TestCase):
