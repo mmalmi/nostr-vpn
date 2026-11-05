@@ -249,6 +249,7 @@ mobile_wg_fixture_stage_remote_docker_context() {
 mobile_wg_fixture_initialize() {
   local root="$1" local_fixture_dir="$2"
   local remote_host="${NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST:-}"
+  # Explicit /var/tmp staging is supported; there is no automatic path fallback.
   local remote_temp_root="${NVPN_MOBILE_WG_EXIT_REMOTE_TEMP_ROOT:-/tmp}"
   if [[ -z "$remote_host" ]]; then
     command -v docker >/dev/null 2>&1 || {
