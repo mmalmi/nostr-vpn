@@ -883,10 +883,15 @@ async fn observe_policy_event(policy: &Arc<Mutex<FipsPubsubPolicy>>, event: &Eve
 }
 
 async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) {
+    // Other control kinds are ignored by discovery; keep their delivery
+    // independent of the node's discovery control queue.
+    if !matches!(u16::from(event.kind), FIPS_PEER_ADVERT_KIND | RATING_FACT_KIND) {
+        return;
+    }
     match endpoint.ingest_nostr_discovery_event(event.clone()).await {
         Ok(true) => {}
         Ok(false) => {
-            tracing::debug!(event_id = %event.id, "FIPS ignored non-discovery control event");
+            tracing::debug!(event_id = %event.id, "FIPS ignored discovery or rating event");
         }
         Err(error) => {
             tracing::debug!(%error, event_id = %event.id, "failed to ingest pubsub event into FIPS discovery");
