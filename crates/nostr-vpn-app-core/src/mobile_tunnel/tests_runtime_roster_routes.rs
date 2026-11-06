@@ -4,15 +4,26 @@
     // them without the app.
     #[test]
     fn roster_updates_change_running_tunnel_interface_settings() {
+        run_roster_route_test(false);
+    }
+
+    #[test]
+    fn roster_updates_change_interface_settings_with_an_exit_selected() {
+        run_roster_route_test(true);
+    }
+
+    fn run_roster_route_test(exit_selected: bool) {
         std::thread::Builder::new()
             .name("mobile-roster-routes".to_string())
             .stack_size(8 * 1024 * 1024)
-            .spawn(|| {
+            .spawn(move || {
                 tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
                     .expect("mobile roster route test runtime")
-                    .block_on(roster_updates_change_running_tunnel_interface_settings_inner());
+                    .block_on(roster_updates_change_running_tunnel_interface_settings_inner(
+                        exit_selected,
+                    ));
             })
             .expect("spawn mobile roster route test")
             .join()
@@ -20,7 +31,7 @@
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn roster_updates_change_running_tunnel_interface_settings_inner() {
+    async fn roster_updates_change_running_tunnel_interface_settings_inner(exit_selected: bool) {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -73,6 +84,10 @@
                 ))
                 .expect("apply initial roster")
         );
+        if exit_selected {
+            phone_app.exit_node = admin_hex.clone();
+            phone_app.exit_node_leak_protection = true;
+        }
         phone_app.save(&config_path).expect("save phone config");
         let phone_mobile = MobileTunnelConfig::from_app_with_config_path(&phone_app, &config_path)
             .expect("phone mobile config");
@@ -84,6 +99,10 @@
             )
         );
         assert!(!phone_mobile.route_targets.contains(&laptop_route));
+        assert_eq!(
+            phone_mobile.route_targets.iter().any(|route| route == "0.0.0.0/0"),
+            exit_selected
+        );
 
         let endpoint = bind_local_mobile_endpoint(network_id, &phone_mobile).await;
         let state_control_runtime = FipsControlTcpRuntime::start(Arc::clone(&endpoint))
@@ -140,6 +159,7 @@
         .await
         .expect("apply roster adding the laptop");
         assert!(routes().contains(&laptop_route), "added member gets a route");
+        assert_eq!(routes().iter().any(|route| route == "0.0.0.0/0"), exit_selected);
         assert!(revision.has_changed().expect("revision sender"));
         revision.mark_unchanged();
 
@@ -171,6 +191,7 @@
         .await
         .expect("apply roster removing the laptop");
         assert!(!routes().contains(&laptop_route), "removed member loses its route");
+        assert_eq!(routes().iter().any(|route| route == "0.0.0.0/0"), exit_selected);
         assert!(revision.has_changed().expect("revision sender"));
 
         let _ = std::fs::remove_dir_all(dir);
