@@ -202,6 +202,53 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) error: String,
 }
 
+/// The part of a running tunnel's config that the host installs on the OS
+/// interface: its routes and resolvers. A roster update can change it while
+/// the tunnel runs, so hosts re-read it and re-apply it without a restart.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MobileTunnelInterfaceSettings {
+    route_targets: Vec<String>,
+    dns_servers: Vec<String>,
+    magic_dns_server: String,
+    dns_match_domains: Vec<String>,
+}
+
+impl From<&MobileTunnelConfig> for MobileTunnelInterfaceSettings {
+    fn from(config: &MobileTunnelConfig) -> Self {
+        Self {
+            route_targets: config.route_targets.clone(),
+            dns_servers: config.dns_servers.clone(),
+            magic_dns_server: config.magic_dns_server.clone(),
+            dns_match_domains: config.dns_match_domains.clone(),
+        }
+    }
+}
+
+/// Advances whenever the running tunnel's interface settings change. The iOS
+/// packet tunnel provider waits on it; Android re-reads the settings when the
+/// runtime saves the roster that changed them.
+#[derive(Clone)]
+pub(crate) struct MobileInterfaceSettingsRevision(Arc<tokio::sync::watch::Sender<u64>>);
+
+impl Default for MobileInterfaceSettingsRevision {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::watch::channel(0).0))
+    }
+}
+
+impl MobileInterfaceSettingsRevision {
+    fn advance(&self) {
+        self.0
+            .send_modify(|revision| *revision = revision.wrapping_add(1));
+    }
+
+    #[cfg(any(test, target_os = "ios"))]
+    fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.0.subscribe()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MobileTunnelLaunchConfig {
     #[serde(flatten)]
@@ -729,6 +776,8 @@ pub(crate) struct MobileTunnel {
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
+    #[cfg(target_os = "ios")]
+    interface_settings: MobileInterfaceSettingsRevision,
     peer_hints: Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,

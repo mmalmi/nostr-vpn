@@ -43,6 +43,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var previousUnderlayPaths: [UnderlayPathSource: Network.NWPath] = [:]
     private var underlayRefreshWorkItem: DispatchWorkItem?
     private let bonjourDiscovery = FipsBonjourDiscovery()
+    // Network settings applied to the tunnel, re-applied from this queue when
+    // a roster update changes the runtime's routes or resolvers.
+    private let interfaceSettingsQueue = DispatchQueue(
+        label: "fi.siriusbusiness.nvpn.packet-tunnel.interface-settings"
+    )
+    private var appliedNetworkSettings: AppliedNetworkSettings?
+    private var interfaceSettingsUpdateInFlight = false
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -99,51 +106,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // resolved by the running WireGuard transport; Direct/FIPS mode has no
         // single remote tunnel server, so retain a valid display-only address.
         let remoteAddress = parseIPv4CIDR(resolvedWgExcludedRoute)?.address ?? "1.1.1.1"
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: remoteAddress)
-        settings.mtu = NSNumber(value: parsedConfig.mtu)
-        packetDebugLog("remoteAddress=\(remoteAddress) mtu=\(parsedConfig.mtu)")
-
-        if let parsed = parseIPv4CIDR(parsedConfig.localAddress) {
-            let ipv4 = NEIPv4Settings(addresses: [parsed.address], subnetMasks: [parsed.mask])
-            // Use NEIPv4Route.default() for 0.0.0.0/0 — iOS recognizes
-            // it as the catch-all default route, vs an explicit
-            // (0.0.0.0, 0.0.0.0) which can be treated as a host route
-            // in some kernel paths.
-            ipv4.includedRoutes = parsedConfig.routeTargets.compactMap(ipv4Route)
-            // When WG upstream is on, the Rust runtime has expanded
-            // `routeTargets` to include 0.0.0.0/0 so all outbound
-            // traffic enters the tun. We then exclude the resolved WG
-            // endpoint IP itself so the encrypted UDP can actually
-            // escape the tunnel and reach the upstream.
-            if !excludedRoutes.isEmpty {
-                ipv4.excludedRoutes = excludedRoutes.compactMap(ipv4Route)
-            }
-            settings.ipv4Settings = ipv4
-            NSLog(
-                "nvpn-pkt: ipv4 addr=\(parsed.address)/\(parsed.mask) "
-                    + "included=\(parsedConfig.routeTargets) "
-                    + "excluded=\(excludedRoutes)"
-            )
-        }
-
-        // The Rust tunnel owns DNS whenever an exit is active. It answers
-        // MagicDNS locally and sends public queries only through authenticated
-        // DNS-over-HTTPS. Never allow iOS to fall back to underlay DNS.
-        let dnsConfig = iosDnsConfig(
-            from: parsedConfig.dnsServers,
-            magicDnsServer: parsedConfig.magicDnsServer,
-            matchDomains: parsedConfig.dnsMatchDomains
+        let settings = networkSettings(
+            for: parsedConfig,
+            excludedRoutes: excludedRoutes,
+            remoteAddress: remoteAddress
         )
-        if !dnsConfig.servers.isEmpty {
-            let dns = NEDNSSettings(servers: dnsConfig.servers)
-            dns.matchDomains = dnsConfig.matchDomains
-            settings.dnsSettings = dns
-            NSLog(
-                "nvpn-pkt: dns servers=\(dnsConfig.servers) "
-                    + "match=\(dnsConfig.matchDomains) failover=false"
-            )
-        }
-
         NSLog("nvpn-pkt: calling setTunnelNetworkSettings")
         packetDebugLog("calling setTunnelNetworkSettings")
         let settingsStartedAt = ProcessInfo.processInfo.systemUptime
@@ -209,6 +176,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(PacketTunnelError.startFailed)
                 return
             }
+            self.watchInterfaceSettings(
+                AppliedNetworkSettings(
+                    generation: startGeneration,
+                    config: parsedConfig,
+                    excludedRoutes: excludedRoutes,
+                    remoteAddress: remoteAddress
+                )
+            )
             let lanInfo = self.withTunnelHandle(generation: startGeneration) { handle in
                 consumeCString(nostr_vpn_mobile_tunnel_lan_discovery_info_json(handle))
             } ?? ""
@@ -391,6 +366,58 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return ([magicDnsServer], normalizedMatchDomains)
     }
 
+    private func networkSettings(
+        for config: MobileTunnelConfig,
+        excludedRoutes: [String],
+        remoteAddress: String
+    ) -> NEPacketTunnelNetworkSettings {
+        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: remoteAddress)
+        settings.mtu = NSNumber(value: config.mtu)
+        packetDebugLog("remoteAddress=\(remoteAddress) mtu=\(config.mtu)")
+
+        if let parsed = parseIPv4CIDR(config.localAddress) {
+            let ipv4 = NEIPv4Settings(addresses: [parsed.address], subnetMasks: [parsed.mask])
+            // Use NEIPv4Route.default() for 0.0.0.0/0 — iOS recognizes
+            // it as the catch-all default route, vs an explicit
+            // (0.0.0.0, 0.0.0.0) which can be treated as a host route
+            // in some kernel paths.
+            ipv4.includedRoutes = config.routeTargets.compactMap(ipv4Route)
+            // When WG upstream is on, the Rust runtime has expanded
+            // `routeTargets` to include 0.0.0.0/0 so all outbound
+            // traffic enters the tun. We then exclude the resolved WG
+            // endpoint IP itself so the encrypted UDP can actually
+            // escape the tunnel and reach the upstream.
+            if !excludedRoutes.isEmpty {
+                ipv4.excludedRoutes = excludedRoutes.compactMap(ipv4Route)
+            }
+            settings.ipv4Settings = ipv4
+            NSLog(
+                "nvpn-pkt: ipv4 addr=\(parsed.address)/\(parsed.mask) "
+                    + "included=\(config.routeTargets) "
+                    + "excluded=\(excludedRoutes)"
+            )
+        }
+
+        // The Rust tunnel owns DNS whenever an exit is active. It answers
+        // MagicDNS locally and sends public queries only through authenticated
+        // DNS-over-HTTPS. Never allow iOS to fall back to underlay DNS.
+        let dnsConfig = iosDnsConfig(
+            from: config.dnsServers,
+            magicDnsServer: config.magicDnsServer,
+            matchDomains: config.dnsMatchDomains
+        )
+        if !dnsConfig.servers.isEmpty {
+            let dns = NEDNSSettings(servers: dnsConfig.servers)
+            dns.matchDomains = dnsConfig.matchDomains
+            settings.dnsSettings = dns
+            NSLog(
+                "nvpn-pkt: dns servers=\(dnsConfig.servers) "
+                    + "match=\(dnsConfig.matchDomains) failover=false"
+            )
+        }
+        return settings
+    }
+
     private func beginRustTunnelStart() -> UInt64 {
         stopRustTunnel()
         tunnelCondition.lock()
@@ -454,6 +481,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         tunnelCondition.unlock()
         stopUnderlayNetworkMonitor()
+        interfaceSettingsQueue.async { [weak self] in
+            guard let self, self.appliedNetworkSettings?.generation == stoppedGeneration else { return }
+            self.appliedNetworkSettings = nil
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.tunnelCondition.lock()
@@ -464,6 +495,92 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         if let handle {
             nostr_vpn_mobile_tunnel_free(handle)
+        }
+    }
+
+    // The runtime applies signed roster updates in-process. When one changes
+    // the routes or resolvers, re-apply the network settings from here, so
+    // added members become reachable and removed members lose their routes
+    // while the app is closed.
+    private func watchInterfaceSettings(_ initial: AppliedNetworkSettings) {
+        let generation = initial.generation
+        interfaceSettingsQueue.async { [weak self] in
+            self?.appliedNetworkSettings = initial
+        }
+        let watch = InterfaceSettingsWatch(provider: self, generation: generation)
+        let watching = withTunnelHandle(generation: generation) { handle in
+            watch.attach(to: handle)
+        }
+        if watching != true {
+            NSLog("nvpn-pkt: could not watch interface settings; routes stay as started")
+            packetDebugLog("interface settings watch failed")
+        }
+        // Catch a roster the runtime applied while the tunnel was starting.
+        interfaceSettingsChanged(generation: generation)
+    }
+
+    func interfaceSettingsChanged(generation: UInt64) {
+        interfaceSettingsQueue.async { [weak self] in
+            self?.reapplyInterfaceSettings(generation: generation)
+        }
+    }
+
+    // Runs on interfaceSettingsQueue.
+    private func reapplyInterfaceSettings(generation: UInt64) {
+        guard !interfaceSettingsUpdateInFlight,
+              let applied = appliedNetworkSettings,
+              applied.generation == generation,
+              let interfaceSettingsJson = withTunnelHandle(generation: generation, { handle in
+                  consumeCString(nostr_vpn_mobile_tunnel_interface_settings_json(handle))
+              })
+        else {
+            return
+        }
+        guard let data = interfaceSettingsJson.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["error"] == nil
+        else {
+            NSLog("nvpn-pkt: interface settings unavailable: \(interfaceSettingsJson)")
+            return
+        }
+        var config = applied.config
+        config.routeTargets = object["routeTargets"] as? [String] ?? []
+        config.dnsServers = object["dnsServers"] as? [String] ?? []
+        config.magicDnsServer = object["magicDnsServer"] as? String ?? ""
+        config.dnsMatchDomains = object["dnsMatchDomains"] as? [String] ?? []
+        guard !config.hasSameInterfaceSettings(as: applied.config) else {
+            return
+        }
+        let settings = networkSettings(
+            for: config,
+            excludedRoutes: applied.excludedRoutes,
+            remoteAddress: applied.remoteAddress
+        )
+        interfaceSettingsUpdateInFlight = true
+        setTunnelNetworkSettings(settings) { [weak self] error in
+            guard let self else { return }
+            self.interfaceSettingsQueue.async {
+                self.interfaceSettingsUpdateInFlight = false
+                guard self.appliedNetworkSettings?.generation == generation else { return }
+                if let error {
+                    NSLog("nvpn-pkt: re-applying network settings failed: \(error); retrying")
+                    packetDebugLog("re-applying network settings failed: \(error)")
+                    self.interfaceSettingsQueue.asyncAfter(deadline: .now() + 15) { [weak self] in
+                        self?.reapplyInterfaceSettings(generation: generation)
+                    }
+                    return
+                }
+                self.appliedNetworkSettings = AppliedNetworkSettings(
+                    generation: generation,
+                    config: config,
+                    excludedRoutes: applied.excludedRoutes,
+                    remoteAddress: applied.remoteAddress
+                )
+                NSLog("nvpn-pkt: re-applied network settings routes=\(config.routeTargets)")
+                packetDebugLog("re-applied network settings")
+                // A change that arrived while this update ran is applied now.
+                self.reapplyInterfaceSettings(generation: generation)
+            }
         }
     }
 
@@ -677,13 +794,63 @@ private enum PacketTunnelError: LocalizedError {
     }
 }
 
+private struct AppliedNetworkSettings {
+    let generation: UInt64
+    let config: MobileTunnelConfig
+    let excludedRoutes: [String]
+    let remoteAddress: String
+}
+
+private let interfaceSettingsChangedCallback: NvpnInterfaceSettingsChangedCallback = { context in
+    guard let context else {
+        return
+    }
+    Unmanaged<InterfaceSettingsWatch>
+        .fromOpaque(context)
+        .takeUnretainedValue()
+        .changed()
+}
+
+private let interfaceSettingsReleaseCallback: NvpnPacketFlowReleaseCallback = { context in
+    guard let context else {
+        return
+    }
+    Unmanaged<InterfaceSettingsWatch>.fromOpaque(context).release()
+}
+
+private final class InterfaceSettingsWatch {
+    private weak var provider: PacketTunnelProvider?
+    private let generation: UInt64
+
+    init(provider: PacketTunnelProvider, generation: UInt64) {
+        self.provider = provider
+        self.generation = generation
+    }
+
+    func attach(to handle: OpaquePointer) -> Bool {
+        // Rust owns this retain after the call starts and invokes the release
+        // callback exactly once, including when registration fails.
+        let context = Unmanaged.passRetained(self).toOpaque()
+        return nostr_vpn_mobile_tunnel_interface_settings_watch(
+            handle,
+            context,
+            interfaceSettingsChangedCallback,
+            interfaceSettingsReleaseCallback
+        )
+    }
+
+    func changed() {
+        provider?.interfaceSettingsChanged(generation: generation)
+    }
+}
+
 private struct MobileTunnelConfig {
     let localAddress: String
-    let routeTargets: [String]
+    var routeTargets: [String]
     let excludedRoutes: [String]
-    let dnsServers: [String]
-    let magicDnsServer: String
-    let dnsMatchDomains: [String]
+    var dnsServers: [String]
+    var magicDnsServer: String
+    var dnsMatchDomains: [String]
     let mtu: Int
     let errorText: Error?
 
@@ -710,6 +877,13 @@ private struct MobileTunnelConfig {
         dnsMatchDomains = object["dnsMatchDomains"] as? [String] ?? []
         mtu = object["mtu"] as? Int ?? defaultMobileMtu
         errorText = error.isEmpty ? nil : PacketTunnelError.invalidConfig(error)
+    }
+
+    func hasSameInterfaceSettings(as other: MobileTunnelConfig) -> Bool {
+        routeTargets == other.routeTargets
+            && dnsServers == other.dnsServers
+            && magicDnsServer == other.magicDnsServer
+            && dnsMatchDomains == other.dnsMatchDomains
     }
 }
 

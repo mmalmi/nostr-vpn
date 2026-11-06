@@ -82,3 +82,67 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_packet_flow_send(
         }
     }
 }
+
+/// Returns the routes and resolvers the running tunnel applies as JSON, or
+/// an object with an `error` field.
+///
+/// # Safety
+///
+/// `handle` must be null or a live mobile tunnel handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_interface_settings_json(
+    handle: *const NvpnMobileTunnelHandle,
+) -> *mut c_char {
+    if handle.is_null() {
+        return json_raw_string(r#"{"error":"mobile tunnel stopped"}"#);
+    }
+    let tunnel = unsafe { &*handle };
+    match tunnel.tunnel.interface_settings_json() {
+        Ok(json) => json_raw_string(&json),
+        Err(error) => {
+            json_raw_string(&serde_json::json!({ "error": error.to_string() }).to_string())
+        }
+    }
+}
+
+/// Calls `changed` whenever a roster update changes the running tunnel's
+/// routes or resolvers, so the packet tunnel provider can re-apply its
+/// network settings while the app is closed. Rust owns `context` after this
+/// call and invokes `release` exactly once, including when registration fails.
+///
+/// # Safety
+///
+/// `handle` must be null or a live mobile tunnel handle. `context` and each
+/// callback must remain valid until Rust invokes `release`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_interface_settings_watch(
+    handle: *mut NvpnMobileTunnelHandle,
+    context: *mut c_void,
+    changed: Option<crate::mobile_tunnel::IosInterfaceSettingsChangedCallback>,
+    release: Option<crate::mobile_tunnel::IosPacketFlowReleaseCallback>,
+) -> bool {
+    let callbacks =
+        match crate::mobile_tunnel::IosInterfaceSettingsCallbacks::new(context, changed, release) {
+            Ok(callbacks) => callbacks,
+            Err(error) => {
+                mobile_debug_log(format!(
+                    "mobile: invalid iOS interface settings callbacks: {error:#}"
+                ));
+                if !context.is_null()
+                    && let Some(release) = release
+                {
+                    unsafe {
+                        release(context);
+                    }
+                }
+                return false;
+            }
+        };
+    if handle.is_null() {
+        drop(callbacks);
+        return false;
+    }
+    let tunnel = unsafe { &mut *handle };
+    tunnel.tunnel.watch_interface_settings(callbacks);
+    true
+}

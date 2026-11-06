@@ -65,6 +65,54 @@ impl Drop for IosPacketFlowCallbacks {
     }
 }
 
+#[cfg(target_os = "ios")]
+pub(crate) type IosInterfaceSettingsChangedCallback =
+    unsafe extern "C" fn(context: *mut std::ffi::c_void);
+
+/// Host callbacks that the runtime calls when the tunnel's interface settings
+/// change. `release` runs exactly once, when the callbacks are dropped.
+#[cfg(target_os = "ios")]
+pub(crate) struct IosInterfaceSettingsCallbacks {
+    context: usize,
+    changed: IosInterfaceSettingsChangedCallback,
+    release: IosPacketFlowReleaseCallback,
+}
+
+#[cfg(target_os = "ios")]
+impl IosInterfaceSettingsCallbacks {
+    pub(crate) fn new(
+        context: *mut std::ffi::c_void,
+        changed: Option<IosInterfaceSettingsChangedCallback>,
+        release: Option<IosPacketFlowReleaseCallback>,
+    ) -> Result<Self> {
+        if context.is_null() {
+            return Err(anyhow!("iOS interface settings callback context is null"));
+        }
+        Ok(Self {
+            context: context as usize,
+            changed: changed
+                .ok_or_else(|| anyhow!("iOS interface settings changed callback is null"))?,
+            release: release
+                .ok_or_else(|| anyhow!("iOS interface settings release callback is null"))?,
+        })
+    }
+
+    fn changed(&self) {
+        unsafe {
+            (self.changed)(self.context as *mut std::ffi::c_void);
+        }
+    }
+}
+
+#[cfg(target_os = "ios")]
+impl Drop for IosInterfaceSettingsCallbacks {
+    fn drop(&mut self) {
+        unsafe {
+            (self.release)(self.context as *mut std::ffi::c_void);
+        }
+    }
+}
+
 pub(crate) struct IosPacketFlowRuntime {
     task: Option<JoinHandle<()>>,
 }

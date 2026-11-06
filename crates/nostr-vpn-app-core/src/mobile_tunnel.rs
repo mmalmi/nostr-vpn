@@ -88,6 +88,7 @@ mod tests {
     include!("mobile_tunnel/tests_identity.rs");
     include!("mobile_tunnel/tests_runtime_join_request.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_runtime_roster_routes.rs");
     include!("mobile_tunnel/tests_runtime_pubsub.rs");
     include!("mobile_tunnel/tests_runtime_state.rs");
     include!("mobile_tunnel/tests_runtime_manual_join.rs");
