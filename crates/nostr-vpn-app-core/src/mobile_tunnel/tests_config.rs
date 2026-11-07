@@ -435,7 +435,7 @@
 
         assert_eq!(config.peers.len(), 1);
         assert!(
-            config
+            !config
                 .route_targets
                 .iter()
                 .any(|route| route == MESH_TUNNEL_IPV4_CIDR)
@@ -451,7 +451,7 @@
             .route_targets
             .iter()
             .filter(|route| route.as_str() != "0.0.0.0/0")
-            .filter(|route| route.as_str() != MESH_TUNNEL_IPV4_CIDR)
+            .filter(|route| route.as_str() != "10.44.0.53/32")
             .collect::<Vec<_>>();
         assert_eq!(peer_routes.len(), 1);
         assert!(peer_routes[0].starts_with("10."));

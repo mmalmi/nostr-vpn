@@ -18,6 +18,7 @@ import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
+import org.nostrvpn.app.AndroidConfigChangeObserver
 import org.nostrvpn.app.AndroidLegacyPackageMigration
 import org.nostrvpn.app.TunnelConfigRefreshPolicy
 import org.nostrvpn.app.appCoreDataDir
@@ -53,6 +54,13 @@ class NostrVpnService : VpnService() {
     }
     private val drainQueuedApprovalBeforeRestartRunnable = Runnable {
         continueTunnelRestartAfterQueuedApprovalDrain()
+    }
+    // Config the current VPN interface was built from. Its routes and
+    // resolvers are compared with the ones the native runtime applies.
+    private var interfaceConfig: JSONObject? = null
+    private var configChangeObserver: AndroidConfigChangeObserver? = null
+    private val refreshInterfaceSettingsRunnable = Runnable {
+        refreshInterfaceSettings()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -361,8 +369,93 @@ class NostrVpnService : VpnService() {
 
         tunnelHandle = handle
         running.set(true)
+        interfaceConfig = config
         registerUnderlyingNetworkUpdates()
+        watchInterfaceSettings()
+        // Catch a roster the runtime applied while the interface was built.
+        underlyingNetworkHandler.post(refreshInterfaceSettingsRunnable)
     }
+
+    // The runtime applies signed roster updates in-process and saves the
+    // config afterwards. A changed member set changes the routes, so the
+    // service re-establishes the interface itself, also while the app is
+    // closed.
+    private fun watchInterfaceSettings() {
+        configChangeObserver?.stop()
+        configChangeObserver = AndroidConfigChangeObserver(
+            appCoreDataDir(this).resolve("config.toml"),
+        ) {
+            underlyingNetworkHandler.removeCallbacks(refreshInterfaceSettingsRunnable)
+            underlyingNetworkHandler.postDelayed(
+                refreshInterfaceSettingsRunnable,
+                INTERFACE_SETTINGS_REFRESH_DEBOUNCE_MILLIS,
+            )
+        }.also { it.start() }
+    }
+
+    private fun stopWatchingInterfaceSettings() {
+        configChangeObserver?.stop()
+        configChangeObserver = null
+        underlyingNetworkHandler.removeCallbacks(refreshInterfaceSettingsRunnable)
+        interfaceConfig = null
+    }
+
+    // Establishing a second interface is Android's handover: the current
+    // interface keeps routing until the replacement is up, then outgoing
+    // packets move to the replacement. If it cannot be established, the
+    // current interface and its routes stay in place, so a selected exit
+    // keeps carrying the device's traffic; the refresh is retried.
+    private fun refreshInterfaceSettings() {
+        val handle = tunnelHandle
+        val baseConfig = interfaceConfig
+        if (!running.get() || handle == 0L || baseConfig == null) {
+            return
+        }
+        val settingsJson = NativeCore.mobileTunnelInterfaceSettingsJson(handle)
+        val settings = runCatching { JSONObject(settingsJson) }.getOrNull()
+        if (settings == null || settings.optString("error").isNotBlank()) {
+            Log.w("NostrVpnService", "Native interface settings unavailable: $settingsJson")
+            return
+        }
+        if (interfaceSettingsFingerprint(settings) == interfaceSettingsFingerprint(baseConfig)) {
+            return
+        }
+        val config = JSONObject(baseConfig.toString())
+        for (key in INTERFACE_SETTINGS_KEYS) {
+            config.put(key, settings.get(key))
+        }
+        val descriptor = runCatching { buildVpnInterface(config) }.getOrElse { error ->
+            Log.w("NostrVpnService", "Invalid updated VPN interface settings", error)
+            null
+        }
+        if (descriptor == null) {
+            Log.w(
+                "NostrVpnService",
+                "Keeping the current VPN interface; updated routes could not be installed",
+            )
+            underlyingNetworkHandler.removeCallbacks(refreshInterfaceSettingsRunnable)
+            underlyingNetworkHandler.postDelayed(
+                refreshInterfaceSettingsRunnable,
+                INTERFACE_SETTINGS_RETRY_MILLIS,
+            )
+            return
+        }
+        if (!NativeCore.mobileTunnelReplaceTunFd(handle, descriptor.detachFd())) {
+            // Android already moved routing to the replacement, which native
+            // code has now closed. Restart rather than run without a tunnel.
+            Log.w("NostrVpnService", "Native tunnel rejected the replacement VPN interface; restarting")
+            startTunnelAsync(persistedTunnelConfigJson(), foregroundStarted = false)
+            return
+        }
+        interfaceConfig = config
+        Log.i(
+            "NostrVpnService",
+            "VPN interface re-established with routes ${settings.optJSONArray("routeTargets")}",
+        )
+    }
+
+    private fun interfaceSettingsFingerprint(config: JSONObject): String =
+        INTERFACE_SETTINGS_KEYS.joinToString("\n") { key -> config.opt(key)?.toString().orEmpty() }
 
     private fun Boolean.stickyResult(): Int =
         if (this) START_STICKY else START_NOT_STICKY
@@ -871,6 +964,7 @@ class NostrVpnService : VpnService() {
     private fun stopTunnel() {
         cancelQueuedApprovalRestart()
         unregisterUnderlyingNetworkUpdates()
+        stopWatchingInterfaceSettings()
         running.set(false)
         releaseMulticastLock()
         val handle = tunnelHandle
@@ -936,6 +1030,10 @@ class NostrVpnService : VpnService() {
         private const val UNDERLAY_NETWORK_MAX_RETRIES = 2
         private const val QUEUED_APPROVAL_RESTART_POLL_MILLIS = 250L
         private const val QUEUED_APPROVAL_RESTART_MAX_DELAY_MILLIS = 12_000L
+        private const val INTERFACE_SETTINGS_REFRESH_DEBOUNCE_MILLIS = 500L
+        private const val INTERFACE_SETTINGS_RETRY_MILLIS = 15_000L
+        private val INTERFACE_SETTINGS_KEYS =
+            listOf("routeTargets", "dnsServers", "magicDnsServer", "dnsMatchDomains")
         private val tunnelOwnedInProcess = AtomicBoolean(false)
 
         internal fun isTunnelOwnedInProcess(): Boolean = tunnelOwnedInProcess.get()

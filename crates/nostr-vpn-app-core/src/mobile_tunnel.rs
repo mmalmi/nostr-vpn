@@ -23,10 +23,9 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
-    AppConfig, ExitDnsConfig, ExitDnsResolverConfig, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig,
-    derive_mesh_tunnel_ip, effective_nostr_relays, maybe_autoconfigure_node,
-    normalize_fips_transport_address, normalize_nostr_pubkey, normalize_runtime_network_id,
-    split_peer_transport_addr,
+    AppConfig, ExitDnsConfig, ExitDnsResolverConfig, WireGuardExitConfig, derive_mesh_tunnel_ip,
+    effective_nostr_relays, maybe_autoconfigure_node, normalize_fips_transport_address,
+    normalize_nostr_pubkey, normalize_runtime_network_id, split_peer_transport_addr,
 };
 use nostr_vpn_core::control_pubsub_runtime::{
     ControlPubsubClient, ControlPubsubFipsRuntime, ControlRelayStatus,
@@ -89,6 +88,7 @@ mod tests {
     include!("mobile_tunnel/tests_identity.rs");
     include!("mobile_tunnel/tests_runtime_join_request.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_runtime_roster_routes.rs");
     include!("mobile_tunnel/tests_runtime_pubsub.rs");
     include!("mobile_tunnel/tests_runtime_state.rs");
     include!("mobile_tunnel/tests_runtime_manual_join.rs");

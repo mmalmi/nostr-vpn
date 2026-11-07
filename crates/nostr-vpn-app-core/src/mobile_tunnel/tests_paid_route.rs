@@ -177,6 +177,7 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
     let seller_peer_hints = Arc::new(RwLock::new(HashMap::new()));
     let seller_presence = Arc::new(RwLock::new(HashMap::new()));
     let seller_config_state = Arc::new(RwLock::new(seller_mobile));
+    let seller_interface_settings = MobileInterfaceSettingsRevision::default();
     let seller_app_config = Arc::new(RwLock::new(seller_app));
     let seller_dirty = AtomicBool::new(false);
     let seller_join = AtomicBool::new(false);
@@ -190,6 +191,7 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         peer_hints: &seller_peer_hints,
         presence: &seller_presence,
         config_state: &seller_config_state,
+        interface_settings: &seller_interface_settings,
         app_config: &seller_app_config,
         app_config_dirty: &seller_dirty,
         pending_join_roster_receipts: &seller_pending_join_roster_receipts,
@@ -282,6 +284,7 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
     let buyer_peer_hints = Arc::new(RwLock::new(buyer_mobile.peer_hints.clone()));
     let buyer_presence = Arc::new(RwLock::new(HashMap::new()));
     let buyer_config_state = Arc::new(RwLock::new(buyer_mobile));
+    let buyer_interface_settings = MobileInterfaceSettingsRevision::default();
     let mut buyer_app = AppConfig::generated();
     buyer_app.nostr.public_key = buyer_pubkey;
     buyer_app.nostr.secret_key = buyer_nsec;
@@ -299,6 +302,7 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         peer_hints: &buyer_peer_hints,
         presence: &buyer_presence,
         config_state: &buyer_config_state,
+        interface_settings: &buyer_interface_settings,
         app_config: &buyer_app_config,
         app_config_dirty: &buyer_dirty,
         pending_join_roster_receipts: &buyer_pending_join_roster_receipts,

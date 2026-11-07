@@ -19,6 +19,11 @@ internal object NativeCore {
     external fun mobileTunnelNew(configJson: String): Long
     external fun mobileTunnelFree(handle: Long)
     external fun mobileTunnelAttachTunFd(handle: Long, fd: Int): Boolean
+    /// Moves the running tunnel onto a re-established VPN interface. Native
+    /// code owns `fd` afterwards and closes it on failure.
+    external fun mobileTunnelReplaceTunFd(handle: Long, fd: Int): Boolean
+    /// Routes and resolvers the running tunnel applies, as JSON.
+    external fun mobileTunnelInterfaceSettingsJson(handle: Long): String
     external fun mobileTunnelNetworkChanged(handle: Long): Boolean
     external fun mobileTunnelHasPendingJoinReceipts(handle: Long): Boolean
     external fun mobileTunnelWireGuardUnderlayReady(handle: Long): Boolean

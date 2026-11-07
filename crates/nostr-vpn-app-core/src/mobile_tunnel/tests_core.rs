@@ -1,4 +1,27 @@
     use super::*;
+    use nostr_vpn_core::config::MESH_TUNNEL_IPV4_CIDR;
+
+    const MAGIC_DNS_ROUTE: &str = "10.44.0.53/32";
+
+    fn sorted_routes(routes: &[&str]) -> Vec<String> {
+        let mut routes = routes.iter().map(ToString::to_string).collect::<Vec<_>>();
+        routes.sort();
+        routes
+    }
+
+    fn assert_no_route_covers(routes: &[String], address: Ipv4Addr) {
+        for route in routes {
+            let (network, prefix) = route.split_once('/').expect("cidr route");
+            let network = u32::from(network.parse::<Ipv4Addr>().expect("ipv4 route"));
+            let prefix = prefix.parse::<u32>().expect("prefix");
+            let mask = u32::MAX.checked_shl(32 - prefix).unwrap_or(0);
+            assert_ne!(
+                u32::from(address) & mask,
+                network & mask,
+                "{route} captures {address}"
+            );
+        }
+    }
     use hickory_proto::op::{Message, MessageType};
     use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
     use nostr_sdk::prelude::{Keys, ToBech32};
@@ -276,20 +299,15 @@
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
 
         assert_eq!(config.peers.len(), 1);
-        assert_eq!(config.route_targets.len(), 2);
         assert_eq!(config.peers[0].allowed_ips.len(), 1);
-        assert!(
-            config
-                .route_targets
-                .iter()
-                .any(|route| route == MESH_TUNNEL_IPV4_CIDR)
+        let peer_route = config.peers[0].allowed_ips[0].clone();
+        assert!(peer_route.starts_with("10.44.") && peer_route.ends_with("/32"));
+        assert_eq!(
+            config.route_targets,
+            sorted_routes(&[&peer_route, MAGIC_DNS_ROUTE])
         );
-        let peer_route = config
-            .route_targets
-            .iter()
-            .find(|route| route.as_str() != MESH_TUNNEL_IPV4_CIDR)
-            .expect("peer route");
-        assert!(peer_route.starts_with("10."));
+        // A Wi-Fi numbered inside the mesh range keeps its gateway and DNS.
+        assert_no_route_covers(&config.route_targets, Ipv4Addr::new(10, 44, 0, 1));
         assert!(
             !config
                 .route_targets
@@ -308,7 +326,7 @@
     }
 
     #[test]
-    fn mobile_direct_network_without_peers_keeps_private_mesh_route() {
+    fn mobile_direct_network_without_peers_routes_only_magic_dns() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();
         let own = app.own_nostr_pubkey_hex().expect("own pubkey");
@@ -334,7 +352,7 @@
         let config = MobileTunnelConfig::from_app(&app).expect("direct mobile config");
 
         assert_eq!(config.peers, [] as [nostr_vpn_core::fips_mesh::FipsMeshPeerConfig; 0]);
-        assert_eq!(config.route_targets, vec![MESH_TUNNEL_IPV4_CIDR]);
+        assert_eq!(config.route_targets, vec![MAGIC_DNS_ROUTE]);
         assert!(config.wireguard_exit.is_none());
     }
 
@@ -366,12 +384,8 @@
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
 
         assert_eq!(config.peers.len(), 1);
-        assert!(
-            config
-                .route_targets
-                .iter()
-                .any(|route| route == MESH_TUNNEL_IPV4_CIDR)
-        );
+        assert!(!config.route_targets.iter().any(|route| route == MESH_TUNNEL_IPV4_CIDR));
+        assert!(config.route_targets.iter().any(|route| route == MAGIC_DNS_ROUTE));
         assert!(
             config
                 .route_targets
@@ -926,6 +940,7 @@
             !config
                 .route_targets
                 .iter()
+                .filter(|route| route.as_str() != MAGIC_DNS_ROUTE)
                 .any(|route| route.starts_with("10.") && route.ends_with("/32"))
         );
         let hints = config

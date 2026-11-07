@@ -49,6 +49,7 @@ struct MobileEndpointReceiveContext<'a> {
     peer_hints: &'a Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
     presence: &'a Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config_state: &'a Arc<RwLock<MobileTunnelConfig>>,
+    interface_settings: &'a MobileInterfaceSettingsRevision,
     app_config: &'a Arc<RwLock<AppConfig>>,
     app_config_dirty: &'a AtomicBool,
     pending_join_roster_receipts: &'a PendingJoinRosterReceipts,
@@ -388,12 +389,18 @@ async fn apply_mobile_roster_runtime_update(
             .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?;
         *hints = updated_hints;
     }
-    {
+    let interface_settings_changed = {
         let mut config = control
             .config_state
             .write()
             .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
+        let changed = MobileTunnelInterfaceSettings::from(&*config)
+            != MobileTunnelInterfaceSettings::from(&updated);
         *config = updated.clone();
+        changed
+    };
+    if interface_settings_changed {
+        control.interface_settings.advance();
     }
     if updated.pending_join_request_recipient.trim().is_empty() {
         control.join_request_active.store(false, Ordering::Relaxed);
