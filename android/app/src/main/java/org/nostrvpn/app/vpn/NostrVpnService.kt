@@ -20,7 +20,6 @@ import android.util.Log
 import org.json.JSONObject
 import org.nostrvpn.app.AndroidConfigChangeObserver
 import org.nostrvpn.app.AndroidLegacyPackageMigration
-import org.nostrvpn.app.BuildConfig
 import org.nostrvpn.app.TunnelConfigRefreshPolicy
 import org.nostrvpn.app.appCoreDataDir
 import org.nostrvpn.app.core.NativeCore
@@ -425,14 +424,9 @@ class NostrVpnService : VpnService() {
         for (key in INTERFACE_SETTINGS_KEYS) {
             config.put(key, settings.get(key))
         }
-        val descriptor = if (consumeDebugInterfaceRefreshFailure()) {
-            Log.w("NostrVpnService", "Debug build: failing this VPN interface refresh on request")
+        val descriptor = runCatching { buildVpnInterface(config) }.getOrElse { error ->
+            Log.w("NostrVpnService", "Invalid updated VPN interface settings", error)
             null
-        } else {
-            runCatching { buildVpnInterface(config) }.getOrElse { error ->
-                Log.w("NostrVpnService", "Invalid updated VPN interface settings", error)
-                null
-            }
         }
         if (descriptor == null) {
             Log.w(
@@ -462,12 +456,6 @@ class NostrVpnService : VpnService() {
 
     private fun interfaceSettingsFingerprint(config: JSONObject): String =
         INTERFACE_SETTINGS_KEYS.joinToString("\n") { key -> config.opt(key)?.toString().orEmpty() }
-
-    // Debug builds only: `run-as` can create this file to make the next
-    // refresh fail, to verify that traffic stays on the current interface.
-    private fun consumeDebugInterfaceRefreshFailure(): Boolean =
-        BuildConfig.DEBUG &&
-            appCoreDataDir(this).resolve(DEBUG_FAIL_INTERFACE_REFRESH_FILE).delete()
 
     private fun Boolean.stickyResult(): Int =
         if (this) START_STICKY else START_NOT_STICKY
@@ -1044,7 +1032,6 @@ class NostrVpnService : VpnService() {
         private const val QUEUED_APPROVAL_RESTART_MAX_DELAY_MILLIS = 12_000L
         private const val INTERFACE_SETTINGS_REFRESH_DEBOUNCE_MILLIS = 500L
         private const val INTERFACE_SETTINGS_RETRY_MILLIS = 15_000L
-        private const val DEBUG_FAIL_INTERFACE_REFRESH_FILE = "debug-fail-next-interface-refresh"
         private val INTERFACE_SETTINGS_KEYS =
             listOf("routeTargets", "dnsServers", "magicDnsServer", "dnsMatchDomains")
         private val tunnelOwnedInProcess = AtomicBoolean(false)
