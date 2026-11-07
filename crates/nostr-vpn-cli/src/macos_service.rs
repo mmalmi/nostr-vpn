@@ -1,72 +1,43 @@
 use super::*;
 
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn macos_service_plist_path(config_path: &Path) -> PathBuf {
-    PathBuf::from(format!(
-        "/Library/LaunchDaemons/{}.plist",
-        macos_service_label(config_path)
-    ))
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(super) fn macos_service_binary_path(config_path: &Path) -> PathBuf {
-    PathBuf::from(format!(
-        "/Library/PrivilegedHelperTools/{}",
-        macos_service_label(config_path)
-    ))
-}
+#[cfg(target_os = "macos")]
+mod registration;
+#[cfg(target_os = "macos")]
+pub(super) use registration::Registration;
 
 #[cfg(target_os = "macos")]
-pub(super) fn macos_service_executable_path(plist_path: &Path) -> Option<PathBuf> {
-    let plist = fs::read_to_string(plist_path).ok()?;
-    macos_service_executable_path_from_plist_contents(&plist).map(PathBuf::from)
+fn lock_service_changes() -> Result<fs::File> {
+    crate::macos_privileged_files::require_root()?;
+    let dir = crate::macos_privileged_files::protected_directory(
+        Path::new("/Library/LaunchDaemons"),
+        false,
+    )?;
+    dir.lock().context("lock launchd service installation")?;
+    Ok(dir)
 }
 
 #[cfg(any(target_os = "macos", test))]
-pub(super) fn macos_service_executable_path_from_plist_contents(plist: &str) -> Option<String> {
-    let after_program_args = plist.split_once("<key>ProgramArguments</key>")?.1;
-    let after_first_string = after_program_args.split_once("<string>")?.1;
-    let executable = after_first_string.split_once("</string>")?.0.trim();
-    if executable.is_empty() {
-        None
-    } else {
-        Some(xml_unescape(executable))
-    }
+pub(super) fn macos_service_plist_path(label: &str) -> PathBuf {
+    PathBuf::from(format!("/Library/LaunchDaemons/{label}.plist"))
 }
 
 #[cfg(any(target_os = "macos", test))]
-pub(super) fn macos_service_target(config_path: &Path) -> String {
-    format!("system/{}", macos_service_label(config_path))
+pub(super) fn macos_service_binary_path(label: &str) -> PathBuf {
+    PathBuf::from(format!("/Library/PrivilegedHelperTools/{label}"))
 }
 
 #[cfg(any(target_os = "macos", test))]
-pub(super) fn macos_service_label(config_path: &Path) -> String {
-    if macos_service_uses_default_label(config_path) {
-        return MACOS_SERVICE_LABEL.to_string();
-    }
-
-    format!(
-        "{MACOS_SERVICE_LABEL}.{}",
-        macos_service_config_suffix(config_path)
-    )
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn macos_service_uses_default_label(config_path: &Path) -> bool {
-    canonicalize_lossy(config_path) == canonicalize_lossy(&default_config_path())
+pub(super) fn macos_scoped_service_label(config_path: &Path) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    canonicalize_lossy(config_path)
+        .as_os_str()
+        .hash(&mut hasher);
+    format!("{MACOS_SERVICE_LABEL}.{:016x}", hasher.finish())
 }
 
 #[cfg(any(target_os = "macos", test))]
 fn canonicalize_lossy(path: &Path) -> PathBuf {
     fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn macos_service_config_suffix(config_path: &Path) -> String {
-    let canonical = canonicalize_lossy(config_path);
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    canonical.as_os_str().hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
 }
 
 #[cfg(target_os = "macos")]
@@ -77,8 +48,9 @@ pub(super) fn macos_install_service(
     mesh_refresh_interval_secs: u64,
     force: bool,
 ) -> Result<()> {
-    let plist_path = macos_service_plist_path(config_path);
-    let service_label = macos_service_label(config_path);
+    let _lock = lock_service_changes()?;
+    let registration = Registration::for_config(config_path)?;
+    let plist_path = macos_service_plist_path(&registration.label);
     if plist_path.exists() && !force {
         println!(
             "service already installed at {} (pass --force to reinstall)",
@@ -87,9 +59,10 @@ pub(super) fn macos_install_service(
         return Ok(());
     }
 
-    macos_service_bootout(config_path, true)?;
+    let service_label = registration.remove_duplicate()?;
+    macos_service_bootout(&service_label, true)?;
     stop_existing_daemons_before_service_install(config_path)?;
-    let service_executable = macos_service_binary_path(config_path);
+    let service_executable = macos_service_binary_path(&service_label);
     crate::macos_privileged_files::install_executable(executable, &service_executable)?;
     let plist = macos_service_plist_content(
         &service_label,
@@ -101,7 +74,7 @@ pub(super) fn macos_install_service(
 
     crate::macos_privileged_files::publish(&mut plist.as_bytes(), &plist_path, 0o644)?;
 
-    macos_activate_service(config_path, &plist_path)?;
+    macos_activate_service(&service_label, &plist_path)?;
     println!("installed system service: {}", plist_path.display());
     println!("label: {service_label}");
     Ok(())
@@ -109,21 +82,26 @@ pub(super) fn macos_install_service(
 
 #[cfg(target_os = "macos")]
 pub(super) fn macos_uninstall_service(config_path: &Path) -> Result<()> {
-    macos_service_bootout(config_path, true)?;
-    macos_service_enable(config_path)?;
-    let plist_path = macos_service_plist_path(config_path);
-    let binary_path = macos_service_binary_path(config_path);
-    macos_remove_service_artifacts(&plist_path, &binary_path)?;
-    println!(
-        "uninstalled system service: {}",
-        macos_service_label(config_path)
-    );
+    let _lock = lock_service_changes()?;
+    let label = Registration::for_config(config_path)?.remove_duplicate()?;
+    remove_registration(&label)?;
+    println!("uninstalled system service: {label}");
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn remove_registration(label: &str) -> Result<()> {
+    macos_service_bootout(label, true)?;
+    macos_service_enable(label)?;
+    macos_remove_service_artifacts(
+        &macos_service_plist_path(label),
+        &macos_service_binary_path(label),
+    )
 }
 
 #[cfg(any(target_os = "macos", test))]
 pub(super) fn macos_remove_service_artifacts(plist_path: &Path, binary_path: &Path) -> Result<()> {
-    for path in [plist_path, binary_path] {
+    for path in [binary_path, plist_path] {
         if let Err(error) = fs::remove_file(path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -135,8 +113,9 @@ pub(super) fn macos_remove_service_artifacts(plist_path: &Path, binary_path: &Pa
 
 #[cfg(target_os = "macos")]
 pub(super) fn macos_enable_service(config_path: &Path) -> Result<()> {
-    let plist_path = macos_service_plist_path(config_path);
-    let service_label = macos_service_label(config_path);
+    let _lock = lock_service_changes()?;
+    let service_label = Registration::for_config(config_path)?.remove_duplicate()?;
+    let plist_path = macos_service_plist_path(&service_label);
     if !plist_path.exists() {
         return Err(anyhow!(
             "system service plist not found: {}",
@@ -144,7 +123,7 @@ pub(super) fn macos_enable_service(config_path: &Path) -> Result<()> {
         ));
     }
 
-    macos_activate_service(config_path, &plist_path)?;
+    macos_activate_service(&service_label, &plist_path)?;
     println!("enabled system service: {}", plist_path.display());
     println!("label: {service_label}");
     Ok(())
@@ -152,8 +131,9 @@ pub(super) fn macos_enable_service(config_path: &Path) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 pub(super) fn macos_disable_service(config_path: &Path) -> Result<()> {
-    let plist_path = macos_service_plist_path(config_path);
-    let service_label = macos_service_label(config_path);
+    let _lock = lock_service_changes()?;
+    let service_label = Registration::for_config(config_path)?.remove_duplicate()?;
+    let plist_path = macos_service_plist_path(&service_label);
     if !plist_path.exists() {
         return Err(anyhow!(
             "system service plist not found: {}",
@@ -161,8 +141,8 @@ pub(super) fn macos_disable_service(config_path: &Path) -> Result<()> {
         ));
     }
 
-    macos_service_bootout(config_path, true)?;
-    macos_service_disable(config_path)?;
+    macos_service_bootout(&service_label, true)?;
+    macos_service_disable(&service_label)?;
     println!("disabled system service: {}", plist_path.display());
     println!("label: {service_label}");
     Ok(())
@@ -213,7 +193,7 @@ pub(super) fn macos_service_plist_content(
 }
 
 #[cfg(target_os = "macos")]
-fn macos_service_bootstrap(_config_path: &Path, plist_path: &Path) -> Result<()> {
+fn macos_service_bootstrap(plist_path: &Path) -> Result<()> {
     let plist = plist_path
         .to_str()
         .ok_or_else(|| anyhow!("plist path is not valid UTF-8"))?;
@@ -222,10 +202,10 @@ fn macos_service_bootstrap(_config_path: &Path, plist_path: &Path) -> Result<()>
 
 #[cfg(any(target_os = "macos", test))]
 pub(super) fn macos_service_activation_commands(
-    config_path: &Path,
+    label: &str,
     plist_path: &Path,
 ) -> Vec<Vec<String>> {
-    let target = format!("system/{}", macos_service_label(config_path));
+    let target = format!("system/{label}");
     let plist = plist_path.display().to_string();
     vec![
         vec!["enable".to_string(), target.clone()],
@@ -236,21 +216,20 @@ pub(super) fn macos_service_activation_commands(
 }
 
 #[cfg(target_os = "macos")]
-fn macos_activate_service(config_path: &Path, plist_path: &Path) -> Result<()> {
-    crate::macos_privileged_files::validate_artifact(plist_path)?;
-    let binary_path = macos_service_binary_path(config_path);
+fn macos_activate_service(label: &str, plist_path: &Path) -> Result<()> {
+    let binary_path = macos_service_binary_path(label);
     crate::macos_privileged_files::validate_artifact(&binary_path)?;
-    if macos_service_executable_path(plist_path).as_ref() != Some(&binary_path) {
+    if registration::installed_service(label)?.is_none_or(|job| job.executable != binary_path) {
         return Err(anyhow!(
             "service executable is not the protected helper; reinstall the service"
         ));
     }
-    for args in macos_service_activation_commands(config_path, plist_path) {
+    for args in macos_service_activation_commands(label, plist_path) {
         match args.first().map(String::as_str) {
-            Some("enable") => macos_service_enable(config_path)?,
-            Some("bootout") => macos_service_bootout(config_path, true)?,
-            Some("bootstrap") => macos_service_bootstrap(config_path, plist_path)?,
-            Some("kickstart") => macos_service_kickstart(config_path)?,
+            Some("enable") => macos_service_enable(label)?,
+            Some("bootout") => macos_service_bootout(label, true)?,
+            Some("bootstrap") => macos_service_bootstrap(plist_path)?,
+            Some("kickstart") => macos_service_kickstart(label)?,
             _ => return Err(anyhow!("unsupported launchctl activation command")),
         }
     }
@@ -258,26 +237,26 @@ fn macos_activate_service(config_path: &Path, plist_path: &Path) -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_service_enable(config_path: &Path) -> Result<()> {
-    let target = macos_service_target(config_path);
+fn macos_service_enable(label: &str) -> Result<()> {
+    let target = format!("system/{label}");
     run_launchctl_checked(&["enable", target.as_str()], "enable service")
 }
 
 #[cfg(target_os = "macos")]
-fn macos_service_disable(config_path: &Path) -> Result<()> {
-    let target = macos_service_target(config_path);
+fn macos_service_disable(label: &str) -> Result<()> {
+    let target = format!("system/{label}");
     run_launchctl_checked(&["disable", target.as_str()], "disable service")
 }
 
 #[cfg(target_os = "macos")]
-fn macos_service_kickstart(config_path: &Path) -> Result<()> {
-    let target = macos_service_target(config_path);
+fn macos_service_kickstart(label: &str) -> Result<()> {
+    let target = format!("system/{label}");
     run_launchctl_checked(&["kickstart", "-k", target.as_str()], "kickstart service")
 }
 
 #[cfg(target_os = "macos")]
-fn macos_service_bootout(config_path: &Path, ignore_missing: bool) -> Result<()> {
-    let target = macos_service_target(config_path);
+fn macos_service_bootout(label: &str, ignore_missing: bool) -> Result<()> {
+    let target = format!("system/{label}");
     run_launchctl_allow_missing(
         &["bootout", target.as_str()],
         "bootout service",
@@ -286,8 +265,8 @@ fn macos_service_bootout(config_path: &Path, ignore_missing: bool) -> Result<()>
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn macos_service_print(config_path: &Path) -> Result<String> {
-    let target = macos_service_target(config_path);
+pub(super) fn macos_service_print(label: &str) -> Result<String> {
+    let target = format!("system/{label}");
     let output = run_launchctl_raw(&["print", target.as_str()], "print service")?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -317,7 +296,7 @@ pub(super) fn macos_service_print_pid(print_output: &str) -> Option<u32> {
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn macos_service_disabled(config_path: &Path) -> Result<bool> {
+pub(super) fn macos_service_disabled(label: &str) -> Result<bool> {
     let output = run_launchctl_raw(&["print-disabled", "system"], "print disabled services")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -331,8 +310,7 @@ pub(super) fn macos_service_disabled(config_path: &Path) -> Result<bool> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(macos_service_disabled_from_print_disabled_output(
-        &stdout,
-        &macos_service_label(config_path),
+        &stdout, label,
     ))
 }
 

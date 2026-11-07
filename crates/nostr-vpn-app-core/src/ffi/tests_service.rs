@@ -798,6 +798,12 @@ exit 0
         assert!(runtime.vpn_enabled);
         assert!(runtime.vpn_active);
 
+        assert!(calls.contains("service status --json --config"));
+        // The privileged runner can report success even if it updated a different job.
+        runtime.expected_service_binary_version = "new".into();
+        runtime.dispatch(NativeAppAction::InstallSystemService);
+        assert!(runtime.last_error.contains("still on vtest"), "{}", runtime.last_error);
+
         let _ = fs::remove_dir_all(&dir);
     }
 

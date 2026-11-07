@@ -275,9 +275,10 @@ pub(crate) fn query_service_status_with_binary_version(
 ) -> Result<ServiceStatusView> {
     #[cfg(target_os = "macos")]
     {
-        let plist_path = macos_service::macos_service_plist_path(_config_path);
-        let label = macos_service::macos_service_label(_config_path);
-        let installed = plist_path.exists();
+        let registration = macos_service::Registration::for_config(_config_path)?;
+        let label = registration.label;
+        let plist_path = macos_service::macos_service_plist_path(&label);
+        let installed = registration.executable.is_some();
         if !installed {
             return Ok(ServiceStatusView {
                 supported: true,
@@ -293,11 +294,11 @@ pub(crate) fn query_service_status_with_binary_version(
             });
         }
 
-        let disabled = macos_service::macos_service_disabled(_config_path).unwrap_or(false);
+        let disabled = macos_service::macos_service_disabled(&label).unwrap_or(false);
         let (loaded, running, pid) = if disabled {
             (false, false, None)
         } else {
-            match macos_service::macos_service_print(_config_path) {
+            match macos_service::macos_service_print(&label) {
                 Ok(output) => (
                     true,
                     macos_service::macos_service_print_is_running(&output),
@@ -306,7 +307,7 @@ pub(crate) fn query_service_status_with_binary_version(
                 Err(_) => (false, false, None),
             }
         };
-        let service_binary = macos_service::macos_service_executable_path(&plist_path);
+        let service_binary = registration.executable;
         let binary_version = if include_binary_version {
             service_binary
                 .as_ref()

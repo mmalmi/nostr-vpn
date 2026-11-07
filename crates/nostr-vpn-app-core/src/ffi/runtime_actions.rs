@@ -90,7 +90,7 @@ impl NativeAppRuntime {
                 ensure_success("nvpn service install", &output)?;
                 self.invalidate_service_status();
                 self.recover_from_startup_error()?;
-                self.refresh_service_status()?;
+                self.refresh_service_after_install()?;
                 self.arm_daemon_status_grace();
                 // Refresh the daemon state after the service swap before
                 // deciding whether to reconnect. Otherwise stale pre-bootout
