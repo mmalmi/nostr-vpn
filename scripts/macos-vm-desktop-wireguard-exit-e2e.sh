@@ -152,6 +152,7 @@ remote_phase() {
     RUST_LOG=info,nvpn::secure_dns_runtime=debug
     "NVPN_E2E_BINARY=$PACKAGE/Nostr VPN.app/Contents/Resources/nvpn"
     "NVPN_MACOS_NETWORK_STATE_DIR=$REMOTE_DIR"
+    "NVPN_MACOS_NETWORK_INSTALLED_APP_PATH=${NVPN_MACOS_NETWORK_INSTALLED_APP_PATH:-/Applications/Nostr VPN.app}"
     "NVPN_E2E_CONFIG=$REMOTE_DIR/config.toml"
     "NVPN_WG_EXIT_CONFIG_FILE=$REMOTE_DIR/client.conf"
     "NVPN_MACOS_WG_ENDPOINT_HOST=$FIXTURE_HOST"
