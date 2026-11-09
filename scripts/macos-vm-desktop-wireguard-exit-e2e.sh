@@ -478,7 +478,7 @@ wg pubkey <"$FIXTURE_DIR/client.key" >"$FIXTURE_DIR/client.pub"
 
 mobile_wg_fixture_initialize "$ROOT" "$FIXTURE_DIR"
 mobile_wg_fixture_assert_available "$CONTAINER" "$HOST_PORT"
-mobile_wg_fixture_build "$ROOT" "$IMAGE" 0
+mobile_wg_fixture_build "$ROOT" "$IMAGE" "${NVPN_MOBILE_WG_EXIT_IMAGE_READY:-0}"
 cat >"$FIXTURE_DIR/client.conf" <<EOF
 [Interface]
 PrivateKey = $(<"$FIXTURE_DIR/client.key")

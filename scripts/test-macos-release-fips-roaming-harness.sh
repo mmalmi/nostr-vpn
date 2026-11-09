@@ -49,7 +49,7 @@ require_tokens "$CONTROLLER" "host-local exit fixture" \
   'FIXTURE_HOST="${NVPN_MACOS_WG_FIXTURE_HOST_IP:-}"' \
   'unset NVPN_MOBILE_WG_EXIT_FIXTURE_SSH_HOST' \
   'mobile_wg_fixture_initialize "$ROOT" "$FIXTURE_DIR"' \
-  'mobile_wg_fixture_build "$ROOT" "$IMAGE" 0' \
+  'mobile_wg_fixture_build "$ROOT" "$IMAGE" "${NVPN_MOBILE_WG_EXIT_IMAGE_READY:-0}"' \
   'mobile_wg_fixture_run "$IMAGE" "$CONTAINER"' \
   'TARGET_CONTAINER="${NVPN_MACOS_WG_TARGET_CONTAINER:-$CONTAINER-target}"' \
   '--entrypoint python3' \
