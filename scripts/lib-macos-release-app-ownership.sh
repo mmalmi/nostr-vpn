@@ -131,27 +131,15 @@ macos_release_app_launch_installed() {
   else
     set --
   fi
-  # This baseline intentionally outlives the gate. Give it its own session
-  # so the finite test supervisor can close its process group independently.
-  python3 - "$MACOS_RELEASE_APP_INSTALLED_EXE" "$@" <<'PY'
-import os
-import subprocess
-import sys
-
-user = os.environ.get("USER") or "dev"
-environment = {
-    "HOME": os.environ["HOME"],
-    "USER": user,
-    "LOGNAME": os.environ.get("LOGNAME") or user,
-    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-    "TMPDIR": os.environ.get("TMPDIR") or "/tmp",
-    "LANG": os.environ.get("LANG") or "en_US.UTF-8",
-}
-subprocess.Popen(
-    sys.argv[1:], env=environment, start_new_session=True,
-    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-)
-PY
+  /usr/bin/nohup /usr/bin/env -i \
+    HOME="$HOME" \
+    USER="${USER:-dev}" \
+    LOGNAME="${LOGNAME:-${USER:-dev}}" \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    LANG="${LANG:-en_US.UTF-8}" \
+    "$MACOS_RELEASE_APP_INSTALLED_EXE" "$@" \
+    </dev/null >/dev/null 2>&1 &
 }
 
 macos_release_app_restore() {

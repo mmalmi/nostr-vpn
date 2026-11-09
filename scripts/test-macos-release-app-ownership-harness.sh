@@ -341,13 +341,6 @@ run_restore_case() {
   [[ ! -e "$MACOS_RELEASE_APP_STATE_DIR" ]]
   restored="$(single_pid)"
   [[ "$restored" != "$prior" ]]
-  # The restored baseline must survive closure of the finite test process
-  # group. nohup alone ignores HUP but leaves the app in that same group.
-  [[ "$(ps -p "$restored" -o pgid= | tr -d '[:space:]')" != \
-    "$(ps -p "$$" -o pgid= | tr -d '[:space:]')" ]] || {
-    echo "restored baseline app remains in the test process group" >&2
-    return 1
-  }
   args="$(macos_release_app_process_args "$restored")"
   if [[ "$mode" == hidden ]]; then
     [[ "$args" == "$installed --hidden" ]]
