@@ -255,6 +255,14 @@ remote() {
   for argument in "$@"; do
     printf -v remote_command '%s %q' "$remote_command" "$argument"
   done
+  if [[ -n "${NVPN_MACOS_GUEST_SCRATCH_ADMISSION:-}" ]]; then
+    [[ -z "${NVPN_MACOS_GUEST_TMPDIR:-}" ]] || {
+      echo "macOS guest comparison scratch has conflicting admissions" >&2
+      return 2
+    }
+    printf -v remote_command 'export NVPN_MACOS_ADMISSION_SCRATCH_ADMISSION=%q; %s' \
+      "$NVPN_MACOS_GUEST_SCRATCH_ADMISSION" "$remote_command"
+  fi
   if [[ -n "${NVPN_MACOS_GUEST_TMPDIR:-}" ]]; then
     printf -v remote_command 'export NVPN_MACOS_GUEST_TMPDIR=%q TMPDIR=%q; %s' \
       "$NVPN_MACOS_GUEST_TMPDIR" "$NVPN_MACOS_GUEST_TMPDIR" "$remote_command"

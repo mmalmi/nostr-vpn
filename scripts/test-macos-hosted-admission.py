@@ -46,21 +46,39 @@ class HostedMacAdmission(unittest.TestCase):
         script = Path(__file__).with_name("macos-vm-release-mobile-join-e2e.sh").read_text()
         remote = "remote() {" + script.split("\nremote() {", 1)[1].split("\n}\n", 1)[0] + "\n}\n"
         probe = self.root / "probe.sh"
-        probe.write_text('#!/bin/bash\n/usr/bin/printf "%s\\n" "$NVPN_MACOS_GUEST_TMPDIR" "$TMPDIR" "$@"\n')
+        probe.write_text('#!/bin/bash\n/usr/bin/printf "%s\\n" "${NVPN_MACOS_GUEST_TMPDIR:-}" "$TMPDIR" "${NVPN_MACOS_ADMISSION_SCRATCH_ADMISSION:-}" "$@"\n')
         probe.chmod(0o755)
         scratch = self.root / "scratch ' $literal"
         scratch.mkdir()
         env = dict(os.environ, GUEST_REPO=str(self.root), REMOTE_SCRIPT_REL="probe.sh",
-                   HOME=str(self.root), NVPN_MACOS_GUEST_TMPDIR=str(scratch), MAC_HOST="fixture")
+                   HOME=str(self.root), TMPDIR="/tmp", NVPN_MACOS_GUEST_TMPDIR="",
+                   NVPN_MACOS_GUEST_SCRATCH_ADMISSION="", NVPN_MACOS_ADMISSION_SCRATCH_ADMISSION="",
+                   MAC_HOST="fixture")
         for name in ("REMOTE_ARTIFACT_DIR", "REMOTE_HARNESS_DIGEST", "PRODUCT_GIT_SHA",
                      "PRODUCT_GIT_TREE", "APP_GIT_SHA", "APP_GIT_TREE", "RELEASE_JOIN_FIPS_SHA",
                      "RELEASE_JOIN_FIPS_TREE", "RELEASE_JOIN_FIPS_VERSION", "MACOS_SIGNING_IDENTITY",
                      "EXPECTED_MACOS_TEAM", "EXPECTED_MACOS_CERT", "RELEASE_JOIN_IOS_SETUP_WAIT_SECS"):
             env[name] = "fixture"
         command = remote + '\nssh() { /bin/bash -c "${@: -1}"; }\nremote verify "argument with spaces"\n'
-        result = subprocess.run(["/bin/bash", "-eu", "-c", command], env=env,
-                                capture_output=True, text=True, check=True)
-        self.assertEqual(result.stdout.splitlines(), [str(scratch), str(scratch), "verify", "argument with spaces"])
+        admission = str(scratch / "ram admission.json")
+        for changes, expected in (
+                ({"NVPN_MACOS_GUEST_TMPDIR": str(scratch)}, [str(scratch), str(scratch), ""]),
+                ({"NVPN_MACOS_GUEST_SCRATCH_ADMISSION": admission,
+                  "NVPN_MACOS_ADMISSION_SCRATCH_ADMISSION": "host-only-admission"},
+                 ["", "/tmp", admission])):
+            with self.subTest(changes=changes):
+                result = subprocess.run(["/bin/bash", "-eu", "-c", command], env=env | changes,
+                                        capture_output=True, text=True, check=True)
+                self.assertEqual(result.stdout.splitlines(), expected + ["verify", "argument with spaces"])
+        marker = self.root / "ssh-started"
+        conflict = remote + '\nssh() { touch "$MARKER"; }\nremote verify\n'
+        result = subprocess.run(["/bin/bash", "-eu", "-c", conflict],
+                                env=env | {"MARKER": str(marker), "NVPN_MACOS_GUEST_TMPDIR": str(scratch),
+                                           "NVPN_MACOS_GUEST_SCRATCH_ADMISSION": admission},
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicting", result.stderr)
+        self.assertFalse(marker.exists(), "conflicting scratch inputs must fail before SSH")
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="nvpn-macos-admission-test-")
