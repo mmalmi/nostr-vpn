@@ -591,6 +591,10 @@ with tempfile.TemporaryDirectory() as temporary:
         mutate(value)
         path.write_text(json.dumps(value) + "\n", encoding="utf-8")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        driver_path = tampered / "driver-receipt.json"
+        driver = json.loads(driver_path.read_text())
+        driver["appArtifactReceiptSha256"] = digest
+        driver_path.write_text(json.dumps(driver) + "\n", encoding="utf-8")
         for case_path in (tampered / "cases").glob("*.json"):
             case_value = json.loads(case_path.read_text())
             case_value["appArtifactReceiptSha256"] = digest
