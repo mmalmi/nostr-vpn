@@ -19,9 +19,12 @@ class ArtifactReadbackTest(unittest.TestCase):
             root = Path(directory)
             app = root / "app"
             tunnel = app / "PlugIns/Nostr VPN Tunnel.appex"
+            share = app / "PlugIns/ShareFiles.appex"
             tunnel.mkdir(parents=True)
-            for path in [app, tunnel]:
+            share.mkdir()
+            for path in [app, tunnel, share]:
                 (path / "embedded.mobileprovision").write_bytes(b"profile fixture")
+            (share / "ShareFiles").write_bytes(b"share extension fixture")
             info = {"CFBundleVersion": "7", "CFBundleShortVersionString": "1.2.3",
                     "NVPNBuildGitSha": "a" * 40}
             (app / "Info.plist").write_bytes(plistlib.dumps(info))
