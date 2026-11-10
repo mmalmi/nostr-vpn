@@ -1427,13 +1427,15 @@ pixel_timings = {
 }
 selected = sys.argv[11]
 reused_pixel_sha256 = sys.argv[12]
-if reused_pixel_sha256 and (
-    selected != "all"
-    or hashlib.sha256(
-        pathlib.Path(sys.argv[1]).with_name("reused-pixel-summary.json").read_bytes()
-    ).hexdigest() != reused_pixel_sha256
-):
-    raise SystemExit("Retained Mac/Pixel evidence changed during the iPhone run")
+reused_pixel = None
+if reused_pixel_sha256:
+    retained = pathlib.Path(sys.argv[1]).with_name("reused-pixel-summary.json").read_bytes()
+    if selected != "all" or hashlib.sha256(retained).hexdigest() != reused_pixel_sha256:
+        raise SystemExit("Retained Mac/Pixel evidence changed during the iPhone run")
+    reused_pixel = json.loads(retained)
+    if any(timings.get(label) != reused_pixel.get("deliveryMilliseconds", {}).get(label)
+           for label in pixel_timings):
+        raise SystemExit("Retained Mac/Pixel delivery timing changed during composition")
 expected_timings = all_timings if selected == "all" else pixel_timings
 if set(timings) != expected_timings or any(
     elapsed < 0 or elapsed > 15_000 for elapsed in timings.values()
@@ -1605,6 +1607,13 @@ if len(sys.argv) == 16:
     evidence = json.loads(pathlib.Path(sys.argv[15]).read_text(encoding="utf-8"))
     if set(evidence) != {"profileIsolation", "directionEvidence"}:
         raise SystemExit("Mac launch/profile evidence has unexpected fields")
+    if reused_pixel is not None:
+        for direction in ("macosAdminPixelJoiner", "pixelAdminMacosJoiner"):
+            if (evidence["profileIsolation"]["directions"][direction]
+                    != reused_pixel["profileIsolation"]["directions"][direction]
+                    or evidence["directionEvidence"][direction]
+                    != reused_pixel["directionEvidence"][direction]):
+                raise SystemExit("Retained Mac/Pixel launch/profile evidence changed during composition")
     receipt.update(evidence)
     subprocess.run([
         "node", "--input-type=module", "-e",

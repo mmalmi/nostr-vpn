@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import tempfile
 from typing import Any
 
@@ -720,12 +721,13 @@ def validate_desktop_mobile_join_receipt(
     )
     timings = receipt.get("deliveryMilliseconds")
     require(
-        receipt.get("schema") == 1
+        receipt.get("schema") in (1, 2)
         and receipt.get("platform") == "macos"
         and receipt.get("publicUiOnly") is True
         and receipt.get("privateStateRead") is False
         and receipt.get("fixtureInvoked") is False
-        and receipt.get("appLaunchArgumentsOrEnvironment") is False
+        and (receipt.get("schema") == 1 or receipt.get("privateAppStateRead") is False)
+        and (receipt.get("schema") == 1 or receipt.get("selectedDirections") == "all")
         and receipt.get("desktopAdminAndroidJoiner") is True
         and receipt.get("androidAdminDesktopJoiner") is True
         and receipt.get("desktopAdminIphoneJoiner") is True
@@ -764,6 +766,20 @@ def validate_desktop_mobile_join_receipt(
         ),
         "desktop/mobile join receipt is incomplete or not source-bound",
     )
+    # Share the Mac launch/profile contract with final release collection. The
+    # final collector additionally binds this summary to the actual Mac artifact.
+    profile_check = subprocess.run(
+        ["node", "--input-type=module", "-e",
+         "import{readFileSync}from'node:fs';import{pathToFileURL}from'node:url';"
+         "const{validateMacosJoinProfileIsolation}=await import(pathToFileURL(process.argv[1]));"
+         "const r=JSON.parse(readFileSync(0,'utf8'));"
+         "validateMacosJoinProfileIsolation(r,r.artifact,r.artifact.artifactReceiptSha256,"
+         "{requireProof:r.schema!==1||r.buildOrigin==='github-actions'});",
+         str(pathlib.Path(__file__).with_name("release-artifact-provenance-lib.mjs"))],
+        input=json.dumps(receipt), text=True, capture_output=True, timeout=15,
+    )
+    require(profile_check.returncode == 0,
+            "desktop/mobile join launch/profile evidence is invalid")
     for field in (
         "appGitSha",
         "appGitTree",

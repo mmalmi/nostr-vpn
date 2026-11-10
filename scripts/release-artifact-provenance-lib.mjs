@@ -818,6 +818,7 @@ function requireMacosJoinReceipt({
   }
   if (
     receipt.privateAppStateRead !== false
+    || (receipt.schema === 2 && receipt.selectedDirections !== (includeIphone ? 'all' : 'pixel'))
     || receipt.desktopAdminAndroidJoiner !== true
     || receipt.androidAdminDesktopJoiner !== true
     || receipt.desktopAdminIphoneJoiner !== includeIphone

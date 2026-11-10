@@ -2165,6 +2165,14 @@ test('release receipt collection requires exact source and strict public UI gate
     assert.doesNotThrow(() => collectReleaseGateReceipts({
       commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
     }))
+    const wrongMacosScope = structuredClone(fullMacosWithProfile)
+    wrongMacosScope.selectedDirections = 'pixel'
+    delete wrongMacosScope.profileIsolation.directions.macosAdminIphoneJoiner
+    delete wrongMacosScope.profileIsolation.directions.iphoneAdminMacosJoiner
+    writeFileSync(paths.macos.public_ui_join, JSON.stringify(wrongMacosScope))
+    assert.throws(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }), /macOS\/mobile public-UI join receipt is incomplete/)
     delete fullMacosWithProfile.profileIsolation.directions.iphoneAdminMacosJoiner
     writeFileSync(paths.macos.public_ui_join, JSON.stringify(fullMacosWithProfile))
     assert.throws(() => collectReleaseGateReceipts({
