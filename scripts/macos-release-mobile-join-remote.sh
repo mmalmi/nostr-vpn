@@ -52,6 +52,7 @@ EXPECTED_SIGNING_TEAM="${NVPN_EXPECTED_MACOS_SIGNING_TEAM_ID:-}"
 EXPECTED_SIGNER_CERT_SHA256="${NVPN_EXPECTED_MACOS_SIGNER_CERT_SHA256:-}"
 APP_LOG="$ARTIFACT_DIR/app.log"
 APP_PID=""
+APP_STOP_UNRESOLVED=0
 MACOS_RELEASE_APP_STATE_DIR="$ARTIFACT_DIR/app-ownership"
 MACOS_RELEASE_APP_INSTALLED_EXE="${MACOS_RELEASE_APP_INSTALLED_EXE:-/Applications/Nostr VPN.app/Contents/MacOS/Nostr VPN}"
 MACOS_RELEASE_APP_GATE_EXE="$APP_EXE"
@@ -72,15 +73,18 @@ APPROVAL_STARTED="$ARTIFACT_DIR/approval-started"
 mkdir -p "$ARTIFACT_DIR"
 
 stop_app() {
+  [[ "$APP_STOP_UNRESOLVED" -eq 0 ]] || return 1
   if [[ -n "$APP_PID" ]]; then
-    if kill -0 "$APP_PID" >/dev/null 2>&1; then
-      macos_release_app_stop_pid "$APP_PID" "$APP_EXE"
+    if ! macos_release_app_stop_pid "$APP_PID" "$APP_EXE"; then
+      APP_STOP_UNRESOLVED=1
+      return 1
     fi
     rm -f "$OWNED_PID_FILE"
   fi
   APP_PID=""
 }
-trap stop_app EXIT
+# 125 marks an unresolved app stop, even if this shell itself can exit cleanly.
+trap 'status=$?; stop_app || status=125; exit "$status"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -531,7 +535,6 @@ case "${1:-}" in
   cleanup)
     restore_test_profile
     macos_release_app_restore
-    rm -rf "$ROOT"
     ;;
   reset-profile)
     restore_test_profile

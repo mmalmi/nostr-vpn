@@ -131,15 +131,24 @@ macos_release_app_launch_installed() {
   else
     set --
   fi
-  /usr/bin/nohup /usr/bin/env -i \
-    HOME="$HOME" \
-    USER="${USER:-dev}" \
-    LOGNAME="${LOGNAME:-${USER:-dev}}" \
-    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-    TMPDIR="${TMPDIR:-/tmp}" \
-    LANG="${LANG:-en_US.UTF-8}" \
-    "$MACOS_RELEASE_APP_INSTALLED_EXE" "$@" \
-    </dev/null >/dev/null 2>&1 &
+  # The restored baseline outlives this action. Give it its own session so
+  # terminal action-group checks still cover every test app and driver.
+  python3 - "$MACOS_RELEASE_APP_INSTALLED_EXE" "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+env = {
+    "HOME": os.environ["HOME"], "USER": os.environ.get("USER", "dev"),
+    "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "dev")),
+    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+    "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
+    "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+}
+subprocess.Popen(sys.argv[1:], env=env, start_new_session=True,
+                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
+PY
 }
 
 macos_release_app_restore() {

@@ -8,6 +8,7 @@ HELPER="$ROOT/scripts/lib-macos-release-app-ownership.sh"
 trap 'echo "macOS app ownership harness failed at line $LINENO" >&2' ERR
 
 bash -n "$HOST" "$REMOTE" "$HELPER"
+python3 "$ROOT/scripts/test-macos-remote-action-harness.py"
 bash "$ROOT/scripts/test-macos-release-approval-wait-harness.sh"
 python3 - "$HOST" "$REMOTE" "$HELPER" <<'PY'
 import pathlib
@@ -120,7 +121,7 @@ for required in (
     if required not in remote:
         raise SystemExit(f"VM importer lacks app ownership contract: {required}")
 for required in (
-    "trap stop_app EXIT",
+    "trap 'status=$?; stop_app || status=125; exit \"$status\"' EXIT",
     "trap 'exit 129' HUP",
     "trap 'exit 130' INT",
     "trap 'exit 143' TERM",
@@ -206,6 +207,7 @@ run_cleanup_case() {
   remote_pid=""
   remote_app_ownership_armed=1
   remote_harness_install_attempted=0
+  macos_remote_actions_closed() { return 0; }
   RESULT_DIR="$tmp"
   release_join_android_capture_failure_log() { :; }
   PRIVATE_DIR="$tmp/private-$primary_status-$remote_status"

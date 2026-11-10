@@ -173,6 +173,67 @@ remote_pid=""
 acceptance_observer_pids=()
 remote_app_ownership_armed=0
 remote_harness_install_attempted=0
+REMOTE_ACTION_HELPER="$ROOT/scripts/macos_release_action.py"
+REMOTE_ACTION_SESSION="$(uuidgen)"
+REMOTE_ACTION_DIR="$RESULT_DIR/macos/remote-actions"
+mkdir -m 700 "$REMOTE_ACTION_DIR"
+
+macos_remote_actions_block() {
+  printf '%s\n' "$*" >&2
+  python3 "$REMOTE_ACTION_HELPER" record "$REMOTE_ACTION_DIR/blocked.json" \
+    '{"unresolved":true}'
+}
+
+macos_remote_actions_closed() {
+  local intent
+  [[ ! -e "$REMOTE_ACTION_DIR/blocked.json" ]] || return 1
+  for intent in "$REMOTE_ACTION_DIR/"*.intent.json; do
+    [[ -e "$intent" ]] || continue
+    [[ -f "${intent%.intent.json}.closed.json" ]] || {
+      macos_remote_actions_block "Remote action has no proven terminal outcome: $intent"
+      return 1
+    }
+  done
+}
+
+macos_remote_action() {
+  local action="$1" command="$2" action_id relative receipt command_sha wrapped status=0
+  [[ "$action" =~ ^[a-z][a-z-]*$ ]] || return 2
+  [[ ! -e "$REMOTE_ACTION_DIR/blocked.json" ]] || return 1
+  case "$action" in
+    # These reads/signals intentionally overlap the held join driver's action.
+    approval-start|carrier-ready|daemon-log-offset|require-delivery-log|diagnostics) ;;
+    *) macos_remote_actions_closed || return 1 ;;
+  esac
+  action_id="$(uuidgen)" || return 1
+  relative=".cache/nvpn-release-mobile-join-actions/$REMOTE_ACTION_SESSION/$action_id"
+  receipt="$REMOTE_ACTION_DIR/$action_id"
+  command_sha="$(printf '%s' "$command" | shasum -a 256 | awk '{print $1}')" || return 1
+  python3 "$REMOTE_ACTION_HELPER" record "$receipt.intent.json" \
+    "{\"action\":\"$action\",\"remotePath\":\"$relative\",\"commandSha256\":\"$command_sha\"}" || return 1
+  printf -v wrapped 'python3 -c %q run %q %q %q' \
+    "$(cat "$REMOTE_ACTION_HELPER")" "$relative" "$action" "$command"
+  ssh -o BatchMode=yes -o ConnectTimeout=5 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$MAC_HOST" "$wrapped" || status=$?
+  python3 "$REMOTE_ACTION_HELPER" record "$receipt.transport.json" \
+    "{\"sshExitCode\":$status}" || return 1
+  printf -v wrapped 'python3 -c %q closed %q %q %q %q' \
+    "$(cat "$REMOTE_ACTION_HELPER")" "$relative" "$action" "$command_sha" "$status"
+  if ssh -n -o BatchMode=yes -o ConnectTimeout=5 \
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$MAC_HOST" "$wrapped" \
+    >"$receipt.closure.log" 2>&1
+  then
+    python3 "$REMOTE_ACTION_HELPER" record "$receipt.closed.json" \
+      "{\"exitCode\":$status}" || return 1
+    if [[ "$status" -eq 125 ]]; then
+      macos_remote_actions_block "Guest app stop is unresolved; retaining its ownership evidence"
+    fi
+    return "$status"
+  fi
+  macos_remote_actions_block "Remote action closure is unresolved; preserving its profile and harness: $action"
+  return 1
+}
+
 cleanup() {
   local status=$?
   local cleanup_status=0
@@ -199,8 +260,15 @@ cleanup() {
     cleanup_status=1
     echo "macOS VM remote child survived bounded cleanup" >&2
     [[ "$status" -ne 0 ]] || status="$cleanup_status"
+    macos_remote_actions_block "Local remote-action worker did not stop"
+  else
+    remote_pid=""
   fi
-  remote_pid=""
+  if ! macos_remote_actions_closed; then
+    echo "Preserving remote work, profile, harness and local recovery evidence" >&2
+    [[ "$status" -ne 0 ]] || status=1
+    exit "$status"
+  fi
   if [[ "$remote_app_ownership_armed" -eq 1 ]]; then
     if remote cleanup >/dev/null; then
       :
@@ -209,6 +277,10 @@ cleanup() {
       echo "macOS VM app restoration failed during release gate cleanup (status $cleanup_status)" >&2
       [[ "$status" -ne 0 ]] || status="$cleanup_status"
     fi
+  fi
+  if ! macos_remote_actions_closed || [[ "$cleanup_status" -ne 0 ]]; then
+    [[ "$status" -ne 0 ]] || status=1
+    exit "$status"
   fi
   if [[ "$remote_harness_install_attempted" -eq 1 ]]; then
     if remove_remote_harness >/dev/null; then
@@ -223,7 +295,11 @@ cleanup() {
     cp "$PRIVATE_DIR/android-ui.xml" \
       "$RESULT_DIR/macos/android-ui-failure.xml"
   fi
-  rm -rf "$PRIVATE_DIR"
+  if macos_remote_actions_closed && [[ "$cleanup_status" -eq 0 ]]; then
+    rm -rf "$PRIVATE_DIR"
+  else
+    [[ "$status" -ne 0 ]] || status=1
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -268,17 +344,17 @@ remote() {
     printf -v remote_command 'export NVPN_MACOS_GUEST_TMPDIR=%q TMPDIR=%q; %s' \
       "$NVPN_MACOS_GUEST_TMPDIR" "$NVPN_MACOS_GUEST_TMPDIR" "$remote_command"
   fi
-  ssh -o BatchMode=yes "$MAC_HOST" "$remote_command"
+  macos_remote_action "$subcommand" "$remote_command"
 }
 
 install_remote_harness() {
   local install_command
   # shellcheck disable=SC2016 # $HOME is expanded by the remote shell.
   printf -v install_command \
-    'set -e; destination="$HOME"/%q; rm -rf "$destination"; mkdir -p "$destination"; tar -xf - -C "$destination"; chmod 700 "$destination/scripts/macos-release-mobile-join-remote.sh"' \
-    "$REMOTE_HARNESS_ROOT_REL"
+    'set -e; destination="$HOME"/%q; test ! -e "$destination"; mkdir -p "$(dirname "$destination")"; mkdir "$destination"; printf "%%s\n" %q >"$destination/.owner"; tar -xf - -C "$destination"; chmod 700 "$destination/scripts/macos-release-mobile-join-remote.sh"' \
+    "$REMOTE_HARNESS_ROOT_REL" "$REMOTE_ACTION_SESSION"
   tar -cf - -C "$ROOT" "${REMOTE_HARNESS_FILES[@]}" \
-    | ssh -o BatchMode=yes "$MAC_HOST" "$install_command"
+    | macos_remote_action install-harness "$install_command"
 }
 
 remove_remote_harness() {
@@ -287,9 +363,9 @@ remove_remote_harness() {
   # It deliberately does not invoke app/profile restoration.
   # shellcheck disable=SC2016 # $HOME is expanded by the remote shell.
   printf -v remove_command \
-    'target="$HOME"/%q; rm -rf "$target"; test ! -e "$target"' \
-    "$REMOTE_HARNESS_ROOT_REL"
-  ssh -o BatchMode=yes "$MAC_HOST" "$remove_command"
+    'set -e; target="$HOME"/%q; test -e "$target" || exit 0; test -f "$target/.owner"; test "$(cat "$target/.owner")" = %q; rm -rf "$target"; test ! -e "$target"' \
+    "$REMOTE_HARNESS_ROOT_REL" "$REMOTE_ACTION_SESSION"
+  macos_remote_action remove-harness "$remove_command"
 }
 
 wait_log_marker() {
@@ -300,7 +376,7 @@ wait_log_marker() {
     grep -Fq "NVPN_RELEASE_JOIN_MARKER $marker" "$log" 2>/dev/null && return 0
     if [[ -n "$remote_pid" ]] && ! kill -0 "$remote_pid" 2>/dev/null; then
       wait "$remote_pid" || true
-      remote_pid=""
+      macos_remote_actions_closed && remote_pid=""
       tail -n 100 "$log" >&2 || true
       return 1
     fi
@@ -351,6 +427,7 @@ macos_mobile_direction_cleanup() {
     then
       status=1
       echo "iOS direction runner survived bounded cleanup" >&2
+      macos_remote_actions_block "Local iOS direction runner did not stop"
     fi
   fi
   RELEASE_JOIN_IOS_TEST_PID=""
@@ -365,8 +442,14 @@ macos_mobile_direction_cleanup() {
     then
       status=1
       echo "macOS VM direction child survived bounded cleanup" >&2
+      macos_remote_actions_block "Local remote-action worker did not stop"
+    else
+      remote_pid=""
     fi
-    remote_pid=""
+  fi
+  if ! macos_remote_actions_closed; then
+    echo "Direction closure unresolved; no profile reset or reverse direction is allowed" >&2
+    exit 1
   fi
   if [[ "$status" -ne 0 && -s "$PRIVATE_DIR/android-ui.xml" ]]; then
     cp "$PRIVATE_DIR/android-ui.xml" \
