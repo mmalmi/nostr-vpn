@@ -362,38 +362,15 @@ launch_app() {
     echo "a previous imported app launch is still owned" >&2
     return 1
   }
-  local deadline=$((SECONDS + 10)) pids pid
   # SwiftUI needs LaunchServices to create its initial window over SSH, as in
   # the imported-app UI gate. Record uncertainty before the launch: cancellation
   # or failed identity capture must retain ownership, never restore over it.
   APP_LAUNCH_PENDING=1
-  : >"$LAUNCH_PENDING_FILE" || return 1
-  python3 -c 'import subprocess,sys; timeout=int(sys.argv[1]); assert timeout>0; subprocess.run(sys.argv[2:], timeout=timeout, check=True)' \
-    "$((deadline - SECONDS))" /usr/bin/open -n -F \
-    --env "HOME=$HOME" --env "USER=${USER:-dev}" \
-    --env "LOGNAME=${LOGNAME:-${USER:-dev}}" \
-    --env "PATH=/usr/bin:/bin:/usr/sbin:/sbin" \
-    --env "TMPDIR=${TMPDIR:-/tmp}" --env "LANG=${LANG:-en_US.UTF-8}" \
-    --env "NVPN_APP_DATA_DIR=$TEST_CONFIG_DIR" \
-    --stdout "$APP_LOG" --stderr "$APP_LOG" "$APP_PATH" || return 1
-  while ((SECONDS < deadline)); do
-    pids="$(pgrep -x "$MACOS_RELEASE_APP_PROCESS_NAME" 2>/dev/null || true)"
-    [[ "$(wc -w <<<"$pids" | tr -d ' ')" -le 1 ]] || return 1
-    if [[ -n "$pids" ]]; then
-      pid="$pids"
-      [[ "$(ps -ww -p "$pid" -o comm=)" == "$APP_EXE" \
-        && "$(macos_release_app_process_args "$pid")" == "$APP_EXE" ]] || return 1
-      APP_PID="$pid"
-      printf '%s\n' "$APP_PID" >"$OWNED_PID_FILE.tmp" || return 1
-      mv "$OWNED_PID_FILE.tmp" "$OWNED_PID_FILE" || return 1
-      rm "$LAUNCH_PENDING_FILE" || return 1
-      APP_LAUNCH_PENDING=0
-      return 0
-    fi
-    sleep 0.1
-  done
-  echo "imported app launch identity did not resolve within its original allowance" >&2
-  return 1
+  APP_PID="$(python3 "$ROOT/scripts/macos_release_action.py" imported-launch \
+    "$MACOS_RELEASE_APP_STATE_DIR" "$APP_PATH" "$APP_EXE" "$APP_LOG" \
+    "$TEST_CONFIG_DIR" "$MACOS_RELEASE_APP_PROCESS_NAME")" || return 1
+  [[ "$APP_PID" =~ ^[1-9][0-9]*$ ]] || return 1
+  APP_LAUNCH_PENDING=0
 }
 
 run_driver() {

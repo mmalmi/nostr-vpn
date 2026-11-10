@@ -113,6 +113,57 @@ def baseline_snapshot(owner, pid, executable, arguments):
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
+def imported_launch(owner, app, executable, log, data_dir, process_name):
+    """Keep request, exact PID capture and ownership commit under one end."""
+    deadline = time.clock_gettime(time.CLOCK_MONOTONIC) + 10
+    arm_deadline(deadline, cleanup_reserve=.25)
+    owner = owner.absolute()
+    pending = owner / "imported-launch-pending"
+    pid_file = owner / "imported.pid"
+    if pending.exists() or pid_file.exists():
+        raise ValueError("previous imported launch is still owned")
+    state = {"deadlineMonotonic": deadline, "executable": executable}
+    try:
+        write(pending, state)
+        expected_hash = file_hash(executable, deadline)
+        user = os.environ.get("USER") or "dev"
+        environment = {"HOME": os.environ["HOME"], "USER": user,
+            "LOGNAME": os.environ.get("LOGNAME") or user,
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "TMPDIR": os.environ.get("TMPDIR") or "/tmp",
+            "LANG": os.environ.get("LANG") or "en_US.UTF-8",
+            "NVPN_APP_DATA_DIR": data_dir}
+        command = ["/usr/bin/open", "-n", "-F"]
+        for key, value in environment.items():
+            command += ["--env", key + "=" + value]
+        command += ["--stdout", log, "--stderr", log, app]
+        subprocess.run(command, timeout=remaining(deadline, reserve=.25),
+                       capture_output=True, text=True, check=True)
+        while True:
+            result = subprocess.run(["pgrep", "-x", process_name],
+                capture_output=True, text=True, timeout=remaining(deadline, 2))
+            pids = result.stdout.split()
+            if result.returncode not in (0, 1) or result.stderr.strip() or len(pids) > 1:
+                raise ValueError("imported app identity is ambiguous")
+            if pids:
+                pid = int(pids[0])
+                read_identity(pid, executable, expected_hash, executable, os.getuid(), deadline)
+                write(pid_file, pid)
+                remaining(deadline, reserve=.25)
+                pending.unlink()
+                remaining(deadline, reserve=.25)
+                print(pid, flush=True)
+                remaining(deadline, reserve=.25)
+                return 0
+            time.sleep(remaining(deadline, .1))
+    except BaseException:
+        # Keep recovery ownership even when cancellation follows marker removal.
+        # The alarm still refers to the same end; this is not another allowance.
+        if not pending.exists():
+            write(pending, state)
+        raise
+
+
 def ownership_files(owner):
     if owner.resolve(strict=True) != owner or not owner.is_dir():
         raise ValueError("baseline ownership path changed")
@@ -426,6 +477,8 @@ def closed(path, action, command_sha, transport_status, deadline=None):
 
 
 def main():
+    if len(sys.argv) == 8 and sys.argv[1] == "imported-launch":
+        return imported_launch(Path(sys.argv[2]), *sys.argv[3:])
     if len(sys.argv) == 6 and sys.argv[1] == "completion-deadline":
         print(completion_deadline(Path(sys.argv[2]), sys.argv[3], sys.argv[4], int(sys.argv[5])))
         return 0

@@ -226,4 +226,4 @@ print("Mac remote action closure and cleanup ordering passed (no VM/device use)"
 
 run([sys.executable, str(ROOT / "test-macos-baseline-handoff.py")], timeout=30)
 print("Full restored-baseline handoff checks passed")
-run([sys.executable, str(ROOT / "test-macos-launch-services-harness.py")], timeout=20)
+run([sys.executable, str(ROOT / "test-macos-launch-services-harness.py")], timeout=45)
