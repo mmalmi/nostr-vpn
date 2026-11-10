@@ -307,6 +307,7 @@ release_join_android_enter() {
 
 release_join_android_launch() {
   local package="${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}"
+  "${ADB[@]}" shell cmd statusbar collapse || return 1
   "${ADB[@]}" shell am start -W \
     --ez org.nostrvpn.app.extra.RELEASE_JOIN_IMAGE_IMPORT true \
     -n "$package/org.nostrvpn.app.MainActivity" >/dev/null

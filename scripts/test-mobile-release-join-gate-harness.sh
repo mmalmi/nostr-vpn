@@ -1402,6 +1402,23 @@ PY
   [[ "$RELEASE_JOIN_IOS_JOINER_MANUAL_RELAUNCH_DURABLE" == 1 ]]
 )
 
+# Android launch must dismiss SystemUI before foregrounding the app.
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  ADB=(fake_adb)
+  calls=()
+  failure=""
+  fake_adb() { calls+=("$*"); [[ -z "$failure" || "$*" != *"$failure"* ]]; }
+  release_join_android_launch
+  [[ "${calls[0]}" == 'shell cmd statusbar collapse' && "${calls[1]}" == 'shell am start -W '* && "${#calls[@]}" == 2 ]]
+  calls=(); failure='statusbar collapse'
+  if release_join_android_launch; then exit 1; fi
+  [[ "${#calls[@]}" == 1 ]]
+  calls=(); failure='am start'
+  if release_join_android_launch; then exit 1; fi
+  [[ "${#calls[@]}" == 2 ]]
+)
+
 # Run the Android QR lifecycle helper itself: Home, foreground, same request,
 # pending QR, and width must all survive.
 (
