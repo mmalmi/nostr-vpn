@@ -392,7 +392,7 @@ def run(*arguments):
 def inspect():
     result = run('container', 'inspect', identity)
     if result.returncode:
-        assert result.returncode == 1 and 'No such container' in result.stderr
+        assert result.returncode == 1 and 'no such container: ' + identity in result.stderr.lower()
         return None
     actual = json.loads(result.stdout)[0]
     assert all(actual[key] == expected[key] for key in ['Id', 'Name', 'Image']), 'Container identity changed; preserve it'
