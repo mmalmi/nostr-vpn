@@ -199,7 +199,7 @@ macos_remote_actions_closed() {
 }
 
 macos_remote_action() {
-  local action="$1" command="$2" action_id relative receipt command_sha wrapped status=0
+  local action="$1" command="$2" action_id relative receipt command_sha wrapped deadline status=0
   [[ "$action" =~ ^[a-z][a-z-]*$ ]] || return 2
   [[ ! -e "$REMOTE_ACTION_DIR/blocked.json" ]] || return 1
   case "$action" in
@@ -216,11 +216,18 @@ macos_remote_action() {
   printf -v wrapped 'python3 -c %q run %q %q %q' \
     "$(cat "$REMOTE_ACTION_HELPER")" "$relative" "$action" "$command"
   ssh -o BatchMode=yes -o ConnectTimeout=5 \
-    -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$MAC_HOST" "$wrapped" || status=$?
+    -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$MAC_HOST" "$wrapped" \
+    2>"$receipt.action-stderr.log" || status=$?
+  cat "$receipt.action-stderr.log" >&2
   python3 "$REMOTE_ACTION_HELPER" record "$receipt.transport.json" \
     "{\"sshExitCode\":$status}" || return 1
-  printf -v wrapped 'python3 -c %q closed %q %q %q %q' \
-    "$(cat "$REMOTE_ACTION_HELPER")" "$relative" "$action" "$command_sha" "$status"
+  if ! deadline="$(python3 "$REMOTE_ACTION_HELPER" completion-deadline \
+      "$receipt.action-stderr.log" "$action" "$command_sha" "$status")"; then
+    macos_remote_actions_block "Remote completion output is unresolved; preserving its profile and harness: $action"
+    return 1
+  fi
+  printf -v wrapped 'python3 -c %q closed %q %q %q %q %q' \
+    "$(cat "$REMOTE_ACTION_HELPER")" "$relative" "$action" "$command_sha" "$status" "$deadline"
   if ssh -n -o BatchMode=yes -o ConnectTimeout=5 \
     -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$MAC_HOST" "$wrapped" \
     >"$receipt.closure.log" 2>&1

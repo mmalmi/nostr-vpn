@@ -119,7 +119,7 @@ echo reverse >>"$events"
 
     def closed(relative, command, status, expected=0):
         return run([sys.executable, str(HELPER), "closed", relative, "fixture",
-                    hashlib.sha256(command.encode()).hexdigest(), str(status)],
+                    hashlib.sha256(command.encode()).hexdigest(), str(status), "none"],
                    expected=expected, env=env)
 
     for status in (0, 7):

@@ -4,6 +4,7 @@
 import ctypes
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -34,6 +35,8 @@ def write(path, value):
 
 _cancellation = {}
 
+# Apple Python 3.9 gives time.monotonic() a process-relative origin. These
+# deadlines cross processes, so use the system-wide CLOCK_MONOTONIC directly.
 def arm_deadline(deadline, cleanup_reserve=30, shared_state=None):
     """Interrupt blocking Python/syscall work before the original end budget."""
     global _cancellation
@@ -42,16 +45,16 @@ def arm_deadline(deadline, cleanup_reserve=30, shared_state=None):
     _cancellation['deadline']=deadline
     def cancelled(signum, _frame):
         _cancellation['signal']=_cancellation['signal'] or signum
-        _cancellation['observedAtMonotonic']=time.monotonic()
-        signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.monotonic()-.25))
+        _cancellation['observedAtMonotonic']=time.clock_gettime(time.CLOCK_MONOTONIC)
+        signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.clock_gettime(time.CLOCK_MONOTONIC)-.25))
         raise InterruptedError('operation cancellation signal %s' % signum)
     for signum in (signal.SIGTERM,signal.SIGINT,signal.SIGHUP,signal.SIGALRM):
         signal.signal(signum,cancelled)
     reserve=.25 if _cancellation['signal'] else cleanup_reserve
-    signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.monotonic()-reserve))
+    signal.setitimer(signal.ITIMER_REAL,max(.001,deadline-time.clock_gettime(time.CLOCK_MONOTONIC)-reserve))
 
 def remaining(deadline, maximum=None, reserve=1):
-    value = deadline - time.monotonic() - reserve
+    value = deadline - time.clock_gettime(time.CLOCK_MONOTONIC) - reserve
     if value <= 0:
         raise TimeoutError('original operation deadline exhausted')
     return min(value, maximum) if maximum is not None else value
@@ -99,7 +102,8 @@ def receipt_path(relative):
 
 
 def baseline_snapshot(owner, pid, executable, arguments):
-    deadline = time.monotonic() + 10
+    owner = owner.absolute()
+    deadline = time.clock_gettime(time.CLOCK_MONOTONIC) + 10
     arm_deadline(deadline, cleanup_reserve=.25)
     try:
         original = read_identity(pid, executable, file_hash(executable, deadline),
@@ -122,10 +126,15 @@ def ownership_files(owner):
 
 
 def baseline_restore(owner, executable, process_name):
+    owner = owner.absolute()
     # The prior restore already had a ten-second launch/readback allowance.
     # Use one absolute end for launch, recovery and post-action handoff.
-    deadline = time.monotonic() + 10
+    deadline = time.clock_gettime(time.CLOCK_MONOTONIC) + 10
     arm_deadline(deadline, cleanup_reserve=6)
+    # Carry this same guest-clock end into the separate closure invocation.
+    # A single pipe write cannot wait for a receipt file or fill the pipe.
+    os.write(int(os.environ["NVPN_MACOS_BASELINE_DEADLINE_FD"]),
+             (repr(deadline) + "\n").encode())
     native = runpy.run_path(str(Path(__file__).with_name("native-lab.py")))
     record = Path(os.environ["NVPN_MACOS_RELEASE_ACTION_DIR"]) / "restored-baseline.json"
     state = {"phase": "launch_pending", "owner": str(owner),
@@ -170,8 +179,8 @@ def baseline_restore(owner, executable, process_name):
                 previous_alarm = signal.getsignal(signal.SIGALRM)
                 def launch_alarm(signum, frame):
                     _cancellation["signal"] = _cancellation.get("signal") or signum
-                    _cancellation["observedAtMonotonic"] = time.monotonic()
-                    signal.setitimer(signal.ITIMER_REAL, max(.001, deadline - time.monotonic() - .25))
+                    _cancellation["observedAtMonotonic"] = time.clock_gettime(time.CLOCK_MONOTONIC)
+                    signal.setitimer(signal.ITIMER_REAL, max(.001, deadline - time.clock_gettime(time.CLOCK_MONOTONIC) - .25))
                     launch_signals._handle(signum, frame)
                 signal.signal(signal.SIGALRM, launch_alarm)
                 try:
@@ -211,7 +220,7 @@ def baseline_restore(owner, executable, process_name):
     except BaseException as error:
         # If persistence failed, close only the returned, still-owned launch
         # handle using the remaining original budget; never launch a replacement.
-        signal.setitimer(signal.ITIMER_REAL, max(.001, deadline - time.monotonic() - .25))
+        signal.setitimer(signal.ITIMER_REAL, max(.001, deadline - time.clock_gettime(time.CLOCK_MONOTONIC) - .25))
         if child is not None and not launch_recorded:
             try:
                 with native["DeferredSignals"]():
@@ -234,16 +243,18 @@ def baseline_restore(owner, executable, process_name):
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
-def baseline_handoff(path):
+def baseline_handoff(path, deadline):
     record = path / "restored-baseline.json"
     if not record.exists():
         return
+    if deadline is None:
+        raise ValueError("restoration deadline was not carried into closure")
     state = json.loads(record.read_text())
     print(json.dumps({"baselineRestoration": state}), flush=True)
     if state.get("phase") != "identity_verified_ownership_retained":
         raise ValueError("baseline restoration is unresolved")
-    deadline = state["deadlineMonotonic"]
-    arm_deadline(deadline, cleanup_reserve=.25)
+    if state["deadlineMonotonic"] != deadline:
+        raise ValueError("restoration deadline changed before closure")
     try:
         owner = Path(state["owner"])
         identity = state.get("identity")
@@ -276,8 +287,32 @@ def baseline_handoff(path):
         print(json.dumps({"baselineRecovery": state}), flush=True)
         write(record, state)
         raise
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def parse_deadline(value):
+    if not isinstance(value, str):
+        raise ValueError("restoration deadline must be the original scalar text")
+    if value == "none":
+        return None
+    deadline = float(value)
+    if not math.isfinite(deadline) or deadline <= 0:
+        raise ValueError("invalid original restoration deadline")
+    return deadline
+
+
+def completion_deadline(path, action, command_sha, status):
+    prefix = "NVPN_REMOTE_ACTION_COMPLETE "
+    records = [json.loads(line[len(prefix):]) for line in path.read_text().splitlines()
+               if line.startswith(prefix)]
+    if len(records) != 1:
+        raise ValueError("remote action completion output is missing or ambiguous")
+    record = records[0]
+    if (record.get("action") != action or record.get("commandSha256") != command_sha
+            or type(record.get("exitCode")) is not int or record["exitCode"] != status):
+        raise ValueError("remote action completion output does not match its intent")
+    value = record["baselineDeadline"]
+    parse_deadline(value)
+    return value
 
 
 def run(path, action, command):
@@ -304,16 +339,41 @@ def run(path, action, command):
     # Keep the command, its drivers, and their children in this SSH action's
     # group. A lost transport or interrupted supervisor leaves an unclosed
     # receipt; it never launches another cleanup operation.
-    environment = dict(os.environ, NVPN_MACOS_RELEASE_ACTION_DIR=str(path))
-    result = subprocess.run(["/bin/bash", "-c", command], env=environment)
+    reader, writer = os.pipe()
+    os.set_blocking(reader, False)
+    os.set_blocking(writer, False)
+    environment = dict(os.environ, NVPN_MACOS_RELEASE_ACTION_DIR=str(path),
+                       NVPN_MACOS_BASELINE_DEADLINE_FD=str(writer))
+    try:
+        result = subprocess.run(["/bin/bash", "-c", command], env=environment,
+                                pass_fds=(writer,))
+    finally:
+        os.close(writer)
+    try:
+        try:
+            value = os.read(reader, 128).decode().strip() or "none"
+        except BlockingIOError:
+            value = "none"
+    finally:
+        os.close(reader)
+    deadline = parse_deadline(value)
+    if deadline is not None:
+        arm_deadline(deadline, cleanup_reserve=.25)
     status = result.returncode if result.returncode >= 0 else 128 - result.returncode
     write(path / "result.json", {
         "childExitCode": result.returncode, "exitCode": status,
     })
+    print("NVPN_REMOTE_ACTION_COMPLETE " + json.dumps({
+        "action": action, "commandSha256": hashlib.sha256(command.encode()).hexdigest(),
+        "exitCode": status, "baselineDeadline": value,
+    }), file=sys.stderr, flush=True)
     return status
 
 
-def closed(path, action, command_sha, transport_status):
+def closed(path, action, command_sha, transport_status, deadline=None):
+    if deadline is not None:
+        arm_deadline(deadline, cleanup_reserve=.25)
+        remaining(deadline, reserve=.25)
     identity = json.loads((path / "identity.json").read_text())
     result = json.loads((path / "result.json").read_text())
     print(json.dumps({"identity": identity, "result": result}), flush=True)
@@ -337,7 +397,7 @@ def closed(path, action, command_sha, transport_status):
         raise ValueError("remote action completion does not match its intent")
     # Prove terminal action closure before verifying a separately restored
     # baseline and releasing its exact retained ownership records.
-    end = time.monotonic() + 2
+    end = time.clock_gettime(time.CLOCK_MONOTONIC) + 2
     while True:
         process = subprocess.run(
             ["ps", "-p", str(identity["pid"]), "-o", "lstart="],
@@ -351,21 +411,24 @@ def closed(path, action, command_sha, transport_status):
             group_gone = False
         except ProcessLookupError:
             group_gone = True
-        if gone and group_gone or time.monotonic() >= end:
+        if gone and group_gone or time.clock_gettime(time.CLOCK_MONOTONIC) >= end:
             print(json.dumps({
                 "psExit": process.returncode, "psStdout": process.stdout,
                 "psStderr": process.stderr, "groupGone": group_gone,
             }), flush=True)
         if gone and group_gone:
             if result["exitCode"] == 0:
-                baseline_handoff(path)
+                baseline_handoff(path, deadline)
             return 0
-        if time.monotonic() >= end:
+        if time.clock_gettime(time.CLOCK_MONOTONIC) >= end:
             raise ValueError("remote action or group is still active")
         time.sleep(.05)
 
 
 def main():
+    if len(sys.argv) == 6 and sys.argv[1] == "completion-deadline":
+        print(completion_deadline(Path(sys.argv[2]), sys.argv[3], sys.argv[4], int(sys.argv[5])))
+        return 0
     if len(sys.argv) == 6 and sys.argv[1] == "baseline-snapshot":
         baseline_snapshot(Path(sys.argv[2]), int(sys.argv[3]), sys.argv[4], sys.argv[5])
         return 0
@@ -375,11 +438,17 @@ def main():
         write(pathlib.Path(sys.argv[2]), json.loads(sys.argv[3]))
         return 0
     mode, relative, action, value, *extra = sys.argv[1:]
+    deadline = None
+    if mode == "closed" and len(extra) == 2:
+        deadline = parse_deadline(extra[1])
+        if deadline is not None:
+            arm_deadline(deadline, cleanup_reserve=.25)
+            remaining(deadline, reserve=.25)
     path = receipt_path(relative)
     if mode == "run" and not extra:
         return run(path, action, value)
-    if mode == "closed" and len(extra) == 1:
-        return closed(path, action, value, int(extra[0]))
+    if mode == "closed" and len(extra) == 2:
+        return closed(path, action, value, int(extra[0]), deadline)
     raise ValueError("invalid remote release action invocation")
 
 
