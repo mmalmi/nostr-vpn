@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import test from 'node:test'
+import { tmpdir } from 'node:os'
+import test, { after } from 'node:test'
 
 import {
   publishReleaseRefs,
@@ -13,14 +14,19 @@ const tree = 'b'.repeat(40)
 const previous = 'c'.repeat(40)
 const tag = 'v4.1.5'
 const cid = 'nhash1acdefghjklmnpqrstuvwxyz023456789'
-const repository = 'example/nostr-vpn'
+const repository = 'mmalmi/nostr-vpn'
+const stateRoots = []
+after(() => { for (const path of stateRoots) rmSync(path, { recursive: true, force: true }) })
 
 function options() {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-refs-test-'))
+  stateRoots.push(root)
   return {
     stageDir: '/private/release/stage',
     tag,
     cid,
     env: {},
+    workflowStateDir: join(root, 'workflow'),
   }
 }
 
@@ -60,6 +66,12 @@ function fakePublication({
   multiplePushUrls = '',
   workflowAppearsOnList = 0,
   duplicateExactRuns = false,
+  configuredRepository = repository,
+  saturatedRuns = false,
+  dispatchFailure = false,
+  watchFailure = false,
+  beforeDispatch = () => {},
+  beforeWatch = () => {},
 } = {}) {
   const events = []
   const state = {
@@ -69,6 +81,7 @@ function fakePublication({
     htreeTag,
     localTag,
     workflow,
+    watchFailure,
   }
   let workflowListCount = 0
   const workflowRow = (status = state.workflow) => {
@@ -116,7 +129,7 @@ function fakePublication({
       return result(
         0,
         remoteName === 'github'
-          ? `git@github.com:${repository}.git`
+          ? `git@github.com:${configuredRepository}.git`
           : 'htree://self/nostr-vpn',
       )
     }
@@ -178,6 +191,7 @@ function fakePublication({
         state[driftBeforeWorkflowList === 'origin' ? 'htreeTag' : 'githubTag'] = ''
       }
       const rows = []
+      if (saturatedRuns) return result(0, JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ databaseId: i + 1 }))))
       if (conflictingCid) {
         rows.push({
           ...workflowRow('queued'),
@@ -201,16 +215,19 @@ function fakePublication({
       && args[0] === 'workflow'
       && args[1] === 'run'
     ) {
+      beforeDispatch()
       events.push({
         mutation: true,
         name: 'workflow-dispatch',
         args,
       })
       state.workflow = 'queued'
-      return result()
+      return dispatchFailure ? result(1, '', 'uncertain dispatch response') : result()
     }
     if (command === 'gh' && args[0] === 'run' && args[1] === 'watch') {
+      beforeWatch()
       events.push({ mutation: false, name: 'workflow-watch', args })
+      if (state.watchFailure) return result(1, '', 'local watch deadline')
       state.workflow = 'success'
       return result()
     }
@@ -598,4 +615,81 @@ test('workflow title binds the exact dispatch inputs used for retry recovery', (
     workflow,
     /run-name:\s*>-\s+Release \$\{\{ inputs\.tag \}\} @ \$\{\{ inputs\.locally_attested_commit \}\} from \$\{\{ inputs\.locally_gated_release_cid \}\}/,
   )
+})
+
+test('matching fetch and push URLs for a different GitHub owner fail before mutation', () => {
+  const fake = fakePublication({ configuredRepository: 'unreviewed/nostr-vpn' })
+  assert.throws(() => publishReleaseRefs(options(), {
+    runCommand: fake.runCommand, validateGate: successfulGate(fake.events),
+  }), /canonical release repository/)
+  assert.deepEqual(mutationNames(fake.events), [])
+})
+
+test('a saturated workflow listing cannot authorize dispatch', () => {
+  const fake = fakePublication({ githubTag: commit, htreeTag: commit, localTag: true, saturatedRuns: true })
+  assert.throws(() => publishReleaseRefs(options(), {
+    runCommand: fake.runCommand, validateGate: successfulGate(fake.events),
+  }), /saturated; absence is unproven/)
+  assert.deepEqual(mutationNames(fake.events), [])
+})
+
+test('uncertain dispatch persists intent and resumes by observation without redispatch', () => {
+  const selected = options()
+  const record = (name) => JSON.parse(readFileSync(join(selected.workflowStateDir, `${name}.json`), 'utf8'))
+  const fake = fakePublication({
+    dispatchFailure: true,
+    beforeDispatch: () => {
+      assert.deepEqual(record('intent'), { repository, workflow: 'release.yml', tag, commit, cid, dispatchMayHaveOccurred: true })
+    },
+    beforeWatch: () => assert.equal(record('run').runId, 415),
+  })
+  const dependencies = { runCommand: fake.runCommand, validateGate: successfulGate(fake.events), sleep: () => {} }
+  assert.throws(() => publishReleaseRefs(selected, dependencies), /uncertain dispatch response/)
+  assert.equal(existsSync(join(selected.workflowStateDir, 'run.json')), false)
+  fake.events.length = 0
+  assert.equal(publishReleaseRefs(selected, dependencies).runId, 415)
+  assert.deepEqual(mutationNames(fake.events), [])
+  assert.equal(fake.events.some((event) => event.name === 'htree-get'), false)
+})
+
+test('an unknown dispatch with no visible run remains unresolved and never redispatches', () => {
+  const selected = options()
+  const fake = fakePublication({ dispatchFailure: true })
+  const dependencies = { runCommand: fake.runCommand, validateGate: successfulGate(fake.events), sleep: () => {} }
+  assert.throws(() => publishReleaseRefs(selected, dependencies), /uncertain dispatch response/)
+  fake.state.workflow = 'none'
+  fake.events.length = 0
+  assert.throws(() => publishReleaseRefs(selected, dependencies), /did not appear within 30 seconds/)
+  assert.deepEqual(mutationNames(fake.events), [])
+  assert.equal(existsSync(join(selected.workflowStateDir, 'run.json')), false)
+})
+
+test('an interrupted existing-run watch preserves its ID and resumes without a new dispatch', () => {
+  const selected = options()
+  const fake = fakePublication({
+    githubTag: commit, htreeTag: commit, localTag: true, workflow: 'queued', watchFailure: true,
+    beforeWatch: () => {
+      const saved = JSON.parse(readFileSync(join(selected.workflowStateDir, 'run.json'), 'utf8'))
+      assert.equal(saved.runId, 415)
+    },
+  })
+  const dependencies = { runCommand: fake.runCommand, validateGate: successfulGate(fake.events) }
+  assert.throws(() => publishReleaseRefs(selected, dependencies), /local watch deadline/)
+  const intent = JSON.parse(readFileSync(join(selected.workflowStateDir, 'intent.json'), 'utf8'))
+  assert.equal(intent.dispatchMayHaveOccurred, false)
+  fake.state.watchFailure = false
+  fake.events.length = 0
+  assert.equal(publishReleaseRefs(selected, dependencies).runId, 415)
+  assert.deepEqual(mutationNames(fake.events), [])
+  assert.equal(fake.events.some((event) => event.name === 'htree-get'), false)
+})
+
+test('recovery records cannot be reused with a different immutable draft', () => {
+  const selected = options()
+  const fake = fakePublication({ githubTag: commit, htreeTag: commit, localTag: true, workflow: 'success' })
+  const dependencies = { runCommand: fake.runCommand, validateGate: successfulGate(fake.events) }
+  publishReleaseRefs(selected, dependencies)
+  fake.events.length = 0
+  assert.throws(() => publishReleaseRefs({ ...selected, cid: `${cid}q` }, dependencies), /different release inputs/)
+  assert.deepEqual(mutationNames(fake.events), [])
 })

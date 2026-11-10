@@ -3,8 +3,16 @@
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
   mkdtempSync,
+  openSync,
+  readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
@@ -17,6 +25,8 @@ import { validateReleaseMutationGate } from './release-mutation-gate.mjs'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const canonicalHtreeRemote = 'htree://self/nostr-vpn'
+const canonicalGithubRemote = 'git@github.com:mmalmi/nostr-vpn.git'
+const canonicalGithubRepository = 'mmalmi/nostr-vpn'
 const workflowName = 'release.yml'
 
 function fail(message) {
@@ -107,6 +117,9 @@ function assertRemotePins(runCommand) {
     fail('github push URL differs from its validated fetch URL')
   }
   const repository = githubRepositoryFromRemote(githubRemote)
+  if (githubRemote !== canonicalGithubRemote || repository !== canonicalGithubRepository) {
+    fail('github must remain the exact canonical release repository and URL')
+  }
   const origin = exactConfiguredRemoteUrl(runCommand, 'origin')
   const originPush = exactConfiguredRemoteUrl(
     runCommand,
@@ -255,6 +268,9 @@ function listedWorkflowRuns(runCommand, repository, tag) {
   if (!Array.isArray(rows)) {
     fail('GitHub workflow run list must be an array')
   }
+  if (rows.length >= 100) {
+    fail('GitHub workflow run list is saturated; absence is unproven')
+  }
   return rows
 }
 
@@ -323,6 +339,7 @@ function verifyWorkflowRun({
   tag,
   commit,
   cid,
+  requireSuccess = true,
 }) {
   const viewed = exactJson(
     run(
@@ -347,12 +364,71 @@ function verifyWorkflowRun({
       !== releaseWorkflowRunTitle({ tag, commit, cid })
     || viewed?.event !== 'workflow_dispatch'
     || viewed?.headSha !== commit
-    || viewed?.status !== 'completed'
-    || viewed?.conclusion !== 'success'
+    || (requireSuccess && (
+      viewed?.status !== 'completed' || viewed?.conclusion !== 'success'
+    ))
   ) {
     fail('GitHub workflow did not complete successfully with exact inputs')
   }
   return viewed
+}
+
+// These records survive a killed watcher or an uncertain dispatch response.
+// Once intent exists, another invocation only reconciles the same workflow.
+function workflowRecords(directory, expected) {
+  if (!directory || !isAbsolute(directory)) {
+    fail('an absolute workflow state directory is required')
+  }
+  const read = (name) => {
+    const path = join(directory, `${name}.json`)
+    if (!existsSync(path)) return null
+    const metadata = lstatSync(path)
+    if (!metadata.isFile() || metadata.isSymbolicLink()) fail('workflow record is not a regular file')
+    const value = exactJson(readFileSync(path, 'utf8'), 'workflow record')
+    for (const [key, exact] of Object.entries(expected)) {
+      if (value[key] !== exact) fail('workflow record binds different release inputs')
+    }
+    return value
+  }
+  if (existsSync(directory)) {
+    const metadata = lstatSync(directory)
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()) fail('workflow state must be a real directory')
+  }
+  const write = (name, fields) => {
+    if (!existsSync(directory)) mkdirSync(directory, { mode: 0o700 })
+    const path = join(directory, `${name}.json`)
+    const fd = openSync(path, 'wx', 0o600)
+    try {
+      writeFileSync(fd, `${JSON.stringify({ ...expected, ...fields }, null, 2)}\n`)
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+    // Persist both the new record and, on first use, its containing directory.
+    for (const path of [directory, dirname(directory)]) {
+      const fd = openSync(path, 'r')
+      try { fsyncSync(fd) } finally { closeSync(fd) }
+    }
+  }
+  return { read, write }
+}
+
+function observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records }) {
+  if (!Number.isSafeInteger(workflow.databaseId) || workflow.databaseId <= 0) fail('invalid workflow run ID')
+  const saved = records.read('run')
+  if (saved && saved.runId !== workflow.databaseId) fail('workflow run ID changed')
+  if (!saved) records.write('run', { runId: workflow.databaseId })
+  if (!(workflow.status === 'completed' && workflow.conclusion === 'success')) {
+    const watched = commandResult(
+      runCommand, 'gh',
+      ['run', 'watch', String(workflow.databaseId), '--repo', repository, '--exit-status', '--interval', '30'],
+      { cwd: repoRoot, stdio: 'inherit' },
+    )
+    if (watched.status !== 0) {
+      fail(watched.stderr || 'exact workflow watch ended without success; reconcile the saved run ID')
+    }
+  }
+  return verifyWorkflowRun({ runCommand, repository, runId: workflow.databaseId, tag, commit, cid })
 }
 
 function waitForExactWorkflowRun({
@@ -412,6 +488,21 @@ export function publishReleaseRefs(options, dependencies = {}) {
   ) {
     fail('canonical mutation gate returned an invalid exact source')
   }
+  const repository = assertRemotePins(runCommand)
+  const records = workflowRecords(options.workflowStateDir, {
+    repository, workflow: workflowName, tag, commit, cid,
+  })
+  const priorIntent = records.read('intent')
+  if (priorIntent) {
+    const saved = records.read('run')
+    const workflow = saved
+      ? verifyWorkflowRun({ runCommand, repository, runId: saved.runId, tag, commit, cid, requireSuccess: false })
+      : waitForExactWorkflowRun({ runCommand, sleep, repository, tag, commit, cid })
+    const verified = observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records })
+    assertPublishedRefsExact(inspectRemoteRefs(runCommand, tag, commit), commit)
+    return { cid, commit, repository, runId: verified.databaseId, status: 'passed', tag, tree }
+  }
+  if (records.read('run')) fail('workflow run record has no dispatch or observation intent')
   verifyDraftCid({
     runCommand,
     tag,
@@ -419,7 +510,6 @@ export function publishReleaseRefs(options, dependencies = {}) {
     tree,
     cid,
   })
-  const repository = assertRemotePins(runCommand)
   let refs = inspectRemoteRefs(runCommand, tag, commit)
   ensureLightweightTag(runCommand, tag, commit)
 
@@ -496,6 +586,7 @@ export function publishReleaseRefs(options, dependencies = {}) {
       cid,
     })
     if (!workflow) {
+      records.write('intent', { dispatchMayHaveOccurred: true })
       run(
         runCommand,
         'gh',
@@ -526,38 +617,8 @@ export function publishReleaseRefs(options, dependencies = {}) {
       })
     }
   }
-  if (!(workflow.status === 'completed' && workflow.conclusion === 'success')) {
-    const watched = commandResult(
-      runCommand,
-      'gh',
-      [
-        'run',
-        'watch',
-        String(workflow.databaseId),
-        '--repo',
-        repository,
-        '--exit-status',
-        '--interval',
-        '30',
-      ],
-      // Long CI runs must not fill spawnSync's captured-output buffer.
-      { cwd: repoRoot, stdio: 'inherit' },
-    )
-    if (watched.status !== 0) {
-      fail(
-        watched.stderr
-        || 'exact GitHub workflow run did not succeed',
-      )
-    }
-  }
-  const verified = verifyWorkflowRun({
-    runCommand,
-    repository,
-    runId: workflow.databaseId,
-    tag,
-    commit,
-    cid,
-  })
+  if (!records.read('intent')) records.write('intent', { dispatchMayHaveOccurred: false })
+  const verified = observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records })
   assertPublishedRefsExact(
     inspectRemoteRefs(runCommand, tag, commit),
     commit,
@@ -578,6 +639,7 @@ function parseArgs(argv) {
     stageDir: process.env.NVPN_RELEASE_STAGE_DIR || '',
     tag: process.env.NVPN_RELEASE_TAG || '',
     cid: process.env.NVPN_RELEASE_DRAFT_CID || '',
+    workflowStateDir: process.env.NVPN_RELEASE_WORKFLOW_STATE_DIR || '',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
@@ -591,6 +653,9 @@ function parseArgs(argv) {
       case '--draft-cid':
         values.cid = argv[++index] ?? ''
         break
+      case '--workflow-state-dir':
+        values.workflowStateDir = argv[++index] ?? ''
+        break
       case '--help':
       case '-h':
         console.log(`Usage: node scripts/publish-release-refs.mjs [options]
@@ -602,7 +667,8 @@ and waits for that workflow to succeed.
 Options:
   --stage-dir DIR
   --tag TAG
-  --draft-cid CID`)
+  --draft-cid CID
+  --workflow-state-dir DIR  Durable dispatch and run records; reuse after interruption`)
         process.exit(0)
         break
       default:
