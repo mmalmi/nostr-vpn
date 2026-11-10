@@ -19,6 +19,7 @@ import {
   startosExactPackageValidator,
   validateExactZipMembers,
   validateMacosPixelJoinReceipt,
+  validateMacosJoinProfileIsolation,
 } from './release-artifact-provenance-lib.mjs'
 import { proveUnchangedPlatformInputs } from './release-component-source.mjs'
 
@@ -30,6 +31,90 @@ function write(path, value) {
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, value)
 }
+
+function withMacosProfileEvidence(receipt) {
+  receipt.schema = 2
+  receipt.selectedDirections ??= 'all'
+  receipt.appLaunchArgumentsOrEnvironment = true
+  receipt.directionEvidence = {}
+  receipt.profileIsolation = {
+    schema: 1, kind: 'macos-production-data-directory',
+    environmentKeys: ['HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR', 'LANG', 'NVPN_APP_DATA_DIR'],
+    appArguments: [], artifactReceiptSha256: receipt.artifact.artifactReceiptSha256,
+    appExecutableSha256: receipt.artifact.appExecutableSha256, directions: {},
+  }
+  for (const direction of ['macosAdminPixelJoiner', 'pixelAdminMacosJoiner',
+    ...(receipt.selectedDirections === 'pixel' ? []
+      : ['macosAdminIphoneJoiner', 'iphoneAdminMacosJoiner'])]) {
+    const binding = {
+      runtimeHarnessGitSha: 'a'.repeat(40), runtimeLaunchHelperSha256: 'b'.repeat(64),
+      outcomeSha256: sha256(direction), operationSha256: 'c'.repeat(64),
+      restoredBaselineIdentitySha256: 'd'.repeat(64),
+    }
+    receipt.directionEvidence[direction] = { ...binding }
+    receipt.profileIsolation.directions[direction] = {
+      ...binding, configDirectoryBeforeSha256: 'e'.repeat(64),
+      configDirectoryAfterSha256: 'e'.repeat(64), configBeforeSha256: 'f'.repeat(64),
+      configAfterSha256: 'f'.repeat(64), systemBeforeSha256: '1'.repeat(64),
+      systemAfterSha256: '1'.repeat(64),
+      knownPathsBefore: { appOwnership: false, externalHarness: false,
+        profileTransaction: false, testConfig: false },
+      knownPathsAfter: { appOwnership: false, externalHarness: false,
+        profileTransaction: false, testConfig: false },
+    }
+  }
+  return receipt
+}
+
+test('Mac profile evidence binds explicit launch settings and bounded restoration', () => {
+  const artifact = { appExecutableSha256: '9'.repeat(64) }
+  const artifactSha = '8'.repeat(64)
+  const original = withMacosProfileEvidence({ selectedDirections: 'pixel', artifact: {
+    artifactReceiptSha256: artifactSha, appExecutableSha256: artifact.appExecutableSha256,
+  } })
+  const validate = (receipt, options) => validateMacosJoinProfileIsolation(
+    receipt, artifact, artifactSha, options)
+  assert.doesNotThrow(() => validate(original))
+  const mutations = [
+    (r) => { delete r.profileIsolation },
+    (r) => { r.profileIsolation = null },
+    (r) => { r.appLaunchArgumentsOrEnvironment = false },
+    (r) => { r.schema = 1 },
+    (r) => { r.profileIsolation.kind = 'production-data-directory' },
+    (r) => { r.profileIsolation.environmentKeys.push('NVPN_CLI_PATH') },
+    (r) => { r.profileIsolation.environmentKeys.pop() },
+    (r) => { r.profileIsolation.appArguments.push('--injected-peer') },
+    (r) => { r.profileIsolation.appExecutableSha256 = '0'.repeat(64) },
+    (r) => { r.profileIsolation.artifactReceiptSha256 = '0'.repeat(64) },
+    (r) => { r.profileIsolation.originalProfileUnchanged = true },
+    (r) => { delete r.directionEvidence },
+    (r) => { delete r.profileIsolation.directions.pixelAdminMacosJoiner },
+    (r) => { r.selectedDirections = 'all' },
+  ]
+  for (const field of ['runtimeHarnessGitSha', 'runtimeLaunchHelperSha256',
+    'outcomeSha256', 'operationSha256', 'restoredBaselineIdentitySha256',
+    'configDirectoryAfterSha256', 'configAfterSha256', 'systemAfterSha256']) {
+    mutations.push((r) => { r.profileIsolation.directions.macosAdminPixelJoiner[field] = '0'.repeat(64) })
+  }
+  for (const field of ['knownPathsBefore', 'knownPathsAfter']) {
+    mutations.push((r) => { r.profileIsolation.directions.macosAdminPixelJoiner[field].testConfig = true })
+  }
+  mutations.push((r) => {
+    r.directionEvidence.macosAdminPixelJoiner.outcomeSha256 = 'malformed'
+    r.profileIsolation.directions.macosAdminPixelJoiner.outcomeSha256 = 'malformed'
+  })
+  for (const mutate of mutations) {
+    const receipt = structuredClone(original)
+    mutate(receipt)
+    assert.throws(() => validate(receipt))
+  }
+  const legacy = { schema: 1, appLaunchArgumentsOrEnvironment: false }
+  assert.doesNotThrow(() => validate(legacy, { requireProof: false }))
+  assert.throws(() => validate(legacy))
+  for (const marker of ['selectedDirections', 'directionEvidence', 'reusedPixelReceiptSha256']) {
+    assert.throws(() => validate({ ...legacy, [marker]: 'retained' }, { requireProof: false }))
+  }
+})
 
 test('exact ZIP validation rejects publication payload extras', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-exact-zip-'))
@@ -2069,6 +2154,24 @@ test('release receipt collection requires exact source and strict public UI gate
     delete paths.ios.hosted_admission
 
     const fullMacosText = readFileSync(paths.macos.public_ui_join, 'utf8')
+    const fullMacosSealText = readFileSync(paths.ios.frozen_archive, 'utf8')
+    // Full release collection and Pixel reuse share the same Mac-specific proof.
+    const fullMacosWithProfile = withMacosProfileEvidence(JSON.parse(fullMacosText))
+    writeFileSync(paths.macos.public_ui_join, JSON.stringify(fullMacosWithProfile))
+    const profileSeal = JSON.parse(fullMacosSealText)
+    profileSeal.realDeviceGateReceiptSha256['desktop-mobile-manual-join'][0] =
+      sha256(readFileSync(paths.macos.public_ui_join))
+    writeFileSync(paths.ios.frozen_archive, JSON.stringify(profileSeal))
+    assert.doesNotThrow(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }))
+    delete fullMacosWithProfile.profileIsolation.directions.iphoneAdminMacosJoiner
+    writeFileSync(paths.macos.public_ui_join, JSON.stringify(fullMacosWithProfile))
+    assert.throws(() => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    }), /profile isolation/)
+    writeFileSync(paths.macos.public_ui_join, fullMacosText)
+    writeFileSync(paths.ios.frozen_archive, fullMacosSealText)
     const pixelReceipt = JSON.parse(fullMacosText)
     pixelReceipt.selectedDirections = 'pixel'
     for (const key of [
@@ -2079,6 +2182,7 @@ test('release receipt collection requires exact source and strict public UI gate
     delete pixelReceipt.artifact.ios
     delete pixelReceipt.deliveryMilliseconds['macOS-admin-to-iPhone-manual']
     delete pixelReceipt.deliveryMilliseconds['iPhone-admin-to-macOS-manual']
+    withMacosProfileEvidence(pixelReceipt)
     const pixelArgs = {
       receipt: pixelReceipt,
       artifactReceipt: JSON.parse(readFileSync(paths.macos.artifact, 'utf8')),

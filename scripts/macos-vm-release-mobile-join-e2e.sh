@@ -1563,47 +1563,60 @@ if ios_artifact is not None:
         **{key: ios_artifact[key] for key in ios_identity_keys},
     }
 
-with open(sys.argv[1], "w", encoding="utf-8") as handle:
-    json.dump(
-        {
-            "schema": 1,
-            "platform": "macos",
-            "artifact": artifact_summary,
-            "builtOnHost": artifact["builtOnHost"],
-            "builtOnTestVm": False,
-            **({"buildOrigin": "github-actions", "signedOnHost": True,
-                "hostedAdmissionReceiptSha256": artifact["hostedAdmissionReceiptSha256"]}
-               if artifact.get("receiptSchema") == 2 else {}),
-            "remoteImportVerified": True,
-            "publicUiOnly": True,
-            "appLaunchArgumentsOrEnvironment": False,
-            "privateAppStateRead": False,
-            "privateStateRead": False,
-            "fixtureInvoked": False,
-            "acceptedSelectorSemantics": "participant-state-not-pending",
-            "selectedDirections": selected,
-            **({"reusedPixelReceiptSha256": reused_pixel_sha256}
-               if reused_pixel_sha256 else {}),
-            "desktopAdminAndroidJoiner": True,
-            "androidAdminDesktopJoiner": True,
-            "desktopAdminIphoneJoiner": selected == "all",
-            "iphoneAdminDesktopJoiner": selected == "all",
-            "exactRosterOnBothSides": True,
-            "acceptedRosterRetainedAcrossRelaunch": True,
-            "desktopRelaunchDurability": True,
-            "pixelRelaunchDurability": True,
-            "desktopAdminIphoneJoinerRelaunchDurable":
-                selected == "all" and desktop_admin_iphone_joiner_relaunch == "1",
-            "iphoneAdminDesktopJoinerRelaunchDurable":
-                selected == "all" and iphone_admin_desktop_joiner_relaunch == "1",
-            "deliveryDeadlineMilliseconds": 15_000,
-            "deliveryMilliseconds": timings,
-        },
-        handle,
-        indent=2,
-        sort_keys=True,
-    )
-    handle.write("\n")
+receipt = {
+    "schema": 2,
+    "platform": "macos",
+    "artifact": artifact_summary,
+    "builtOnHost": artifact["builtOnHost"],
+    "builtOnTestVm": False,
+    **({"buildOrigin": "github-actions", "signedOnHost": True,
+        "hostedAdmissionReceiptSha256": artifact["hostedAdmissionReceiptSha256"]}
+       if artifact.get("receiptSchema") == 2 else {}),
+    "remoteImportVerified": True,
+    "publicUiOnly": True,
+    "appLaunchArgumentsOrEnvironment": True,
+    "privateAppStateRead": False,
+    "privateStateRead": False,
+    "fixtureInvoked": False,
+    "acceptedSelectorSemantics": "participant-state-not-pending",
+    "selectedDirections": selected,
+    **({"reusedPixelReceiptSha256": reused_pixel_sha256}
+       if reused_pixel_sha256 else {}),
+    "desktopAdminAndroidJoiner": True,
+    "androidAdminDesktopJoiner": True,
+    "desktopAdminIphoneJoiner": selected == "all",
+    "iphoneAdminDesktopJoiner": selected == "all",
+    "exactRosterOnBothSides": True,
+    "acceptedRosterRetainedAcrossRelaunch": True,
+    "desktopRelaunchDurability": True,
+    "pixelRelaunchDurability": True,
+    "desktopAdminIphoneJoinerRelaunchDurable":
+        selected == "all" and desktop_admin_iphone_joiner_relaunch == "1",
+    "iphoneAdminDesktopJoinerRelaunchDurable":
+        selected == "all" and iphone_admin_desktop_joiner_relaunch == "1",
+    "deliveryDeadlineMilliseconds": 15_000,
+    "deliveryMilliseconds": timings,
+}
+# Restoration is observed after this runtime process exits. A retained-evidence
+# composer supplies the sealed launch/profile evidence as the final argument;
+# the live runner can emit only a draft, never an admissible final summary.
+output = pathlib.Path(sys.argv[1])
+if len(sys.argv) == 16:
+    evidence = json.loads(pathlib.Path(sys.argv[15]).read_text(encoding="utf-8"))
+    if set(evidence) != {"profileIsolation", "directionEvidence"}:
+        raise SystemExit("Mac launch/profile evidence has unexpected fields")
+    receipt.update(evidence)
+    subprocess.run([
+        "node", "--input-type=module", "-e",
+        "import{readFileSync}from'node:fs';import{pathToFileURL}from'node:url';"
+        "const[root,artifactPath,artifactSha]=process.argv.slice(1);"
+        "const{validateMacosJoinProfileIsolation}=await import(pathToFileURL(root+'/scripts/release-artifact-provenance-lib.mjs'));"
+        "validateMacosJoinProfileIsolation(JSON.parse(readFileSync(0,'utf8')),JSON.parse(readFileSync(artifactPath,'utf8')),artifactSha);",
+        sys.argv[13], str(artifact_path), hashlib.sha256(artifact_path.read_bytes()).hexdigest(),
+    ], input=json.dumps(receipt), text=True, check=True)
+else:
+    output = output.with_name("runtime-summary.json")
+output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 
-echo "SIGNED_RELEASE_PUBLIC_UI_DESKTOP_MOBILE_JOIN_E2E_OK"
+echo "SIGNED_RELEASE_PUBLIC_UI_DESKTOP_MOBILE_JOIN_RUNTIME_OK"

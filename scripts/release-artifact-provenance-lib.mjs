@@ -725,6 +725,60 @@ function requireSameIosReceipt(original, current, allowed, label, path = []) {
   } else if (!isDeepStrictEqual(original, current)) fail()
 }
 
+// This records only the configuration and system snapshots actually observed by
+// the Mac gate. It is not a claim that the entire original profile tree was read.
+export function validateMacosJoinProfileIsolation(
+  receipt, artifactReceipt, artifactReceiptSha256, { requireProof = true } = {},
+) {
+  const proof = receipt.profileIsolation
+  if (!requireProof && receipt.schema === 1
+    && receipt.appLaunchArgumentsOrEnvironment === false && proof === undefined
+    && receipt.directionEvidence === undefined
+    && receipt.selectedDirections === undefined
+    && receipt.reusedPixelReceiptSha256 === undefined) return
+  const fail = () => { throw new Error('macOS profile isolation lacks exact launch/restoration evidence.') }
+  const exactKeys = (value, keys) => value && typeof value === 'object'
+    && !Array.isArray(value)
+    && isDeepStrictEqual(Object.keys(value).sort(), [...keys].sort())
+  if (receipt.schema !== 2 || receipt.appLaunchArgumentsOrEnvironment !== true
+    || !['pixel', 'all'].includes(receipt.selectedDirections)
+    || !exactKeys(proof, ['schema', 'kind', 'environmentKeys', 'appArguments',
+      'artifactReceiptSha256', 'appExecutableSha256', 'directions'])
+    || proof.schema !== 1 || proof.kind !== 'macos-production-data-directory'
+    || !isDeepStrictEqual(proof.environmentKeys,
+      ['HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR', 'LANG', 'NVPN_APP_DATA_DIR'])
+    || !isDeepStrictEqual(proof.appArguments, [])
+    || proof.artifactReceiptSha256 !== artifactReceiptSha256
+    || proof.appExecutableSha256 !== artifactReceipt.appExecutableSha256) fail()
+  requireSha256(proof.artifactReceiptSha256, 'macOS profile artifact receipt')
+  requireSha256(proof.appExecutableSha256, 'macOS profile executable')
+  const directions = ['macosAdminPixelJoiner', 'pixelAdminMacosJoiner',
+    ...(receipt.selectedDirections === 'pixel' ? []
+      : ['macosAdminIphoneJoiner', 'iphoneAdminMacosJoiner'])]
+  if (!exactKeys(proof.directions, directions)) fail()
+  const bindings = ['runtimeHarnessGitSha', 'runtimeLaunchHelperSha256',
+    'outcomeSha256', 'operationSha256', 'restoredBaselineIdentitySha256']
+  const hashes = ['configDirectoryBeforeSha256', 'configDirectoryAfterSha256',
+    'configBeforeSha256', 'configAfterSha256', 'systemBeforeSha256', 'systemAfterSha256']
+  for (const direction of directions) {
+    const row = proof.directions[direction]
+    const evidence = receipt.directionEvidence?.[direction]
+    if (!exactKeys(row, [...bindings, ...hashes, 'knownPathsBefore', 'knownPathsAfter'])
+      || !evidence || !/^[0-9a-f]{40}$/.test(row.runtimeHarnessGitSha)
+      || bindings.some((key) => row[key] !== evidence[key])) fail()
+    for (const key of [...bindings.slice(1), ...hashes]) {
+      requireSha256(row[key], `macOS profile ${direction} ${key}`)
+    }
+    for (const prefix of ['configDirectory', 'config', 'system']) {
+      if (row[`${prefix}BeforeSha256`] !== row[`${prefix}AfterSha256`]) fail()
+    }
+    const absent = { appOwnership: false, externalHarness: false,
+      profileTransaction: false, testConfig: false }
+    if (!isDeepStrictEqual(row.knownPathsBefore, absent)
+      || !isDeepStrictEqual(row.knownPathsAfter, absent)) fail()
+  }
+}
+
 function requireMacosJoinReceipt({
   receipt,
   artifactReceipt,
@@ -736,11 +790,15 @@ function requireMacosJoinReceipt({
   commit,
   tree,
   includeIphone = true,
+  requireProfileIsolation = artifactReceipt.receiptSchema === 2,
 }) {
+  validateMacosJoinProfileIsolation(receipt, artifactReceipt, artifactReceiptSha256,
+    { requireProof: requireProfileIsolation })
   requirePublicUiJoinReceipt(
     receipt,
     'macos',
     'macOS/mobile public-UI join receipt',
+    receipt.schema === 2 ? 2 : 1,
   )
   requireReceiptSource(receipt, {
     commit,
@@ -759,7 +817,7 @@ function requireMacosJoinReceipt({
     throw new Error('macOS/Android join install receipt size is invalid.')
   }
   if (
-    receipt.appLaunchArgumentsOrEnvironment !== false
+    receipt.privateAppStateRead !== false
     || receipt.desktopAdminAndroidJoiner !== true
     || receipt.androidAdminDesktopJoiner !== true
     || receipt.desktopAdminIphoneJoiner !== includeIphone
@@ -844,6 +902,7 @@ export function validateMacosPixelJoinReceipt(args) {
     commit: artifactReceipt.appGitSha,
     tree: artifactReceipt.appGitTree,
     includeIphone: false,
+    requireProfileIsolation: true,
   })
   return { ...receipt.deliveryMilliseconds }
 }
