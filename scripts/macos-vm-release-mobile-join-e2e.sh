@@ -1001,13 +1001,15 @@ set +e
 (
 set -euo pipefail
 MACOS_MOBILE_DIRECTION_LABEL=macos-admin-pixel-joiner
+RELEASE_JOIN_ANDROID_UI_XML="$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-android-ui.xml"
 remote_pid=""
 remote_pid_owner=""
 ios_test_pid_owner=""
 acceptance_observer_pids=()
 trap macos_mobile_direction_cleanup EXIT
 prepare_macos_mobile_direction "$MACOS_MOBILE_DIRECTION_LABEL"
-release_join_android_open_network_setup
+release_join_android_open_network_setup \
+  2>"$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-android-setup.log"
 desktop_admin_log="$RESULT_DIR/macos/desktop-admin.log"
 remote create-admin "ReleaseDesktopAdmin" >"$desktop_admin_log" 2>&1
 DESKTOP_ADMIN_ID="$(marker_value "$desktop_admin_log" NVPN_RELEASE_JOIN_ADMIN_ID)"
@@ -1067,13 +1069,15 @@ set +e
 (
 set -euo pipefail
 MACOS_MOBILE_DIRECTION_LABEL=pixel-admin-macos-joiner
+RELEASE_JOIN_ANDROID_UI_XML="$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-android-ui.xml"
 remote_pid=""
 remote_pid_owner=""
 ios_test_pid_owner=""
 acceptance_observer_pids=()
 trap macos_mobile_direction_cleanup EXIT
 prepare_macos_mobile_direction "$MACOS_MOBILE_DIRECTION_LABEL"
-release_join_android_open_network_setup
+release_join_android_open_network_setup \
+  2>"$RESULT_DIR/macos/$MACOS_MOBILE_DIRECTION_LABEL-android-setup.log"
 release_join_android_create_admin
 desktop_joiner_identity_log="$RESULT_DIR/macos/android-admin-desktop-identity.log"
 remote joiner-id >"$desktop_joiner_identity_log"

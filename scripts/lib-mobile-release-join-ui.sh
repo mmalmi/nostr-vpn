@@ -176,10 +176,12 @@ release_join_observe_pair_until_ms() {
 }
 
 release_join_android_dump_ui() {
-  RELEASE_JOIN_ANDROID_UI_XML="$PRIVATE_DIR/android-ui.xml"
+  RELEASE_JOIN_ANDROID_UI_XML="${RELEASE_JOIN_ANDROID_UI_XML:-$PRIVATE_DIR/android-ui.xml}"
   "${ADB[@]}" shell uiautomator dump /sdcard/nvpn-release-join.xml >/dev/null 2>&1 || return 1
+  # Keep the last completed snapshot if the next read fails or is interrupted.
   "${ADB[@]}" exec-out cat /sdcard/nvpn-release-join.xml \
-    >"$RELEASE_JOIN_ANDROID_UI_XML"
+    >"$RELEASE_JOIN_ANDROID_UI_XML.tmp" || return 1
+  mv "$RELEASE_JOIN_ANDROID_UI_XML.tmp" "$RELEASE_JOIN_ANDROID_UI_XML"
 }
 
 release_join_android_query() {
@@ -315,20 +317,26 @@ release_join_android_launch() {
 
 release_join_android_open_network_setup() {
   release_join_require_device_mutation_allowed || return 1
+  local started=$SECONDS
+  printf 'NVPN_ANDROID_SETUP step=start elapsed=0\n' >&2
   RELEASE_JOIN_DEVICE_MUTATED=1
   RELEASE_JOIN_ANDROID_MUTATED=1
   release_join_android_stop || return 1
   release_join_android_launch || return 1
+  printf 'NVPN_ANDROID_SETUP step=launched elapsed=%s\n' "$((SECONDS - started))" >&2
   local deadline=$((SECONDS + RELEASE_JOIN_UI_WAIT_SECS))
   while ((SECONDS < deadline)); do
     release_join_android_dump_ui || return 1
     if release_join_android_query_dumped description 'Create Network' center >/dev/null 2>&1; then
+      printf 'NVPN_ANDROID_SETUP step=ready elapsed=%s\n' "$((SECONDS - started))" >&2
       return 0
     fi
     if release_join_android_query_dumped network-picker 'Turn VPN ' center >/dev/null 2>&1; then
+      printf 'NVPN_ANDROID_SETUP step=carrier-settings elapsed=%s\n' "$((SECONDS - started))" >&2
       release_join_android_normalize_carrier || return 1
       # A preceding exit test may have retained a now-stopped fixture. Select
       # native internet through the UI, without erasing its saved configuration.
+      printf 'NVPN_ANDROID_SETUP step=internet-source elapsed=%s\n' "$((SECONDS - started))" >&2
       release_join_android_tap_center description 'Internet tab' || return 1
       # The shared list retains Settings' scroll offset; the picker is above it.
       release_join_android_scroll_to resource internet-source-picker safe-center backward || return 1
@@ -337,11 +345,14 @@ release_join_android_open_network_setup() {
         release_join_android_tap_center description 'Internet source This device' || return 1
         release_join_android_wait_query text 'This device' || return 1
       fi
+      printf 'NVPN_ANDROID_SETUP step=network-picker elapsed=%s\n' "$((SECONDS - started))" >&2
       release_join_android_tap_center network-picker 'Turn VPN ' || return 1
+      printf 'NVPN_ANDROID_SETUP step=add-network elapsed=%s\n' "$((SECONDS - started))" >&2
       release_join_android_scroll_to text 'Add network' visible-center || return 1
       release_join_android_tap_visible text 'Add network' || return 1
-      release_join_android_wait_query description 'Create Network'
-      return $?
+      release_join_android_wait_query description 'Create Network' || return $?
+      printf 'NVPN_ANDROID_SETUP step=ready elapsed=%s\n' "$((SECONDS - started))" >&2
+      return 0
     fi
     sleep 0.1
   done
