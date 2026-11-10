@@ -306,7 +306,7 @@ export function validateMacosGateSigningIdentity({
   resolvedCertificateSha256,
 } = {}) {
   if (
-    receipt?.receiptSchema !== 1
+    ![1, 2].includes(receipt?.receiptSchema)
     || receipt.artifactType !== 'macOS company Developer ID Release gate package'
     || receipt.companySigningVerified !== true
   ) {

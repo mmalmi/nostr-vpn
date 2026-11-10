@@ -416,34 +416,62 @@ test('macOS publication selects the exact gated leaf when another Developer ID i
     '     2 valid identities found',
   ].join('\n')
 
-  assert.deepEqual(
-    validateMacosGateSigningIdentity({
-      receipt,
-      codesigningIdentities: identities,
-      resolvedCertificateSha256: signerCertificateSha256,
-    }),
-    {
-      identitySha1: signingIdentitySha1.toUpperCase(),
-      signingTeam,
-      signerCertificateSha256,
-    },
-  )
-  assert.throws(
-    () => validateMacosGateSigningIdentity({
-      receipt,
-      codesigningIdentities: identities,
-      resolvedCertificateSha256: 'd'.repeat(64),
-    }),
-    /certificate differs from the gate receipt/i,
-  )
-  assert.throws(
-    () => validateMacosGateSigningIdentity({
-      receipt: { ...receipt, signingTeam: 'KLMNOPQRST' },
-      codesigningIdentities: identities,
-      resolvedCertificateSha256: signerCertificateSha256,
-    }),
-    /team differs from the gate receipt/i,
-  )
+  for (const receiptSchema of [1, 2]) {
+    const candidate = { ...receipt, receiptSchema }
+    assert.deepEqual(
+      validateMacosGateSigningIdentity({
+        receipt: candidate,
+        codesigningIdentities: identities,
+        resolvedCertificateSha256: signerCertificateSha256,
+      }),
+      {
+        identitySha1: signingIdentitySha1.toUpperCase(),
+        signingTeam,
+        signerCertificateSha256,
+      },
+    )
+    assert.throws(
+      () => validateMacosGateSigningIdentity({
+        receipt: candidate,
+        codesigningIdentities: identities,
+        resolvedCertificateSha256: 'd'.repeat(64),
+      }),
+      /certificate differs from the gate receipt/i,
+    )
+    assert.throws(
+      () => validateMacosGateSigningIdentity({
+        receipt: { ...candidate, signingTeam: 'KLMNOPQRST' },
+        codesigningIdentities: identities,
+        resolvedCertificateSha256: signerCertificateSha256,
+      }),
+      /team differs from the gate receipt/i,
+    )
+  }
+
+  for (const receiptSchema of [undefined, null, 0, 3, true, "1", "2"]) {
+    assert.throws(
+      () => validateMacosGateSigningIdentity({
+        receipt: { ...receipt, receiptSchema },
+        codesigningIdentities: identities,
+        resolvedCertificateSha256: signerCertificateSha256,
+      }),
+      /wrong gate receipt/i,
+    )
+  }
+  for (const changed of [
+    { companySigningVerified: false },
+    { companySigningVerified: "true" },
+    { artifactType: "different artifact" },
+  ]) {
+    assert.throws(
+      () => validateMacosGateSigningIdentity({
+        receipt: { ...receipt, receiptSchema: 2, ...changed },
+        codesigningIdentities: identities,
+        resolvedCertificateSha256: signerCertificateSha256,
+      }),
+      /wrong gate receipt/i,
+    )
+  }
 })
 
 test('Zapstore publication can be made mandatory by CLI or release environment', () => {
