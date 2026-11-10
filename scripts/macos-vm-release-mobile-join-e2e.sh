@@ -1608,12 +1608,15 @@ if len(sys.argv) == 16:
     if set(evidence) != {"profileIsolation", "directionEvidence"}:
         raise SystemExit("Mac launch/profile evidence has unexpected fields")
     if reused_pixel is not None:
-        for direction in ("macosAdminPixelJoiner", "pixelAdminMacosJoiner"):
-            if (evidence["profileIsolation"]["directions"][direction]
-                    != reused_pixel["profileIsolation"]["directions"][direction]
-                    or evidence["directionEvidence"][direction]
-                    != reused_pixel["directionEvidence"][direction]):
-                raise SystemExit("Retained Mac/Pixel launch/profile evidence changed during composition")
+        for supplied, retained in (
+            (evidence["profileIsolation"]["directions"], reused_pixel["profileIsolation"]["directions"]),
+            (evidence["directionEvidence"], reused_pixel["directionEvidence"]),
+        ):
+            for direction in ("macosAdminPixelJoiner", "pixelAdminMacosJoiner"):
+                if (json.dumps(supplied[direction], sort_keys=True, allow_nan=False)
+                        != json.dumps(retained[direction], sort_keys=True, allow_nan=False)):
+                    raise SystemExit("Retained Mac/Pixel launch/profile evidence changed during composition")
+                supplied[direction] = retained[direction]
     receipt.update(evidence)
     subprocess.run([
         "node", "--input-type=module", "-e",

@@ -120,6 +120,8 @@ with tempfile.TemporaryDirectory(prefix="nvpn-mac-retained-proof-") as temporary
     full["directionEvidence"][pixel_roles[0]].update(
         originalOverallAttemptStatus="failed", standaloneDirectionExitCode=None,
         timingBasis="retained host observation; original start not separately persisted")
+    full["directionEvidence"][pixel_roles[1]].update(
+        originalOverallAttemptStatus="passed-isolated-reverse", standaloneDirectionExitCode=0)
     timings = directory / "delivery-times.tsv"
     pixel_evidence = {"profileIsolation": copy.deepcopy(full["profileIsolation"]),
                       "directionEvidence": {role: full["directionEvidence"][role] for role in pixel_roles}}
@@ -150,12 +152,7 @@ with tempfile.TemporaryDirectory(prefix="nvpn-mac-retained-proof-") as temporary
     for role in pixel_roles:
         assert result["profileIsolation"]["directions"][role] == retained["profileIsolation"]["directions"][role]
         assert result["directionEvidence"][role] == retained["directionEvidence"][role]
-    for role in pixel_roles:
-        replacement = copy.deepcopy(full)
-        for key in ("runtimeHarnessGitSha", "runtimeLaunchHelperSha256", "outcomeSha256", "operationSha256"):
-            value = "f" * (40 if key == "runtimeHarnessGitSha" else 64)
-            replacement["profileIsolation"]["directions"][role][key] = value
-            replacement["directionEvidence"][role][key] = value
+    def assert_valid_profile(replacement):
         # Prove the substitution is internally consistent, so only binding to
         # the retained receipt can reject it at the final writer boundary.
         checked = subprocess.run(["node", "--input-type=module", "-e",
@@ -165,6 +162,14 @@ with tempfile.TemporaryDirectory(prefix="nvpn-mac-retained-proof-") as temporary
             str(root / "scripts/release-artifact-provenance-lib.mjs")],
             input=json.dumps(replacement), text=True, capture_output=True, timeout=15)
         assert checked.returncode == 0, checked.stderr
+
+    for role in pixel_roles:
+        replacement = copy.deepcopy(full)
+        for key in ("runtimeHarnessGitSha", "runtimeLaunchHelperSha256", "outcomeSha256", "operationSha256"):
+            value = "f" * (40 if key == "runtimeHarnessGitSha" else 64)
+            replacement["profileIsolation"]["directions"][role][key] = value
+            replacement["directionEvidence"][role][key] = value
+        assert_valid_profile(replacement)
         try:
             compose(replacement, "rejected.json")
         except SystemExit as error:
@@ -178,4 +183,18 @@ with tempfile.TemporaryDirectory(prefix="nvpn-mac-retained-proof-") as temporary
         assert "Retained Mac/Pixel delivery timing changed" in str(error)
     else:
         raise AssertionError("canonical writer accepted changed retained Pixel timing")
+    for status in (False, 0.0):
+        replacement = copy.deepcopy(full)
+        replacement["directionEvidence"][pixel_roles[1]]["standaloneDirectionExitCode"] = status
+        assert_valid_profile(replacement)
+        try:
+            compose(replacement, "rejected-types.json")
+        except SystemExit as error:
+            assert "Retained Mac/Pixel launch/profile evidence changed" in str(error)
+        else:
+            raise AssertionError("canonical writer accepted a changed retained status type")
+        assert not (directory / "rejected-types.json").exists()
+        original = json.loads(retained_path.read_text())["directionEvidence"][pixel_roles[1]]["standaloneDirectionExitCode"]
+        assert type(original) is int and original == 0
 print("PASS: actual canonical writer preserves both retained Pixel rows; internally consistent replacements for either role and changed timing rejected")
+print("PASS: retained integer-zero status cannot become false or floating zero; inner proof remains valid and no rejected final receipt is written")
