@@ -693,19 +693,26 @@ function requireIosJoinVariant(
   }
 }
 
-const iosDeviceObservationFields = new Set([
-  'selectedPhysicalDevice.identityReadAt',
-  'selectedPhysicalDevice.identityReadbackSha256',
-])
-const iosJoinRunnerFields = new Set([
+const iosDeviceObservationFields = [
+  ['selectedPhysicalDevice', 'identityReadAt'],
+  ['selectedPhysicalDevice', 'identityReadbackSha256'],
+]
+const iosJoinRunnerFields = [
   ...iosDeviceObservationFields,
-  'productionArtifactReceiptSha256', 'testProductsPathSha256',
-  'testProductsTreeSha256', 'xctestrunPathSha256', 'xctestrunSha256',
-  'derivedDataPathSha256',
-])
+  ['productionArtifactReceiptSha256'], ['testProductsPathSha256'],
+  ['testProductsTreeSha256'], ['xctestrunPathSha256'], ['xctestrunSha256'],
+  ['derivedDataPathSha256'],
+]
 
-function requireSameIosReceipt(original, current, allowed, label, path = '') {
-  const fail = () => { throw new Error(`${label} differs at ${path}.`) }
+function requireSameIosReceipt(original, current, allowed, label, path = []) {
+  const fail = () => { throw new Error(`${label} differs at ${path.join('.')}.`) }
+  if (allowed.some((leaf) => isDeepStrictEqual(leaf, path))) {
+    for (const value of [original, current]) {
+      if (typeof value !== 'string' || !value) fail()
+      if (path.at(-1).endsWith('Sha256')) requireSha256(value, `${label} ${path.join('.')}`)
+    }
+    return
+  }
   if (typeof original !== typeof current
     || Array.isArray(original) !== Array.isArray(current)
     || (original === null) !== (current === null)) fail()
@@ -713,12 +720,7 @@ function requireSameIosReceipt(original, current, allowed, label, path = '') {
     if (!isDeepStrictEqual(Object.keys(original).sort(), Object.keys(current).sort())) fail()
     for (const key of Object.keys(original)) {
       requireSameIosReceipt(original[key], current[key], allowed, label,
-        path ? `${path}.${key}` : key)
-    }
-  } else if (allowed.has(path)) {
-    for (const value of [original, current]) {
-      if (typeof value !== 'string' || !value) fail()
-      if (path.endsWith('Sha256')) requireSha256(value, `${label} ${path}`)
+        [...path, key])
     }
   } else if (!isDeepStrictEqual(original, current)) fail()
 }

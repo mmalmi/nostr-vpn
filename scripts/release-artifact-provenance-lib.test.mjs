@@ -1980,6 +1980,64 @@ test('release receipt collection requires exact source and strict public UI gate
     wrongProductionSeal.desktopJoinIosProductionReceiptSha256 = '0'.repeat(64)
     writeFileSync(paths.ios.frozen_archive, JSON.stringify(wrongProductionSeal))
     assert.throws(collectPair, /Sealed desktop iOS receipt pair differs/)
+    const originalMobileJoinText = readFileSync(mobileJoinPath, 'utf8')
+    const originalNetworks = Object.fromEntries(['wireguard_dns', 'underlay_lifecycle']
+      .map((name) => [name, readFileSync(paths.ios[name], 'utf8')]))
+    const installOriginalPair = (production, variant) => {
+      const productionText = JSON.stringify(production)
+      writeFileSync(paths.ios.mobile_artifact, productionText)
+      const variantText = JSON.stringify({ ...variant,
+        productionArtifactReceiptSha256: sha256(productionText) })
+      writeFileSync(paths.ios.join_variant, variantText)
+      const mobile = JSON.parse(originalMobileJoinText)
+      mobile.artifact.ios.productionArtifactReceiptSha256 = sha256(productionText)
+      mobile.artifact.ios.artifactReceiptSha256 = sha256(variantText)
+      writeFileSync(mobileJoinPath, JSON.stringify(mobile))
+      for (const [name, text] of Object.entries(originalNetworks)) {
+        const network = JSON.parse(text)
+        network.artifactReceiptSha256 = sha256(productionText)
+        writeFileSync(paths.ios[name], JSON.stringify(network))
+      }
+      const seal = JSON.parse(readFileSync(paths.ios.frozen_archive, 'utf8'))
+      seal.mobileArtifactReceiptSha256 = sha256(productionText)
+      seal.mobileJoinIosVariantReceiptSha256 = sha256(variantText)
+      seal.realDeviceGateReceiptSha256['bidirectional-mobile-qr-and-manual-join'] = [
+        sha256(readFileSync(mobileJoinPath)), sha256(variantText),
+      ]
+      const wg = sha256(readFileSync(paths.ios.wireguard_dns))
+      const underlay = sha256(readFileSync(paths.ios.underlay_lifecycle))
+      seal.realDeviceGateReceiptSha256['background-foreground-and-rapid-start-stop'] = [wg, underlay]
+      seal.realDeviceGateReceiptSha256['wifi-radio-off-on-recovery'] = [underlay]
+      seal.realDeviceGateReceiptSha256['wireguard-exit-and-five-dns-policies'] = [wg]
+      writeFileSync(paths.ios.frozen_archive, JSON.stringify(seal))
+    }
+    for (const target of ['production', 'variant']) {
+      const expected = target === 'production' ? /iOS production receipts/ : /iOS join variant receipts/
+      for (const field of ['identityReadAt', 'identityReadbackSha256']) {
+        for (const malformed of [{}, []]) {
+          const oldProduction = structuredClone(iosArtifact), oldVariant = structuredClone(iosJoinVariant)
+          const production = structuredClone(desktopProduction), variant = structuredClone(desktopVariant)
+          for (const value of target === 'production' ? [oldProduction, production] : [oldVariant, variant]) {
+            value.selectedPhysicalDevice[field] = structuredClone(malformed)
+          }
+          installPair(production, variant)
+          installOriginalPair(oldProduction, oldVariant)
+          assert.throws(collectPair, expected)
+        }
+      }
+      const oldProduction = structuredClone(iosArtifact), oldVariant = structuredClone(iosJoinVariant)
+      const production = structuredClone(desktopProduction), variant = structuredClone(desktopVariant)
+      const [left, right] = target === 'production' ? [oldProduction, production] : [oldVariant, variant]
+      left['selectedPhysicalDevice.identityReadAt'] = 'original'
+      right['selectedPhysicalDevice.identityReadAt'] = 'changed'
+      installPair(production, variant)
+      installOriginalPair(oldProduction, oldVariant)
+      assert.throws(collectPair, expected)
+    }
+    writeFileSync(paths.ios.mobile_artifact, iosText)
+    writeFileSync(paths.ios.join_variant, iosJoinVariantText)
+    writeFileSync(mobileJoinPath, originalMobileJoinText)
+    for (const [name, text] of Object.entries(originalNetworks)) writeFileSync(paths.ios[name], text)
     assert.equal(readFileSync(paths.ios.mobile_artifact, 'utf8'), iosText)
     assert.equal(readFileSync(paths.ios.join_variant, 'utf8'), iosJoinVariantText)
     delete paths.ios.desktop_join_production

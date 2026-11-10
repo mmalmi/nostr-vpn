@@ -800,35 +800,37 @@ def validate_desktop_mobile_join_receipt(
 
 
 IOS_DEVICE_OBSERVATION_FIELDS = {
-    "selectedPhysicalDevice.identityReadAt",
-    "selectedPhysicalDevice.identityReadbackSha256",
+    ("selectedPhysicalDevice", "identityReadAt"),
+    ("selectedPhysicalDevice", "identityReadbackSha256"),
 }
 IOS_JOIN_RUNNER_FIELDS = IOS_DEVICE_OBSERVATION_FIELDS | {
-    "productionArtifactReceiptSha256", "testProductsPathSha256",
-    "testProductsTreeSha256", "xctestrunPathSha256", "xctestrunSha256",
-    "derivedDataPathSha256",
+    ("productionArtifactReceiptSha256",), ("testProductsPathSha256",),
+    ("testProductsTreeSha256",), ("xctestrunPathSha256",), ("xctestrunSha256",),
+    ("derivedDataPathSha256",),
 }
 
 
-def require_same_ios_receipt(original, current, allowed, label, path=""):
+def require_same_ios_receipt(original, current, allowed, label, path=()):
     """Allow named leaf values to differ, never keys or nested identity."""
-    require(type(original) is type(current), f"{label} differs at {path}")
+    display = ".".join(map(str, path))
+    if path in allowed:
+        for value in (original, current):
+            required_string(value, f"{label} {display}", r".+")
+            if path[-1].endswith("Sha256"):
+                required_hash(value, f"{label} {display}", 64)
+        return
+    require(type(original) is type(current), f"{label} differs at {display}")
     if isinstance(original, dict):
-        require(original.keys() == current.keys(), f"{label} keys differ at {path}")
+        require(original.keys() == current.keys(), f"{label} keys differ at {display}")
         for key in original:
             require_same_ios_receipt(original[key], current[key], allowed, label,
-                                     f"{path}.{key}" if path else key)
+                                     path + (key,))
     elif isinstance(original, list):
-        require(len(original) == len(current), f"{label} length differs at {path}")
+        require(len(original) == len(current), f"{label} length differs at {display}")
         for index, (left, right) in enumerate(zip(original, current)):
-            require_same_ios_receipt(left, right, allowed, label, f"{path}.{index}")
-    elif path in allowed:
-        for value in (original, current):
-            required_string(value, f"{label} {path}", r".+")
-            if path.endswith("Sha256"):
-                required_hash(value, f"{label} {path}", 64)
+            require_same_ios_receipt(left, right, allowed, label, path + (index,))
     else:
-        require(original == current, f"{label} differs at {path}")
+        require(original == current, f"{label} differs at {display}")
 
 
 def desktop_join_pair(args, production, variant, variant_sha):

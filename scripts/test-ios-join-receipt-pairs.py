@@ -148,6 +148,11 @@ archive_path.write_text(''', 1)
 
     def rebind_seal():
         value = copy.deepcopy(good_seal)
+        value["mobileArtifactReceiptSha256"] = sha(paths["mobile"])
+        value["mobileJoinIosVariantReceiptSha256"] = sha(paths["variant"])
+        value["mobileJoinReceiptSha256"] = sha(paths["mobile-join"])
+        value["realDeviceGateReceiptSha256"]["bidirectional-mobile-qr-and-manual-join"] = [
+            sha(paths["mobile-join"]), sha(paths["variant"])]
         value["desktopJoinIosVariantReceiptSha256"] = sha(variant_path)
         value["desktopJoinIosProductionReceiptSha256"] = sha(production_path)
         value["desktopMobileJoinReceiptSha256"] = sha(paths["desktop-join"])
@@ -195,6 +200,48 @@ archive_path.write_text(''', 1)
     value["desktopJoinIosProductionReceiptSha256"] = "0" * 64
     write(seal, value)
     reject(validate, "sealed desktop iOS receipt pair differs")
+
+    def install_original_pair(p, v):
+        write(paths["mobile"], p)
+        v = copy.deepcopy(v)
+        v["productionArtifactReceiptSha256"] = sha(paths["mobile"])
+        write(paths["variant"], v)
+        receipt = json.loads(original_bytes["mobile-join"])
+        receipt["artifact"]["ios"]["productionArtifactReceiptSha256"] = sha(paths["mobile"])
+        receipt["artifact"]["ios"]["artifactReceiptSha256"] = sha(paths["variant"])
+        write(paths["mobile-join"], receipt)
+        sealed.write_bytes(paths["mobile"].read_bytes())
+
+    # Both sides have the same malformed shape; all exact receipt references
+    # are rebound. Only the allowlisted leaf's shape rejects these fixtures.
+    for target in ("production", "variant"):
+        for field in ("identityReadAt", "identityReadbackSha256"):
+            for malformed in ({}, []):
+                old_p, old_v = copy.deepcopy(production), copy.deepcopy(variant)
+                new_p, new_v = copy.deepcopy(new_production), copy.deepcopy(new_variant)
+                for receipt in ((old_p, new_p) if target == "production" else (old_v, new_v)):
+                    receipt["selectedPhysicalDevice"][field] = copy.deepcopy(malformed)
+                install_original_pair(old_p, old_v)
+                install_pair(new_p, new_v)
+                rebind_seal()
+                pattern = "iOS " + ("production receipts" if target == "production" else "join variant receipts")
+                reject(create, pattern)
+                reject(validate, pattern)
+        # Identical key presence on both sides, with unequal literal-key
+        # values, must not receive the genuine nested observation exemption.
+        old_p, old_v = copy.deepcopy(production), copy.deepcopy(variant)
+        new_p, new_v = copy.deepcopy(new_production), copy.deepcopy(new_variant)
+        left, right = (old_p, new_p) if target == "production" else (old_v, new_v)
+        left["selectedPhysicalDevice.identityReadAt"] = "original"
+        right["selectedPhysicalDevice.identityReadAt"] = "changed"
+        install_original_pair(old_p, old_v)
+        install_pair(new_p, new_v)
+        rebind_seal()
+        pattern = "iOS " + ("production receipts" if target == "production" else "join variant receipts")
+        reject(create, pattern)
+        reject(validate, pattern)
+    for name in ("mobile", "variant", "mobile-join"):
+        paths[name].write_bytes(original_bytes[name])
     for name, original in original_bytes.items():
         if name != "desktop-join":
             assert paths[name].read_bytes() == original
@@ -202,4 +249,4 @@ archive_path.write_text(''', 1)
     create()
     validate()
 
-print("iOS receipt pairs: distinct/legacy accepted; 17 rejection cases and 4 shell-callsite cases passed")
+print("iOS receipt pairs: distinct/legacy accepted; 37 rejection cases and 4 shell-callsite cases passed")
