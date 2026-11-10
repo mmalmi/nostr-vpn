@@ -32,9 +32,9 @@ case "$ARTIFACT_ACTION" in
 esac
 MACOS_MOBILE_DIRECTIONS="${NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS:-all}"
 case "$MACOS_MOBILE_DIRECTIONS" in
-  all|pixel|macos-admin-iphone|pixel-admin-macos) ;;
+  all|pixel|macos-admin-iphone|pixel-admin-macos|iphone-admin-macos) ;;
   *)
-    echo "Unsupported NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS=$MACOS_MOBILE_DIRECTIONS (expected all, pixel, macos-admin-iphone, or pixel-admin-macos)" >&2
+    echo "Unsupported NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS=$MACOS_MOBILE_DIRECTIONS (expected all, pixel, macos-admin-iphone, pixel-admin-macos, or iphone-admin-macos)" >&2
     exit 2
     ;;
 esac
@@ -999,6 +999,7 @@ IPHONE_ADMIN_DESKTOP_JOINER_RELAUNCH_DURABLE=0
 # macOS admin -> physical Android joiner.
 if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" \
   && "$MACOS_MOBILE_DIRECTIONS" != "pixel-admin-macos" \
+  && "$MACOS_MOBILE_DIRECTIONS" != "iphone-admin-macos" \
   && -z "$REUSED_PIXEL_RECEIPT_SHA256" ]]; then
 set +e
 (
@@ -1070,6 +1071,7 @@ fi
 # Physical Android admin -> macOS joiner. The remote app remains alive while
 # waiting for the exact Android admin row, so receipt delivery is real.
 if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" \
+  && "$MACOS_MOBILE_DIRECTIONS" != "iphone-admin-macos" \
   && -z "$REUSED_PIXEL_RECEIPT_SHA256" ]]; then
 set +e
 (
@@ -1148,8 +1150,8 @@ fi
 finish_macos_mobile_direction pixel-admin-macos-joiner
 fi
 
-if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" \
-  && "$MACOS_MOBILE_DIRECTIONS" != "pixel-admin-macos" ]]; then
+if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" \
+  || "$MACOS_MOBILE_DIRECTIONS" == "macos-admin-iphone" ]]; then
 # macOS admin -> physical iPhone joiner. XCTest only drives the shipped
 # accessibility tree; the app receives no launch arguments or environment.
 set +e
@@ -1258,9 +1260,11 @@ else
   DESKTOP_ADMIN_IPHONE_JOINER_RELAUNCH_DURABLE=1
 fi
 finish_macos_mobile_direction macos-admin-iphone-joiner
+fi
 
 # Physical iPhone admin -> macOS joiner.
-if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" ]]; then
+if [[ "$MACOS_MOBILE_DIRECTIONS" == "all" \
+  || "$MACOS_MOBILE_DIRECTIONS" == "iphone-admin-macos" ]]; then
 set +e
 (
 set -euo pipefail
@@ -1362,6 +1366,9 @@ remote verify "$RELEASE_JOIN_IOS_ADMIN_ID" \
 )
 ios_admin_macos_status=$?
 set -e
+python3 "$REMOTE_ACTION_HELPER" record \
+  "$RESULT_DIR/macos/iphone-admin-macos-direction.json" \
+  "{\"direction\":\"iphone-admin-macos\",\"exitCode\":$ios_admin_macos_status}"
 if ((ios_admin_macos_status != 0)); then
   echo "iPhone admin -> macOS joiner failed" >&2
 else
@@ -1369,6 +1376,8 @@ else
 fi
 finish_macos_mobile_direction iphone-admin-macos-joiner
 fi
+if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" \
+  && "$MACOS_MOBILE_DIRECTIONS" != "pixel-admin-macos" ]]; then
 release_join_launch_ios_release
 release_join_assert_one_ios_process
 fi
@@ -1382,7 +1391,8 @@ if ((macos_admin_android_status != 0 \
 fi
 
 if [[ "$MACOS_MOBILE_DIRECTIONS" == "macos-admin-iphone" \
-  || "$MACOS_MOBILE_DIRECTIONS" == "pixel-admin-macos" ]]; then
+  || "$MACOS_MOBILE_DIRECTIONS" == "pixel-admin-macos" \
+  || "$MACOS_MOBILE_DIRECTIONS" == "iphone-admin-macos" ]]; then
   # An isolated role records its own evidence, never a full join-gate summary.
   echo "MACOS_MOBILE_JOIN_DIAGNOSTIC_OK $MACOS_MOBILE_DIRECTIONS"
   exit 0
