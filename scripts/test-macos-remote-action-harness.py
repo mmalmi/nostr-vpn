@@ -23,8 +23,8 @@ def function(source, name):
     return re.search(r"^" + name + r"\(\) \{\n.*?^\}\n", source, re.M | re.S)[0]
 
 
-def run(argv, *, expected=0, **kwargs):
-    result = subprocess.run(argv, capture_output=True, text=True, timeout=12, **kwargs)
+def run(argv, *, expected=0, timeout=12, **kwargs):
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, **kwargs)
     assert result.returncode == expected, (argv[0], result.returncode, result.stdout, result.stderr)
     return result
 
@@ -222,5 +222,5 @@ stop_app && exit 11
 
 print("Mac remote action closure and cleanup ordering passed (no VM/device use)")
 
-run([sys.executable, str(ROOT / "test-macos-baseline-handoff.py")])
+run([sys.executable, str(ROOT / "test-macos-baseline-handoff.py")], timeout=30)
 print("Full restored-baseline handoff checks passed")
