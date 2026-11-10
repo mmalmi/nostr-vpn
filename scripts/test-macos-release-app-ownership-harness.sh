@@ -25,6 +25,10 @@ for required in (
 ):
     if required not in host:
         raise SystemExit(f"host importer lacks cleanup ownership guard: {required}")
+if 'MACOS_RELEASE_APP_INSTALLED_EXE=%q' not in host:
+    raise SystemExit("host importer does not forward the selected baseline executable")
+if '${MACOS_RELEASE_APP_INSTALLED_EXE:-/Applications/Nostr VPN.app/Contents/MacOS/Nostr VPN}' not in remote:
+    raise SystemExit("remote importer does not preserve the selected baseline executable")
 if host.index("remote_app_ownership_armed=1") > host.index(
     'remote create-admin "ReleaseDesktopAdmin"'
 ):

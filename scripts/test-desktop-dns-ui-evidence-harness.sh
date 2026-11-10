@@ -547,12 +547,13 @@ with tempfile.TemporaryDirectory() as temporary:
         "direct_gateway=192.0.2.1\ndirect_source_ip=192.0.2.2\n"
     )
     output = reused / "network-receipt.json"
-    module.build_desktop(module.parser().parse_args([
+    desktop_arguments = [
         "desktop", "--platform", "macos", "--artifact-dir", str(network),
         "--dns-ui-dir", str(cases_root), "--artifact-receipt", str(artifact_path),
         "--app-git-sha", app_sha, "--app-git-tree", app_tree,
         "--output", str(output),
-    ]))
+    ]
+    module.build_desktop(module.parser().parse_args(desktop_arguments))
     network_receipt = json.loads(output.read_text())
     assert (network_receipt["appGitSha"], network_receipt["appGitTree"]) == (
         receipt_sha, receipt_tree
@@ -560,7 +561,22 @@ with tempfile.TemporaryDirectory() as temporary:
     assert network_receipt["summary"]["artifactReceiptSha256"] == artifact_receipt_hash
     assert network_receipt["desktopDnsUiEvidenceFiles"] == hashes
 
+    # Hosted signing uses schema 2; retain its exact receipt hash in both
+    # the reused DNS UI proof and the resulting network receipt.
+    artifact["receiptSchema"] = 2
+    artifact_path.write_text(json.dumps(artifact) + "\n", encoding="utf-8")
+    artifact_receipt_hash = hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+    for path in [reused / "driver-receipt.json", *cases_root.glob("*.json")]:
+        value = json.loads(path.read_text())
+        value["appArtifactReceiptSha256"] = artifact_receipt_hash
+        path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+    module.build_desktop(module.parser().parse_args(desktop_arguments))
+    hosted_network = json.loads(output.read_text())
+    assert hosted_network["summary"]["artifactReceiptSha256"] == artifact_receipt_hash
+    assert hosted_network["appGitSha"] == receipt_sha
+
     for label, mutate in (
+        ("schema", lambda value: value.update(receiptSchema=99)),
         ("candidate", lambda value: value["componentInputProof"].update(
             candidate_app_git_sha="3" * 40
         )),

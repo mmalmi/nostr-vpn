@@ -1264,7 +1264,7 @@ def validate_desktop_dns_ui_receipts(
             "changed_paths_sha256",
         }
         require(
-            artifact.get("receiptSchema") == 1
+            artifact.get("receiptSchema") in (1, 2)
             and artifact.get("appGitSha") == receipt_source[0]
             and artifact.get("appGitTree") == receipt_source[1]
             and isinstance(proof, dict)
@@ -1607,7 +1607,7 @@ def build_desktop(args: argparse.Namespace) -> None:
         artifact_path = pathlib.Path(args.artifact_receipt).resolve()
         artifact = load_json(artifact_path)
         require(
-            artifact.get("receiptSchema") == 1
+            artifact.get("receiptSchema") in (1, 2)
             and artifact.get("appGitSha") == dns_ui_source[0]
             and artifact.get("appGitTree") == dns_ui_source[1]
             and artifact.get("companySigningVerified") is True,
