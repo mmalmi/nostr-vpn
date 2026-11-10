@@ -209,9 +209,11 @@ remove_remote_harness
     run(["bash", "-c", f'''set -euo pipefail
 {function(REMOTE, "stop_app")}
 APP_STOP_UNRESOLVED=0
+APP_LAUNCH_PENDING=0
 APP_PID=12345
 APP_EXE=fixture
 OWNED_PID_FILE={shlex.quote(str(owner))}
+LAUNCH_PENDING_FILE={shlex.quote(str(owner))}.launch-pending
 calls=0
 macos_release_app_stop_pid() {{ calls=$((calls + 1)); return 1; }}
 stop_app && exit 10
@@ -224,3 +226,4 @@ print("Mac remote action closure and cleanup ordering passed (no VM/device use)"
 
 run([sys.executable, str(ROOT / "test-macos-baseline-handoff.py")], timeout=30)
 print("Full restored-baseline handoff checks passed")
+run([sys.executable, str(ROOT / "test-macos-launch-services-harness.py")], timeout=20)

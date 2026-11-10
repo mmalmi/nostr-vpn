@@ -148,6 +148,10 @@ macos_release_app_launch_installed() {
 }
 
 macos_release_app_restore() {
+  [[ ! -e "$MACOS_RELEASE_APP_STATE_DIR/imported-launch-pending" ]] || {
+    echo "imported app launch identity is unresolved; retaining ownership" >&2
+    return 125
+  }
   local marker="$MACOS_RELEASE_APP_STATE_DIR/acquired"
   local prior="$MACOS_RELEASE_APP_STATE_DIR/prior-state"
   local owned="$MACOS_RELEASE_APP_STATE_DIR/imported.pid"

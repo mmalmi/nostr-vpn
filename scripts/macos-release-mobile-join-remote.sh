@@ -55,11 +55,13 @@ EXPECTED_SIGNER_CERT_SHA256="${NVPN_EXPECTED_MACOS_SIGNER_CERT_SHA256:-}"
 APP_LOG="$ARTIFACT_DIR/app.log"
 APP_PID=""
 APP_STOP_UNRESOLVED=0
+APP_LAUNCH_PENDING=0
 MACOS_RELEASE_APP_STATE_DIR="$ARTIFACT_DIR/app-ownership"
 MACOS_RELEASE_APP_INSTALLED_EXE="${MACOS_RELEASE_APP_INSTALLED_EXE:-/Applications/Nostr VPN.app/Contents/MacOS/Nostr VPN}"
 MACOS_RELEASE_APP_GATE_EXE="$APP_EXE"
 MACOS_RELEASE_APP_PROCESS_NAME="Nostr VPN"
 OWNED_PID_FILE="$MACOS_RELEASE_APP_STATE_DIR/imported.pid"
+LAUNCH_PENDING_FILE="$MACOS_RELEASE_APP_STATE_DIR/imported-launch-pending"
 CONFIG_DIR="$HOME/Library/Application Support/nvpn"
 PROFILE_STATE_DIR="${NVPN_MACOS_RELEASE_JOIN_PROFILE_STATE_DIR:-$HOME/Library/Caches/nvpn-release-mobile-join-profile}"
 CONFIG_BACKUP="$PROFILE_STATE_DIR/prior"
@@ -76,6 +78,11 @@ mkdir -p "$ARTIFACT_DIR"
 
 stop_app() {
   [[ "$APP_STOP_UNRESOLVED" -eq 0 ]] || return 1
+  if [[ "$APP_LAUNCH_PENDING" -eq 1 || -e "$LAUNCH_PENDING_FILE" ]]; then
+    APP_STOP_UNRESOLVED=1
+    echo "imported app launch identity is unresolved; retaining ownership" >&2
+    return 1
+  fi
   if [[ -n "$APP_PID" ]]; then
     if ! macos_release_app_stop_pid "$APP_PID" "$APP_EXE"; then
       APP_STOP_UNRESOLVED=1
@@ -350,30 +357,42 @@ launch_app() {
     echo "macOS Release join import was not verified" >&2
     return 1
   }
-  macos_release_app_acquire
-  [[ ! -f "$OWNED_PID_FILE" ]] || {
+  macos_release_app_acquire || return 1
+  [[ ! -f "$OWNED_PID_FILE" && ! -e "$LAUNCH_PENDING_FILE" ]] || {
     echo "a previous imported app launch is still owned" >&2
     return 1
   }
-  (
-    exec /usr/bin/env -i \
-      HOME="$HOME" \
-      USER="${USER:-dev}" \
-      LOGNAME="${LOGNAME:-${USER:-dev}}" \
-      PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-      TMPDIR="${TMPDIR:-/tmp}" \
-      LANG="${LANG:-en_US.UTF-8}" \
-      NVPN_APP_DATA_DIR="$TEST_CONFIG_DIR" \
-      "$APP_EXE"
-  ) >>"$APP_LOG" 2>&1 &
-  APP_PID=$!
-  printf '%s\n' "$APP_PID" >"$OWNED_PID_FILE.tmp"
-  mv "$OWNED_PID_FILE.tmp" "$OWNED_PID_FILE"
-  local deadline=$((SECONDS + 10))
+  local deadline=$((SECONDS + 10)) pids pid
+  # SwiftUI needs LaunchServices to create its initial window over SSH, as in
+  # the imported-app UI gate. Record uncertainty before the launch: cancellation
+  # or failed identity capture must retain ownership, never restore over it.
+  APP_LAUNCH_PENDING=1
+  : >"$LAUNCH_PENDING_FILE" || return 1
+  python3 -c 'import subprocess,sys; timeout=int(sys.argv[1]); assert timeout>0; subprocess.run(sys.argv[2:], timeout=timeout, check=True)' \
+    "$((deadline - SECONDS))" /usr/bin/open -n -F \
+    --env "HOME=$HOME" --env "USER=${USER:-dev}" \
+    --env "LOGNAME=${LOGNAME:-${USER:-dev}}" \
+    --env "PATH=/usr/bin:/bin:/usr/sbin:/sbin" \
+    --env "TMPDIR=${TMPDIR:-/tmp}" --env "LANG=${LANG:-en_US.UTF-8}" \
+    --env "NVPN_APP_DATA_DIR=$TEST_CONFIG_DIR" \
+    --stdout "$APP_LOG" --stderr "$APP_LOG" "$APP_PATH" || return 1
   while ((SECONDS < deadline)); do
-    kill -0 "$APP_PID" >/dev/null 2>&1 && return 0
+    pids="$(pgrep -x "$MACOS_RELEASE_APP_PROCESS_NAME" 2>/dev/null || true)"
+    [[ "$(wc -w <<<"$pids" | tr -d ' ')" -le 1 ]] || return 1
+    if [[ -n "$pids" ]]; then
+      pid="$pids"
+      [[ "$(ps -ww -p "$pid" -o comm=)" == "$APP_EXE" \
+        && "$(macos_release_app_process_args "$pid")" == "$APP_EXE" ]] || return 1
+      APP_PID="$pid"
+      printf '%s\n' "$APP_PID" >"$OWNED_PID_FILE.tmp" || return 1
+      mv "$OWNED_PID_FILE.tmp" "$OWNED_PID_FILE" || return 1
+      rm "$LAUNCH_PENDING_FILE" || return 1
+      APP_LAUNCH_PENDING=0
+      return 0
+    fi
     sleep 0.1
   done
+  echo "imported app launch identity did not resolve within its original allowance" >&2
   return 1
 }
 
