@@ -799,6 +799,61 @@ def validate_desktop_mobile_join_receipt(
         )
 
 
+IOS_DEVICE_OBSERVATION_FIELDS = {
+    "selectedPhysicalDevice.identityReadAt",
+    "selectedPhysicalDevice.identityReadbackSha256",
+}
+IOS_JOIN_RUNNER_FIELDS = IOS_DEVICE_OBSERVATION_FIELDS | {
+    "productionArtifactReceiptSha256", "testProductsPathSha256",
+    "testProductsTreeSha256", "xctestrunPathSha256", "xctestrunSha256",
+    "derivedDataPathSha256",
+}
+
+
+def require_same_ios_receipt(original, current, allowed, label, path=""):
+    """Allow named leaf values to differ, never keys or nested identity."""
+    require(type(original) is type(current), f"{label} differs at {path}")
+    if isinstance(original, dict):
+        require(original.keys() == current.keys(), f"{label} keys differ at {path}")
+        for key in original:
+            require_same_ios_receipt(original[key], current[key], allowed, label,
+                                     f"{path}.{key}" if path else key)
+    elif isinstance(original, list):
+        require(len(original) == len(current), f"{label} length differs at {path}")
+        for index, (left, right) in enumerate(zip(original, current)):
+            require_same_ios_receipt(left, right, allowed, label, f"{path}.{index}")
+    elif path in allowed:
+        for value in (original, current):
+            required_string(value, f"{label} {path}", r".+")
+            if path.endswith("Sha256"):
+                required_hash(value, f"{label} {path}", 64)
+    else:
+        require(original == current, f"{label} differs at {path}")
+
+
+def desktop_join_pair(args, production, variant, variant_sha):
+    variant_path = getattr(args, "desktop_join_ios_variant_receipt", None)
+    production_path = getattr(args, "desktop_join_ios_production_receipt", None)
+    require(bool(variant_path) == bool(production_path),
+            "desktop iOS join requires both exact variant and production receipts")
+    if not variant_path:
+        return variant, variant_sha, {}
+    desktop_production = load_json(pathlib.Path(production_path))
+    desktop_production_sha = sha256_file(pathlib.Path(production_path))
+    desktop_variant = load_json(pathlib.Path(variant_path))
+    desktop_variant_sha = sha256_file(pathlib.Path(variant_path))
+    validate_join_variant_receipt(desktop_variant, desktop_production,
+                                  desktop_production_sha)
+    require_same_ios_receipt(production, desktop_production,
+                             IOS_DEVICE_OBSERVATION_FIELDS, "iOS production receipts")
+    require_same_ios_receipt(variant, desktop_variant,
+                             IOS_JOIN_RUNNER_FIELDS, "iOS join variant receipts")
+    return desktop_variant, desktop_variant_sha, {
+        "desktopJoinIosVariantReceiptSha256": desktop_variant_sha,
+        "desktopJoinIosProductionReceiptSha256": desktop_production_sha,
+    }
+
+
 def seal_gate(args: argparse.Namespace) -> None:
     archive_receipt = pathlib.Path(args.archive_receipt)
     archive = load_json(archive_receipt)
@@ -852,10 +907,13 @@ def seal_gate(args: argparse.Namespace) -> None:
         mobile,
         "underlay-lifecycle",
     )
+    desktop_variant, desktop_variant_sha, desktop_pair_hashes = desktop_join_pair(
+        args, mobile, join_variant, join_variant_receipt_sha256,
+    )
     validate_desktop_mobile_join_receipt(
         desktop_join,
-        join_variant,
-        join_variant_receipt_sha256,
+        desktop_variant,
+        desktop_variant_sha,
         mobile_join,
     )
     required_gates = sorted(set(args.required_gate))
@@ -879,6 +937,7 @@ def seal_gate(args: argparse.Namespace) -> None:
             mobile_underlay_receipt
         ),
         "desktopMobileJoinReceiptSha256": sha256_file(desktop_join_receipt),
+        **desktop_pair_hashes,
         "realDeviceGateReceiptSha256": {
             "background-foreground-and-rapid-start-stop": [
                 sha256_file(mobile_wg_receipt),
@@ -890,7 +949,7 @@ def seal_gate(args: argparse.Namespace) -> None:
             ],
             "desktop-mobile-manual-join": [
                 sha256_file(desktop_join_receipt),
-                join_variant_receipt_sha256,
+                desktop_variant_sha,
             ],
             "wifi-radio-off-on-recovery": [
                 sha256_file(mobile_underlay_receipt)
@@ -970,10 +1029,17 @@ def validate_gate_seal(args: argparse.Namespace) -> None:
         mobile,
         "underlay-lifecycle",
     )
+    desktop_variant, desktop_variant_sha, desktop_pair_hashes = desktop_join_pair(
+        args, mobile, join_variant, join_variant_receipt_sha256,
+    )
+    require({key: seal[key] for key in (
+        "desktopJoinIosVariantReceiptSha256", "desktopJoinIosProductionReceiptSha256",
+    ) if key in seal} == desktop_pair_hashes,
+            "sealed desktop iOS receipt pair differs")
     validate_desktop_mobile_join_receipt(
         desktop_join,
-        join_variant,
-        join_variant_receipt_sha256,
+        desktop_variant,
+        desktop_variant_sha,
         mobile_join,
     )
     required_hash(
@@ -1074,7 +1140,7 @@ def validate_gate_seal(args: argparse.Namespace) -> None:
         ],
         "desktop-mobile-manual-join": [
             sha256_file(desktop_join_receipt),
-            join_variant_receipt_sha256,
+            desktop_variant_sha,
         ],
         "wifi-radio-off-on-recovery": [
             sha256_file(mobile_underlay_receipt)

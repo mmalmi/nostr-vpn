@@ -2231,6 +2231,14 @@ seal_frozen_ios_release_gate() {
   bool_is_true "${NVPN_RELEASE_IOS_FROZEN_ARCHIVE:-0}" || return 0
   local required_mode release_join_result_dir
   release_join_result_dir="${NVPN_RELEASE_JOIN_RESULT_DIR:-$ROOT_DIR/artifacts/mobile-release-join}"
+  local desktop_pair_args=()
+  if [[ -e "$release_join_result_dir/macos/ios-join-test-variant.json" \
+    || -e "$release_join_result_dir/macos/ios-join-production-artifact.json" ]]; then
+    desktop_pair_args=(
+      --desktop-join-ios-variant-receipt "$release_join_result_dir/macos/ios-join-test-variant.json"
+      --desktop-join-ios-production-receipt "$release_join_result_dir/macos/ios-join-production-artifact.json"
+    )
+  fi
   for required_mode in \
     NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E \
     NVPN_RELEASE_GATE_MOBILE_UNDERLAY_E2E \
@@ -2242,6 +2250,7 @@ seal_frozen_ios_release_gate() {
     }
   done
   python3 "$ROOT_DIR/scripts/ios_frozen_archive.py" seal-gate \
+    ${desktop_pair_args[@]+"${desktop_pair_args[@]}"} \
     --archive-receipt "$ROOT_DIR/dist/ios/frozen/archive-receipt.json" \
     --adhoc-receipt "$ROOT_DIR/dist/ios/frozen/release-testing-receipt.json" \
     --mobile-receipt "$NVPN_MOBILE_IOS_RELEASE_RECEIPT" \

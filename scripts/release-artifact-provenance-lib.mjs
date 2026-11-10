@@ -693,6 +693,36 @@ function requireIosJoinVariant(
   }
 }
 
+const iosDeviceObservationFields = new Set([
+  'selectedPhysicalDevice.identityReadAt',
+  'selectedPhysicalDevice.identityReadbackSha256',
+])
+const iosJoinRunnerFields = new Set([
+  ...iosDeviceObservationFields,
+  'productionArtifactReceiptSha256', 'testProductsPathSha256',
+  'testProductsTreeSha256', 'xctestrunPathSha256', 'xctestrunSha256',
+  'derivedDataPathSha256',
+])
+
+function requireSameIosReceipt(original, current, allowed, label, path = '') {
+  const fail = () => { throw new Error(`${label} differs at ${path}.`) }
+  if (typeof original !== typeof current
+    || Array.isArray(original) !== Array.isArray(current)
+    || (original === null) !== (current === null)) fail()
+  if (original !== null && typeof original === 'object') {
+    if (!isDeepStrictEqual(Object.keys(original).sort(), Object.keys(current).sort())) fail()
+    for (const key of Object.keys(original)) {
+      requireSameIosReceipt(original[key], current[key], allowed, label,
+        path ? `${path}.${key}` : key)
+    }
+  } else if (allowed.has(path)) {
+    for (const value of [original, current]) {
+      if (typeof value !== 'string' || !value) fail()
+      if (path.endsWith('Sha256')) requireSha256(value, `${label} ${path}`)
+    }
+  } else if (!isDeepStrictEqual(original, current)) fail()
+}
+
 function requireMacosJoinReceipt({
   receipt,
   artifactReceipt,
@@ -1981,6 +2011,36 @@ function collectReleaseGateEvidence({
     iosArtifact,
     iosArtifactReceiptSha256,
   )
+  let desktopIosJoinVariant = iosJoinVariant
+  let desktopIosJoinVariantReceiptSha256 = iosJoinVariantReceiptSha256
+  const desktopVariantPath = platformReceiptPaths.ios.desktop_join_variant
+  const desktopProductionPath = platformReceiptPaths.ios.desktop_join_production
+  if (Boolean(desktopVariantPath) !== Boolean(desktopProductionPath)) {
+    throw new Error('Desktop iOS join requires both exact variant and production receipts.')
+  }
+  const desktopPairHashes = {}
+  if (desktopVariantPath) {
+    const desktopProduction = readRequiredJson(desktopProductionPath,
+      'Desktop iOS join historical production receipt')
+    const desktopProductionSha256 = sha256FileSync(desktopProductionPath)
+    desktopIosJoinVariant = readRequiredJson(desktopVariantPath,
+      'Desktop iOS join-test variant receipt')
+    desktopIosJoinVariantReceiptSha256 = sha256FileSync(desktopVariantPath)
+    requireIosJoinVariant(desktopIosJoinVariant, desktopProduction, desktopProductionSha256)
+    requireSameIosReceipt(iosArtifact, desktopProduction,
+      iosDeviceObservationFields, 'iOS production receipts')
+    requireSameIosReceipt(iosJoinVariant, desktopIosJoinVariant,
+      iosJoinRunnerFields, 'iOS join variant receipts')
+    Object.assign(desktopPairHashes, {
+      desktopJoinIosVariantReceiptSha256: desktopIosJoinVariantReceiptSha256,
+      desktopJoinIosProductionReceiptSha256: desktopProductionSha256,
+    })
+  }
+  if (!isDeepStrictEqual(Object.fromEntries([
+    'desktopJoinIosVariantReceiptSha256', 'desktopJoinIosProductionReceiptSha256',
+  ].filter((key) => Object.hasOwn(ios, key)).map((key) => [key, ios[key]])), desktopPairHashes)) {
+    throw new Error('Sealed desktop iOS receipt pair differs.')
+  }
   if (
     ios.mobileJoinIosVariantReceiptSha256
     !== iosJoinVariantReceiptSha256
@@ -2065,8 +2125,8 @@ function collectReleaseGateEvidence({
     ),
     androidArtifact: android,
     androidArtifactReceiptSha256: runtimeAndroidReceiptSha256(macosJoin.artifact?.android?.artifactReceiptSha256),
-    iosJoinVariant,
-    iosJoinVariantReceiptSha256,
+    iosJoinVariant: desktopIosJoinVariant,
+    iosJoinVariantReceiptSha256: desktopIosJoinVariantReceiptSha256,
     commit: macosSource.commit,
     tree: macosSource.tree,
   })
@@ -2113,7 +2173,7 @@ function collectReleaseGateEvidence({
     ],
     'desktop-mobile-manual-join': [
       sha256FileSync(platformReceiptPaths.ios.desktop_mobile_join),
-      iosJoinVariantReceiptSha256,
+      desktopIosJoinVariantReceiptSha256,
     ],
     'wifi-radio-off-on-recovery': [
       iosNetworkReceipts.underlay_lifecycle,

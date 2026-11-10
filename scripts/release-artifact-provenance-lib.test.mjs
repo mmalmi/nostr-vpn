@@ -1162,6 +1162,13 @@ test('release receipt collection requires exact source and strict public UI gate
       signerCertificateSha256: '8'.repeat(64),
       installedBundleIdentifier: 'fi.siriusbusiness.nvpn',
       fipsCoreVersion: source.fipsVersion,
+      appProvisioningProfileSha256: '9'.repeat(64),
+      selectedPhysicalDevice: {
+        identityReadAt: '2026-01-01T00:00:00Z',
+        identityReadbackSha256: '1'.repeat(64),
+        deviceIdentifierSha256: '7'.repeat(64),
+        hardware: { model: 'Fixture' },
+      },
     }
     const androidText = JSON.stringify(androidArtifact)
     const androidForegroundIdleRaw = {
@@ -1239,6 +1246,11 @@ test('release receipt collection requires exact source and strict public UI gate
       productionAppByteIdentical: false,
       companySigningVerified: true,
       debuggable: false,
+      derivedDataPathSha256: '1'.repeat(64),
+      testProductsPathSha256: '2'.repeat(64),
+      testProductsTreeSha256: '3'.repeat(64),
+      xctestrunPathSha256: '4'.repeat(64),
+      xctestrunSha256: '5'.repeat(64),
     }
     const iosJoinVariantText = JSON.stringify(iosJoinVariant)
     writeFileSync(paths.android.physical, androidText)
@@ -1897,6 +1909,84 @@ test('release receipt collection requires exact source and strict public UI gate
       Object.keys(evidence.platformGateReceipts).sort(),
       ['android', 'ios', 'linux', 'macos', 'windows'],
     )
+
+    // Keep the historical mobile pair byte-for-byte. Every negative below
+    // updates the downstream hashes, so the deep identity checks are reached.
+    const pairSealText = readFileSync(paths.ios.frozen_archive, 'utf8')
+    const pairMacosText = readFileSync(paths.macos.public_ui_join, 'utf8')
+    paths.ios.desktop_join_production = join(root, 'desktop-ios-production.json')
+    paths.ios.desktop_join_variant = join(root, 'desktop-ios-variant.json')
+    const desktopProduction = structuredClone(iosArtifact)
+    Object.assign(desktopProduction.selectedPhysicalDevice, {
+      identityReadAt: '2026-01-02T00:00:00Z', identityReadbackSha256: '2'.repeat(64),
+    })
+    const desktopVariant = structuredClone(iosJoinVariant)
+    desktopVariant.selectedPhysicalDevice = structuredClone(desktopProduction.selectedPhysicalDevice)
+    for (const field of ['derivedDataPathSha256', 'testProductsPathSha256',
+      'testProductsTreeSha256', 'xctestrunPathSha256', 'xctestrunSha256']) {
+      desktopVariant[field] = '6'.repeat(64)
+    }
+    const collectPair = () => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    })
+    const installPair = (production, variant, badReference = false) => {
+      const productionText = JSON.stringify(production)
+      writeFileSync(paths.ios.desktop_join_production, productionText)
+      const current = { ...variant, productionArtifactReceiptSha256:
+        badReference ? sha256(iosText) : sha256(productionText) }
+      const variantText = JSON.stringify(current)
+      writeFileSync(paths.ios.desktop_join_variant, variantText)
+      const macos = JSON.parse(pairMacosText)
+      macos.artifact.ios.artifactReceiptSha256 = sha256(variantText)
+      const macosText = JSON.stringify(macos)
+      writeFileSync(paths.macos.public_ui_join, macosText)
+      const seal = JSON.parse(pairSealText)
+      seal.desktopJoinIosProductionReceiptSha256 = sha256(productionText)
+      seal.desktopJoinIosVariantReceiptSha256 = sha256(variantText)
+      seal.realDeviceGateReceiptSha256['desktop-mobile-manual-join'] = [
+        sha256(macosText), sha256(variantText),
+      ]
+      writeFileSync(paths.ios.frozen_archive, JSON.stringify(seal))
+    }
+    installPair(desktopProduction, desktopVariant)
+    assert.doesNotThrow(collectPair)
+    for (const [target, mutate, expected] of [
+      ['production', (v) => { v.appProvisioningProfileSha256 = 'f'.repeat(64) }, /iOS production receipts/],
+      ['production', (v) => { v.selectedPhysicalDevice.hardware.model = 'Different' }, /iOS production receipts/],
+      ['variant', (v) => { delete v.selectedPhysicalDevice.deviceIdentifierSha256 }, /iOS join variant receipts/],
+      ['variant', (v) => { v.appProvisioningProfileSha256 = 'f'.repeat(64) }, /iOS join variant receipts/],
+      ['variant', (v) => { delete v.testProductsTreeSha256 }, /iOS join variant receipts/],
+      ['variant', (v) => { v.unrecognizedIdentity = true }, /iOS join variant receipts/],
+    ]) {
+      const production = structuredClone(desktopProduction)
+      const variant = structuredClone(desktopVariant)
+      mutate(target === 'production' ? production : variant)
+      installPair(production, variant)
+      assert.throws(collectPair, expected)
+    }
+    installPair(desktopProduction, desktopVariant, true)
+    assert.throws(collectPair, /join-test variant receipt is incomplete/)
+    installPair(desktopProduction, desktopVariant)
+    const wrongMacos = JSON.parse(readFileSync(paths.macos.public_ui_join, 'utf8'))
+    wrongMacos.artifact.ios.artifactReceiptSha256 = '0'.repeat(64)
+    writeFileSync(paths.macos.public_ui_join, JSON.stringify(wrongMacos))
+    const wrongSeal = JSON.parse(readFileSync(paths.ios.frozen_archive, 'utf8'))
+    wrongSeal.realDeviceGateReceiptSha256['desktop-mobile-manual-join'][0] =
+      sha256(readFileSync(paths.macos.public_ui_join))
+    writeFileSync(paths.ios.frozen_archive, JSON.stringify(wrongSeal))
+    assert.throws(collectPair, /macOS\/mobile public-UI join receipt is incomplete/)
+    installPair(desktopProduction, desktopVariant)
+    const wrongProductionSeal = JSON.parse(readFileSync(paths.ios.frozen_archive, 'utf8'))
+    wrongProductionSeal.desktopJoinIosProductionReceiptSha256 = '0'.repeat(64)
+    writeFileSync(paths.ios.frozen_archive, JSON.stringify(wrongProductionSeal))
+    assert.throws(collectPair, /Sealed desktop iOS receipt pair differs/)
+    assert.equal(readFileSync(paths.ios.mobile_artifact, 'utf8'), iosText)
+    assert.equal(readFileSync(paths.ios.join_variant, 'utf8'), iosJoinVariantText)
+    delete paths.ios.desktop_join_production
+    delete paths.ios.desktop_join_variant
+    writeFileSync(paths.ios.frozen_archive, pairSealText)
+    writeFileSync(paths.macos.public_ui_join, pairMacosText)
+    assert.doesNotThrow(collectPair)
 
     const localIosText = readFileSync(paths.ios.mobile_artifact, 'utf8')
     const localSealText = readFileSync(paths.ios.frozen_archive, 'utf8')

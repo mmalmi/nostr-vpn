@@ -472,8 +472,18 @@ frozen_gate_arguments() {
 }
 
 validate_frozen_gate_seal() {
+  local desktop_pair_dir="${FROZEN_DESKTOP_MOBILE_JOIN_RECEIPT%/*}"
+  local desktop_pair_args=()
+  if [[ -e "$desktop_pair_dir/ios-join-test-variant.json" \
+    || -e "$desktop_pair_dir/ios-join-production-artifact.json" ]]; then
+    desktop_pair_args=(
+      --desktop-join-ios-variant-receipt "$desktop_pair_dir/ios-join-test-variant.json"
+      --desktop-join-ios-production-receipt "$desktop_pair_dir/ios-join-production-artifact.json"
+    )
+  fi
   frozen_gate_arguments
   python3 "$FROZEN_TOOL" validate-gate-seal \
+    ${desktop_pair_args[@]+"${desktop_pair_args[@]}"} \
     --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \
     --adhoc-receipt "$FROZEN_ADHOC_RECEIPT" \
     --sealed-mobile-receipt "$FROZEN_MOBILE_RECEIPT" \

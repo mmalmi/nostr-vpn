@@ -2270,6 +2270,13 @@ function main() {
         releaseJoinResultDir,
         'ios-join-test-variant.json',
       ),
+      ...(existsSync(join(releaseJoinResultDir, 'macos', 'ios-join-test-variant.json'))
+        || existsSync(join(releaseJoinResultDir, 'macos', 'ios-join-production-artifact.json'))
+        ? {
+            desktop_join_variant: join(releaseJoinResultDir, 'macos', 'ios-join-test-variant.json'),
+            desktop_join_production: join(releaseJoinResultDir, 'macos', 'ios-join-production-artifact.json'),
+          }
+        : {}),
       mobile_join: join(releaseJoinResultDir, 'summary.json'),
       desktop_mobile_join: join(
         releaseJoinResultDir,

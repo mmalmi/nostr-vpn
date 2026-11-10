@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TOOL="$ROOT/scripts/ios_frozen_archive.py"
+python3 "$ROOT/scripts/test-ios-join-receipt-pairs.py"
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-ios-frozen-archive.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
