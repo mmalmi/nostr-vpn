@@ -7,6 +7,8 @@ APP_ROOT="${NVPN_APP_REPO_PATH:-$ROOT}"
 EXTERNAL_HARNESS_DIGEST="${NVPN_EXTERNAL_HARNESS_DIGEST:-}"
 REMOTE_HARNESS_FILES=(
   scripts/lib-macos-release-app-ownership.sh
+  scripts/macos_release_action.py
+  scripts/native-lab.py
   scripts/macos-release-mobile-join-remote.sh
   scripts/macos_release_join_artifact.py
   scripts/macos_hosted_admission.py
@@ -442,6 +444,10 @@ capture_diagnostics() {
 }
 
 stage() {
+  [[ ! -e "$MACOS_RELEASE_APP_STATE_DIR" ]] || {
+    echo "complete the owned app handoff before staging another artifact" >&2
+    return 125
+  }
   stop_app
   restore_test_profile
   macos_release_app_restore

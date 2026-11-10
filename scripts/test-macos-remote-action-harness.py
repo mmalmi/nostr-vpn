@@ -219,33 +219,8 @@ stop_app && exit 11
 [[ "$APP_PID" == 12345 && "$calls" -eq 1 && -f "$OWNED_PID_FILE" ]]
 '''])
 
-    # Restored baseline intentionally outlives its action in a separate session.
-    baseline = directory / "baseline.json"
-    fixture = directory / "baseline-app"
-    fixture.write_text(f'''#!{sys.executable}
-import json,os,pathlib,sys,time
-pathlib.Path({str(baseline)!r}).write_text(json.dumps(dict(pid=os.getpid(),pgid=os.getpgrp(),sid=os.getsid(0),args=sys.argv[1:])))
-time.sleep(20)
-''')
-    fixture.chmod(0o700)
-    restored = None
-    try:
-        command = (f"source {shlex.quote(str(ROOT / 'lib-macos-release-app-ownership.sh'))}; "
-                   f"MACOS_RELEASE_APP_INSTALLED_EXE={shlex.quote(str(fixture))}; "
-                   "macos_release_app_launch_installed hidden")
-        relative = action(command, 0)
-        deadline = time.monotonic() + 2
-        while not baseline.exists() and time.monotonic() < deadline:
-            time.sleep(.01)
-        restored = json.loads(baseline.read_text())
-        assert restored["pid"] == restored["pgid"] == restored["sid"]
-        assert restored["args"] == ["--hidden"]
-        closed(relative, command, 0)
-    finally:
-        if restored is not None:
-            try:
-                os.killpg(restored["pgid"], signal.SIGTERM)
-            except ProcessLookupError:
-                pass
 
 print("Mac remote action closure and cleanup ordering passed (no VM/device use)")
+
+run([sys.executable, str(ROOT / "test-macos-baseline-handoff.py")])
+print("Full restored-baseline handoff checks passed")

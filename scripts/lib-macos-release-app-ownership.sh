@@ -121,6 +121,11 @@ macos_release_app_acquire() {
   printf '%s\n' "$state" >"$prior.tmp"
   mv "$prior.tmp" "$prior"
   : >"$marker"
+  if [[ -n "$pids" && -n "${NVPN_MACOS_RELEASE_ACTION_DIR:-}" ]]; then
+    python3 "$(dirname "${BASH_SOURCE[0]}")/macos_release_action.py" \
+      baseline-snapshot "$MACOS_RELEASE_APP_STATE_DIR" "$pid" \
+      "$MACOS_RELEASE_APP_INSTALLED_EXE" "$args" || return 1
+  fi
   [[ -z "$pids" ]] || macos_release_app_stop_pid "$pid" "$args"
 }
 
@@ -131,24 +136,15 @@ macos_release_app_launch_installed() {
   else
     set --
   fi
-  # The restored baseline outlives this action. Give it its own session so
-  # terminal action-group checks still cover every test app and driver.
-  python3 - "$MACOS_RELEASE_APP_INSTALLED_EXE" "$@" <<'PY'
-import os
-import subprocess
-import sys
-
-env = {
-    "HOME": os.environ["HOME"], "USER": os.environ.get("USER", "dev"),
-    "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "dev")),
-    "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-    "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
-    "LANG": os.environ.get("LANG", "en_US.UTF-8"),
-}
-subprocess.Popen(sys.argv[1:], env=env, start_new_session=True,
-                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                 stderr=subprocess.DEVNULL)
-PY
+  /usr/bin/nohup /usr/bin/env -i \
+    HOME="$HOME" \
+    USER="${USER:-dev}" \
+    LOGNAME="${LOGNAME:-${USER:-dev}}" \
+    PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    LANG="${LANG:-en_US.UTF-8}" \
+    "$MACOS_RELEASE_APP_INSTALLED_EXE" "$@" \
+    </dev/null >/dev/null 2>&1 &
 }
 
 macos_release_app_restore() {
@@ -163,8 +159,18 @@ macos_release_app_restore() {
   if [[ -f "$owned" ]]; then
     pid="$(<"$owned")"
     [[ "$pid" =~ ^[1-9][0-9]*$ ]]
-    macos_release_app_stop_pid "$pid" "$MACOS_RELEASE_APP_GATE_EXE"
+    macos_release_app_stop_pid "$pid" "$MACOS_RELEASE_APP_GATE_EXE" || return 125
     rm -f "$owned"
+  fi
+
+  if [[ -n "${NVPN_MACOS_RELEASE_ACTION_DIR:-}" ]]; then
+    # Keep the acquired/prior/identity records until the host independently
+    # closes this action and verifies the exact separately launched baseline.
+    python3 "$(dirname "${BASH_SOURCE[0]}")/macos_release_action.py" \
+      baseline-restore "$MACOS_RELEASE_APP_STATE_DIR" \
+      "$MACOS_RELEASE_APP_INSTALLED_EXE" "$MACOS_RELEASE_APP_PROCESS_NAME" \
+      || return 125
+    return 0
   fi
 
   pids="$(pgrep -x "$MACOS_RELEASE_APP_PROCESS_NAME" 2>/dev/null || true)"
