@@ -20,6 +20,7 @@ for file in "${FILES[@]}"; do
   bash -n "$file"
 done
 python3 "$ROOT/scripts/test-mobile-release-join-ui-evidence.py"
+python3 "$ROOT/scripts/test-macos-mobile-direction-selection.py"
 (
   source "$ROOT/scripts/release_common.sh"
   eval "$(sed -n '/^select_generated_ios_release_xctestrun_for_gate() {/,/^}/p' "$ROOT/scripts/release-gate.sh")"

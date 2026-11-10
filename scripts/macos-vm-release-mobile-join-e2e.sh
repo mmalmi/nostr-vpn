@@ -32,9 +32,9 @@ case "$ARTIFACT_ACTION" in
 esac
 MACOS_MOBILE_DIRECTIONS="${NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS:-all}"
 case "$MACOS_MOBILE_DIRECTIONS" in
-  all|pixel|macos-admin-iphone) ;;
+  all|pixel|macos-admin-iphone|pixel-admin-macos) ;;
   *)
-    echo "Unsupported NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS=$MACOS_MOBILE_DIRECTIONS (expected all, pixel, or macos-admin-iphone)" >&2
+    echo "Unsupported NVPN_MACOS_RELEASE_MOBILE_DIRECTIONS=$MACOS_MOBILE_DIRECTIONS (expected all, pixel, macos-admin-iphone, or pixel-admin-macos)" >&2
     exit 2
     ;;
 esac
@@ -842,7 +842,8 @@ prepare_host_sources() {
 }
 
 if [[ "$ARTIFACT_ACTION" == "full" || "$ARTIFACT_ACTION" == "run-only" ]]; then
-  [[ "$MACOS_MOBILE_DIRECTIONS" == "pixel" || -n "${IOS_DEVICE:-}" ]] || {
+  [[ "$MACOS_MOBILE_DIRECTIONS" == "pixel" \
+    || "$MACOS_MOBILE_DIRECTIONS" == "pixel-admin-macos" || -n "${IOS_DEVICE:-}" ]] || {
     echo "macOS/mobile Release join gate requires IOS_DEVICE" >&2
     exit 2
   }
@@ -850,7 +851,8 @@ if [[ "$ARTIFACT_ACTION" == "full" || "$ARTIFACT_ACTION" == "run-only" ]]; then
     echo "macOS/mobile Release join gate requires exact artifact reuse" >&2
     exit 2
   }
-  if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" ]]; then
+  if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" \
+    && "$MACOS_MOBILE_DIRECTIONS" != "pixel-admin-macos" ]]; then
     release_join_validate_reused_artifacts || {
       echo "macOS/mobile Release join gate rejected the exact mobile artifacts" >&2
       exit 1
@@ -996,6 +998,7 @@ IPHONE_ADMIN_DESKTOP_JOINER_RELAUNCH_DURABLE=0
 
 # macOS admin -> physical Android joiner.
 if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" \
+  && "$MACOS_MOBILE_DIRECTIONS" != "pixel-admin-macos" \
   && -z "$REUSED_PIXEL_RECEIPT_SHA256" ]]; then
 set +e
 (
@@ -1062,9 +1065,12 @@ if ((macos_admin_android_status != 0)); then
   echo "macOS admin -> Pixel joiner failed; continuing reverse direction" >&2
 fi
 finish_macos_mobile_direction macos-admin-pixel-joiner
+fi
 
 # Physical Android admin -> macOS joiner. The remote app remains alive while
 # waiting for the exact Android admin row, so receipt delivery is real.
+if [[ "$MACOS_MOBILE_DIRECTIONS" != "macos-admin-iphone" \
+  && -z "$REUSED_PIXEL_RECEIPT_SHA256" ]]; then
 set +e
 (
 set -euo pipefail
@@ -1133,13 +1139,17 @@ release_join_android_relaunch_and_wait_accepted "$DESKTOP_JOINER_ID"
 )
 android_admin_macos_status=$?
 set -e
+python3 "$REMOTE_ACTION_HELPER" record \
+  "$RESULT_DIR/macos/pixel-admin-macos-direction.json" \
+  "{\"direction\":\"pixel-admin-macos\",\"exitCode\":$android_admin_macos_status}"
 if ((android_admin_macos_status != 0)); then
   echo "Pixel admin -> macOS joiner failed; continuing independent Apple checks" >&2
 fi
 finish_macos_mobile_direction pixel-admin-macos-joiner
 fi
 
-if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" ]]; then
+if [[ "$MACOS_MOBILE_DIRECTIONS" != "pixel" \
+  && "$MACOS_MOBILE_DIRECTIONS" != "pixel-admin-macos" ]]; then
 # macOS admin -> physical iPhone joiner. XCTest only drives the shipped
 # accessibility tree; the app receives no launch arguments or environment.
 set +e
@@ -1371,8 +1381,10 @@ if ((macos_admin_android_status != 0 \
   exit 1
 fi
 
-if [[ "$MACOS_MOBILE_DIRECTIONS" == "macos-admin-iphone" ]]; then
-  echo "MACOS_MOBILE_JOIN_DIAGNOSTIC_OK macos-admin-iphone"
+if [[ "$MACOS_MOBILE_DIRECTIONS" == "macos-admin-iphone" \
+  || "$MACOS_MOBILE_DIRECTIONS" == "pixel-admin-macos" ]]; then
+  # An isolated role records its own evidence, never a full join-gate summary.
+  echo "MACOS_MOBILE_JOIN_DIAGNOSTIC_OK $MACOS_MOBILE_DIRECTIONS"
   exit 0
 fi
 
