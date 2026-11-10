@@ -991,6 +991,7 @@ function buildLinuxArtifacts({
   const verificationPlan = linuxPublicationVerificationPlan({
     env,
     tag,
+    candidateRoot: repoRoot,
     candidateCommit,
     candidateTree,
     gateReceipt,
