@@ -1882,7 +1882,9 @@ cleanup_gate() {
   local cleanup_failed=0 underlay_owner=""
   if [[ -f "$STATE_DIR/underlay.pid" ]]; then
     underlay_owner="$(tr -d '[:space:]' <"$STATE_DIR/underlay.pid")"
-    stop_owned_underlay_runner || cleanup_failed=1
+    # A surviving underlay runner can still restore services in its EXIT trap.
+    # Do not change routes or services concurrently with that recovery.
+    stop_owned_underlay_runner || return 1
   fi
   if [[ -f "$STATE_DIR/payload.pid" ]]; then
     if [[ "$underlay_owner" =~ ^[1-9][0-9]*$ ]]; then
@@ -1919,7 +1921,26 @@ cleanup_gate() {
   return "$cleanup_failed"
 }
 
+record_recovery_action() {
+  local receipt="$RESULT_DIR/recovery-$ACTION"
+  mkdir -p "$RESULT_DIR"
+  # One invocation per action. Unknown completion must not become a retry.
+  mkdir "$receipt" || return 1
+  printf '%s\n' "$$" >"$receipt/pid"
+  process_start_signature "$$" >"$receipt/start"
+  ps -p "$$" -o pgid= | xargs >"$receipt/pgid"
+  ps -p "$$" -o uid=,command= >"$receipt/command"
+  [[ -s "$receipt/start" && -s "$receipt/pgid" ]] || return 1
+  trap 'status=$?; trap - EXIT; printf "%s\n" "$status" >"$RESULT_DIR/recovery-$ACTION/exit"; exit "$status"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
 validate_inputs
+case "$ACTION" in
+  cleanup|restore-installed-state) record_recovery_action ;;
+esac
 case "$ACTION" in
   prepare|dns-case|underlay-start|underlay-run|crash-restart|direct)
     resolve_daemon_log

@@ -67,6 +67,8 @@ INSTALLED_STATE_SNAPSHOT_STARTED=0
 GUEST_NETWORK_CLEANED=0
 INSTALLED_STATE_RESTORED=0
 UNDERLAY_STARTED=0
+RECOVERY_UNRESOLVED=0
+TARGET_CONTAINER_STARTED=0
 
 fail() {
   echo "macOS VM Release network gate failed: $*" >&2
@@ -187,21 +189,62 @@ remote_phase() {
   done
   printf -v quoted '%q' "$action"
   remote_command+=" ./scripts/e2e-macos-release-network.sh $quoted"
-  if [[ -n "${3:-}" ]]; then
-    # Save the exact canonical recovery action before quiescing the guest.
-    python3 - "$3" ssh "${options[@]}" "$SSH_HOST" "$remote_command" <<'PY'
-import json, os, pathlib, sys
+  case "$action" in
+    cleanup|restore-installed-state)
+      [[ "$RECOVERY_UNRESOLVED" -eq 0 ]] || return 1
+      local intent="$ARTIFACT_DIR/recovery-$action.intent"
+      if [[ -e "$intent" ]]; then
+        RECOVERY_UNRESOLVED=1
+        return 1
+      fi
+      RECOVERY_UNRESOLVED=1
+      printf '%s\n' "$REMOTE_DIR/results/recovery-$action" >"$intent" || return 1
+      local status=0
+      ssh "${options[@]}" "$SSH_HOST" "$remote_command" || status="$?"
+      printf '%s\n' "$status" >"$ARTIFACT_DIR/recovery-$action-transport-exit" || return 1
+      # Transport success does not replace exact remote action/group closure.
+      if ! recovery_action_closed "$lane" "$action"; then return 1; fi
+      RECOVERY_UNRESOLVED=0
+      ;;
+    *) ssh "${options[@]}" "$SSH_HOST" "$remote_command" ;;
+  esac
+}
+
+recovery_action_closed() {
+  local lane="$1" action="$2" source quoted status=0
+  source="$(cat <<'PYACTION'
+import json, os, pathlib, subprocess, sys, time
 path = pathlib.Path(sys.argv[1])
-temporary = path.with_suffix('.writing')
-with temporary.open('w') as stream:
-    json.dump(sys.argv[2:], stream)
-    stream.flush()
-    os.fsync(stream.fileno())
-os.replace(temporary, path)
-PY
-  else
-    ssh "${options[@]}" "$SSH_HOST" "$remote_command"
-  fi
+receipt = {name: (path/name).read_text().strip() for name in ['pid', 'start', 'pgid', 'command', 'exit']}
+print(json.dumps(receipt), flush=True)
+pid, group = int(receipt['pid']), int(receipt['pgid'])
+assert pid > 1 and group > 1
+# Reuse the finite SSH action phase; this read-only observation never signals.
+end = time.monotonic() + 2
+while True:
+    process = subprocess.run(['ps', '-p', str(pid), '-o', 'lstart='], capture_output=True, text=True, timeout=1)
+    gone = process.returncode == 1 or (process.returncode == 0 and process.stdout.strip() != receipt['start'])
+    try:
+        os.killpg(group, 0)
+        group_gone = False
+    except ProcessLookupError:
+        group_gone = True
+    if (gone and group_gone) or time.monotonic() >= end:
+        print(json.dumps(dict(psExit=process.returncode, psStdout=process.stdout,
+                              psStderr=process.stderr, groupGone=group_gone)), flush=True)
+    if gone and group_gone:
+        break
+    assert time.monotonic() < end, 'Recovery action/group still active'
+    time.sleep(.05)
+assert int(receipt['exit']) == 0, 'Recovery action failed; preserve state'
+PYACTION
+)"
+  printf -v quoted '%q' "$source"
+  remote_shell "$lane" "python3 -c $quoted '$REMOTE_DIR/results/recovery-$action'" \
+    >"$ARTIFACT_DIR/recovery-$action-closure.json" \
+    2>"$ARTIFACT_DIR/recovery-$action-closure.stderr" || status="$?"
+  printf '%s\n' "$status" >"$ARTIFACT_DIR/recovery-$action-closure-exit" || return 1
+  return "$status"
 }
 
 run_dns_case() {
@@ -321,15 +364,54 @@ capture_fixture_failure() {
     >"$ARTIFACT_DIR/fixture-failure-target-logs.txt" 2>&1 || true
 }
 
+remove_recorded_container() {
+  local name="$1" receipt="$2"
+  python3 - "$receipt" "$name" "$FIXTURE_IMAGE_ID" <<'PYCONTAINER'
+import json, pathlib, re, subprocess, sys
+path, name, image = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+expected = json.loads(path.read_text())[0]
+assert expected['Name'] == '/' + name and expected['Image'] == image
+identity = expected['Id']
+assert re.fullmatch(r'[0-9a-f]{64}', identity)
+observations = []
+def run(*arguments):
+    try:
+        result = subprocess.run(['docker', '--context', 'desktop-linux', *arguments],
+                                capture_output=True, text=True, timeout=5)
+        value = dict(argv=list(arguments), exitCode=result.returncode,
+                     stdout=result.stdout, stderr=result.stderr)
+    except subprocess.TimeoutExpired as error:
+        def text(value):
+            return value.decode(errors='replace') if isinstance(value, bytes) else value
+        value = dict(argv=list(arguments), exitCode=None, timedOut=True,
+                     stdout=text(error.stdout), stderr=text(error.stderr))
+    observations.append(value)
+    path.with_name(path.stem + '-cleanup.json').write_text(json.dumps(observations))
+    assert value['exitCode'] is not None, 'Container operation timed out; closure unresolved'
+    return result
+def inspect():
+    result = run('container', 'inspect', identity)
+    if result.returncode:
+        assert result.returncode == 1 and 'No such container' in result.stderr
+        return None
+    actual = json.loads(result.stdout)[0]
+    assert all(actual[key] == expected[key] for key in ['Id', 'Name', 'Image']), 'Container identity changed; preserve it'
+    return actual
+if inspect() is not None:
+    assert run('rm', '-f', identity).returncode == 0
+assert inspect() is None, 'Recorded container ID remains'
+PYCONTAINER
+}
+
 remove_forward_target() {
-  [[ -n "$TARGET_CONTAINER" ]] || return 0
-  if mobile_wg_fixture_docker container inspect "$TARGET_CONTAINER" \
-    >/dev/null 2>&1
-  then
-    mobile_wg_fixture_docker rm -f "$TARGET_CONTAINER" >/dev/null || return 1
-  fi
-  ! mobile_wg_fixture_docker container inspect "$TARGET_CONTAINER" \
-    >/dev/null 2>&1
+  [[ "$TARGET_CONTAINER_STARTED" -eq 1 ]] || return 0
+  remove_recorded_container "$TARGET_CONTAINER" "$ARTIFACT_DIR/owned-target-container.json"
+}
+
+remove_exit_fixture() {
+  [[ "$MOBILE_WG_FIXTURE_STARTED" -eq 1 ]] || return 0
+  remove_recorded_container "$CONTAINER" "$ARTIFACT_DIR/owned-fixture-container.json" || return 1
+  MOBILE_WG_FIXTURE_STARTED=0
 }
 
 remove_remote_dir() {
@@ -363,6 +445,7 @@ close_ssh_controls() {
 cleanup() {
   local status="$?" cleanup_failed=0
   trap - EXIT INT TERM
+  [[ "$RECOVERY_UNRESOLVED" -eq 0 ]] || cleanup_failed=1
   if [[ "$status" -ne 0 && "$MOBILE_WG_FIXTURE_STARTED" -eq 1 ]]; then
     capture_fixture_failure
   fi
@@ -377,7 +460,9 @@ cleanup() {
       echo "macOS guest production cleanup failed" >&2
       cleanup_failed=1
     fi
-    if [[ "$INSTALLED_STATE_SNAPSHOT_STARTED" -eq 1 \
+    if [[ "$GUEST_NETWORK_CLEANED" -eq 1 \
+      && "$RECOVERY_UNRESOLVED" -eq 0 \
+      && "$INSTALLED_STATE_SNAPSHOT_STARTED" -eq 1 \
       && "$INSTALLED_STATE_RESTORED" -eq 0 ]]
     then
       if remote_phase "$lane" restore-installed-state; then
@@ -400,31 +485,36 @@ cleanup() {
       echo "preserving macOS guest state after incomplete cleanup" >&2
     fi
   fi
-  if remove_forward_target; then
+  if [[ "$RECOVERY_UNRESOLVED" -eq 1 ]]; then
+    echo "preserving fixture and guest state after unresolved remote recovery" >&2
+    cleanup_failed=1
+  elif remove_forward_target; then
     :
   else
     cleanup_failed=1
   fi
-  if mobile_wg_fixture_cleanup "$CONTAINER" "$IMAGE"; then
+  if [[ "$RECOVERY_UNRESOLVED" -eq 1 ]]; then
+    :
+  elif remove_exit_fixture; then
     :
   else
     cleanup_failed=1
   fi
-  if [[ -n "$FIXTURE_DIR" ]]; then
+  if [[ "$RECOVERY_UNRESOLVED" -eq 0 && "$cleanup_failed" -eq 0 && -n "$FIXTURE_DIR" ]]; then
     rm -rf "$FIXTURE_DIR"
     [[ ! -e "$FIXTURE_DIR" ]] || cleanup_failed=1
     FIXTURE_DIR=""
   fi
-  close_ssh_controls
+  [[ "$RECOVERY_UNRESOLVED" -eq 1 ]] || close_ssh_controls
   python3 - "$ARTIFACT_DIR/cleanup-result.json" "$status" "$cleanup_failed" \
-    "$GUEST_NETWORK_CLEANED" "$INSTALLED_STATE_RESTORED" "$REMOTE_DIR" <<'PY'
+    "$GUEST_NETWORK_CLEANED" "$INSTALLED_STATE_RESTORED" "$REMOTE_DIR" "$RECOVERY_UNRESOLVED" <<'PY'
 import json, os, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 path.parent.mkdir(parents=True, exist_ok=True)
 with path.open('w') as stream:
     json.dump(dict(originalExit=int(sys.argv[2]), cleanupFailed=int(sys.argv[3]),
                    guestNetworkCleaned=int(sys.argv[4]), installedStateRestored=int(sys.argv[5]),
-                   remainingRemoteDir=sys.argv[6]), stream)
+                   remainingRemoteDir=sys.argv[6], recoveryUnresolved=bool(int(sys.argv[7]))), stream)
     stream.flush()
     os.fsync(stream.fileno())
 PY
@@ -506,6 +596,7 @@ wg pubkey <"$FIXTURE_DIR/client.key" >"$FIXTURE_DIR/client.pub"
 mobile_wg_fixture_initialize "$ROOT" "$FIXTURE_DIR"
 mobile_wg_fixture_assert_available "$CONTAINER" "$HOST_PORT"
 mobile_wg_fixture_build "$ROOT" "$IMAGE" "${NVPN_MOBILE_WG_EXIT_IMAGE_READY:-0}"
+FIXTURE_IMAGE_ID="$(mobile_wg_fixture_docker image inspect -f '{{.Id}}' "$IMAGE")"
 cat >"$FIXTURE_DIR/client.conf" <<EOF
 [Interface]
 PrivateKey = $(<"$FIXTURE_DIR/client.key")
@@ -537,6 +628,7 @@ mobile_wg_fixture_ready "$CONTAINER" \
 mobile_wg_fixture_docker container inspect "$TARGET_CONTAINER" \
   >/dev/null 2>&1 \
   && fail "local forwarded target container name is already in use"
+TARGET_CONTAINER_STARTED=1
 mobile_wg_fixture_docker run -d \
   --name "$TARGET_CONTAINER" \
   --entrypoint python3 \
@@ -595,8 +687,6 @@ SECONDARY_IP="$(
 remote_shell secondary 'true'
 
 mkdir -p "$ARTIFACT_DIR"
-remote_phase secondary cleanup "$ARTIFACT_DIR/recover-network-argv.json"
-remote_phase secondary restore-installed-state "$ARTIFACT_DIR/restore-installed-argv.json"
 python3 - "$ARTIFACT_DIR/recovery-state.json" "$REMOTE_DIR" "$FIXTURE_DIR" \
   "$PRIMARY_CONTROL_PATH" "$SECONDARY_CONTROL_PATH" <<'PY'
 import json, os, pathlib, sys
@@ -731,7 +821,7 @@ INSTALLED_STATE_RESTORED=1
 copy_guest_results
 remove_remote_dir
 remove_forward_target
-mobile_wg_fixture_cleanup "$CONTAINER" "$IMAGE"
+remove_exit_fixture
 
 echo "MACOS_VM_WIREGUARD_EXIT_E2E_OK"
 echo "Real Direct -> local IPv4 WireGuard exit -> two-underlay handoff -> SIGKILL/restart -> Direct and all five DNS modes passed"
