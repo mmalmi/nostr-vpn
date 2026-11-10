@@ -223,11 +223,12 @@ macos_remote_action() {
     -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$MAC_HOST" "$wrapped" \
     >"$receipt.closure.log" 2>&1
   then
-    python3 "$REMOTE_ACTION_HELPER" record "$receipt.closed.json" \
-      "{\"exitCode\":$status}" || return 1
     if [[ "$status" -eq 125 ]]; then
       macos_remote_actions_block "Guest app stop is unresolved; retaining its ownership evidence"
+      return "$status"
     fi
+    python3 "$REMOTE_ACTION_HELPER" record "$receipt.closed.json" \
+      "{\"exitCode\":$status}" || return 1
     return "$status"
   fi
   macos_remote_actions_block "Remote action closure is unresolved; preserving its profile and harness: $action"

@@ -170,7 +170,8 @@ macos_remote_actions_closed
 echo reverse >>"$events"
 ''', expected=1)
     assert not (directory / "events").read_text()
-    (actions / "blocked.json").unlink()
+    for path in actions.iterdir():
+        path.unlink()
 
     # The transferred harness can be removed only by its installing session.
     # Exercise the actual removal function rather than the cleanup event stub.
