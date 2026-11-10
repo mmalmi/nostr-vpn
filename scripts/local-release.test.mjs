@@ -474,6 +474,36 @@ test('macOS publication selects the exact gated leaf when another Developer ID i
   }
 })
 
+test('macOS publication preserves archive permissions under a restrictive umask', {
+  skip: process.platform !== 'darwin' || process.getuid?.() === 0,
+}, () => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-publication-permissions-'))
+  const app = join(root, 'Nostr VPN.app')
+  const executable = join(app, 'payload')
+  const unpacked = join(root, 'unpacked')
+  const archive = join(root, 'updater.tar.gz')
+  try {
+    mkdirSync(app)
+    mkdirSync(unpacked)
+    writeFileSync(executable, 'exact fixture payload\n')
+    chmodSync(executable, 0o755)
+    const packed = spawnSync('/usr/bin/tar', ['-czf', archive, '-C', root, 'Nostr VPN.app'], { encoding: 'utf8' })
+    assert.equal(packed.status, 0, packed.stderr)
+    const wrapper = readFileSync(join(process.cwd(), 'scripts/verify-macos-release-publication-artifacts.sh'), 'utf8')
+    const commands = wrapper.split('\n').filter((line) => line.startsWith('tar ') && line.includes('"$UPDATER"'))
+    assert.equal(commands.length, 1)
+    const extracted = spawnSync('/bin/bash', ['-c', `set -eu; umask 077\n${commands[0]}`], {
+      encoding: 'utf8', env: { ...process.env, UPDATER: archive, updater_root: unpacked },
+    })
+    assert.equal(extracted.status, 0, extracted.stderr)
+    const restored = join(unpacked, 'Nostr VPN.app', 'payload')
+    assert.equal(readFileSync(restored, 'utf8'), readFileSync(executable, 'utf8'))
+    assert.equal(statSync(restored).mode & 0o777, 0o755)
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('Zapstore publication can be made mandatory by CLI or release environment', () => {
   assert.equal(zapstorePublicationRequired({ cliRequired: true }), true)
   assert.equal(

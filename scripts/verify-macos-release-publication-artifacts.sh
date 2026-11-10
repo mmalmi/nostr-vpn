@@ -42,7 +42,7 @@ verify_app() {
 
 verify_app "$APP"
 
-tar -xzf "$UPDATER" -C "$updater_root"
+tar -xzpf "$UPDATER" -C "$updater_root"
 verify_app "$updater_root/Nostr VPN.app"
 
 hdiutil attach -readonly -nobrowse -mountpoint "$mount_root" "$DMG"
