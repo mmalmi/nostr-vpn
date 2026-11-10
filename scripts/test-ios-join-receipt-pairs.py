@@ -288,18 +288,37 @@ archive_path.write_text(''', 1)
     assert android_seal["mobileJoinAndroidArtifactReceiptSha256"] == sha(mobile_android_path)
     assert android_seal["desktopJoinAndroidArtifactReceiptSha256"] == sha(desktop_android_path)
 
-    def reject_android(arguments=android_args):
+    def rebind_android_seal():
+        value = copy.deepcopy(android_seal)
+        value["mobileJoinAndroidArtifactReceiptSha256"] = sha(mobile_android_path)
+        value["desktopJoinAndroidArtifactReceiptSha256"] = sha(desktop_android_path)
+        for name, field, gate in (
+            ("mobile-join", "mobileJoinReceiptSha256", "bidirectional-mobile-qr-and-manual-join"),
+            ("desktop-join", "desktopMobileJoinReceiptSha256", "desktop-mobile-manual-join"),
+        ):
+            digest = sha(paths[name])
+            value[field] = digest
+            value["realDeviceGateReceiptSha256"][gate][0] = digest
+        write(seal, value)
+
+    rebind_android_seal()
+    validate(android_args)  # Otherwise-valid rebound fixture reaches success.
+
+    def reject_android(expected, arguments=android_args):
+        rebind_android_seal()
         for operation in (create, validate):
             try:
                 operation(arguments)
-            except ValueError:
-                pass
+            except ValueError as error:
+                message = expected[operation.__name__] if isinstance(expected, dict) else expected
+                assert str(error) == message, (operation.__name__, str(error))
             else:
                 raise AssertionError("invalid Android receipt pair was accepted")
 
-    reject_android(())
-    reject_android(android_args[:2])
-    reject_android(android_args[2:])
+    reject_android({"create": "desktop/mobile join receipt is incomplete or not source-bound",
+                    "validate": "sealed Android join receipt pair differs"}, ())
+    reject_android("Android join pairing requires both exact physical receipts", android_args[:2])
+    reject_android("Android join pairing requires both exact physical receipts", android_args[2:])
     mutations = [
         lambda v: v.update(apkSha256="f" * 64),
         lambda v: v.update(appGitSha="f" * 40),
@@ -315,27 +334,27 @@ archive_path.write_text(''', 1)
         bad = copy.deepcopy(current_android)
         mutate(bad)
         install_android_pair(android, bad)
-        reject_android()
+        reject_android("Android join receipts differ from the exact tested APK")
     # Validate both metadata sets, even when their malformed values agree.
     malformed = {**android, "aabSha256": ["1" * 64]}
     install_android_pair(malformed, malformed)
-    reject_android()
+    reject_android("Android join receipts differ from the exact tested APK")
     install_android_pair(android, current_android)
     write(seal, {**android_seal, "desktopJoinAndroidArtifactReceiptSha256": "0" * 64})
     try:
         validate(android_args)
-    except ValueError:
-        pass
+    except ValueError as error:
+        assert str(error) == "sealed Android join receipt pair differs", str(error)
     else:
         raise AssertionError("stale sealed Android pair was accepted")
     # A mutually changed pair cannot contradict the joins' actual APK identity.
     changed = {**android, "apkSha256": "f" * 64}
     install_android_pair(changed, changed)
-    reject_android()
+    reject_android("Android join physical identity differs at apkSha256")
     install_android_pair(android, current_android)
     value = load(paths["desktop-join"])
     value["artifact"]["android"]["artifactReceiptSha256"] = "0" * 64
     write(paths["desktop-join"], value)
-    reject_android()
+    reject_android("Android join receipt hash differs from its physical receipt")
 
 print("iOS receipt pairs: legacy/iOS cases and Android packaging-only pair cases passed")
