@@ -482,6 +482,13 @@ validate_frozen_gate_seal() {
     )
   fi
   frozen_gate_arguments
+  if [[ -e "$desktop_pair_dir/../android-release-artifact.json" \
+    || -e "$desktop_pair_dir/android-release-artifact.json" ]]; then
+    desktop_pair_args+=(
+      --mobile-join-android-receipt "$(dirname "$desktop_pair_dir")/android-release-artifact.json"
+      --desktop-join-android-receipt "$desktop_pair_dir/android-release-artifact.json"
+    )
+  fi
   python3 "$FROZEN_TOOL" validate-gate-seal \
     ${desktop_pair_args[@]+"${desktop_pair_args[@]}"} \
     --archive-receipt "$FROZEN_ARCHIVE_RECEIPT" \

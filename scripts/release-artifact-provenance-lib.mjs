@@ -1712,6 +1712,22 @@ function requireReleaseGateSummary(summary, {
   }
 }
 
+export function validateAndroidRuntimeReceiptPair(previous, current) {
+  // Packaging/path recovery can change these hashes, never the tested APK.
+  const metadata = new Set(['aabSha256', 'apkPathSha256', 'bundleReceiptSha256',
+    'hostedAdmissionCanonicalSha256', 'hostedAdmissionReceiptSha256'])
+  const runtime = (value) => Object.fromEntries(
+    Object.entries(value).filter(([name]) => !metadata.has(name)),
+  )
+  if (!isDeepStrictEqual(runtime(previous), runtime(current))
+    || [...metadata].some((name) => typeof previous[name] !== 'string'
+      || typeof current[name] !== 'string'
+      || !/^[0-9a-f]{64}$/.test(previous[name])
+      || !/^[0-9a-f]{64}$/.test(current[name]))) {
+    throw new Error('Previous Android physical receipt differs from the exact tested APK identity.')
+  }
+}
+
 function collectReleaseGateEvidence({
   commit,
   tree,
@@ -1772,16 +1788,7 @@ function collectReleaseGateEvidence({
     // Re-signing an AAB and recovering paths may change its admission receipts.
     // Retain the original runtime evidence only when every APK/source/signing
     // field is identical; the current AAB still needs its own staging validation.
-    const metadata = new Set(['aabSha256', 'apkPathSha256', 'bundleReceiptSha256',
-      'hostedAdmissionCanonicalSha256', 'hostedAdmissionReceiptSha256'])
-    const runtime = (value) => Object.fromEntries(
-      Object.entries(value).filter(([name]) => !metadata.has(name)),
-    )
-    if (!isDeepStrictEqual(runtime(previous), runtime(android))
-      || [...metadata].some((name) => !/^[0-9a-f]{64}$/.test(previous[name] ?? '')
-        || !/^[0-9a-f]{64}$/.test(android[name] ?? ''))) {
-      throw new Error('Previous Android physical receipt differs from the exact tested APK identity.')
-    }
+    validateAndroidRuntimeReceiptPair(previous, android)
     previousAndroidReceiptSha256 = sha256FileSync(platformReceiptPaths.android.previous_physical)
   }
   const runtimeAndroidReceiptSha256 = (digest) => previousAndroidReceiptSha256
@@ -2192,6 +2199,14 @@ function collectReleaseGateEvidence({
     commit: macosSource.commit,
     tree: macosSource.tree,
   })
+  if (mobileJoin.artifact.android.artifactReceiptSha256 !== macosJoin.artifact.android.artifactReceiptSha256
+    || ios.mobileJoinAndroidArtifactReceiptSha256 !== undefined
+    || ios.desktopJoinAndroidArtifactReceiptSha256 !== undefined) {
+    if (ios.mobileJoinAndroidArtifactReceiptSha256 !== mobileJoin.artifact.android.artifactReceiptSha256
+      || ios.desktopJoinAndroidArtifactReceiptSha256 !== macosJoin.artifact.android.artifactReceiptSha256) {
+      throw new Error('Sealed Android join receipt pair differs.')
+    }
+  }
   const macosNetwork = readRequiredJson(
     platformReceiptPaths.macos.network,
     'macOS desktop network receipt',

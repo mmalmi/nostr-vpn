@@ -1036,6 +1036,8 @@ def parser() -> argparse.ArgumentParser:
     seal.add_argument("--desktop-mobile-join-receipt", required=True)
     seal.add_argument("--desktop-join-ios-variant-receipt")
     seal.add_argument("--desktop-join-ios-production-receipt")
+    seal.add_argument("--mobile-join-android-receipt")
+    seal.add_argument("--desktop-join-android-receipt")
     seal.add_argument("--sealed-mobile-receipt", required=True)
     seal.add_argument("--output", required=True)
     seal.add_argument("--required-gate", action="append", default=[])
@@ -1053,6 +1055,8 @@ def parser() -> argparse.ArgumentParser:
     validate_seal.add_argument("--desktop-mobile-join-receipt", required=True)
     validate_seal.add_argument("--desktop-join-ios-variant-receipt")
     validate_seal.add_argument("--desktop-join-ios-production-receipt")
+    validate_seal.add_argument("--mobile-join-android-receipt")
+    validate_seal.add_argument("--desktop-join-android-receipt")
     validate_seal.add_argument("--gate-seal", required=True)
     validate_seal.add_argument("--required-gate", action="append", default=[])
     return result

@@ -2239,6 +2239,13 @@ seal_frozen_ios_release_gate() {
       --desktop-join-ios-production-receipt "$release_join_result_dir/macos/ios-join-production-artifact.json"
     )
   fi
+  if [[ -e "$release_join_result_dir/android-release-artifact.json" \
+    || -e "$release_join_result_dir/macos/android-release-artifact.json" ]]; then
+    desktop_pair_args+=(
+      --mobile-join-android-receipt "$release_join_result_dir/android-release-artifact.json"
+      --desktop-join-android-receipt "$release_join_result_dir/macos/android-release-artifact.json"
+    )
+  fi
   for required_mode in \
     NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E \
     NVPN_RELEASE_GATE_MOBILE_UNDERLAY_E2E \

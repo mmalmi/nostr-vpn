@@ -93,8 +93,11 @@ archive_path.write_text(''', 1)
         source = re.search(r"^" + name + r"\(\) \{\n.*?^\}\n",
                            (ROOT / file).read_text(), re.M | re.S)[0]
         for paired in (False, True):
-            for filename in ("ios-join-test-variant.json", "ios-join-production-artifact.json"):
-                path = pair_dir / filename
+            for directory, filename in ((pair_dir, "ios-join-test-variant.json"),
+                                        (pair_dir, "ios-join-production-artifact.json"),
+                                        (root, "android-release-artifact.json"),
+                                        (pair_dir, "android-release-artifact.json")):
+                path = directory / filename
                 if paired:
                     path.write_text("{}\n")
                 else:
@@ -112,6 +115,11 @@ archive_path.write_text(''', 1)
                 assert (flag in arguments) == paired
                 if paired:
                     assert arguments[arguments.index(flag) + 1] == str(pair_dir / filename)
+            for flag, directory in (("--mobile-join-android-receipt", root),
+                                    ("--desktop-join-android-receipt", pair_dir)):
+                assert (flag in arguments) == paired
+                if paired:
+                    assert arguments[arguments.index(flag) + 1] == str(directory / "android-release-artifact.json")
     original_bytes = {name: path.read_bytes() for name, path in paths.items()}
     production = load(paths["mobile"])
     variant = load(paths["variant"])
@@ -249,4 +257,85 @@ archive_path.write_text(''', 1)
     create()
     validate()
 
-print("iOS receipt pairs: distinct/legacy accepted; 37 rejection cases and 4 shell-callsite cases passed")
+    # Both physical Android receipts must be supplied and authenticated when
+    # packaging metadata changed around the same tested APK.
+    metadata = ("aabSha256", "apkPathSha256", "bundleReceiptSha256",
+                "hostedAdmissionCanonicalSha256", "hostedAdmissionReceiptSha256")
+    mobile_android_path = root / "mobile-android.json"
+    desktop_android_path = root / "desktop-android.json"
+    android = copy.deepcopy(load(paths["mobile-join"])["artifact"]["android"])
+    android.pop("artifactReceiptSha256")
+    android.update({name: "1" * 64 for name in metadata})
+    android["receiptSchema"] = 2
+    android["debuggable"] = False
+    current_android = {**android, **{name: "2" * 64 for name in metadata}}
+    android_args = ["--mobile-join-android-receipt", str(mobile_android_path),
+                    "--desktop-join-android-receipt", str(desktop_android_path)]
+
+    def install_android_pair(previous, current):
+        write(mobile_android_path, previous)
+        write(desktop_android_path, current)
+        for name, receipt_path in (("mobile-join", mobile_android_path),
+                                   ("desktop-join", desktop_android_path)):
+            value = json.loads(original_bytes[name])
+            value["artifact"]["android"]["artifactReceiptSha256"] = sha(receipt_path)
+            write(paths[name], value)
+
+    install_android_pair(android, current_android)
+    create(android_args)
+    validate(android_args)
+    android_seal = load(seal)
+    assert android_seal["mobileJoinAndroidArtifactReceiptSha256"] == sha(mobile_android_path)
+    assert android_seal["desktopJoinAndroidArtifactReceiptSha256"] == sha(desktop_android_path)
+
+    def reject_android(arguments=android_args):
+        for operation in (create, validate):
+            try:
+                operation(arguments)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("invalid Android receipt pair was accepted")
+
+    reject_android(())
+    reject_android(android_args[:2])
+    reject_android(android_args[2:])
+    mutations = [
+        lambda v: v.update(apkSha256="f" * 64),
+        lambda v: v.update(appGitSha="f" * 40),
+        lambda v: v.update(signerCertificateSha256="f" * 64),
+        lambda v: v.update(debuggable=0),
+        lambda v: v.pop("package"),
+        lambda v: v.update(unknown=True),
+        lambda v: v.update(aabSha256="invalid"),
+        lambda v: v.update(aabSha256=["2" * 64]),
+        lambda v: v.pop("hostedAdmissionReceiptSha256"),
+    ]
+    for mutate in mutations:
+        bad = copy.deepcopy(current_android)
+        mutate(bad)
+        install_android_pair(android, bad)
+        reject_android()
+    # Validate both metadata sets, even when their malformed values agree.
+    malformed = {**android, "aabSha256": ["1" * 64]}
+    install_android_pair(malformed, malformed)
+    reject_android()
+    install_android_pair(android, current_android)
+    write(seal, {**android_seal, "desktopJoinAndroidArtifactReceiptSha256": "0" * 64})
+    try:
+        validate(android_args)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("stale sealed Android pair was accepted")
+    # A mutually changed pair cannot contradict the joins' actual APK identity.
+    changed = {**android, "apkSha256": "f" * 64}
+    install_android_pair(changed, changed)
+    reject_android()
+    install_android_pair(android, current_android)
+    value = load(paths["desktop-join"])
+    value["artifact"]["android"]["artifactReceiptSha256"] = "0" * 64
+    write(paths["desktop-join"], value)
+    reject_android()
+
+print("iOS receipt pairs: legacy/iOS cases and Android packaging-only pair cases passed")

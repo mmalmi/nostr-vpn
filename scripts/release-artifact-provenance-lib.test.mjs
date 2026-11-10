@@ -2643,6 +2643,32 @@ test('release receipt collection requires exact source and strict public UI gate
     paths.android.previous_physical = previousPath
     assert.equal(collect().platformGateReceipts.android.previous_physical,
       sha256(originalPhysical))
+    const androidPairMacText = readFileSync(paths.macos.public_ui_join, 'utf8')
+    const androidPairSealText = readFileSync(paths.ios.frozen_archive, 'utf8')
+    const androidPairMac = JSON.parse(androidPairMacText)
+    androidPairMac.artifact.android.artifactReceiptSha256 = sha256(renewedText)
+    const currentMacText = JSON.stringify(androidPairMac)
+    writeFileSync(paths.macos.public_ui_join, currentMacText)
+    const androidPairSeal = JSON.parse(androidPairSealText)
+    androidPairSeal.desktopMobileJoinReceiptSha256 = sha256(currentMacText)
+    androidPairSeal.realDeviceGateReceiptSha256['desktop-mobile-manual-join'][0] = sha256(currentMacText)
+    const androidPairKeys = ['mobileJoinAndroidArtifactReceiptSha256', 'desktopJoinAndroidArtifactReceiptSha256']
+    Object.assign(androidPairSeal, {
+      mobileJoinAndroidArtifactReceiptSha256: sha256(originalPhysical),
+      desktopJoinAndroidArtifactReceiptSha256: sha256(renewedText),
+    })
+    writeFileSync(paths.ios.frozen_archive, JSON.stringify(androidPairSeal))
+    assert.doesNotThrow(collect)
+    for (const key of androidPairKeys) {
+      assertRejectedReceiptMutation(paths.ios.frozen_archive,
+        (r) => { delete r[key] }, /Sealed Android join receipt pair differs/)
+      assertRejectedReceiptMutation(paths.ios.frozen_archive,
+        (r) => { r[key] = '0'.repeat(64) }, /Sealed Android join receipt pair differs/)
+    }
+    assertRejectedReceiptMutation(paths.ios.frozen_archive,
+      (r) => { for (const key of androidPairKeys) delete r[key] }, /Sealed Android join receipt pair differs/)
+    writeFileSync(paths.macos.public_ui_join, androidPairMacText)
+    writeFileSync(paths.ios.frozen_archive, androidPairSealText)
     for (const key of ['apkSha256', 'installedApkSha256', 'appGitSha', 'fipsGitTree',
       'signerCertificateSha256', 'bundletoolSha256', 'fipsCargoMetadataReceiptSha256']) {
       assertRejectedReceiptMutation(previousPath,
@@ -2652,6 +2678,8 @@ test('release receipt collection requires exact source and strict public UI gate
       (r) => { r.unreviewed = true }, /differs from the exact tested APK identity/)
     assertRejectedReceiptMutation(previousPath,
       (r) => { r.aabSha256 = 'invalid' }, /differs from the exact tested APK identity/)
+    assertRejectedReceiptMutation(previousPath,
+      (r) => { r.aabSha256 = ['8'.repeat(64)] }, /differs from the exact tested APK identity/)
     assertRejectedReceiptMutation(paths.android.wireguard_dns,
       (r) => { r.artifactReceiptSha256 = '9'.repeat(64) }, /not exact source\/artifact evidence/)
     delete paths.android.previous_physical

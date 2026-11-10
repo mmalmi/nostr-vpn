@@ -709,6 +709,7 @@ def validate_desktop_mobile_join_receipt(
     join_variant: dict[str, Any],
     join_variant_receipt_sha256: str,
     mobile_join: dict[str, Any],
+    android_receipt_sha256: str | None = None,
 ) -> None:
     artifact = receipt.get("artifact")
     ios_artifact = artifact.get("ios") if isinstance(artifact, dict) else None
@@ -743,7 +744,7 @@ def validate_desktop_mobile_join_receipt(
         and isinstance(android, dict)
         and isinstance(mobile_android, dict)
         and android.get("artifactReceiptSha256")
-        == mobile_android.get("artifactReceiptSha256")
+        == (android_receipt_sha256 or mobile_android.get("artifactReceiptSha256"))
         and re.fullmatch(
             r"[0-9a-f]{64}", android.get("installReceiptSha256", "")
         )
@@ -872,6 +873,36 @@ def desktop_join_pair(args, production, variant, variant_sha):
     }
 
 
+def android_join_pair(args, desktop_join, mobile_join):
+    paths = [getattr(args, name, None) for name in (
+        "mobile_join_android_receipt", "desktop_join_android_receipt")]
+    require(bool(paths[0]) == bool(paths[1]),
+            "Android join pairing requires both exact physical receipts")
+    if not paths[0]:
+        return {}
+    receipts = [load_json(pathlib.Path(path)) for path in paths]
+    hashes = [sha256_file(pathlib.Path(path)) for path in paths]
+    check = subprocess.run(
+        ["node", "--input-type=module", "-e",
+         "import{readFileSync}from'node:fs';import{pathToFileURL}from'node:url';"
+         "const{validateAndroidRuntimeReceiptPair}=await import(pathToFileURL(process.argv[1]));"
+         "const r=JSON.parse(readFileSync(0,'utf8'));validateAndroidRuntimeReceiptPair(...r);",
+         str(pathlib.Path(__file__).with_name("release-artifact-provenance-lib.mjs"))],
+        input=json.dumps(receipts), text=True, capture_output=True, timeout=15,
+    )
+    require(check.returncode == 0, "Android join receipts differ from the exact tested APK")
+    for join, receipt, digest in zip((mobile_join, desktop_join), receipts, hashes):
+        identity = join.get("artifact", {}).get("android", {})
+        require(identity.get("artifactReceiptSha256") == digest,
+                "Android join receipt hash differs from its physical receipt")
+        for field in ("appGitSha", "appGitTree", "fipsGitSha", "fipsGitTree",
+                      "apkSha256", "installedApkSha256", "package", "signerCertificateSha256"):
+            require(bool(receipt.get(field)) and identity.get(field) == receipt[field],
+                    f"Android join physical identity differs at {field}")
+    return dict(zip(("mobileJoinAndroidArtifactReceiptSha256",
+                     "desktopJoinAndroidArtifactReceiptSha256"), hashes))
+
+
 def seal_gate(args: argparse.Namespace) -> None:
     archive_receipt = pathlib.Path(args.archive_receipt)
     archive = load_json(archive_receipt)
@@ -928,11 +959,13 @@ def seal_gate(args: argparse.Namespace) -> None:
     desktop_variant, desktop_variant_sha, desktop_pair_hashes = desktop_join_pair(
         args, mobile, join_variant, join_variant_receipt_sha256,
     )
+    android_pair_hashes = android_join_pair(args, desktop_join, mobile_join)
     validate_desktop_mobile_join_receipt(
         desktop_join,
         desktop_variant,
         desktop_variant_sha,
         mobile_join,
+        android_pair_hashes.get("desktopJoinAndroidArtifactReceiptSha256"),
     )
     required_gates = sorted(set(args.required_gate))
     require(
@@ -956,6 +989,7 @@ def seal_gate(args: argparse.Namespace) -> None:
         ),
         "desktopMobileJoinReceiptSha256": sha256_file(desktop_join_receipt),
         **desktop_pair_hashes,
+        **android_pair_hashes,
         "realDeviceGateReceiptSha256": {
             "background-foreground-and-rapid-start-stop": [
                 sha256_file(mobile_wg_receipt),
@@ -1054,11 +1088,17 @@ def validate_gate_seal(args: argparse.Namespace) -> None:
         "desktopJoinIosVariantReceiptSha256", "desktopJoinIosProductionReceiptSha256",
     ) if key in seal} == desktop_pair_hashes,
             "sealed desktop iOS receipt pair differs")
+    android_pair_hashes = android_join_pair(args, desktop_join, mobile_join)
+    require({key: seal[key] for key in (
+        "mobileJoinAndroidArtifactReceiptSha256", "desktopJoinAndroidArtifactReceiptSha256",
+    ) if key in seal} == android_pair_hashes,
+            "sealed Android join receipt pair differs")
     validate_desktop_mobile_join_receipt(
         desktop_join,
         desktop_variant,
         desktop_variant_sha,
         mobile_join,
+        android_pair_hashes.get("desktopJoinAndroidArtifactReceiptSha256"),
     )
     required_hash(
         seal.get("archiveReceiptSha256"),
