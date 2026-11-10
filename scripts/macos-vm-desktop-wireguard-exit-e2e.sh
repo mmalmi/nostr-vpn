@@ -187,7 +187,21 @@ remote_phase() {
   done
   printf -v quoted '%q' "$action"
   remote_command+=" ./scripts/e2e-macos-release-network.sh $quoted"
-  ssh "${options[@]}" "$SSH_HOST" "$remote_command"
+  if [[ -n "${3:-}" ]]; then
+    # Save the exact canonical recovery action before quiescing the guest.
+    python3 - "$3" ssh "${options[@]}" "$SSH_HOST" "$remote_command" <<'PY'
+import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+temporary = path.with_suffix('.writing')
+with temporary.open('w') as stream:
+    json.dump(sys.argv[2:], stream)
+    stream.flush()
+    os.fsync(stream.fileno())
+os.replace(temporary, path)
+PY
+  else
+    ssh "${options[@]}" "$SSH_HOST" "$remote_command"
+  fi
 }
 
 run_dns_case() {
@@ -402,6 +416,18 @@ cleanup() {
     FIXTURE_DIR=""
   fi
   close_ssh_controls
+  python3 - "$ARTIFACT_DIR/cleanup-result.json" "$status" "$cleanup_failed" \
+    "$GUEST_NETWORK_CLEANED" "$INSTALLED_STATE_RESTORED" "$REMOTE_DIR" <<'PY'
+import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.parent.mkdir(parents=True, exist_ok=True)
+with path.open('w') as stream:
+    json.dump(dict(originalExit=int(sys.argv[2]), cleanupFailed=int(sys.argv[3]),
+                   guestNetworkCleaned=int(sys.argv[4]), installedStateRestored=int(sys.argv[5]),
+                   remainingRemoteDir=sys.argv[6]), stream)
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
   if [[ "$status" -eq 0 && "$cleanup_failed" -ne 0 ]]; then
     status=1
   fi
@@ -497,6 +523,8 @@ grep -Fxq "DNS = $TUNNEL_SERVER_IP" "$FIXTURE_DIR/client.conf" \
   || fail "Automatic/profile WireGuard config lost the fixture DNS server"
 
 mobile_wg_fixture_run "$IMAGE" "$CONTAINER" "$MOBILE_WG_FIXTURE_VOLUME_DIR"
+mobile_wg_fixture_docker inspect "$CONTAINER" \
+  >"$ARTIFACT_DIR/owned-fixture-container.json"
 for _ in $(seq 1 100); do
   mobile_wg_fixture_ready "$CONTAINER" >/dev/null 2>&1 && break
   mobile_wg_fixture_running "$CONTAINER" \
@@ -516,6 +544,8 @@ mobile_wg_fixture_docker run -d \
   /usr/local/bin/mobile-wireguard-http-probe.py \
   0.0.0.0 "$HTTP_PROBE_PORT" /tmp/http-probe.pid "$HTTP_PROBE_TOKEN" \
   >/dev/null
+mobile_wg_fixture_docker inspect "$TARGET_CONTAINER" \
+  >"$ARTIFACT_DIR/owned-target-container.json"
 for _ in $(seq 1 50); do
   mobile_wg_fixture_docker exec "$TARGET_CONTAINER" \
     test -s /tmp/http-probe.pid >/dev/null 2>&1 && break
@@ -565,6 +595,18 @@ SECONDARY_IP="$(
 remote_shell secondary 'true'
 
 mkdir -p "$ARTIFACT_DIR"
+remote_phase secondary cleanup "$ARTIFACT_DIR/recover-network-argv.json"
+remote_phase secondary restore-installed-state "$ARTIFACT_DIR/restore-installed-argv.json"
+python3 - "$ARTIFACT_DIR/recovery-state.json" "$REMOTE_DIR" "$FIXTURE_DIR" \
+  "$PRIMARY_CONTROL_PATH" "$SECONDARY_CONTROL_PATH" <<'PY'
+import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+with path.open('w') as stream:
+    json.dump(dict(remoteDir=sys.argv[2], fixtureDir=sys.argv[3],
+                   sshControlPaths=sys.argv[4:]), stream)
+    stream.flush()
+    os.fsync(stream.fileno())
+PY
 INSTALLED_STATE_SNAPSHOT_STARTED=1
 remote_phase primary quiesce-installed-state
 macos_identity_output="$(remote_phase primary initialize)"

@@ -444,6 +444,11 @@ quiesce_installed_state() {
 restore_installed_state() {
   [[ -f "$INSTALLED_STATE_DIR/snapshot-complete" ]] || return 0
   mkdir -p "$RESULT_DIR"
+  # A bounded recovery can arrive after the first restoration completed but
+  # before its host-side receipt was saved. Do not open a second app instance.
+  if installed_state_matches_snapshot; then
+    return 0
+  fi
   ! pgrep -x nvpn >/dev/null 2>&1 \
     || fail "owned network daemon survived before installed-state restoration"
 
@@ -1493,6 +1498,8 @@ run_underlay_gate() {
   process_start_signature "$payload_pid" >"$STATE_DIR/payload.start"
   [[ -s "$STATE_DIR/payload.start" ]] \
     || fail "continuous payload process has no start-time receipt"
+  cp "$STATE_DIR/payload.pid" "$RESULT_DIR/payload-owner.pid"
+  cp "$STATE_DIR/payload.start" "$RESULT_DIR/payload-owner.start"
   first_requested="$(monotonic_ms)"
   sudo -n /usr/sbin/networksetup \
     -setnetworkserviceenabled "$PRIMARY_SERVICE" off
@@ -1582,7 +1589,18 @@ run_underlay_with_status() {
   trap 'exit 130' INT
   trap 'exit 143' TERM
   trap record_underlay_status_on_exit EXIT
+  # The detached child must observe its parent's ownership receipt before it
+  # changes a service; retain it after normal cleanup removes the live receipt.
+  wait_until "the detached runner ownership receipt" underlay_receipt_ready
+  cp "$STATE_DIR/underlay.pid" "$RESULT_DIR/underlay-owner.pid"
+  cp "$STATE_DIR/underlay.start" "$RESULT_DIR/underlay-owner.start"
   run_underlay_gate
+}
+
+underlay_receipt_ready() {
+  [[ -f "$STATE_DIR/underlay.pid" \
+    && "$(tr -d '[:space:]' <"$STATE_DIR/underlay.pid")" == "$$" ]] \
+    && pid_matches_start_receipt "$$" "$STATE_DIR/underlay.start"
 }
 
 start_underlay_gate() {
