@@ -79,6 +79,7 @@ test('candidate preflight packages Cargo archives even when source quality is re
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = spawnSync('/bin/bash', ['-c', `
       set -euo pipefail
+      VERIFIER_ROOT="$2"
       source "$1"
       release_gate_state_init "$2"
       trap 's=$?; node "$RELEASE_GATE_STATE_TOOL" finish "$RELEASE_GATE_STATE_DIR" "$s"; exit "$s"' EXIT

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "${NVPN_RELEASE_APP_REPO_PATH:-$ROOT_DIR}" && pwd)"
 cd "$ROOT_DIR"
 
 ensure_cargo_audit() {
@@ -64,9 +65,7 @@ audit_args=(
 # and rustix and retire the pin-utils dependency before qualifying a successor.
 frozen_candidate=52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4
 if [[ "$(git rev-parse HEAD)" == "$frozen_candidate" ]] \
-  && git diff --quiet "$frozen_candidate" -- . \
-    ':(exclude)scripts/security-audit-rust.sh' \
-    ':(exclude)scripts/check-source-file-lines.sh'; then
+  && git diff --quiet "$frozen_candidate" -- .; then
   audit_args+=(
     --ignore RUSTSEC-2026-0459
     --ignore RUSTSEC-2026-0486

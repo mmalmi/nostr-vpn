@@ -4,7 +4,8 @@ set -euo pipefail
 # Verification imports must not add bytecode to the sealed source checkout.
 export PYTHONDONTWRITEBYTECODE=1
 
-ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VERIFIER_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "${NVPN_RELEASE_APP_REPO_PATH:-$VERIFIER_ROOT}" && pwd)"
 MOBILE_IOS_APP_READY=0
 MOBILE_ANDROID_APP_READY=0
 cd "$ROOT_DIR"
@@ -401,7 +402,7 @@ run_release_gate_candidate_preflight() {
     return 1
   fi
   node scripts/sync-versions.mjs --check
-  ./scripts/check-source-file-lines.sh
+  "$VERIFIER_ROOT/scripts/check-source-file-lines.sh"
   # Release harness defects are cheap to catch and catastrophically expensive
   # after an exact-candidate VM build or physical-device run has started.
   if bool_is_true "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}"; then
@@ -2698,7 +2699,7 @@ main() {
   # metadata before any remote lane snapshots the unchanged candidate.
   release_gate_timing_run \
     "Dependency security preflight" \
-    ./scripts/security-audit-rust.sh
+    "$VERIFIER_ROOT/scripts/security-audit-rust.sh"
   release_gate_timing_run \
     "Local candidate preflight" \
     run_release_gate_candidate_preflight

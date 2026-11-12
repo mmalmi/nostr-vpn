@@ -122,8 +122,10 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
-          for script in scripts/security-audit-rust.sh scripts/check-source-file-lines.sh; do
-            git show "${GITHUB_SHA}:${script}" > "$script"
+          mkdir -p "${RUNNER_TEMP}/verifier/scripts"
+          for script in scripts/release-gate.sh scripts/security-audit-rust.sh scripts/check-source-file-lines.sh; do
+            git show "${GITHUB_SHA}:${script}" > "${RUNNER_TEMP}/verifier/${script}"
+            chmod +x "${RUNNER_TEMP}/verifier/${script}"
           done
 
       - name: Run hosted release verification
@@ -132,7 +134,8 @@ jobs:
           # artifact-bound local gate. This job checks portable source/Docker.
           NVPN_RELEASE_GATE_IDLE_CPU: '0'
           NVPN_E2E_ROAMING_LOADED_LATENCY: '0'
-        run: ./scripts/release-gate.sh --hosted
+          NVPN_RELEASE_APP_REPO_PATH: ${{ github.workspace }}
+        run: bash "${RUNNER_TEMP}/verifier/scripts/release-gate.sh" --hosted
 
       - name: Show checkout changes after failed verification
         if: failure()
@@ -146,9 +149,11 @@ jobs:
   # Run the remaining harnesses on a supported hosted image.
   macos-sdk-compat:
     name: macOS 14 SDK compatibility
-    runs-on: macos-15
+    # The standard Intel pool avoids the current arm64 capacity failures.
+    runs-on: macos-15-intel
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -174,8 +179,29 @@ jobs:
           ./scripts/test-mobile-release-join-gate-harness.sh
           ./scripts/test-mobile-ios-release-runner-harness.sh
 
+  retained-assets:
+    name: Verify retained exact 4.1.21 asset evidence
+    if: ${{ inputs.tag == 'v4.1.21' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout pinned verifier
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify the successful immutable asset job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NVPN_RELEASE_TAG: ${{ inputs.tag }}
+          NVPN_RELEASE_COMMIT: ${{ inputs.locally_attested_commit }}
+          NVPN_RELEASE_CID: ${{ inputs.locally_gated_release_cid }}
+        run: node scripts/verify-retained-release-assets.mjs
+
   release:
     name: Verify exact locally gated assets (no publication)
+    if: ${{ inputs.tag != 'v4.1.21' }}
     # Importing the immutable bundle is independent of the source checks.
     # Local publication still requires the entire workflow to succeed.
     runs-on: ubuntu-24.04

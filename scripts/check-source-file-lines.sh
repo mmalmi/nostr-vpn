@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT_DIR="$(cd "${NVPN_RELEASE_APP_REPO_PATH:-$ROOT_DIR}" && pwd)"
 LIMIT="${NVPN_SOURCE_FILE_LINE_LIMIT:-1000}"
 
 if ! [[ "$LIMIT" =~ ^[0-9]+$ ]] || ((LIMIT == 0)); then

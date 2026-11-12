@@ -19,6 +19,7 @@ function runRoute(command, { complete = '0', full = false, failCheck = '', seria
     const result = spawnSync('bash', ['-c', `
 set -euo pipefail
 ROOT_DIR="$1"
+VERIFIER_ROOT="$1"
 RELEASE_GATE_TARGET_SECS=1800
 release_gate_mode_disabled() { [[ "$1" == 0 ]]; }
 release_gate_state_init() { :; }
@@ -27,9 +28,9 @@ release_gate_timing_init() { :; }
 release_gate_cleanup() { echo "cleanup-status:$?"; }
 release_gate_timing_run() {
   if [[ "$NVPN_TEST_FULL_ROUTE" == 1 ]]; then
-    echo "check:$2"
+    echo "check:\${2#\"$VERIFIER_ROOT\"/}"
     [[ "$2" != "$NVPN_TEST_FAIL_CHECK" ]] || return 75
-  elif [[ "$2" == ./scripts/security-audit-rust.sh ]]; then
+  elif [[ "$2" == "$VERIFIER_ROOT/scripts/security-audit-rust.sh" ]]; then
     echo dependency-security
   else
     shift; "$@"

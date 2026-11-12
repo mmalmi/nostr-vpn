@@ -52,11 +52,16 @@ from the frozen product commit and draft CID. Push that branch first and use a
 new workflow state directory for the repaired verifier; retain the failed run's
 records. Reuse the new directory on interruption. Never move the release tag or
 accept a workflow whose head differs from the recorded verifier commit.
+Hosted policy scripts execute from the pinned verifier outside the product
+checkout, using `NVPN_RELEASE_APP_REPO_PATH` to select the clean frozen source.
+Do not overlay the verifier scripts onto the candidate or relax its clean-tree
+check.
 
 GitHub has retired macOS 14 runners. The hosted SDK check now reuses the pinned,
 successful Xcode 15.4/SDK 14.5 check only while both the entire Swift source and
 SDK-check script remain byte-identical. Changed inputs fail closed and require
-new older-SDK evidence. Other orchestration checks run again on macOS 15.
+new older-SDK evidence. Other orchestration checks run again on the standard
+macOS 15 Intel runner after arm64 jobs failed to acquire capacity.
 
 The frozen 4.1.21 candidate retains one style exception: its exact config test
 file is 1,010 lines. The source-size check binds that exception to both the
@@ -64,6 +69,12 @@ candidate commit and file blob; every other file and future candidate keeps the
 1,000-line default. Split that test module before freezing the next candidate.
 Its three newly published dependency advisories also have candidate-only static
 assessments in `security-audit-rust.sh`; they do not exempt subsequent releases.
+
+The repaired 4.1.21 workflow retains the successful immutable-asset job from
+run 43248941791. Its verifier checks the exact product commit, draft CID,
+workflow commit, run identity and successful import step through GitHub's API.
+It does not inherit the failed source job's outcome. Other tags download and
+verify their own assets as usual.
 
 ## Linux builder inputs
 

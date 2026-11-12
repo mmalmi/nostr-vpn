@@ -2911,14 +2911,14 @@ test('hosted release retains Rust and Docker verification without duplicate nati
   const verifyJob = workflow.slice(verifyJobStart, verifyJobEnd)
   assert.ok(verifyJobStart >= 0 && verifyJobEnd > verifyJobStart)
   assert.match(verifyJob, /uses: docker\/setup-buildx-action@v3/)
-  assert.match(verifyJob, /run: \.\/scripts\/release-gate\.sh/)
+  assert.match(verifyJob, /run: bash "\$\{RUNNER_TEMP\}\/verifier\/scripts\/release-gate\.sh"/)
   assert.doesNotMatch(workflow, /^  build-linux-app:/m)
 })
 
 test('hosted release selects the portable gate instead of maintaining fleet skip flags', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
   const verifyJob = workflow.slice(workflow.indexOf('  verify:'), workflow.indexOf('  macos-sdk-compat:'))
-  assert.match(verifyJob, /run: \.\/scripts\/release-gate\.sh --hosted/)
+  assert.match(verifyJob, /run: bash "\$\{RUNNER_TEMP\}\/verifier\/scripts\/release-gate\.sh" --hosted/)
   assert.match(verifyJob, /uses: pnpm\/action-setup@v4/)
   assert.doesNotMatch(verifyJob, /NVPN_RELEASE_GATE_(?:WINDOWS|MACOS|MOBILE|LINUX_ARM64)_/)
 })
@@ -3104,9 +3104,12 @@ test('Actions cannot mutate public releases and local promotion is exact-stage g
       workflow.match(
         /ref: \$\{\{ github\.event\.inputs\.locally_attested_commit \}\}/g,
       ) ?? []
-    ).length,
+    ).length + (workflow.match(/ref: \$\{\{ github\.sha \}\}/g) ?? []).length,
     (workflow.match(/uses: actions\/checkout@/g) ?? []).length,
   )
+  const retained = workflow.slice(workflow.indexOf('  retained-assets:'), workflow.indexOf('  release:'))
+  assert.match(retained, /ref: \$\{\{ github\.sha \}\}/)
+  assert.match(retained, /verify-retained-release-assets\.mjs/)
   assert.match(
     workflow,
     /LOCALLY_ATTESTED_COMMIT: \$\{\{ github\.event\.inputs\.locally_attested_commit \}\}/,
@@ -3150,7 +3153,7 @@ test('GitHub release verifies the gated bytes without rebuilding unused platform
   assert.doesNotMatch(releaseJob, /^    needs:/m)
   assert.match(workflow, /^  verify:/m)
   assert.match(workflow, /^  macos-sdk-compat:/m)
-  assert.match(workflow, /run: \.\/scripts\/release-gate\.sh/)
+  assert.match(workflow, /run: bash "\$\{RUNNER_TEMP\}\/verifier\/scripts\/release-gate\.sh" --hosted/)
   assert.match(releaseJob, /verify-release-publication-bundle\.mjs/)
   assert.match(releaseJob, /--require-draft/)
   for (const job of [
