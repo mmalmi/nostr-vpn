@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process'
 import { isDeepStrictEqual } from 'node:util'
 import {
+  existsSync,
   lstatSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
 } from 'node:fs'
 import { join } from 'node:path'
@@ -92,13 +94,12 @@ function normalizedGate(value) {
     'signer_certificate_sha256',
     'signing_team_id',
   ]
+  for (const optional of ['source_equivalence', 'hosted_admission_receipt_sha256']) {
+    if (Object.hasOwn(value, optional)) keys.push(optional)
+  }
   const actualKeys = Object.keys(value).sort()
   const exactKeys = keys.sort()
-  const proofKeys = [...keys, 'source_equivalence'].sort()
-  if (
-    JSON.stringify(actualKeys) !== JSON.stringify(exactKeys)
-    && JSON.stringify(actualKeys) !== JSON.stringify(proofKeys)
-  ) {
+  if (JSON.stringify(actualKeys) !== JSON.stringify(exactKeys)) {
     throw new Error('Frozen iOS App Store gate fields are not exact.')
   }
   return value
@@ -118,6 +119,25 @@ export function validateFrozenIosPublication({ repoRoot, stagedManifest }) {
     receiptPath,
     'Frozen iOS App Store export receipt',
   )
+  const frozenDir = join(repoRoot, 'dist', 'ios', 'frozen')
+  const archivePath = join(frozenDir, 'archive-receipt.json')
+  const admissionPath = join(frozenDir, 'hosted-admission.json')
+  const archive = existsSync(archivePath)
+    ? exactJson(realpathSync(archivePath), 'Frozen iOS archive receipt')
+    : null
+  if (archive?.receiptSchema === 2 || existsSync(admissionPath)
+    || Object.hasOwn(gate, 'hosted_admission_receipt_sha256')) {
+    const admission = exactJson(realpathSync(admissionPath), 'Hosted iOS admission')
+    if (!/^[0-9a-f]{64}$/.test(String(gate.hosted_admission_receipt_sha256 ?? ''))
+      || gate.hosted_admission_receipt_sha256 !== sha256FileSync(admissionPath)
+      || archive?.receiptSchema !== 2
+      || admission.receiptSchema !== 1
+      || admission.artifactType !== 'signed hosted iOS archive admission'
+      || admission.archiveReceiptSha256 !== sha256FileSync(archivePath)
+      || receipt.archiveReceiptSha256 !== admission.archiveReceiptSha256) {
+      throw new Error('Frozen iOS hosted archive admission differs from exact staging.')
+    }
+  }
   const identity = receipt.identity ?? {}
   const signing = receipt.signing ?? {}
   const ipa = statSync(ipaPath)

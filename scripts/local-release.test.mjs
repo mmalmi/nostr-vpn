@@ -816,6 +816,59 @@ test('frozen iOS publication rejects IPA, receipt, signer, and source substituti
       }),
     /differs from exact staging|receipt source lookup/i,
   )
+
+  // Hosted archives retain their producer receipts through links. Publication
+  // must bind those bytes to both the staged gate and the exported IPA receipt.
+  const archivePath = join(frozenDir, 'archive-receipt.json')
+  const admissionPath = join(frozenDir, 'hosted-admission.json')
+  const producerArchive = join(repoRoot, 'producer-archive.json')
+  const producerAdmission = join(repoRoot, 'producer-admission.json')
+  writeFileSync(producerArchive, JSON.stringify({ receiptSchema: 2 }))
+  symlinkSync(producerArchive, archivePath)
+  const archiveSha = createHash('sha256')
+    .update(readFileSync(archivePath)).digest('hex')
+  receipt.archiveReceiptSha256 = archiveSha
+  writeFileSync(receiptPath, JSON.stringify(receipt))
+  stagedManifest.ios_app_store_gate.export_receipt_sha256 = createHash('sha256')
+    .update(readFileSync(receiptPath)).digest('hex')
+  const admission = {
+    receiptSchema: 1,
+    artifactType: 'signed hosted iOS archive admission',
+    archiveReceiptSha256: archiveSha,
+  }
+  writeFileSync(producerAdmission, JSON.stringify(admission))
+  symlinkSync(producerAdmission, admissionPath)
+  const admissionSha = createHash('sha256')
+    .update(readFileSync(admissionPath)).digest('hex')
+  const gate = stagedManifest.ios_app_store_gate
+  gate.hosted_admission_receipt_sha256 = admissionSha
+  assert.equal(validateFrozenIosPublication({ repoRoot, stagedManifest }).ipaPath, ipaPath)
+
+  for (const badHash of [undefined, null, 'invalid', '0'.repeat(64)]) {
+    gate.hosted_admission_receipt_sha256 = badHash
+    assert.throws(() => validateFrozenIosPublication({ repoRoot, stagedManifest }),
+      /hosted.*admission/i)
+  }
+  delete gate.hosted_admission_receipt_sha256
+  unlinkSync(admissionPath)
+  assert.throws(() => validateFrozenIosPublication({ repoRoot, stagedManifest }))
+  symlinkSync(producerAdmission, admissionPath)
+  gate.hosted_admission_receipt_sha256 = admissionSha
+
+  writeFileSync(producerAdmission, JSON.stringify({ ...admission, archiveReceiptSha256: '0'.repeat(64) }))
+  gate.hosted_admission_receipt_sha256 = createHash('sha256')
+    .update(readFileSync(admissionPath)).digest('hex')
+  assert.throws(() => validateFrozenIosPublication({ repoRoot, stagedManifest }),
+    /hosted.*admission/i)
+  writeFileSync(producerAdmission, JSON.stringify(admission))
+  gate.hosted_admission_receipt_sha256 = admissionSha
+  writeFileSync(producerArchive, JSON.stringify({ receiptSchema: 1 }))
+  assert.throws(() => validateFrozenIosPublication({ repoRoot, stagedManifest }),
+    /hosted.*admission/i)
+  writeFileSync(producerArchive, JSON.stringify({ receiptSchema: 2 }))
+  gate.unexpected_proof = admissionSha
+  assert.throws(() => validateFrozenIosPublication({ repoRoot, stagedManifest }),
+    /gate fields/i)
 })
 
 test('frozen iOS publication binds an unchanged-product source proof', () => {
