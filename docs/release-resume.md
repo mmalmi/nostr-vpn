@@ -45,6 +45,26 @@ still use the existing `--complete-gate-from-receipts` and
 `--reuse-gate-receipts` paths. An incomplete platform set is not accepted by those
 commands.
 
+If hosted infrastructure changes after a candidate is frozen, repair only its
+verifier on a clean reviewed branch. `publish-release-refs.mjs --workflow-ref
+<branch>` pins that branch to the local verifier commit and records it separately
+from the frozen product commit and draft CID. Push that branch first and use a
+new workflow state directory for the repaired verifier; retain the failed run's
+records. Reuse the new directory on interruption. Never move the release tag or
+accept a workflow whose head differs from the recorded verifier commit.
+
+GitHub has retired macOS 14 runners. The hosted SDK check now reuses the pinned,
+successful Xcode 15.4/SDK 14.5 check only while both the entire Swift source and
+SDK-check script remain byte-identical. Changed inputs fail closed and require
+new older-SDK evidence. Other orchestration checks run again on macOS 15.
+
+The frozen 4.1.21 candidate retains one style exception: its exact config test
+file is 1,010 lines. The source-size check binds that exception to both the
+candidate commit and file blob; every other file and future candidate keeps the
+1,000-line default. Split that test module before freezing the next candidate.
+Its three newly published dependency advisories also have candidate-only static
+assessments in `security-audit-rust.sh`; they do not exempt subsequent releases.
+
 ## Linux builder inputs
 
 `Dockerfile.linux-vm-gate` is the established **native Linux amd64, Ubuntu

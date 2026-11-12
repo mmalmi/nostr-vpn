@@ -242,7 +242,7 @@ export function releaseWorkflowRunTitle({ tag, commit, cid }) {
   return `Release ${tag} @ ${commit} from ${cid}`
 }
 
-function listedWorkflowRuns(runCommand, repository, tag) {
+function listedWorkflowRuns(runCommand, repository, ref) {
   const text = run(
     runCommand,
     'gh',
@@ -256,7 +256,7 @@ function listedWorkflowRuns(runCommand, repository, tag) {
       '--event',
       'workflow_dispatch',
       '--branch',
-      tag,
+      ref,
       '--limit',
       '100',
       '--json',
@@ -280,23 +280,25 @@ function exactWorkflowRun({
   tag,
   commit,
   cid,
+  workflowRef = tag,
+  workflowCommit = commit,
 }) {
   const title = releaseWorkflowRunTitle({ tag, commit, cid })
   const prefix = `Release ${tag} @ ${commit} from `
-  const rows = listedWorkflowRuns(runCommand, repository, tag)
+  const rows = listedWorkflowRuns(runCommand, repository, workflowRef)
   const wrongHead = rows.find(
     (row) =>
       row?.event === 'workflow_dispatch'
       && row?.displayTitle === title
-      && row?.headSha !== commit,
+      && row?.headSha !== workflowCommit,
   )
-  if (wrongHead) {
+  if (wrongHead && workflowRef === tag) {
     fail('the exact-input workflow run has a different Git head SHA')
   }
   const conflicting = rows.find(
     (row) =>
       row?.event === 'workflow_dispatch'
-      && row?.headSha === commit
+      && row?.headSha === workflowCommit
       && typeof row?.displayTitle === 'string'
       && row.displayTitle.startsWith(prefix)
       && row.displayTitle !== title,
@@ -307,7 +309,7 @@ function exactWorkflowRun({
   const exact = rows.filter(
     (row) =>
       row?.event === 'workflow_dispatch'
-      && row?.headSha === commit
+      && row?.headSha === workflowCommit
       && row?.displayTitle === title,
   )
   if (exact.length > 1) {
@@ -340,6 +342,7 @@ function verifyWorkflowRun({
   commit,
   cid,
   requireSuccess = true,
+  workflowCommit = commit,
 }) {
   const viewed = exactJson(
     run(
@@ -363,7 +366,7 @@ function verifyWorkflowRun({
     || viewed?.displayTitle
       !== releaseWorkflowRunTitle({ tag, commit, cid })
     || viewed?.event !== 'workflow_dispatch'
-    || viewed?.headSha !== commit
+    || viewed?.headSha !== workflowCommit
     || (requireSuccess && (
       viewed?.status !== 'completed' || viewed?.conclusion !== 'success'
     ))
@@ -413,7 +416,7 @@ function workflowRecords(directory, expected) {
   return { read, write }
 }
 
-function observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records }) {
+function observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records, workflowCommit = commit }) {
   if (!Number.isSafeInteger(workflow.databaseId) || workflow.databaseId <= 0) fail('invalid workflow run ID')
   const saved = records.read('run')
   if (saved && saved.runId !== workflow.databaseId) fail('workflow run ID changed')
@@ -428,7 +431,7 @@ function observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, r
       fail(watched.stderr || 'exact workflow watch ended without success; reconcile the saved run ID')
     }
   }
-  return verifyWorkflowRun({ runCommand, repository, runId: workflow.databaseId, tag, commit, cid })
+  return verifyWorkflowRun({ runCommand, repository, runId: workflow.databaseId, tag, commit, cid, workflowCommit })
 }
 
 function waitForExactWorkflowRun({
@@ -438,6 +441,8 @@ function waitForExactWorkflowRun({
   tag,
   commit,
   cid,
+  workflowRef = tag,
+  workflowCommit = commit,
 }) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const found = exactWorkflowRun({
@@ -446,6 +451,8 @@ function waitForExactWorkflowRun({
       tag,
       commit,
       cid,
+      workflowRef,
+      workflowCommit,
     })
     if (found) {
       return found
@@ -457,6 +464,21 @@ function waitForExactWorkflowRun({
 
 function defaultSleep(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
+
+// A repaired verifier can check frozen product bytes without moving their tag.
+// Bind its clean local source and remote branch before dispatch and on resume.
+function bindWorkflowSource(runCommand, ref) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) fail('invalid workflow branch')
+  run(runCommand, 'git', ['check-ref-format', `refs/heads/${ref}`])
+  if (run(runCommand, 'git', ['status', '--porcelain=v1', '--untracked-files=all'])) {
+    fail('workflow verifier checkout is dirty')
+  }
+  const commit = run(runCommand, 'git', ['rev-parse', 'HEAD'])
+  if (!/^[0-9a-f]{40}$/.test(commit)) fail('invalid workflow verifier commit')
+  const remote = run(runCommand, 'git', ['ls-remote', '--exit-code', 'github', `refs/heads/${ref}`])
+  if (remote !== `${commit}\trefs/heads/${ref}`) fail('workflow branch differs from the exact local verifier')
+  return commit
 }
 
 export function publishReleaseRefs(options, dependencies = {}) {
@@ -489,16 +511,20 @@ export function publishReleaseRefs(options, dependencies = {}) {
     fail('canonical mutation gate returned an invalid exact source')
   }
   const repository = assertRemotePins(runCommand)
+  const workflowRef = options.workflowRef || tag
+  const workflowCommit = options.workflowRef ? bindWorkflowSource(runCommand, workflowRef) : commit
+  const workflowSource = { workflowRef, workflowCommit }
   const records = workflowRecords(options.workflowStateDir, {
     repository, workflow: workflowName, tag, commit, cid,
+    ...(options.workflowRef ? workflowSource : {}),
   })
   const priorIntent = records.read('intent')
   if (priorIntent) {
     const saved = records.read('run')
     const workflow = saved
-      ? verifyWorkflowRun({ runCommand, repository, runId: saved.runId, tag, commit, cid, requireSuccess: false })
-      : waitForExactWorkflowRun({ runCommand, sleep, repository, tag, commit, cid })
-    const verified = observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records })
+      ? verifyWorkflowRun({ runCommand, repository, runId: saved.runId, tag, commit, cid, requireSuccess: false, workflowCommit })
+      : waitForExactWorkflowRun({ runCommand, sleep, repository, tag, commit, cid, ...workflowSource })
+    const verified = observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records, workflowCommit })
     assertPublishedRefsExact(inspectRemoteRefs(runCommand, tag, commit), commit)
     return { cid, commit, repository, runId: verified.databaseId, status: 'passed', tag, tree }
   }
@@ -567,6 +593,7 @@ export function publishReleaseRefs(options, dependencies = {}) {
     tag,
     commit,
     cid,
+    ...workflowSource,
   })
   if (!workflow) {
     replayGate()
@@ -584,8 +611,12 @@ export function publishReleaseRefs(options, dependencies = {}) {
       tag,
       commit,
       cid,
+      ...workflowSource,
     })
     if (!workflow) {
+      if (options.workflowRef && bindWorkflowSource(runCommand, workflowRef) !== workflowCommit) {
+        fail('workflow verifier changed before dispatch')
+      }
       records.write('intent', { dispatchMayHaveOccurred: true })
       run(
         runCommand,
@@ -597,7 +628,7 @@ export function publishReleaseRefs(options, dependencies = {}) {
           '--repo',
           repository,
           '--ref',
-          tag,
+          workflowRef,
           '-f',
           `tag=${tag}`,
           '-f',
@@ -614,11 +645,12 @@ export function publishReleaseRefs(options, dependencies = {}) {
         tag,
         commit,
         cid,
+        ...workflowSource,
       })
     }
   }
   if (!records.read('intent')) records.write('intent', { dispatchMayHaveOccurred: false })
-  const verified = observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records })
+  const verified = observeWorkflow({ runCommand, repository, workflow, tag, commit, cid, records, workflowCommit })
   assertPublishedRefsExact(
     inspectRemoteRefs(runCommand, tag, commit),
     commit,
@@ -640,6 +672,7 @@ function parseArgs(argv) {
     tag: process.env.NVPN_RELEASE_TAG || '',
     cid: process.env.NVPN_RELEASE_DRAFT_CID || '',
     workflowStateDir: process.env.NVPN_RELEASE_WORKFLOW_STATE_DIR || '',
+    workflowRef: '',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
@@ -656,6 +689,9 @@ function parseArgs(argv) {
       case '--workflow-state-dir':
         values.workflowStateDir = argv[++index] ?? ''
         break
+      case '--workflow-ref':
+        values.workflowRef = argv[++index] ?? ''
+        break
       case '--help':
       case '-h':
         console.log(`Usage: node scripts/publish-release-refs.mjs [options]
@@ -668,6 +704,7 @@ Options:
   --stage-dir DIR
   --tag TAG
   --draft-cid CID
+  --workflow-ref BRANCH     Reviewed verifier branch; must match clean local HEAD
   --workflow-state-dir DIR  Durable dispatch and run records; reuse after interruption`)
         process.exit(0)
         break

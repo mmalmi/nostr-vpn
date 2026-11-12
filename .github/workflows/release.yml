@@ -118,6 +118,14 @@ jobs:
           pnpm --dir web/control-panel install --frozen-lockfile
           pnpm --dir web/control-panel exec playwright install --with-deps chromium
 
+      - name: Load reviewed verifier policies for the frozen candidate
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          for script in scripts/security-audit-rust.sh scripts/check-source-file-lines.sh; do
+            git show "${GITHUB_SHA}:${script}" > "$script"
+          done
+
       - name: Run hosted release verification
         env:
           # Hardware and calibrated timing checks remain mandatory in the
@@ -134,10 +142,11 @@ jobs:
 
   # Native packages already passed the mandatory exact-artifact local gate.
   # Rebuilding different bytes here cannot strengthen those package receipts.
-  # Retain the older-SDK source check, which the current local SDK cannot cover.
+  # The older-SDK proof is reusable only for its byte-identical source inputs.
+  # Run the remaining harnesses on a supported hosted image.
   macos-sdk-compat:
     name: macOS 14 SDK compatibility
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -146,10 +155,19 @@ jobs:
         with:
           ref: ${{ github.event.inputs.locally_attested_commit }}
 
-      - name: Compile-check macOS 14 SDK compatibility
+      - name: Load the pinned workflow verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git show "${GITHUB_SHA}:scripts/verify-macos14-sdk-evidence.mjs" > "${RUNNER_TEMP}/verify-macos14-sdk-evidence.mjs"
+          # Keep source-relative reads bound to the frozen product checkout.
+          cp "${RUNNER_TEMP}/verify-macos14-sdk-evidence.mjs" scripts/verify-macos14-sdk-evidence.mjs
+
+      - name: Verify unchanged macOS 14 SDK compatibility evidence
         env:
-          DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
-        run: ./scripts/check-macos-swift-sdk-compat.sh
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/verify-macos14-sdk-evidence.mjs
 
       - name: Verify iOS release artifact orchestration without devices
         run: |
@@ -162,7 +180,8 @@ jobs:
     # Local publication still requires the entire workflow to succeed.
     runs-on: ubuntu-24.04
     env:
-      RELEASE_HTREE_VERSION: '0.2.114'
+      RELEASE_HTREE_VERSION: '0.3.1'
+      RELEASE_HTREE_SHA256: 'a909181cc50a0e24c1c512f6ed3ed437fe9bce3deb329257b8bf208abbd036cd'
     permissions:
       contents: read
     steps:
@@ -171,35 +190,19 @@ jobs:
         with:
           ref: ${{ github.event.inputs.locally_attested_commit }}
 
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RELEASE_RUST_TOOLCHAIN }}
-
-      - name: Install htree native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
-
-      # Tag-scoped caches let retries reuse this tool without recompiling it.
-      - name: Restore pinned htree client
-        id: htree-cache
-        uses: actions/cache/restore@v5
-        with:
-          path: ~/.cargo/bin/htree
-          key: release-htree-ubuntu24.04-${{ runner.arch }}-${{ env.RELEASE_HTREE_VERSION }}-rust-${{ env.RELEASE_RUST_TOOLCHAIN }}
-
       - name: Install pinned htree client
-        if: steps.htree-cache.outputs.cache-hit != 'true'
-        run: cargo install hashtree-cli --version "${RELEASE_HTREE_VERSION}" --locked --bin htree
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/hashtree.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://github.com/mmalmi/hashtree/releases/download/v${RELEASE_HTREE_VERSION}/hashtree-x86_64-unknown-linux-musl.tar.gz"
+          printf '%s  %s\n' "${RELEASE_HTREE_SHA256}" "$archive" | sha256sum --check --strict
+          mkdir -p "${RUNNER_TEMP}/hashtree"
+          tar -xzf "$archive" --strip-components=1 -C "${RUNNER_TEMP}/hashtree"
+          echo "${RUNNER_TEMP}/hashtree" >> "$GITHUB_PATH"
 
       - name: Verify pinned htree client
         run: test "$(htree --version)" = "htree ${RELEASE_HTREE_VERSION}"
-
-      - name: Save verified htree client before downloading the release
-        if: steps.htree-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.cargo/bin/htree
-          key: ${{ steps.htree-cache.outputs.cache-primary-key }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

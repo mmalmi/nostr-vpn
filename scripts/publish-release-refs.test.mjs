@@ -70,6 +70,10 @@ function fakePublication({
   saturatedRuns = false,
   dispatchFailure = false,
   watchFailure = false,
+  verifierCommit = commit,
+  verifierRemoteCommit = verifierCommit,
+  verifierDirty = false,
+  verifierDrifts = false,
   beforeDispatch = () => {},
   beforeWatch = () => {},
 } = {}) {
@@ -84,6 +88,7 @@ function fakePublication({
     watchFailure,
   }
   let workflowListCount = 0
+  let verifierReads = 0
   const workflowRow = (status = state.workflow) => {
     const completed = status === 'success' || status === 'failure'
     return {
@@ -142,6 +147,10 @@ function fakePublication({
     if (command === 'git' && args[0] === 'ls-remote') {
       const remote = args[2]
       const reference = args[3]
+      if (reference.startsWith('refs/heads/')) {
+        assert.equal(remote, 'github')
+        return result(0, `${verifierRemoteCommit}\t${reference}`)
+      }
       assert.equal(reference, `refs/tags/${tag}`)
       assert.ok(['github', 'origin'].includes(remote))
       const sha = state[remote === 'github' ? 'githubTag' : 'htreeTag']
@@ -158,8 +167,16 @@ function fakePublication({
       return result()
     }
     if (command === 'git' && args[0] === 'rev-parse') {
+      if (args[1] === 'HEAD') {
+        verifierReads += 1
+        return result(0, verifierDrifts && verifierReads > 1 ? previous : verifierCommit)
+      }
       return result(0, commit)
     }
+    if (command === 'git' && args[0] === 'status') {
+      return result(0, verifierDirty ? ' M scripts/publish-release-refs.mjs' : '')
+    }
+    if (command === 'git' && args[0] === 'check-ref-format') return result()
     if (command === 'git' && args[0] === 'push') {
       if (args.includes('github')) {
         events.push({
@@ -692,4 +709,57 @@ test('recovery records cannot be reused with a different immutable draft', () =>
   fake.events.length = 0
   assert.throws(() => publishReleaseRefs({ ...selected, cid: `${cid}q` }, dependencies), /different release inputs/)
   assert.deepEqual(mutationNames(fake.events), [])
+})
+
+test('a repaired verifier binds its own clean commit while product tags stay frozen', () => {
+  const selected = { ...options(), workflowRef: 'codex/release-verifier' }
+  const fake = fakePublication({
+    githubTag: commit, htreeTag: commit, localTag: true,
+    verifierCommit: previous, workflowHeadSha: previous,
+  })
+  const published = publishReleaseRefs(selected, {
+    runCommand: fake.runCommand, sleep: () => {}, validateGate: successfulGate(fake.events),
+  })
+  assert.equal(published.commit, commit)
+  assert.deepEqual(mutationNames(fake.events), ['workflow-dispatch'])
+  const dispatch = fake.events.find((event) => event.name === 'workflow-dispatch').args
+  assert.equal(dispatch[dispatch.indexOf('--ref') + 1], selected.workflowRef)
+  assert.ok(dispatch.includes(`locally_attested_commit=${commit}`))
+  for (const record of ['intent', 'run']) {
+    const saved = JSON.parse(readFileSync(join(selected.workflowStateDir, `${record}.json`), 'utf8'))
+    assert.equal(saved.workflowCommit, previous)
+    assert.equal(saved.workflowRef, selected.workflowRef)
+    assert.equal(saved.commit, commit)
+  }
+  publishReleaseRefs(selected, {
+    runCommand: fake.runCommand, sleep: () => {}, validateGate: successfulGate(fake.events),
+  })
+  assert.deepEqual(mutationNames(fake.events), ['workflow-dispatch'])
+})
+
+test('unreviewed or changed verifier source cannot authorize a workflow dispatch', () => {
+  for (const change of [
+    { verifierDirty: true },
+    { verifierRemoteCommit: previous },
+    { verifierDrifts: true },
+  ]) {
+    const fake = fakePublication({ githubTag: commit, htreeTag: commit, localTag: true, ...change })
+    assert.throws(() => publishReleaseRefs({ ...options(), workflowRef: 'codex/release-verifier' }, {
+      runCommand: fake.runCommand, sleep: () => {}, validateGate: successfulGate(fake.events),
+    }), /verifier/)
+    assert.deepEqual(mutationNames(fake.events), [])
+  }
+})
+
+test('saved verifier intent cannot be resumed with another verifier revision', () => {
+  const selected = { ...options(), workflowRef: 'codex/release-verifier' }
+  const fake = fakePublication({ githubTag: commit, htreeTag: commit, localTag: true })
+  publishReleaseRefs(selected, {
+    runCommand: fake.runCommand, sleep: () => {}, validateGate: successfulGate(fake.events),
+  })
+  const changed = fakePublication({ verifierCommit: previous })
+  assert.throws(() => publishReleaseRefs(selected, {
+    runCommand: changed.runCommand, sleep: () => {}, validateGate: successfulGate(changed.events),
+  }), /different release inputs/)
+  assert.deepEqual(mutationNames(changed.events), [])
 })

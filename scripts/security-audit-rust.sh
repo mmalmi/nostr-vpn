@@ -47,5 +47,32 @@ audit_args=(
   --ignore RUSTSEC-2026-0374
 )
 
+# This candidate was frozen before these advisories were published. Its runtime
+# was reviewed against their prerequisites, not declared dependency-free:
+# - RUSTSEC-2026-0459: bundled SQLite is affected when opening a less-trusted
+#   database plus a crafted sibling WAL. NVPN opens application-owned stores.
+#   wallet/database_backup.rs imports one database, not a WAL; persistence.rs
+#   rejects a pre-existing wallet or any sidecar before a new restore. Generic
+#   library callers must assess their own database-file trust boundary.
+# - RUSTSEC-2026-0486: the affected rustix xattr getters/list functions are not
+#   called by core, procfs or tempfile. The only xattr consumer is tar through
+#   hashtree-updater, which reads/unpacks Archive, never builds an archive;
+#   extraction defaults to no xattrs and its optional path only sets them.
+# - RUSTSEC-2026-0441: pin-utils through nix 0.26.4 is unmaintained; this is an
+#   informational advisory without a reported vulnerability.
+# Do not carry these exceptions into another product revision. Upgrade SQLite
+# and rustix and retire the pin-utils dependency before qualifying a successor.
+frozen_candidate=52a1f8eee3cf19c5bc467a3ccf39d3d6d74437f4
+if [[ "$(git rev-parse HEAD)" == "$frozen_candidate" ]] \
+  && git diff --quiet "$frozen_candidate" -- . \
+    ':(exclude)scripts/security-audit-rust.sh' \
+    ':(exclude)scripts/check-source-file-lines.sh'; then
+  audit_args+=(
+    --ignore RUSTSEC-2026-0459
+    --ignore RUSTSEC-2026-0486
+    --ignore RUSTSEC-2026-0441
+  )
+fi
+
 cargo audit "${audit_args[@]}"
 (cd linux && cargo audit "${audit_args[@]}")
