@@ -19,6 +19,8 @@ pub(crate) struct PaidExitManualBuyer {
     funding_satisfied: bool,
     funding_retry_after: u64,
     funding: Option<PaidExitManualFunding>,
+    renewal_funding: Option<tokio::task::JoinHandle<Result<()>>>,
+    renewal_retry_at: u64,
 }
 
 struct PaidExitManualProbe {
@@ -46,6 +48,8 @@ impl PaidExitManualBuyer {
         // attaching that result to the original session, as Automatic does.
         // Dropping its handle prevents completion from changing this selection.
         self.funding.take();
+        self.renewal_funding.take();
+        self.renewal_retry_at = 0;
         self.generation = self.generation.wrapping_add(1);
         self.session_id.clear();
         self.selected_at = 0;
@@ -153,6 +157,35 @@ async fn fund_manual_paid_exit_if_available(
     Ok(PaidExitManualFundingOutcome::Funded(Box::new(
         fund_paid_exit_session(app, config_path, session_id, now_unix).await?,
     )))
+}
+
+/// Fund a renewal without selecting it. The renewal handover switches the
+/// route only after the seller admits the replacement channel.
+fn start_manual_renewal_funding(
+    manual: &mut PaidExitManualBuyer,
+    app: &AppConfig,
+    config_path: &Path,
+    session_id: &str,
+    now_unix: u64,
+) -> Result<()> {
+    if manual.renewal_funding.is_some() {
+        return Ok(());
+    }
+    let store_path = paid_route_store_file_path(config_path);
+    update_paid_route_store(&store_path, |store| {
+        store.begin_buyer_session_funding(session_id, now_unix)
+    })?;
+    if now_unix < load_paid_route_store(&store_path)?.buyer_session_funding_retry_at(session_id) {
+        return Ok(());
+    }
+    let app = app.clone();
+    let config_path = config_path.to_path_buf();
+    let session_id = session_id.to_string();
+    manual.renewal_funding = Some(tokio::spawn(async move {
+        let envelope = fund_paid_exit_session(&app, &config_path, &session_id, now_unix).await?;
+        queue_paid_exit_payment(&app, &config_path, &envelope).map(|_| ())
+    }));
+    Ok(())
 }
 
 fn begin_or_retry_funded_manual_session(
@@ -278,6 +311,54 @@ pub(crate) async fn update_manual_paid_exit(
             }
         }
     }
+    if manual
+        .renewal_funding
+        .as_ref()
+        .is_some_and(|task| task.is_finished())
+    {
+        let result = manual
+            .renewal_funding
+            .take()
+            .expect("finished manual renewal funding exists")
+            .await
+            .map_err(|error| anyhow!("{error}"))
+            .and_then(|result| result);
+        if let Err(error) = result {
+            manual.renewal_retry_at = now_unix.saturating_add(PAID_EXIT_MANUAL_FUNDING_RETRY_SECS);
+            eprintln!("paid-exit: selected manual channel renewal funding failed: {error:#}");
+        }
+    }
+    // Renew only a route that has proven healthy, like Automatic. A Manual
+    // channel otherwise ends at its capacity or routing cutoff and fails.
+    if manual.probe_succeeded && manual.funding_satisfied && now_unix >= manual.renewal_retry_at {
+        let renewal = match renew_selected_paid_exit(
+            runtime,
+            app,
+            config_path,
+            &session_id,
+            &seller_pubkey,
+            &mut manual.renewal_retry_at,
+            now_unix,
+        )
+        .await
+        {
+            Ok(PaidExitRenewalStep::Fund(next)) => {
+                start_manual_renewal_funding(manual, app, config_path, &next, now_unix)
+            }
+            Ok(PaidExitRenewalStep::Renewed(next)) => {
+                // The replacement inherits the healthy route and its evidence.
+                manual.session_id = next;
+                return Ok(false);
+            }
+            Ok(PaidExitRenewalStep::Waiting) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = renewal {
+            manual.renewal_retry_at = now_unix.saturating_add(PAID_EXIT_MANUAL_FUNDING_RETRY_SECS);
+            eprintln!("paid-exit: selected manual channel renewal failed: {error:#}");
+        }
+    }
+
     let seller_admitted = store.buyer_session_is_seller_admitted(&session_id)?;
     let seller_authenticated = runtime.peer_statuses().iter().any(|status| {
         status.connected

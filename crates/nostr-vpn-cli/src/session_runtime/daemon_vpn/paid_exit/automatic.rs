@@ -5,8 +5,6 @@ use nostr_vpn_core::paid_routes::PaidRouteUsage;
 mod funding;
 #[path = "automatic/payments.rs"]
 mod payments;
-#[path = "automatic/renewal.rs"]
-mod renewal;
 #[path = "automatic/runtime.rs"]
 mod runtime;
 #[path = "automatic/selection.rs"]
@@ -14,6 +12,7 @@ mod selection;
 #[path = "automatic/state.rs"]
 mod state;
 
+pub(crate) use payments::drain_paid_exit_buyer_usage;
 pub(crate) use payments::finalize_automatic_paid_exit;
 pub(crate) use payments::fund_paid_exit_session;
 pub(crate) use payments::queue_recovered_paid_exit_channel_open;

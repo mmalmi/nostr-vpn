@@ -170,7 +170,7 @@ pub(crate) async fn update_automatic_paid_exit(
 
     let funding_changed = funding::update_funding(automatic, app, config_path, now_unix).await?;
 
-    renewal::renew_automatic_paid_exit(automatic, runtime, app, config_path, now_unix).await?;
+    renew_automatic_paid_exit(automatic, runtime, app, config_path, now_unix).await?;
 
     if automatic
         .candidate
@@ -209,6 +209,46 @@ pub(crate) async fn update_automatic_paid_exit(
     }
 
     Ok(funding_changed)
+}
+
+async fn renew_automatic_paid_exit(
+    automatic: &mut PaidExitAutomaticBuyer,
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    config_path: &Path,
+    now_unix: u64,
+) -> Result<()> {
+    let Some(candidate) = automatic.candidate.as_ref() else {
+        return Ok(());
+    };
+    if !candidate.funded || !candidate.probe_succeeded || candidate.failed {
+        return Ok(());
+    }
+    let session_id = candidate.session_id.clone();
+    let seller_pubkey = candidate.seller_pubkey.clone();
+    match renew_selected_paid_exit(
+        runtime,
+        app,
+        config_path,
+        &session_id,
+        &seller_pubkey,
+        &mut automatic.renewal_retry_at,
+        now_unix,
+    )
+    .await?
+    {
+        PaidExitRenewalStep::Waiting => {}
+        PaidExitRenewalStep::Fund(next) => {
+            funding::start_funding(automatic, app, config_path, &next, now_unix)?;
+        }
+        PaidExitRenewalStep::Renewed(next) => {
+            if let Some(candidate) = automatic.candidate.as_mut() {
+                candidate.session_id = next;
+                candidate.unanswered_since = None;
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn record_paid_exit_probe(
