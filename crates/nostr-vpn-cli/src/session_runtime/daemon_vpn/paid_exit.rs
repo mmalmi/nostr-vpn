@@ -9,7 +9,10 @@ mod manual;
 pub(crate) use manual::*;
 #[path = "paid_exit/refunds.rs"]
 mod refunds;
+#[path = "paid_exit/renewal.rs"]
+mod renewal;
 pub(in crate::session_runtime) use refunds::PaidExitBuyerRefundRuntime;
+use renewal::{PaidExitRenewalStep, renew_selected_paid_exit};
 #[cfg(test)]
 #[path = "paid_exit/tests.rs"]
 mod tests;

@@ -1464,7 +1464,19 @@ if truthy "$PAID_EXIT_MODE" \
   run_internet_mode_switch_matrix
 fi
 
-if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
+if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+  if [[ "$PAID_EXIT_SELECTION_MODE" != "automatic" ]]; then
+    # Manual renews the bought channel from the same wallet. Fund the
+    # replacements, with their mint fees, for this check and the resale matrix
+    # here so the billing checks above stay tightly funded.
+    PAID_EXIT_RENEWAL_TOPUP_SAT="$((8 * PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT))"
+    "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit wallet \
+      --config "$CONFIG_PATH" \
+      --json \
+      topup "$PAID_EXIT_RENEWAL_TOPUP_SAT" \
+      --mint "$PAID_EXIT_MINT" >/dev/null
+    wait_for_paid_exit_wallet_balance node-b "$PAID_EXIT_MINT" "$PAID_EXIT_RENEWAL_TOPUP_SAT" >/dev/null
+  fi
   "${COMPOSE[@]}" exec -T node-b python3 - "$PROBE_BASE_URL" "$PAID_EXIT_PRICE_MSAT_PER_GB" \
     < "$ROOT_DIR/scripts/e2e-paid-exit-renewal.py"
 fi
