@@ -4,8 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## 4.1.22 - 2026-11-14
 
-- Carries forward the paid channel, file transfer, and Linux routing changes
-  prepared for 4.1.21, with release verification fixes.
+### Release notes
+
+- Send files to a network peer and resume interrupted transfers.
+- Paid Internet channels adapt renewals to recent traffic and recover unused
+  credit after reconnecting.
+- Linux can pause a VPN session without flushing routes it never changed.
 
 ## 4.1.21 - 2026-11-04
 
