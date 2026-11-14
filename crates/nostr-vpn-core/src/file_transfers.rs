@@ -169,10 +169,11 @@ fn authorized_peers(
             && !network.removed_devices.contains(&own)
     }) {
         for member in network.devices.iter().chain(&network.admins) {
-            if let Ok(hex) = crate::config::normalize_nostr_pubkey(member) {
-                if hex != own && !network.removed_devices.contains(&hex) {
-                    peers.insert(hex.clone(), app.peer_alias(&hex).unwrap_or_default());
-                }
+            if let Ok(hex) = crate::config::normalize_nostr_pubkey(member)
+                && hex != own
+                && !network.removed_devices.contains(&hex)
+            {
+                peers.insert(hex.clone(), app.peer_alias(&hex).unwrap_or_default());
             }
         }
     }
@@ -209,11 +210,10 @@ pub fn enqueue(config: &Path, command: FileCommand) -> Result<String> {
     };
     if let Some(target) = stopping {
         for path in &pending {
-            if let Ok(existing) = read_command(config, path) {
-                if matches!(&existing.command, FileCommand::Cancel { id } | FileCommand::Decline { id } if id == target)
-                {
-                    return Ok(existing.id);
-                }
+            if let Ok(existing) = read_command(config, path)
+                && matches!(&existing.command, FileCommand::Cancel { id } | FileCommand::Decline { id } if id == target)
+            {
+                return Ok(existing.id);
             }
         }
     }
@@ -260,15 +260,15 @@ pub fn read_state(config: &Path) -> Result<Vec<TransferState>> {
         if states.iter().any(|state| state.id == command.id) {
             continue;
         }
-        if let FileCommand::Send { npub, paths } = &command.command {
-            if let Ok(mut state) = queued_state(config, &command.id, npub, paths) {
-                state.peer_name = states
-                    .iter()
-                    .find(|row| row.peer_npub == *npub)
-                    .map(|row| row.peer_name.clone())
-                    .unwrap_or_default();
-                states.push(state);
-            }
+        if let FileCommand::Send { npub, paths } = &command.command
+            && let Ok(mut state) = queued_state(config, &command.id, npub, paths)
+        {
+            state.peer_name = states
+                .iter()
+                .find(|row| row.peer_npub == *npub)
+                .map(|row| row.peer_name.clone())
+                .unwrap_or_default();
+            states.push(state);
         }
     }
     for command in &commands {
@@ -277,13 +277,13 @@ pub fn read_state(config: &Path) -> Result<Vec<TransferState>> {
             FileCommand::Decline { id } => (id, "declining"),
             _ => continue,
         };
-        if let Some(state) = states.iter_mut().find(|state| state.id == *id) {
-            if !matches!(
+        if let Some(state) = states.iter_mut().find(|state| state.id == *id)
+            && !matches!(
                 state.status.as_str(),
                 "completed" | "cancelled" | "declined" | "failed"
-            ) {
-                state.status = status.into();
-            }
+            )
+        {
+            state.status = status.into();
         }
     }
     bound_states(&mut states);

@@ -333,37 +333,34 @@ async fn run(
                             }
                         }
                     }
-                    if let FileCommand::Cancel { id: target } = &record.command {
-                        if preparing
+                    if let FileCommand::Cancel { id: target } = &record.command
+                        && preparing
                             .as_ref()
                             .is_some_and(|job| job.state.id == *target)
-                        {
-                            let mut job = preparing.take().expect("checked preparation");
-                            job.cancelled.store(true, Ordering::Relaxed);
-                            job.state.status = "cancelled".into();
-                            remove_owned(&job.command_path, false)?;
-                            pending_cleanup.insert(target.clone());
-                            cancelled_queued.insert(target.clone());
-                            failures.push(job.state.clone());
-                            remove_owned(&path, false)?;
-                            continue;
-                        }
+                    {
+                        let mut job = preparing.take().expect("checked preparation");
+                        job.cancelled.store(true, Ordering::Relaxed);
+                        job.state.status = "cancelled".into();
+                        remove_owned(&job.command_path, false)?;
+                        pending_cleanup.insert(target.clone());
+                        cancelled_queued.insert(target.clone());
+                        failures.push(job.state.clone());
+                        remove_owned(&path, false)?;
+                        continue;
                     }
-                    if let FileCommand::Cancel { id: target } = &record.command {
-                        if !registering.contains_key(target)
-                            && !sender
-                                .snapshots()
-                                .iter()
-                                .any(|snapshot| snapshot.id == *target)
-                        {
-                            if let Some(state) = cancel_queued_send(&config, target)? {
-                                cancelled_queued.insert(target.clone());
-                                pending_cleanup.insert(target.clone());
-                                failures.push(state);
-                                remove_owned(&path, false)?;
-                                continue;
-                            }
-                        }
+                    if let FileCommand::Cancel { id: target } = &record.command
+                        && !registering.contains_key(target)
+                        && !sender
+                            .snapshots()
+                            .iter()
+                            .any(|snapshot| snapshot.id == *target)
+                        && let Some(state) = cancel_queued_send(&config, target)?
+                    {
+                        cancelled_queued.insert(target.clone());
+                        pending_cleanup.insert(target.clone());
+                        failures.push(state);
+                        remove_owned(&path, false)?;
+                        continue;
                     }
                     let stop_target = match &record.command {
                         FileCommand::Cancel { id } | FileCommand::Decline { id } => Some(id),

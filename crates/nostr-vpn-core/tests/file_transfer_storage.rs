@@ -24,8 +24,10 @@ impl Fixture {
         fs::create_dir(&directory).unwrap();
         private_permissions(&directory, true);
         let config = directory.join("config.toml");
-        let mut app = AppConfig::default();
-        app.node_name = "File transfer test".into();
+        let mut app = AppConfig {
+            node_name: "File transfer test".into(),
+            ..AppConfig::default()
+        };
         let recipient = Keys::generate().public_key().to_hex();
         let own = app.own_nostr_pubkey_hex().unwrap();
         let network = &mut app.networks[0];

@@ -80,7 +80,14 @@ fn paid_exit_wallet_shows_recorded_balances_offline_without_writing() {
     assert_eq!(json["wallet"]["mints"][0]["balance_msat"], 12000);
     assert_eq!(json["wallet"]["mints"][0]["last_checked_unix"], 1234);
     assert!(json["cashu"].is_null());
-    let refresh = run_nvpn(["paid-exit", "wallet", "show", "--refresh", "--config", config]);
+    let refresh = run_nvpn([
+        "paid-exit",
+        "wallet",
+        "show",
+        "--refresh",
+        "--config",
+        config,
+    ]);
     assert!(!refresh.status.success());
     assert_eq!(std::fs::read(&store_path).unwrap(), before);
 }

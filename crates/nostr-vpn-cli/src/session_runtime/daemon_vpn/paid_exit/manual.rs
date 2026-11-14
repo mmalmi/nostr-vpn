@@ -347,7 +347,9 @@ pub(crate) async fn update_manual_paid_exit(
         if manual.record_probe_failure(reason, now_unix) {
             return fail_manual_paid_exit(manual, config_path, reason, now_unix);
         }
-        eprintln!("[{now_unix}] paid-exit: selected seller health check failed: {reason}; retrying");
+        eprintln!(
+            "[{now_unix}] paid-exit: selected seller health check failed: {reason}; retrying"
+        );
     }
 
     if manual
@@ -375,7 +377,9 @@ pub(crate) async fn update_manual_paid_exit(
                         probe.feedback_generation,
                     );
                     manual.record_probe_success(now_unix);
-                    eprintln!("[{now_unix}] paid-exit: selected manual seller Internet egress is healthy");
+                    eprintln!(
+                        "[{now_unix}] paid-exit: selected manual seller Internet egress is healthy"
+                    );
                     return Ok(false);
                 }
                 Err(error) => {

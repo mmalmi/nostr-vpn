@@ -97,11 +97,15 @@ impl PaidRouteStore {
 
     pub fn set_manual_renewal(&mut self, session_id: &str, enabled: bool) -> Result<()> {
         if enabled {
-            let channel = self.sessions.get(session_id)
+            let channel = self
+                .sessions
+                .get(session_id)
                 .and_then(|record| self.channels.get(&record.session.payment.channel_id))
                 .ok_or_else(|| anyhow!("missing buyer channel"))?;
             if channel.role != PaidRouteChannelRole::Buyer || channel.mint_url.is_empty() {
-                return Err(anyhow!("manual renewal requires a buyer channel with a payment mint"));
+                return Err(anyhow!(
+                    "manual renewal requires a buyer channel with a payment mint"
+                ));
             }
             self.manual_renewal_session_id = session_id.to_owned();
         } else {
