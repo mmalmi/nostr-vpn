@@ -1,0 +1,13 @@
+{
+  "upstream": "cashu-service",
+  "package": "cashu-credit",
+  "status": "local development snapshot; not a published release",
+  "sha256": {
+    "src/account.rs": "b40fbd175a0673ef22b1388d010c8c2f9ba92b5974a452b50bb8d8d8c5fab3d5",
+    "src/error.rs": "4dfdcba989552231231baac362176aa71516e5540c5614b9b2ea4c226a9f631c",
+    "src/ledger.rs": "c4e49e1199307136e4fb031281043961206b79155943a48cf79305bf8dd0577a",
+    "src/lib.rs": "49bb2f8a97ef5c24197ea8d4aaa2d10ed33d34c5aa631311386defc96743bc93",
+    "src/protocol.rs": "12380f579118f87010085b5927403d4681700836b4532f3d5dbd9a1fff3a252c",
+    "src/snapshot.rs": "63a8ca8673936b7752c53b3d834c8e862ebc264618666b07f0d4d034eb5e280c"
+  }
+}

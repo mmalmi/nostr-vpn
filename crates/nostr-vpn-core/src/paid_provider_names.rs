@@ -29,7 +29,7 @@ pub fn provider_alias(seller: &str) -> String {
     )
 }
 
-/// Use the root's follows and their follows/mutes for display trust. This does
+/// Build the root's authenticated two-hop graph for labels and quote discovery. This does
 /// not expand the stricter direct-follow boundary used for service ratings.
 pub fn provider_name_graph(root: &str, events: &[Event], now: u64) -> SocialGraph {
     let mut graph = SocialGraph::new(root);
@@ -73,6 +73,30 @@ pub fn provider_name_graph(root: &str, events: &[Event], now: u64) -> SocialGrap
         graph.recalculate_follow_distances();
     }
     graph
+}
+
+/// Pick a signed upload-credit quote from services the buyer is already willing
+/// to use. The returned quote is still subject to durable purchase authorization.
+#[cfg(feature = "peer-credit")]
+pub fn select_exit_credit_offer<'a>(
+    owner: &PublicKey,
+    events: &[Event],
+    offers: &'a [peer_payments::Signed<peer_payments::Agreement>],
+    intents: &[peer_payments::PurchaseIntent<'_>],
+    now: u64,
+) -> Result<Option<&'a peer_payments::Signed<peer_payments::Agreement>>, peer_payments::Error> {
+    if intents
+        .iter()
+        .any(|intent| intent.service != "vpn.exit.upload_bytes")
+    {
+        return Err(peer_payments::Error::Invalid(
+            "unsupported exit credit meter",
+        ));
+    }
+    let root = owner.to_hex();
+    let graph = provider_name_graph(&root, events, now);
+    peer_payments::discovery::QuotePeers::new(&graph, &root)?
+        .select_credit_offer(offers, intents, now)
 }
 
 pub fn provider_display_name(

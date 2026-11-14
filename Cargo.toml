@@ -10,7 +10,7 @@ members = [
   "vendor/cashu-service",
   "vendor/cdk-spilman",
 ]
-exclude = ["linux"]
+exclude = ["linux", "vendor/peer-payments", "vendor/cashu-credit"]
 default-members = [
   "crates/nostr-vpn-app-core",
   "crates/nostr-vpn-app-core/uniffi-bindgen",
@@ -30,6 +30,7 @@ authors = ["Nostr VPN contributors"]
 repository = "https://github.com/mmalmi/nostr-vpn"
 
 [workspace.dependencies]
+peer-payments = { version = "=0.1.0", path = "vendor/peer-payments" }
 anyhow = "1"
 arc-swap = "1"
 async-trait = "0.1"

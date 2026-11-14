@@ -25,7 +25,7 @@ pub mod magic_dns;
 mod network_roster;
 mod network_routes;
 pub mod packet_checksums;
-#[cfg(feature = "paid-exit")]
+#[cfg(any(feature = "paid-exit", feature = "peer-credit"))]
 pub mod paid_provider_names;
 pub mod paid_route_accounting;
 pub mod paid_route_probe;

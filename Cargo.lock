@@ -960,6 +960,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cashu-credit"
+version = "0.3.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4117,6 +4126,7 @@ dependencies = [
  "nvpn-fips-file-transfer",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
+ "peer-payments",
  "rcgen",
  "reqwest 0.12.28",
  "rustix",
@@ -4347,7 +4357,7 @@ dependencies = [
  "async-trait",
  "axum",
  "cashu",
- "cashu-credit",
+ "cashu-credit 0.3.0",
  "cdk",
  "cdk-axum",
  "cdk-common",
@@ -4900,6 +4910,21 @@ checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
 dependencies = [
  "digest 0.10.7",
  "hmac 0.12.1",
+]
+
+[[package]]
+name = "peer-payments"
+version = "0.1.0"
+dependencies = [
+ "cashu-credit 0.3.1",
+ "fs2",
+ "nostr-social-graph 0.2.0",
+ "rusqlite",
+ "secp256k1 0.29.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -106,6 +106,7 @@ pub struct AcceptedFipsPacket<'a, B = Vec<u8>> {
 pub struct FipsEndpointSourceAdmitter<'a> {
     runtime: &'a FipsMeshRuntime,
     peer: &'a FipsMeshPeerRuntime,
+    credit_session: bool,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -116,6 +117,8 @@ pub struct FipsEndpointAdmissionCache {
 
 #[derive(Debug, Clone)]
 pub struct FipsMeshRuntime {
+    #[cfg(feature = "peer-credit")]
+    credit_allowances: HashMap<[u8; 32], (String, Arc<Mutex<peer_payments::Allowance>>)>,
     peers: Vec<FipsMeshPeerRuntime>,
     local_routes: Vec<IpRoute>,
     paid_route_admissions: HashMap<[u8; 32], FipsPaidRouteAdmission>,
@@ -276,6 +279,8 @@ impl FipsMeshRuntime {
             prefix_route_peer_indexes(&paid_route_routing_peers);
 
         Self {
+            #[cfg(feature = "peer-credit")]
+            credit_allowances: HashMap::new(),
             peers,
             local_routes,
             paid_route_admissions,
@@ -296,6 +301,10 @@ impl FipsMeshRuntime {
 
     pub fn inherit_exit_flows(&mut self, previous: &Self) {
         self.exit_flows = Arc::clone(&previous.exit_flows);
+        #[cfg(feature = "peer-credit")]
+        {
+            self.credit_allowances = previous.credit_allowances.clone();
+        }
     }
 
     pub fn replace_paid_route_admissions(
@@ -373,6 +382,11 @@ impl FipsMeshRuntime {
         Some(FipsEndpointSourceAdmitter {
             runtime: self,
             peer,
+            credit_session: peer
+                .participant_pubkey
+                .as_ref()
+                .and_then(|key| self.paid_route_admissions.get(key))
+                .is_some_and(|a| a.session_id.starts_with(CREDIT_SESSION_PREFIX)),
         })
     }
 
@@ -667,6 +681,9 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         {
             return None;
         }
+        if self.credit_session && !self.runtime.admit_credit_packet(self.peer, data.len()) {
+            return None;
+        }
         Some(self.peer)
     }
 
@@ -678,6 +695,7 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
 }
 
 include!("fips_mesh/route_helpers.rs");
+include!("fips_mesh/peer_credit.rs");
 
 #[cfg(test)]
 
