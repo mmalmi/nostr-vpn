@@ -3,6 +3,9 @@
 Use the smallest mode that proves the layer you changed. The recipes are defined
 in the root `Justfile`; their implementation is `scripts/mobile-test-kit.sh`.
 
+For mobile-sensitive changes, run `just mobile-test-kit`; simulator/device packet
+paths use `just mobile-test-kit-sim` / `just mobile-test-kit-device`.
+
 | Recipe                        | What it proves                                                                                                                                        | Requirements                                                                                            |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | `just mobile-test-kit-rust`   | Shared app-core tests and `nvpn` platform-routing tests                                                                                               | Rust toolchain                                                                                          |
@@ -14,6 +17,23 @@ in the root `Justfile`; their implementation is `scripts/mobile-test-kit.sh`.
 `mobile-test-kit` skips the iOS build on non-macOS hosts. Simulator coverage
 cannot prove Android `VpnService` or iOS NetworkExtension packet flow; use the
 device or exit mode for dataplane claims.
+
+## Device safety and recovery
+
+Run simulator UI checks without physical devices. Before physical UI automation,
+require a bounded fresh unlocked-state check.
+
+For physical iOS XCTest, reuse the trusted destination runner. After one verified
+pre-method `XCTFuture Code=1000` stall, recycle only the exact `testmanagerd` PID
+once and retry the same `UseDestinationArtifacts` plan. Never reboot, broadly
+restart, prime, reinstall or uninstall as recovery. An Apple UI Automation
+passcode may still be required.
+
+A failed startup that never touched the app must not trigger another UI
+automation session for cleanup when fresh USB evidence preserves its stopped
+baseline. Keep completed artifact-bound device receipts when resuming. For
+release-specific evidence reuse and the attended device window, see
+[release gate recovery](release-resume.md#iphone-testing-window).
 
 ## Local configuration
 
