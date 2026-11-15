@@ -88,22 +88,42 @@ fn multi_mint_provider_link_uses_the_buyers_approved_default() {
         assert_eq!(result.mint_url, "https://z-mint.example");
     }
 
-    // A generic seller link does not grant wallet trust to any listed mint.
+    // A generic seller link does not grant wallet trust to any listed mint:
+    // paying is refused, and only the advertised free allowance opens.
     let mut store = PaidRouteStore::default();
     store.upsert_signed_offer(signed, vec![], now).unwrap();
-    let error = store
-        .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
-            offer_selector: provider.npub,
-            buyer_npub: buyer.public_key().to_bech32().unwrap(),
-            mint_url: None,
-            channel_capacity_sat: None,
-            initial_paid_msat: 0,
-            now_unix: now,
-        })
-        .unwrap_err();
-    assert!(error.to_string().contains("no accepted mint approved"));
+    let request = |initial_paid_msat| OpenPaidRouteBuyerSessionRequest {
+        offer_selector: provider.npub.clone(),
+        buyer_npub: buyer.public_key().to_bech32().unwrap(),
+        mint_url: None,
+        channel_capacity_sat: None,
+        initial_paid_msat,
+        now_unix: now,
+    };
+    let error = store.open_buyer_session(request(1)).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("requires an approved wallet mint")
+    );
     assert!(store.wallet.mints.is_empty());
     assert!(store.sessions.is_empty());
+    let trial = store.open_buyer_session(request(0)).unwrap();
+    assert!(trial.mint_url.is_empty());
+    assert!(store.wallet.mints.is_empty());
+    assert_eq!(store.channels[&trial.channel_id].payment.paid_msat, 0);
+
+    config.channel.free_probe_units = 0;
+    let paid_only =
+        signed_paid_exit_offer_from_config("internet-exit", &seller, &config, None, now).unwrap();
+    let mut store = PaidRouteStore::default();
+    store.upsert_signed_offer(paid_only, vec![], now).unwrap();
+    for amount in [0, 1] {
+        let error = store.open_buyer_session(request(amount)).unwrap_err();
+        assert!(error.to_string().contains("no accepted mint approved"));
+        assert!(store.wallet.mints.is_empty());
+        assert!(store.sessions.is_empty());
+    }
 }
 
 #[test]

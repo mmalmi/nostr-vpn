@@ -86,6 +86,13 @@ It accepts only that diagnostic at the pinned source location on the frozen
 commit. Other findings fail verification. The tagged product supplies its
 own dependency-audit and file-size policies.
 
+The original multi-mint test also predated the advertised free trial in
+`c8347fa24`. Run 43765309410 preserved its failing zero-payment assertion.
+The dedicated purchase job runs the whole integration target on a clean copy
+of the exact product, with only that test file updated. It checks approved
+mint selection, zero-cost trials and refusal of paid requests without an
+approved mint. The original workspace job excludes only the replaced case.
+
 ## Linux builder inputs
 
 `Dockerfile.linux-vm-gate` is the established **native Linux amd64, Ubuntu
