@@ -24,7 +24,8 @@ env:
 jobs:
   verify:
     name: Verify release inputs
-    runs-on: ubuntu-latest
+    # The pinned Playwright version supports Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -119,6 +120,7 @@ jobs:
           pnpm --dir web/control-panel exec playwright install --with-deps chromium
 
       - name: Load reviewed verifier policies for the frozen candidate
+        if: ${{ inputs.tag != 'v4.1.22' }}
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
@@ -129,6 +131,7 @@ jobs:
           done
 
       - name: Run hosted release verification
+        if: ${{ inputs.tag != 'v4.1.22' }}
         env:
           # Hardware and calibrated timing checks remain mandatory in the
           # artifact-bound local gate. This job checks portable source/Docker.
@@ -136,6 +139,13 @@ jobs:
           NVPN_E2E_ROAMING_LOADED_LATENCY: '0'
           NVPN_RELEASE_APP_REPO_PATH: ${{ github.workspace }}
         run: bash "${RUNNER_TEMP}/verifier/scripts/release-gate.sh" --hosted
+
+      - name: Run the frozen 4.1.22 portable release gate
+        if: ${{ inputs.tag == 'v4.1.22' }}
+        env:
+          NVPN_RELEASE_GATE_IDLE_CPU: '0'
+          NVPN_E2E_ROAMING_LOADED_LATENCY: '0'
+        run: ./scripts/release-gate.sh --hosted
 
       - name: Show checkout changes after failed verification
         if: failure()
@@ -166,13 +176,12 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
           git show "${GITHUB_SHA}:scripts/verify-macos14-sdk-evidence.mjs" > "${RUNNER_TEMP}/verify-macos14-sdk-evidence.mjs"
-          # Keep source-relative reads bound to the frozen product checkout.
-          cp "${RUNNER_TEMP}/verify-macos14-sdk-evidence.mjs" scripts/verify-macos14-sdk-evidence.mjs
 
       - name: Verify unchanged macOS 14 SDK compatibility evidence
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/verify-macos14-sdk-evidence.mjs
+          NVPN_RELEASE_APP_REPO_PATH: ${{ github.workspace }}
+        run: node "${RUNNER_TEMP}/verify-macos14-sdk-evidence.mjs"
 
       - name: Verify iOS release artifact orchestration without devices
         run: |

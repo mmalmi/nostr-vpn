@@ -37,7 +37,7 @@ export function validateMacos14SdkEvidence({ files, job, workflow }) {
 }
 
 function main() {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+  const root = process.env.NVPN_RELEASE_APP_REPO_PATH || resolve(dirname(fileURLToPath(import.meta.url)), '..')
   const api = (path) => {
     const result = spawnSync('gh', ['api', `repos/mmalmi/nostr-vpn/${path}`], {
       encoding: 'utf8', timeout: 30_000,

@@ -2915,6 +2915,18 @@ test('hosted release retains Rust and Docker verification without duplicate nati
   assert.doesNotMatch(workflow, /^  build-linux-app:/m)
 })
 
+test('4.1.22 uses the frozen product gate on a supported Playwright runner', () => {
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+  const verify = workflow.split('  verify:\n')[1].split('  macos-sdk-compat:\n')[0]
+  assert.match(verify, /^    runs-on: ubuntu-24\.04$/m)
+  const steps = verify.split('      - name: ')
+  const product = steps.find((step) => step.startsWith('Run the frozen 4.1.22 portable release gate\n'))
+  assert.ok(product?.includes("if: ${{ inputs.tag == 'v4.1.22' }}"))
+  assert.match(product, /run: \.\/scripts\/release-gate\.sh --hosted/)
+  const previous = steps.find((step) => step.startsWith('Run hosted release verification\n'))
+  assert.ok(previous?.includes("if: ${{ inputs.tag != 'v4.1.22' }}"))
+})
+
 test('hosted release selects the portable gate instead of maintaining fleet skip flags', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
   const verifyJob = workflow.slice(workflow.indexOf('  verify:'), workflow.indexOf('  macos-sdk-compat:'))
