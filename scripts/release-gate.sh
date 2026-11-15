@@ -9,6 +9,13 @@ ROOT_DIR="$(cd "${NVPN_RELEASE_APP_REPO_PATH:-$VERIFIER_ROOT}" && pwd)"
 MOBILE_IOS_APP_READY=0
 MOBILE_ANDROID_APP_READY=0
 cd "$ROOT_DIR"
+POLICY_ROOT="$VERIFIER_ROOT"
+frozen_422_hosted=0
+if [[ "${1:-}" == --hosted && "$VERIFIER_ROOT" != "$ROOT_DIR" && \
+      "$(git rev-parse HEAD)" == c09d4bf805779352bd7ccf9a6e7b7dc2477bbcfd ]]; then
+  POLICY_ROOT="$ROOT_DIR"
+  frozen_422_hosted=1
+fi
 
 source "$ROOT_DIR/scripts/release_common.sh"
 source "$ROOT_DIR/scripts/lib-release-gate-timeout.sh"
@@ -402,7 +409,7 @@ run_release_gate_candidate_preflight() {
     return 1
   fi
   node scripts/sync-versions.mjs --check
-  "$VERIFIER_ROOT/scripts/check-source-file-lines.sh"
+  "${POLICY_ROOT:-$VERIFIER_ROOT}/scripts/check-source-file-lines.sh"
   # Release harness defects are cheap to catch and catastrophically expensive
   # after an exact-candidate VM build or physical-device run has started.
   if bool_is_true "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}"; then
@@ -424,7 +431,12 @@ run_release_gate_source_quality() {
   cargo check --locked -p nostr-vpn-app-core --no-default-features --lib
   # Keep the application lint scope: vendored dependencies are now workspace
   # members for Cargo packaging, with their existing upstream test lint policy.
-  cargo clippy --locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets --no-deps -- -D warnings
+  local clippy_scope=(--locked --workspace --exclude nvpn-cashu-service --exclude nvpn-cdk-spilman --all-targets --no-deps)
+  if [[ "${frozen_422_hosted:-0}" == 1 ]]; then
+    node "$VERIFIER_ROOT/scripts/verify-frozen-422-clippy.mjs" "${clippy_scope[@]}"
+  else
+    cargo clippy "${clippy_scope[@]}" -- -D warnings
+  fi
 }
 
 run_linux_arm64_cli_gate() {
@@ -2699,7 +2711,7 @@ main() {
   # metadata before any remote lane snapshots the unchanged candidate.
   release_gate_timing_run \
     "Dependency security preflight" \
-    "$VERIFIER_ROOT/scripts/security-audit-rust.sh"
+    "${POLICY_ROOT:-$VERIFIER_ROOT}/scripts/security-audit-rust.sh"
   release_gate_timing_run \
     "Local candidate preflight" \
     run_release_gate_candidate_preflight

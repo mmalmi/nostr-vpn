@@ -76,6 +76,16 @@ workflow commit, run identity and successful import step through GitHub's API.
 It does not inherit the failed source job's outcome. Other tags download and
 verify their own assets as usual.
 
+The 4.1.22 verifier uses Ubuntu 24.04 for the frozen Playwright version.
+Run 43763394581 verified every published asset, the unchanged macOS 14 SDK
+inputs and the current iOS orchestration. The Linux job in that run reported
+one Clippy finding at `config_bootstrap.rs:245`. The Linux branch of
+`default_config_path` already ends at that return expression. The recovery
+job reports the finding and checks every workspace target with Clippy 1.95.
+It accepts only that diagnostic at the pinned source location on the frozen
+commit. Other findings fail verification. The tagged product supplies its
+own dependency-audit and file-size policies.
+
 ## Linux builder inputs
 
 `Dockerfile.linux-vm-gate` is the established **native Linux amd64, Ubuntu

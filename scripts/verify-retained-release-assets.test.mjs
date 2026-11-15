@@ -36,3 +36,25 @@ test('retained asset evidence rejects changed inputs, identity and skipped check
   input.job.steps[0].conclusion = 'skipped'
   assert.throws(() => validateRetainedReleaseAssets(input))
 })
+
+test('4.1.22 pins both current Mac steps and the complete asset import to the same exact run', () => {
+  const input = fixture()
+  input.tag = 'v4.1.22'
+  input.commit = 'c09d4bf805779352bd7ccf9a6e7b7dc2477bbcfd'
+  input.cid = 'nhash1qqs99497nqkr3jvgk3xyd5cdk0jckk8ek6ngf7qygvaz9ldsjngfhvg9yyqnzhlzwjen4q43kmx8hxwteqq3l4vkfu7xkf9twve966jvftzm7cgmluy0t'
+  input.run.id = 43763394581
+  input.run.head_sha = 'bfd4db73733bee35ba9e70b5638ce3c2f1d92dfd'
+  input.run.display_title = `Release ${input.tag} @ ${input.commit} from ${input.cid}`
+  Object.assign(input.job, { id: 132962977589, run_id: input.run.id, head_sha: input.run.head_sha })
+  input.macJob = {
+    ...input.job, id: 132962977844, name: 'macOS 14 SDK compatibility',
+    steps: ['Verify unchanged macOS 14 SDK compatibility evidence', 'Verify iOS release artifact orchestration without devices']
+      .map((name) => ({ name, conclusion: 'success' })),
+  }
+  assert.equal(validateRetainedReleaseAssets(input).macJobId, input.macJob.id)
+  for (const key of ['id', 'run_id', 'head_sha', 'name', 'status', 'conclusion']) {
+    assert.throws(() => validateRetainedReleaseAssets({ ...input, macJob: { ...input.macJob, [key]: 'changed' } }))
+  }
+  input.macJob.steps[1].conclusion = 'skipped'
+  assert.throws(() => validateRetainedReleaseAssets(input))
+})
