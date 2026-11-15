@@ -606,73 +606,41 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
     }
 
     private func selectImportedImage(named filename: String) {
-        let documents = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
-        let roots = [app, documents]
         let displayedFilename = URL(fileURLWithPath: filename)
             .deletingPathExtension()
             .lastPathComponent
-
-        if tapImportedDocument(named: displayedFilename, in: roots, timeout: 1) {
-            return
-        }
-        XCTAssertTrue(tapFile(named: "Browse", in: roots, timeout: 2))
-        XCTAssertTrue(tapFile(named: "On My iPhone", in: roots, timeout: 2))
-        XCTAssertTrue(tapFile(named: "Nostr VPN Test Files", in: roots, timeout: 2))
-        XCTAssertTrue(
-            tapImportedDocument(named: displayedFilename, in: roots, timeout: 4),
-            "Staged QR screenshot was not selectable through the public Files picker"
-        )
-    }
-
-    private func tapImportedDocument(
-        named filename: String,
-        in roots: [XCUIApplication],
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        let documentPredicate = NSPredicate(
+        let document = app.cells.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ OR label BEGINSWITH %@",
-            "\(filename),",
-            "\(filename),"
-        )
-        repeat {
-            for root in roots {
-                let document = root.cells.matching(documentPredicate).firstMatch
-                if document.exists && document.isHittable {
-                    document.tap()
-                    return waitUntil(timeout: timeout) { !document.exists }
+            "\(displayedFilename),", "\(displayedFilename),"
+        )).firstMatch
+
+        // The system presents Files inside this app. Wait for that sheet's
+        // content to become hittable before deciding to navigate to the folder.
+        if !tapWhenHittable(document, timeout: 4) {
+            for title in ["Browse", "On My iPhone", "Nostr VPN Test Files"] {
+                let control = app.descendants(matching: .any).matching(NSPredicate(
+                    format: "identifier == %@ OR label == %@ OR value == %@", title, title, title
+                )).firstMatch
+                guard tapWhenHittable(control, timeout: 4) else {
+                    XCTFail("Files picker did not show \(title)")
+                    return
                 }
             }
-            Thread.sleep(forTimeInterval: 0.1)
-        } while Date() < deadline
-        return false
+            guard tapWhenHittable(document, timeout: 4) else {
+                XCTFail("Staged QR screenshot was not selectable through the public Files picker")
+                return
+            }
+        }
+        XCTAssertTrue(waitUntil(timeout: 4) { !document.exists },
+                      "The Files picker did not dismiss the selected QR image")
     }
 
-    private func tapFile(
-        named filename: String,
-        in roots: [XCUIApplication],
-        timeout: TimeInterval
-    ) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        let filePredicate = NSPredicate(
-            format: "identifier == %@ OR label == %@ OR value == %@",
-            filename,
-            filename,
-            filename
-        )
-        repeat {
-            for root in roots {
-                let file = root.descendants(matching: .any)
-                    .matching(filePredicate)
-                    .firstMatch
-                if file.exists && file.isHittable {
-                    file.tap()
-                    return true
-                }
-            }
-            Thread.sleep(forTimeInterval: 0.1)
-        } while Date() < deadline
-        return false
+    private func tapWhenHittable(_ control: XCUIElement, timeout: TimeInterval) -> Bool {
+        guard waitUntil(timeout: timeout, predicate: { control.exists && control.isHittable }) else {
+            return false
+        }
+        control.tap()
+        return true
     }
 
     private func waitUntil(
