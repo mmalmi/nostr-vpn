@@ -24,6 +24,7 @@ env:
 jobs:
   verify:
     name: Verify release inputs
+    if: ${{ inputs.tag != 'v4.1.22' }}
     # The pinned Playwright version supports Ubuntu 24.04.
     runs-on: ubuntu-24.04
     permissions:
@@ -157,51 +158,44 @@ jobs:
   # Rebuilding different bytes here cannot strengthen those package receipts.
   # The older-SDK proof is reusable only for its byte-identical source inputs.
   # Run the remaining harnesses on a supported hosted image.
-  paid-provider-purchase:
-    name: Verify frozen 4.1.22 free trials and paid purchases
+  frozen-product:
+    name: Verify the completed frozen product checks
     if: ${{ inputs.tag == 'v4.1.22' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     steps:
-      - name: Checkout frozen product
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.inputs.locally_attested_commit }}
-
-      - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RELEASE_RUST_TOOLCHAIN }}
-
-      - name: Install Linux native test prerequisites
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
-
-      - name: Exercise the reviewed assertions on the exact product
-        env:
-          CARGO_PROFILE_TEST_DEBUG: '0'
-          CARGO_INCREMENTAL: '0'
+      - name: Authenticate the Linux release gate and payment integration tests
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCT: ${{ inputs.locally_attested_commit }}
         run: |
           set -euo pipefail
-          product=c09d4bf805779352bd7ccf9a6e7b7dc2477bbcfd
-          fixture=crates/nostr-vpn-core/tests/paid_provider_purchase.rs
-          test "$(git rev-parse HEAD)" = "$product"
-          test "$(git hash-object "$fixture")" = c6d0c58b53f36d4eb1c1faf14fc5e1531e311960
-          test -z "$(git status --porcelain --untracked-files=all)"
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
-          test "$(git rev-parse "${GITHUB_SHA}:$fixture")" = e5e9d088e4c475d1cd87c0cf0a0ab1c0a094041e
-          scratch="$(mktemp -d "${RUNNER_TEMP}/nvpn-paid-provider.XXXXXX")"
-          git worktree add --quiet --detach "$scratch" "$product"
-          git show "${GITHUB_SHA}:$fixture" > "$scratch/$fixture"
-          test "$(git -C "$scratch" status --porcelain --untracked-files=all)" = " M $fixture"
-          cd "$scratch"
-          cargo test --locked -p nostr-vpn-core --test paid_provider_purchase -- --test-threads=1 | tee "$RUNNER_TEMP/paid-provider.log"
-          grep -Fx 'test multi_mint_provider_link_uses_the_buyers_approved_default ... ok' "$RUNNER_TEMP/paid-provider.log"
-          test -z "$(git -C "$GITHUB_WORKSPACE" status --porcelain --untracked-files=all)"
+          repo=mmalmi/nostr-vpn
+          run_id=43768662427
+          verifier=92d53f48cd0539b02234c8ca9cc37abbdb06a451
+          test "$PRODUCT" = c09d4bf805779352bd7ccf9a6e7b7dc2477bbcfd
+          test "$(gh api "repos/$repo/git/commits/$PRODUCT" --jq '.tree.sha')" = ae60087b5459baf6f532ff229c3ebfa9dee4de02
+          prior_cid=nhash1qqs99497nqkr3jvgk3xyd5cdk0jckk8ek6ngf7qygvaz9ldsjngfhvg9yyqnzhlzwjen4q43kmx8hxwteqq3l4vkfu7xkf9twve966jvftzm7cgmluy0t
+          gh api "repos/$repo/actions/runs/$run_id" | jq -e \
+            --arg repo "$repo" --arg verifier "$verifier" --arg title "Release v4.1.22 @ $PRODUCT from $prior_cid" '
+              .id == 43768662427 and .repository.full_name == $repo and
+              .path == ".github/workflows/release.yml" and .event == "workflow_dispatch" and
+              .head_branch == "codex/nvpn-422-hosted-recovery" and .head_sha == $verifier and
+              .run_attempt == 1 and .display_title == $title and
+              .status == "completed" and .conclusion == "success"'
+          gh api "repos/$repo/actions/runs/$run_id/attempts/1/jobs?per_page=100" | jq -e --arg verifier "$verifier" '
+            def passed($id; $name; $step):
+              any(.jobs[]; .id == $id and .name == $name and .run_id == 43768662427 and
+                .run_attempt == 1 and .head_sha == $verifier and .status == "completed" and
+                .conclusion == "success" and any(.steps[]; .name == $step and .conclusion == "success"));
+            passed(132979414709; "Verify release inputs"; "Run the frozen 4.1.22 portable release gate") and
+            passed(132979414956; "Verify frozen 4.1.22 free trials and paid purchases";
+              "Exercise the reviewed assertions on the exact product")'
 
   macos-sdk-compat:
-    if: ${{ inputs.tag != 'v4.1.22' }}
     name: macOS 14 SDK compatibility
     # The standard Intel pool avoids the current arm64 capacity failures.
     runs-on: macos-15-intel
@@ -234,7 +228,7 @@ jobs:
 
   retained-assets:
     name: Verify retained exact release evidence
-    if: ${{ inputs.tag == 'v4.1.21' || inputs.tag == 'v4.1.22' }}
+    if: ${{ inputs.tag == 'v4.1.21' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -254,7 +248,7 @@ jobs:
 
   release:
     name: Verify exact locally gated assets (no publication)
-    if: ${{ inputs.tag != 'v4.1.21' && inputs.tag != 'v4.1.22' }}
+    if: ${{ inputs.tag != 'v4.1.21' }}
     # Importing the immutable bundle is independent of the source checks.
     # Local publication still requires the entire workflow to succeed.
     runs-on: ubuntu-24.04

@@ -93,6 +93,12 @@ of the exact product, with only that test file updated. It checks approved
 mint selection, zero-cost trials and refusal of paid requests without an
 approved mint. The original workspace job excludes only the replaced case.
 
+For the new 4.1.22 distribution export, the hosted verifier downloads the
+replacement draft and checks every packaged asset. It also runs the macOS
+and iOS orchestration checks. The source gate and payment tests use the
+identical product commit and tree. The verifier authenticates both jobs
+and their required steps from run 43768662427 before promotion.
+
 ## Linux builder inputs
 
 `Dockerfile.linux-vm-gate` is the established **native Linux amd64, Ubuntu
