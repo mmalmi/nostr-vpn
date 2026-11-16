@@ -421,6 +421,12 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> Nativ
         {
             continue;
         }
+        // Android takes the old interface down when it establishes a
+        // replacement. A packet written before the tunnel has moved to the
+        // replacement is lost; the tunnel itself keeps running.
+        if error.raw_os_error() == Some(libc::EIO) {
+            return NativeTunWrite::Dropped;
+        }
         return NativeTunWrite::Stopped;
     }
     NativeTunWrite::Stopped
