@@ -10,7 +10,7 @@ description = "Durable, bounded peer credit shared by paid services without a mi
 social-graph = ["dep:nostr-social-graph"]
 
 [dependencies]
-nostr-social-graph = { version = "=0.2.0", optional = true }
+nostr-social-graph = { version = "0.2.1", optional = true }
 cashu-credit = { path = "../cashu-credit", version = "0.3.1" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

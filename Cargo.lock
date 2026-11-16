@@ -3852,20 +3852,6 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848aac810edafec01cd47650e31bfe920129a9d1422df0385cca286625caeed4"
-dependencies = [
- "anyhow",
- "nostr-sdk",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "nostr-identity"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95fd048871579a175d1c38d1ea947f1034206d93696ea7ac74d140979e8022bb"
@@ -3909,14 +3895,14 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.48-recovery.1"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80b7f26d2351a8e466c93fcc591377ab893ff8295ed800f5426f7623b7b595dc"
+checksum = "3ed00bcf7627f4b9ab1c4185d72d130637b32a9e9270c11edcc113208eacdea6"
 dependencies = [
  "async-trait",
  "nostr",
  "nostr-pubsub",
- "nostr-pubsub-social-graph 0.2.4",
+ "nostr-pubsub-social-graph",
  "nvpn-fips-core",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
@@ -3939,29 +3925,15 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-social-graph"
-version = "0.2.4"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82f49b582d5b174358516a230372196691bd014ff997ff58bc039e554198f7fe"
+checksum = "6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd"
 dependencies = [
  "async-trait",
  "nostr",
  "nostr-pubsub",
- "nostr-social-graph 0.1.4",
- "nostr-social-memory 0.1.1",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nostr-pubsub-social-graph"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9dd2d0a1cdacf1ea254ea05d7f63dd6624ff4ee6dae62c4c4000dd4db8b9666"
-dependencies = [
- "async-trait",
- "nostr",
- "nostr-pubsub",
- "nostr-social-graph 0.2.0",
- "nostr-social-memory 0.2.0",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "thiserror 2.0.18",
 ]
 
@@ -4000,22 +3972,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph"
-version = "0.1.4"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe75a62e7939ca311dce77039443ea14af0c8e0a9969c01746992acf7ef40b17"
-dependencies = [
- "hex",
- "indexmap 2.14.0",
- "serde",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "nostr-social-graph"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a7c3e6dedf8c0474c9e09938496abde4a9c77cd38ec4832d9b56ee9602b8f8"
+checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"
 dependencies = [
  "hex",
  "indexmap 2.14.0",
@@ -4026,32 +3985,15 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-memory"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a51c186658b0602aebc9566ee405adfcc1c92d082c697543d0b50358da7f0f"
-dependencies = [
- "anyhow",
- "chrono",
- "nostr-identity 0.1.5",
- "nostr-sdk",
- "nostr-social-graph 0.1.4",
- "serde",
- "serde_json",
- "toml 0.8.23",
- "uuid",
-]
-
-[[package]]
-name = "nostr-social-memory"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39fb16cde2e5bb0e6eeed1c5c8740b01a3c90daa277c30c397715e84aa7a89c9"
+checksum = "4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1"
 dependencies = [
  "anyhow",
  "chrono",
  "nostr-identity 0.6.0",
  "nostr-sdk",
- "nostr-social-graph 0.2.0",
+ "nostr-social-graph",
  "serde",
  "serde_json",
  "toml 0.8.23",
@@ -4116,10 +4058,10 @@ dependencies = [
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-pubsub-relay",
- "nostr-pubsub-social-graph 0.3.0",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
- "nostr-social-graph 0.2.0",
- "nostr-social-memory 0.2.0",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nvpn-cashu-service",
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
@@ -4152,10 +4094,10 @@ dependencies = [
  "anyhow",
  "hex",
  "nostr-pubsub-fips",
- "nostr-pubsub-social-graph 0.3.0",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
- "nostr-social-graph 0.2.0",
- "nostr-social-memory 0.2.0",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nostr-vpn-core",
  "nvpn",
  "nvpn-fips-core",
@@ -4316,8 +4258,8 @@ dependencies = [
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-sdk",
- "nostr-social-graph 0.2.0",
- "nostr-social-memory 0.2.0",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nostr-vpn-core",
  "nostr-vpn-wintun",
  "nvpn-cashu-service",
@@ -4455,9 +4397,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.116-recovery.1"
+version = "0.4.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "010ca3fb586fa0768645b6119fb08e8a1323df148591cc6210ac6b13df2cc759"
+checksum = "6b23ab830c7abdd3510dd2586688a0b29f4a34646d524e7937145df70903599c"
 dependencies = [
  "async-wsocket",
  "base64 0.22.1",
@@ -4491,6 +4433,7 @@ dependencies = [
  "sha2 0.10.9",
  "simple-dns",
  "socket2 0.6.4",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
@@ -4505,18 +4448,18 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.116-recovery.1"
+version = "0.4.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911d23569e374bb1d0fc38d4a62f6cf8b08cdca44c291cc84a94824c130a0b48"
+checksum = "4fc3adaa33ed34c197e7d3dd3390fd1ea308c8ac3e2012caf65b3c533c5328b2"
 dependencies = [
  "nvpn-fips-core",
 ]
 
 [[package]]
 name = "nvpn-fips-file-transfer"
-version = "0.1.1-recovery.1"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b12689a2a1d61d91b941a00787d5adc9f26fec5d77891b78d1656c6c5d93e1f5"
+checksum = "fb2a357c1975069db052a763adfe6a0144deb507c42b76a2024247f19b3e37f2"
 dependencies = [
  "flume",
  "libc",
@@ -4553,9 +4496,9 @@ checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.51-recovery.1"
+version = "0.2.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23bf06eb2db6b85b44fd7cc9db12ac29b058dd0196cd3d4290d7ce79ca3a7051"
+checksum = "8f3fa2f912e0d105a7ee4166c15df11ac5179d453a152b339e351868ecb871eb"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -4918,7 +4861,7 @@ version = "0.1.0"
 dependencies = [
  "cashu-credit 0.3.1",
  "fs2",
- "nostr-social-graph 0.2.0",
+ "nostr-social-graph",
  "rusqlite",
  "secp256k1 0.29.1",
  "serde",
