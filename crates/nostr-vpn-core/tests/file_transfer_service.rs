@@ -105,8 +105,7 @@ fn private(path: &std::path::Path, directory: bool) {
     .unwrap();
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn share_command_sends_without_app_after_service_starts_and_recipient_accepts() {
+async fn authorized_pair() -> (Peer, Peer) {
     let address = match UdpSocket::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -119,6 +118,12 @@ async fn share_command_sends_without_app_after_service_starts_and_recipient_acce
     let mut receiver = Peer::new(address).await;
     sender.authorize(&receiver);
     receiver.authorize(&sender);
+    (sender, receiver)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn share_command_sends_without_app_after_service_starts_and_recipient_accepts() {
+    let (mut sender, receiver) = authorized_pair().await;
     let source = sender.directory.join("photo.bin");
     let contents = vec![0xab; 180_123];
     fs::write(&source, &contents).unwrap();
@@ -205,6 +210,47 @@ async fn share_command_sends_without_app_after_service_starts_and_recipient_acce
     assert_eq!(
         fs::read(received.files[0].local_path.as_ref().unwrap()).unwrap(),
         contents
+    );
+    drop(sender_service);
+    drop(receiver_service);
+    sender.endpoint.shutdown().await.unwrap();
+    receiver.endpoint.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn detached_tunnel_receives_and_saves_after_acceptance() {
+    let (sender, receiver) = authorized_pair().await;
+    let source = sender.directory.join("inbound.txt");
+    let bytes = b"incoming file for the detached tunnel";
+    fs::write(&source, bytes).unwrap();
+    let staged = stage_source(&sender.config, &source).unwrap();
+
+    // Only the packet tunnel has the live roster. The app's private config
+    // is unavailable both when the offer arrives and when the user accepts.
+    fs::remove_file(&receiver.config).unwrap();
+    let roster = FileTransferRoster::new(&receiver.app).unwrap();
+    let receiver_service = FileTransferService::start_with_roster(
+        receiver.endpoint.clone(),
+        receiver.config.clone(),
+        &roster,
+    );
+    let sender_service = FileTransferService::start(sender.endpoint.clone(), sender.config.clone());
+    let id = enqueue(
+        &sender.config,
+        FileCommand::Send {
+            npub: receiver.endpoint.npub().to_string(),
+            paths: vec![staged.to_str().unwrap().to_owned()],
+        },
+    )
+    .unwrap();
+    let offered = receiver.state(&id, "offered").await;
+    assert_eq!(offered.transferred_bytes, 0);
+    enqueue(&receiver.config, FileCommand::Accept { id: id.clone() }).unwrap();
+    let received = receiver.state(&id, "completed").await;
+    sender.state(&id, "completed").await;
+    assert_eq!(
+        fs::read(received.files[0].local_path.as_ref().unwrap()).unwrap(),
+        bytes
     );
     drop(sender_service);
     drop(receiver_service);
