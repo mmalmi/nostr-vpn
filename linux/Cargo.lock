@@ -3854,23 +3854,24 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.5"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848aac810edafec01cd47650e31bfe920129a9d1422df0385cca286625caeed4"
+checksum = "95fd048871579a175d1c38d1ea947f1034206d93696ea7ac74d140979e8022bb"
 dependencies = [
  "anyhow",
  "nostr-sdk",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "uuid",
 ]
 
 [[package]]
 name = "nostr-identity"
-version = "0.4.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95fd048871579a175d1c38d1ea947f1034206d93696ea7ac74d140979e8022bb"
+checksum = "c15c2feb8886d6fe7df33dbcf429f835c752cc139d30463741fa0fdd345add6f"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3896,9 +3897,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.47"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2534f4168585f42e3bd1b34b2e4a08bb9ce5e613ce3c030af2c792a12879ce"
+checksum = "3ed00bcf7627f4b9ab1c4185d72d130637b32a9e9270c11edcc113208eacdea6"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3926,9 +3927,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-social-graph"
-version = "0.2.4"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82f49b582d5b174358516a230372196691bd014ff997ff58bc039e554198f7fe"
+checksum = "6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3973,9 +3974,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph"
-version = "0.1.4"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe75a62e7939ca311dce77039443ea14af0c8e0a9969c01746992acf7ef40b17"
+checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"
 dependencies = [
  "hex",
  "indexmap 2.14.0",
@@ -3986,13 +3987,13 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-memory"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a51c186658b0602aebc9566ee405adfcc1c92d082c697543d0b50358da7f0f"
+checksum = "4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1"
 dependencies = [
  "anyhow",
  "chrono",
- "nostr-identity 0.1.5",
+ "nostr-identity 0.6.0",
  "nostr-sdk",
  "nostr-social-graph",
  "serde",
@@ -4244,9 +4245,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.115"
+version = "0.4.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6909318f877a31517d29d1ba923dab19a73abd6c7f8a0421f2b7f83492d0080"
+checksum = "6b23ab830c7abdd3510dd2586688a0b29f4a34646d524e7937145df70903599c"
 dependencies = [
  "async-wsocket",
  "base64 0.22.1",
@@ -4280,6 +4281,7 @@ dependencies = [
  "sha2 0.10.9",
  "simple-dns",
  "socket2 0.6.4",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
@@ -4294,18 +4296,18 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.115"
+version = "0.4.123"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c667a0ab8bc373e581b59fc5688bfe1b2ca57ffdb419f8da1d0746834ce582f9"
+checksum = "4fc3adaa33ed34c197e7d3dd3390fd1ea308c8ac3e2012caf65b3c533c5328b2"
 dependencies = [
  "nvpn-fips-core",
 ]
 
 [[package]]
 name = "nvpn-fips-file-transfer"
-version = "0.1.0"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2004aae502cb19c48bea1c001eaece94c9bfc1b4862e3d452efe68a6d61dc5bf"
+checksum = "fb2a357c1975069db052a763adfe6a0144deb507c42b76a2024247f19b3e37f2"
 dependencies = [
  "flume",
  "libc",
@@ -4342,9 +4344,9 @@ checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.50"
+version = "0.2.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e4a40810bbc2f39388d68fdecde5f9d43c5ea98428a89928ac264bde552cb14"
+checksum = "8f3fa2f912e0d105a7ee4166c15df11ac5179d453a152b339e351868ecb871eb"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
