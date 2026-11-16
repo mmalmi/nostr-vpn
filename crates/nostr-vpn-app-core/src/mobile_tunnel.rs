@@ -40,6 +40,7 @@ use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
     send_join_roster_with_receipt,
 };
+use nostr_vpn_core::file_transfers::{FileTransferRoster, FileTransferService};
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_delivery::{
     QueuedJoinRoster, join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,

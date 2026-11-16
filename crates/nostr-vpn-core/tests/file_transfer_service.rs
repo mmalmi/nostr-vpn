@@ -7,8 +7,8 @@ use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::{
     config::AppConfig,
     file_transfers::{
-        FileCommand, FileTransferService, TransferState, enqueue, read_state, stage_source,
-        state_dir,
+        FileCommand, FileTransferRoster, FileTransferService, TransferState, enqueue, read_state,
+        stage_source, state_dir,
     },
 };
 
@@ -77,10 +77,10 @@ impl Peer {
                     .into_iter()
                     .find(|row| row.id == id)
                 {
-                    assert_ne!(row.status, "failed", "transfer failed: {:?}", row.error);
                     if row.status == status {
                         return row;
                     }
+                    assert_ne!(row.status, "failed", "transfer failed: {:?}", row.error);
                 }
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
@@ -136,9 +136,18 @@ async fn share_command_sends_without_app_after_service_starts_and_recipient_acce
     private(&command, false);
     assert_eq!(read_state(&sender.config).unwrap()[0].status, "queued");
 
-    let sender_service = FileTransferService::start(sender.endpoint.clone(), sender.config.clone());
+    // The detached iOS tunnel receives its roster at launch. Its state
+    // path locates the outbox even when the private config is unavailable.
+    fs::remove_file(&sender.config).unwrap();
+    let roster = FileTransferRoster::new(&sender.app).unwrap();
+    let sender_service = FileTransferService::start_with_roster(
+        sender.endpoint.clone(),
+        sender.config.clone(),
+        &roster,
+    );
     let receiver_service =
         FileTransferService::start(receiver.endpoint.clone(), receiver.config.clone());
+    sender.state(&id, "offered").await;
     let offered = receiver.state(&id, "offered").await;
     assert_eq!(
         offered.transferred_bytes, 0,
@@ -154,6 +163,48 @@ async fn share_command_sends_without_app_after_service_starts_and_recipient_acce
     assert!(
         !command.exists(),
         "service did not acknowledge the durable share command"
+    );
+
+    // The in-app Send Files button validates at enqueue. The live provider
+    // must check again when it consumes the command, including after revocation.
+    sender.authorize(&receiver);
+    let send_from_app = || {
+        let staged = stage_source(&sender.config, &source).unwrap();
+        enqueue(
+            &sender.config,
+            FileCommand::Send {
+                npub: receiver.endpoint.npub().to_string(),
+                paths: vec![staged.to_str().unwrap().to_owned()],
+            },
+        )
+        .unwrap()
+    };
+    let mut revoked = sender.app.clone();
+    revoked.networks[0]
+        .removed_devices
+        .push(receiver.app.nostr.public_key.clone());
+    roster.update(&revoked).unwrap();
+    let refused = send_from_app();
+    let rejected = sender.state(&refused, "failed").await;
+    assert_eq!(
+        rejected.error.as_deref(),
+        Some("This device is not in an enabled private network")
+    );
+    assert!(
+        !read_state(&receiver.config)
+            .unwrap()
+            .iter()
+            .any(|row| row.id == refused)
+    );
+
+    roster.update(&sender.app).unwrap();
+    let in_app = send_from_app();
+    receiver.state(&in_app, "offered").await;
+    enqueue(&receiver.config, FileCommand::Accept { id: in_app.clone() }).unwrap();
+    let received = receiver.state(&in_app, "completed").await;
+    assert_eq!(
+        fs::read(received.files[0].local_path.as_ref().unwrap()).unwrap(),
+        contents
     );
     drop(sender_service);
     drop(receiver_service);

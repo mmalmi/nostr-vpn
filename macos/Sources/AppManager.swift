@@ -20,6 +20,7 @@ final class AppManager: ObservableObject {
     @Published var filePreparationText = ""
     @Published var filePreparationProgress: Double = 0
     @Published var fileNotificationsEnabled = false
+    var fileNotificationRequest = FileNotificationRequest.idle
     var filePreparation: FilePreparation?
     var pendingFileURLs: [URL] = []
     var fileNotificationDelegate = FileNotificationDelegate()

@@ -193,7 +193,7 @@ struct RootView: View {
         }
         .onChange(of: manager.fileTransfersRequested, initial: true) { _, requested in
             if requested {
-                selectedSidebarItem = .devices
+                selectedSidebarItem = .files
                 manager.fileTransfersRequested = false
             }
         }
@@ -547,6 +547,8 @@ struct RootView: View {
     var sidebar: some View {
         VStack(alignment: .leading, spacing: 5) {
             sidebarButton(.devices, "Devices", "circle.grid.2x2.fill")
+            let offers = manager.fileTransfersForDisplay.filter(\.isIncomingOffer).count
+            sidebarButton(.files, offers == 0 ? "Files" : "Files (\(offers) incoming)", "tray.full.fill")
 
             Text("Internet")
                 .font(.caption.weight(.semibold))
@@ -636,6 +638,13 @@ struct RootView: View {
             } else {
                 setupPane
             }
+        case .files:
+            ScrollViewReader { proxy in
+                pageScroll { FileTransfersView(manager: manager) }
+                    .onChange(of: manager.highlightedFileTransfer, initial: true) { _, id in
+                        if let id { proxy.scrollTo(id, anchor: .top) }
+                    }
+            }
         case .internet:
             pageScroll {
                 pageTitle("Connection", "network")
@@ -682,7 +691,7 @@ struct RootView: View {
         switch item {
         case .publicExits, .wallet:
             return paidRouteMarketAvailable
-        case .devices, .internet, .sharing, .settings:
+        case .devices, .files, .internet, .sharing, .settings:
             return true
         }
     }

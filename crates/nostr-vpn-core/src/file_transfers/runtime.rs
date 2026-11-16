@@ -8,7 +8,25 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+/// Membership supplied by a detached packet tunnel at launch and on roster changes.
+pub struct FileTransferRoster(watch::Sender<HashMap<String, String>>);
+
+impl FileTransferRoster {
+    pub fn new(app: &AppConfig) -> Result<Self> {
+        Ok(Self(watch::Sender::new(authorized_peers(app)?)))
+    }
+
+    pub fn update(&self, app: &AppConfig) -> Result<()> {
+        let peers = authorized_peers(app).inspect_err(|_| {
+            self.0.send_replace(HashMap::new());
+        })?;
+        self.0.send_replace(peers);
+        Ok(())
+    }
+}
 
 /// Lifetime is tied to the canonical VPN endpoint. Dropping it pauses transfers.
 pub struct FileTransferService {
@@ -21,6 +39,24 @@ impl Drop for FileTransferService {
 }
 impl FileTransferService {
     pub fn start(endpoint: Arc<FipsEndpoint>, config: PathBuf) -> Self {
+        Self::spawn(endpoint, config, None)
+    }
+
+    pub fn start_with_roster(
+        endpoint: Arc<FipsEndpoint>,
+        state_anchor: PathBuf,
+        roster: &FileTransferRoster,
+    ) -> Self {
+        let mut updates = roster.0.subscribe();
+        updates.mark_changed();
+        Self::spawn(endpoint, state_anchor, Some(updates))
+    }
+
+    fn spawn(
+        endpoint: Arc<FipsEndpoint>,
+        config: PathBuf,
+        roster: Option<watch::Receiver<HashMap<String, String>>>,
+    ) -> Self {
         let task = tokio::spawn(async move {
             let result: Result<()> = async {
                 owned_dir(&config, &state_dir(&config))?;
@@ -36,7 +72,7 @@ impl FileTransferService {
                 sender
                     .set_source_opener(Arc::new(StagedSource(config.clone())))
                     .map_err(anyhow::Error::msg)?;
-                run(config.clone(), sender, event_rx).await
+                run(config.clone(), sender, event_rx, roster).await
             }
             .await;
             if let Err(error) = result {
@@ -143,6 +179,7 @@ async fn run(
     config: PathBuf,
     sender: TransferSender,
     events: flume::Receiver<fips_file_transfer::TransferEvent>,
+    mut roster: Option<watch::Receiver<HashMap<String, String>>>,
 ) -> Result<()> {
     let mut timer = tokio::time::interval(Duration::from_millis(500));
     timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -232,19 +269,31 @@ async fn run(
             // polling and UI snapshots run at most twice per second.
             continue;
         }
-        let modified = fs::metadata(&config).and_then(|m| m.modified()).ok();
-        if revision != modified || revision.is_none() {
-            match AppConfig::load(&config) {
-                Ok(app) => {
-                    aliases = authorized_peers(&app)?;
-                    allowed = aliases.keys().cloned().collect();
-                    revision = modified;
-                }
-                Err(error) => {
-                    allowed.clear();
-                    tracing::warn!(%error, "file transfer membership unavailable");
-                }
+        let updated_peers = if let Some(updates) = roster.as_mut() {
+            updates
+                .has_changed()?
+                .then(|| updates.borrow_and_update().clone())
+        } else {
+            let modified = fs::metadata(&config).and_then(|m| m.modified()).ok();
+            if revision.is_none() || revision != modified {
+                Some(match AppConfig::load(&config) {
+                    Ok(app) => {
+                        revision = modified;
+                        authorized_peers(&app)?
+                    }
+                    Err(error) => {
+                        revision = None;
+                        tracing::warn!(%error, "file transfer membership unavailable");
+                        HashMap::new()
+                    }
+                })
+            } else {
+                None
             }
+        };
+        if let Some(peers) = updated_peers {
+            aliases = peers;
+            allowed = aliases.keys().cloned().collect();
             sender
                 .set_allowed_peers(allowed.iter().filter_map(|hex| peer(hex).ok()).collect())
                 .map_err(anyhow::Error::msg)?;

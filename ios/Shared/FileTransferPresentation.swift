@@ -17,6 +17,7 @@ struct FileTransferPresentation: Decodable, Identifiable, Sendable {
     var error: String?
 
     var person: String { peerName.isEmpty ? "Device …\(peerNpub.suffix(6))" : peerName }
+    var isIncomingOffer: Bool { !isSender && status == "offered" }
     var title: String {
         guard let first = files.first else { return "Files" }
         return files.count == 1 ? first.name : "\(first.name) + \(files.count - 1)"

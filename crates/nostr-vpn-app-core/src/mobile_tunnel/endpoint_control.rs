@@ -51,6 +51,7 @@ struct MobileEndpointReceiveContext<'a> {
     config_state: &'a Arc<RwLock<MobileTunnelConfig>>,
     app_config: &'a Arc<RwLock<AppConfig>>,
     app_config_dirty: &'a AtomicBool,
+    file_roster: Option<&'a FileTransferRoster>,
     pending_join_roster_receipts: &'a PendingJoinRosterReceipts,
     config_path: Option<&'a Path>,
     join_request_active: &'a AtomicBool,
@@ -350,6 +351,13 @@ async fn apply_mobile_roster_runtime_update(
     control: &MobileEndpointReceiveContext<'_>,
     updated: MobileTunnelConfig,
 ) -> Result<()> {
+    if let Some(roster) = control.file_roster {
+        let app = control
+            .app_config
+            .read()
+            .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+        roster.update(&app)?;
+    }
     let discovery_scope_changed = {
         let current = control
             .config_state

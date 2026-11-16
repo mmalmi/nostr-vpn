@@ -973,6 +973,52 @@
     }
 
     #[test]
+    fn provider_launch_offers_queued_file_without_reopening_private_config() {
+        use nostr_vpn_core::file_transfers::{FileCommand, enqueue, read_state, stage_source};
+
+        let dir = desktop_mobile_join_test_dir("provider-file-offer");
+        let path = dir.join("config.toml");
+        let peer = Keys::generate().public_key();
+        let mut app = AppConfig::generated();
+        app.fips_nostr_discovery_enabled = false;
+        app.fips_bootstrap_enabled = false;
+        app.fips_webrtc_enabled = false;
+        app.lan_discovery_enabled = false;
+        app.nostr.pubsub.mode = nostr_vpn_core::config::NostrPubsubMode::Off;
+        app.networks[0].enabled = true;
+        app.networks[0].devices.push(peer.to_hex());
+        app.save(&path).unwrap();
+        let launch = tunnel_provider_options_config_json(dir.to_str().unwrap());
+        let source = dir.join("photo.jpg");
+        fs::write(&source, b"file contents").unwrap();
+        let staged = stage_source(&path, &source).unwrap();
+        let id = enqueue(
+            &path,
+            FileCommand::Send {
+                npub: peer.to_bech32().unwrap(),
+                paths: vec![staged.to_str().unwrap().to_owned()],
+            },
+        ).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        let tunnel = MobileTunnel::start(&launch).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(row) = read_state(&path).unwrap().into_iter().find(|row| row.id == id) {
+                assert_ne!(row.status, "failed", "{:?}", row.error);
+                if row.status == "offered" {
+                    assert_eq!(row.peer_npub, peer.to_bech32().unwrap());
+                    break;
+                }
+            }
+            assert!(Instant::now() < deadline, "provider did not register the queued offer");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(tunnel);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn mobile_config_json_reports_errors_as_json() {
         let json = tunnel_config_json("\0/not-a-path");
         let value: serde_json::Value = serde_json::from_str(&json).expect("json");

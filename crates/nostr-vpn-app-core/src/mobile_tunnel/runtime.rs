@@ -167,6 +167,13 @@ impl MobileTunnel {
         let peer_hints = Arc::new(RwLock::new(config.peer_hints.clone()));
         let presence = Arc::new(RwLock::new(HashMap::new()));
         let config_state = Arc::new(RwLock::new(config.clone()));
+        // The detached provider uses the app-group path for queued files.
+        // Its live AppConfig supplies the roster, including accepted updates.
+        let file_roster = if config_path.is_none() && private_state_config_path.is_some() {
+            Some(FileTransferRoster::new(&app_config)?)
+        } else {
+            None
+        };
         let app_config = Arc::new(RwLock::new(app_config));
         let app_config_dirty = Arc::new(AtomicBool::new(false));
         let pending_join_roster_receipts = Arc::new(PendingJoinRosterReceiptQueue::load(
@@ -192,13 +199,13 @@ impl MobileTunnel {
         let mesh_ipv4 = parse_ipv4(&config.local_address);
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         if let Some(path) = private_state_config_path.as_ref() {
-            tasks.push(
-                nostr_vpn_core::file_transfers::FileTransferService::start(
-                    Arc::clone(&endpoint),
-                    path.clone(),
-                )
-                .into_task(),
-            );
+            let service = match &file_roster {
+                Some(roster) => FileTransferService::start_with_roster(
+                    Arc::clone(&endpoint), path.clone(), roster,
+                ),
+                None => FileTransferService::start(Arc::clone(&endpoint), path.clone()),
+            };
+            tasks.push(service.into_task());
         }
 
         #[cfg(feature = "paid-exit")]
@@ -563,6 +570,7 @@ impl MobileTunnel {
                     config_state: &config_state,
                     app_config: &app_config,
                     app_config_dirty: app_config_dirty.as_ref(),
+                    file_roster: file_roster.as_ref(),
                     pending_join_roster_receipts: &pending_join_roster_receipts,
                     config_path: config_path.as_deref(),
                     join_request_active: join_request_active.as_ref(),

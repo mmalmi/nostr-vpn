@@ -612,6 +612,7 @@
             config_state: &config_state,
             app_config: &admin_app_config,
             app_config_dirty: &app_config_dirty,
+            file_roster: None,
             pending_join_roster_receipts: &pending_join_roster_receipts,
             config_path: Some(config_path),
             join_request_active: &join_request_active,

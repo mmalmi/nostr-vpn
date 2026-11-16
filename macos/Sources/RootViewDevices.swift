@@ -16,8 +16,6 @@ extension RootView {
     var setupPane: some View {
         pageScroll {
             pageTitle("Add Network", "plus.circle")
-            Button("Received files") { manager.showReceivedFiles() }
-                .buttonStyle(.bordered)
             switch addNetworkMode {
             case nil:
                 addNetworkChoiceSection
@@ -99,7 +97,6 @@ extension RootView {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    FileTransfersView(manager: manager)
                     let activeSearch = showSearch ? search.wrappedValue : ""
                     let participants = visibleParticipants(network, search: activeSearch)
                     let selectedPubkeyHex = selectedParticipant(in: network)?.pubkeyHex

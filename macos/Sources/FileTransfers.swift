@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import UserNotifications
 
+enum FileNotificationRequest { case idle, requesting, finished }
+
 extension AppManager {
     var fileTransfersForDisplay: [FileTransferPresentation] {
         mergedFileTransfers(live: observedFileTransfers, app: state.fileTransfers.map { row in
@@ -29,14 +31,19 @@ extension AppManager {
                 Task { @MainActor in self?.fileNotificationsEnabled = settings.authorizationStatus == .authorized }
             }
             fileObservation = FileTransferObservation { [weak self] rows in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.observedFileTransfers = rows
-                    self.fileNotifications.update(rows)
-                }
+                Task { @MainActor in self?.updateFileTransfers(rows) }
             }
         }
         fileObservation?.start(in: URL(fileURLWithPath: state.configPath).deletingLastPathComponent())
+    }
+
+    func updateFileTransfers(_ rows: [FileTransferPresentation]) {
+        observedFileTransfers = rows
+        if !fileNotificationsEnabled && fileNotificationRequest == .idle && rows.contains(where: \.isIncomingOffer) {
+            enableFileNotifications()
+        } else if fileNotificationRequest != .requesting {
+            fileNotifications.update(rows)
+        }
     }
 
     func processFileNotificationAction() {
@@ -47,10 +54,18 @@ extension AppManager {
     }
 
     func enableFileNotifications() {
+        guard fileNotificationRequest != .requesting else { return }
+        fileNotificationRequest = .requesting
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] granted, _ in
             Task { @MainActor in
-                self?.fileNotificationsEnabled = granted
-                if !granted { self?.actionStatus = "Allow nvpn notifications in System Settings to see file alerts." }
+                guard let self else { return }
+                self.fileNotificationRequest = .finished
+                self.fileNotificationsEnabled = granted
+                if granted {
+                    self.fileNotifications.update(self.observedFileTransfers)
+                } else {
+                    self.actionStatus = "Allow nvpn notifications in System Settings to see file alerts."
+                }
             }
         }
     }
@@ -173,11 +188,10 @@ struct FileTransfersView: View {
         let transfers = manager.fileTransfersForDisplay
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Files").font(.headline)
+                Text("Files").font(.title.weight(.semibold))
                 Spacer()
                 if !manager.fileNotificationsEnabled {
-                    Button { manager.enableFileNotifications() } label: { Image(systemName: "bell.badge.fill") }
-                        .help("Notify me about files")
+                    Button("Enable notifications") { manager.enableFileNotifications() }
                 }
                 Button("Received files") { manager.showReceivedFiles() }
             }
@@ -192,6 +206,9 @@ struct FileTransfersView: View {
                     }
                 }
             }
+            if transfers.isEmpty && manager.filePreparationText.isEmpty {
+                Text("No file transfers yet.").foregroundStyle(.secondary)
+            }
             if !transfers.isEmpty {
                 if !manager.state.vpnActive {
                     HStack {
@@ -199,43 +216,36 @@ struct FileTransfersView: View {
                         Button("Connect") { if !manager.state.vpnEnabled { manager.toggleVpn() } }
                     }
                 }
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(transfers) { transfer in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(transfer.title).fontWeight(.medium).lineLimit(2)
-                                    Text("\(transfer.isSender ? "To" : "From") \(transfer.person)").font(.caption).foregroundStyle(.secondary)
-                                    Text(transfer.statusText(connected: manager.state.vpnActive)).font(.caption)
-                                    if ["preparing", "connecting", "transferring", "paused"].contains(transfer.status) {
-                                        ProgressView(value: Double(transfer.transferredBytes), total: Double(max(1, transfer.totalBytes)))
-                                    }
-                                    if transfer.active { Text(transfer.progressText).font(.caption).foregroundStyle(.secondary) }
-                                    if let error = transfer.error, !error.isEmpty { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
-                                    HStack {
-                                        if transfer.status == "offered" && !transfer.isSender {
-                                            Button("Accept") { manager.dispatch(.acceptFileTransfer(id: transfer.id)) }.disabled(!manager.state.vpnActive)
-                                            Button("Decline") { manager.dispatch(.declineFileTransfer(id: transfer.id)) }
-                                        } else if transfer.active {
-                                            if transfer.status == "paused" { Button("Resume") { manager.dispatch(.resumeFileTransfer(id: transfer.id)) }.disabled(!manager.state.vpnActive) }
-                                            Button("Cancel") { manager.dispatch(.cancelFileTransfer(id: transfer.id)) }
-                                        }
-                                        if transfer.status == "completed" && !transfer.isSender {
-                                            Button("Show in Finder") {
-                                                NSWorkspace.shared.activateFileViewerSelecting(transfer.files.compactMap { $0.localPath.map { URL(fileURLWithPath: $0) } })
-                                            }
-                                        }
-                                    }.disabled(manager.actionInFlight)
-                                }.id(transfer.id)
-                                Divider()
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(transfers) { transfer in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(transfer.title).fontWeight(.medium).lineLimit(2)
+                            Text("\(transfer.isSender ? "To" : "From") \(transfer.person)").font(.caption).foregroundStyle(.secondary)
+                            Text(transfer.statusText(connected: manager.state.vpnActive)).font(.caption)
+                            if ["preparing", "connecting", "transferring", "paused"].contains(transfer.status) {
+                                ProgressView(value: Double(transfer.transferredBytes), total: Double(max(1, transfer.totalBytes)))
                             }
-                        }
+                            if transfer.active { Text(transfer.progressText).font(.caption).foregroundStyle(.secondary) }
+                            if let error = transfer.error, !error.isEmpty { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
+                            HStack {
+                                if transfer.isIncomingOffer {
+                                    Button("Accept") { manager.dispatch(.acceptFileTransfer(id: transfer.id)) }.disabled(!manager.state.vpnActive)
+                                    Button("Decline") { manager.dispatch(.declineFileTransfer(id: transfer.id)) }
+                                } else if transfer.active {
+                                    if transfer.status == "paused" { Button("Resume") { manager.dispatch(.resumeFileTransfer(id: transfer.id)) }.disabled(!manager.state.vpnActive) }
+                                    Button("Cancel") { manager.dispatch(.cancelFileTransfer(id: transfer.id)) }
+                                }
+                                if transfer.status == "completed" && !transfer.isSender {
+                                    Button("Show in Finder") {
+                                        NSWorkspace.shared.activateFileViewerSelecting(transfer.files.compactMap { $0.localPath.map { URL(fileURLWithPath: $0) } })
+                                    }
+                                }
+                            }.disabled(manager.actionInFlight)
+                        }.id(transfer.id)
+                        Divider()
                     }
-                    .frame(height: min(300, CGFloat(transfers.count) * 160))
-                    .onChange(of: manager.highlightedFileTransfer) { _, id in if let id { proxy.scrollTo(id, anchor: .top) } }
-                    .onAppear { if let id = manager.highlightedFileTransfer { proxy.scrollTo(id, anchor: .top) } }
                 }
             }
-        }.padding(12)
+        }
     }
 }
