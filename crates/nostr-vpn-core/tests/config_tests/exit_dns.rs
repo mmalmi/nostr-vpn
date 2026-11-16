@@ -94,3 +94,45 @@ fn exit_dns_supported_policy_matrix_selects_exact_resolver() {
         );
     }
 }
+
+#[test]
+fn custom_exit_dns_rejects_attacker_controlled_resolvers() {
+    let rejected = [
+        (
+            ExitDnsConfig {
+                mode: ExitDnsMode::Encrypted,
+                doh_provider: ExitDohProvider::Custom,
+                custom_doh_url: "https://192.0.2.53/dns-query".to_string(),
+                custom_doh_bootstrap_ips: vec!["192.0.2.53".to_string()],
+                ..ExitDnsConfig::default()
+            },
+            "DNS hostname",
+        ),
+        (
+            ExitDnsConfig {
+                mode: ExitDnsMode::Encrypted,
+                doh_provider: ExitDohProvider::Custom,
+                custom_doh_url: "https://resolver/dns-query".to_string(),
+                custom_doh_bootstrap_ips: vec!["192.0.2.53".to_string()],
+                ..ExitDnsConfig::default()
+            },
+            "fully qualified DNS hostname",
+        ),
+        (
+            ExitDnsConfig {
+                mode: ExitDnsMode::Encrypted,
+                doh_provider: ExitDohProvider::Custom,
+                custom_doh_url: "https://resolver.example/dns-query".to_string(),
+                custom_doh_bootstrap_ips: vec!["10.0.0.53".to_string()],
+                ..ExitDnsConfig::default()
+            },
+            "must be a public address",
+        ),
+    ];
+    for (policy, expected) in rejected {
+        let error = policy
+            .resolver_config(None)
+            .expect_err("attacker-controlled resolver must be rejected");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}

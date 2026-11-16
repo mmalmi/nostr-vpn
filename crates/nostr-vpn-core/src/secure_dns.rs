@@ -110,11 +110,9 @@ impl SecureDnsResolver {
 
     #[cfg(test)]
     fn with_bootstrap(bootstrap: &[SocketAddr]) -> Result<Self, SecureDnsError> {
-        let ips = bootstrap
-            .iter()
-            .map(|address| address.ip())
-            .collect::<Vec<_>>();
-        let endpoint = validate_doh_resolver(CLOUDFLARE_DOH_URL, &ips)?;
+        // Test fixtures intentionally bootstrap at a local spoof server, so
+        // build directly instead of through the bootstrap-IP policy.
+        let endpoint = reqwest::Url::parse(CLOUDFLARE_DOH_URL).expect("built-in DoH URL");
         Self::with_endpoint_and_bootstrap(endpoint, bootstrap)
     }
 
@@ -204,39 +202,11 @@ pub fn validate_doh_resolver(
     endpoint: &str,
     bootstrap_ips: &[IpAddr],
 ) -> Result<reqwest::Url, SecureDnsError> {
-    let endpoint = reqwest::Url::parse(endpoint)
-        .map_err(|error| SecureDnsError::InvalidDohConfig(error.to_string()))?;
-    if endpoint.scheme() != "https" {
-        return Err(SecureDnsError::InvalidDohConfig(
-            "DoH URL must use https".to_string(),
-        ));
-    }
-    if endpoint.username() != "" || endpoint.password().is_some() {
-        return Err(SecureDnsError::InvalidDohConfig(
-            "DoH URL must not contain credentials".to_string(),
-        ));
-    }
-    if endpoint.fragment().is_some() {
-        return Err(SecureDnsError::InvalidDohConfig(
-            "DoH URL must not contain a fragment".to_string(),
-        ));
-    }
-    if endpoint.host_str().is_none() {
-        return Err(SecureDnsError::InvalidDohConfig(
-            "DoH URL has no host".to_string(),
-        ));
-    }
-    if endpoint.port_or_known_default().is_none() {
-        return Err(SecureDnsError::InvalidDohConfig(
-            "DoH URL has no usable HTTPS port".to_string(),
-        ));
-    }
-    if bootstrap_ips.is_empty() {
-        return Err(SecureDnsError::InvalidDohConfig(
-            "DoH requires at least one bootstrap IP".to_string(),
-        ));
-    }
-    Ok(endpoint)
+    crate::config::validate_doh_url_shape(endpoint).map_err(SecureDnsError::InvalidDohConfig)?;
+    crate::config::validate_doh_bootstrap_ips(bootstrap_ips)
+        .map_err(SecureDnsError::InvalidDohConfig)?;
+    reqwest::Url::parse(endpoint)
+        .map_err(|error| SecureDnsError::InvalidDohConfig(error.to_string()))
 }
 
 impl WireGuardDnsResolver {
