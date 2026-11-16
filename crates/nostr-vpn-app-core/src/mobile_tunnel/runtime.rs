@@ -666,6 +666,7 @@ impl MobileTunnel {
         };
         self.native_tun = Some(NativeTunRuntime::start(
             fd,
+            self.runtime.handle().clone(),
             self.outbound_tx.clone(),
             inbound_rx,
             native_tun_packet_capacity(mtu),
@@ -676,7 +677,7 @@ impl MobileTunnel {
 
     /// Moves the running tunnel onto a replacement Android VPN interface that
     /// the host established with updated routes. On error the replacement fd
-    /// is closed and the current interface keeps carrying traffic.
+    /// is closed and the host has to restart the tunnel.
     #[cfg(target_os = "android")]
     pub(crate) fn replace_tun_fd(&mut self, fd: c_int) -> Result<()> {
         if fd < 0 {

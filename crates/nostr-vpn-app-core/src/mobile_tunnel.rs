@@ -6,7 +6,7 @@ use std::io::Write;
 #[cfg(test)]
 use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", all(test, target_os = "linux")))]
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -65,7 +65,7 @@ use tokio::task::JoinHandle;
 
 mod join_roster_watch;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", all(test, target_os = "linux")))]
 include!("mobile_tunnel/native_tun.rs");
 #[cfg(any(test, target_os = "ios"))]
 include!("mobile_tunnel/ios_packet_flow.rs");
@@ -89,6 +89,8 @@ mod tests {
     include!("mobile_tunnel/tests_runtime_join_request.rs");
     include!("mobile_tunnel/tests_runtime.rs");
     include!("mobile_tunnel/tests_runtime_roster_routes.rs");
+    #[cfg(target_os = "linux")]
+    include!("mobile_tunnel/tests_native_tun.rs");
     include!("mobile_tunnel/tests_runtime_pubsub.rs");
     include!("mobile_tunnel/tests_runtime_state.rs");
     include!("mobile_tunnel/tests_runtime_manual_join.rs");
