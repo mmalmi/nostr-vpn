@@ -15,6 +15,12 @@
     "prettier": "^3.6.2",
     "typescript": "^5.9.3"
   },
+  "overrides": {
+    "brace-expansion@<2": "^1.1.21",
+    "brace-expansion@>=2": "^5.0.12",
+    "js-yaml": "^4.3.2",
+    "zod": "^4.6.6"
+  },
   "prettier": {
     "trailingComma": "all",
     "tabWidth": 2,
