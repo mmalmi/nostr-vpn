@@ -3909,9 +3909,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.47"
+version = "0.5.48-recovery.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2534f4168585f42e3bd1b34b2e4a08bb9ce5e613ce3c030af2c792a12879ce"
+checksum = "80b7f26d2351a8e466c93fcc591377ab893ff8295ed800f5426f7623b7b595dc"
 dependencies = [
  "async-trait",
  "nostr",
@@ -4455,9 +4455,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.115"
+version = "0.4.116-recovery.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6909318f877a31517d29d1ba923dab19a73abd6c7f8a0421f2b7f83492d0080"
+checksum = "010ca3fb586fa0768645b6119fb08e8a1323df148591cc6210ac6b13df2cc759"
 dependencies = [
  "async-wsocket",
  "base64 0.22.1",
@@ -4505,18 +4505,18 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.115"
+version = "0.4.116-recovery.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c667a0ab8bc373e581b59fc5688bfe1b2ca57ffdb419f8da1d0746834ce582f9"
+checksum = "911d23569e374bb1d0fc38d4a62f6cf8b08cdca44c291cc84a94824c130a0b48"
 dependencies = [
  "nvpn-fips-core",
 ]
 
 [[package]]
 name = "nvpn-fips-file-transfer"
-version = "0.1.0"
+version = "0.1.1-recovery.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2004aae502cb19c48bea1c001eaece94c9bfc1b4862e3d452efe68a6d61dc5bf"
+checksum = "b12689a2a1d61d91b941a00787d5adc9f26fec5d77891b78d1656c6c5d93e1f5"
 dependencies = [
  "flume",
  "libc",
@@ -4553,9 +4553,9 @@ checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.50"
+version = "0.2.51-recovery.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e4a40810bbc2f39388d68fdecde5f9d43c5ea98428a89928ac264bde552cb14"
+checksum = "23bf06eb2db6b85b44fd7cc9db12ac29b058dd0196cd3d4290d7ce79ca3a7051"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
