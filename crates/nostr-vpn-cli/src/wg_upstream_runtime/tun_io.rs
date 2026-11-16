@@ -88,8 +88,12 @@ fn spawn_posix_tun_reader(
     }
 
     tokio::spawn(async move {
-        let async_fd = match AsyncFd::with_interest(BorrowedFd(tun.as_raw_fd()), Interest::READABLE)
-        {
+        // SAFETY: the tun socket is owned by the `tun` handle captured by this
+        // task and stays open with a stable fd for the lifetime of the
+        // returned `AsyncFd`.
+        let async_fd = match unsafe {
+            AsyncFd::register_with_interest(BorrowedFd(tun.as_raw_fd()), Interest::READABLE)
+        } {
             Ok(fd) => fd,
             Err(error) => {
                 tracing::warn!(?error, "wg-upstream: failed to register tun fd");
