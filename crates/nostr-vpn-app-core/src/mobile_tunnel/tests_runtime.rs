@@ -28,6 +28,9 @@
                 network_id,
             );
             app.set_internet_source(nostr_vpn_core::config::InternetSource::Direct);
+            let mut exit_network = app.active_network_opt().expect("client network").clone();
+            exit_network.id = "network-2".to_string();
+            assert_ne!(exit_network.id, exit_network.network_id);
             let mut config = MobileTunnelConfig::from_app(&app).expect("mobile config");
             config.listen_port = available_udp_port();
             config.nostr_discovery_enabled = true;
@@ -55,14 +58,12 @@
                 (now + 1, vec![], vec![]),
                 (now, vec!["0.0.0.0/0"], vec![]),
             ] {
-                let frame = FipsControlFrame::Capabilities {
-                    network_id: network_id.to_string(),
-                    capabilities: PeerCapabilities {
-                        advertised_routes: routes.into_iter().map(str::to_string).collect(),
-                        signed_at,
-                        ..PeerCapabilities::default()
-                    },
-                };
+                let frame = PeerCapabilities {
+                    advertised_routes: routes.into_iter().map(str::to_string).collect(),
+                    signed_at,
+                    ..PeerCapabilities::default()
+                }
+                .into_network_frame(&exit_network);
                 let before_rx = mobile.presence.read().expect("presence")
                     .get(&exit_pubkey).map_or(0, |peer| peer.rx_bytes);
                 let expected_rx = before_rx + u64::try_from(encode_fips_control_frame(&frame)

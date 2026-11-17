@@ -816,7 +816,7 @@ async fn send_local_fips_capabilities(
             signed_at,
         };
         if runtime
-            .enqueue_capabilities(&participant, &network.id, capabilities)
+            .enqueue_stateful_control_frame(&participant, &capabilities.into_network_frame(network))
             .is_ok()
         {
             sent += 1;

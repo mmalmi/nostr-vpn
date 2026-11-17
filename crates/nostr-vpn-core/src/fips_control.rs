@@ -285,6 +285,11 @@ pub fn local_fips_dataplane_features() -> Vec<String> {
     Vec::new()
 }
 impl PeerCapabilities {
+    /// Peers share the mesh ID. Each device assigns its own local roster entry ID.
+    pub fn into_network_frame(self, network: &crate::config::NetworkConfig) -> FipsControlFrame {
+        peer_capabilities_control_frame(&network.network_id, self)
+    }
+
     pub fn supports_dataplane_feature(&self, feature: &str) -> bool {
         self.dataplane_features
             .iter()
