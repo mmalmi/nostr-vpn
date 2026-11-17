@@ -14,6 +14,22 @@ public sealed class NativeUpdateResult
     public string Error { get; set; } = "";
 }
 
+/// The update install step as the core words it. The shell only renders it.
+public sealed class DesktopUpdateView
+{
+    public string Step { get; set; } = "idle";
+    public bool Active { get; set; }
+    public bool Busy { get; set; }
+    public string Title { get; set; } = "";
+    public string Detail { get; set; } = "";
+    public double? Progress { get; set; }
+    public string PrimaryAction { get; set; } = "install";
+    public string PrimaryLabel { get; set; } = "Install";
+    public string SecondaryAction { get; set; } = "";
+    public string SecondaryLabel { get; set; } = "";
+    public bool Quit { get; set; }
+}
+
 public sealed class NativeAppState
 {
     public ulong Rev { get; set; }

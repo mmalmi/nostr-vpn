@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 use std::thread;
 
+use nostr_vpn_app_core::desktop_update::DesktopUpdateView;
 use nostr_vpn_core::updater::{
     check_product_update_blocking_with_config, download_product_update_blocking_with_config,
     ProductUpdateMode, ProductUpdateSource,
@@ -15,13 +16,14 @@ pub use preferences::{load_preferences, save_preferences, DownloadedUpdate};
 #[derive(Clone, Debug, Default)]
 pub struct UpdateState {
     pub checking: bool,
-    pub downloading: bool,
     pub available: bool,
     pub auto_download: bool,
     pub version: String,
     pub status: String,
     pub asset: Option<ReleaseAsset>,
     pub downloaded: Option<DownloadedUpdate>,
+    /// The install step as the core words it.
+    pub view: DesktopUpdateView,
 }
 
 #[derive(Clone, Debug)]
@@ -38,7 +40,6 @@ pub enum UpdateEvent {
         manual: bool,
         result: Result<UpdateCheck, String>,
     },
-    Downloaded(Result<DownloadedUpdate, String>),
 }
 
 #[derive(Debug)]
@@ -60,13 +61,6 @@ pub fn check(
         let result =
             check_blocking(&current_version, &config_path).map_err(|error| error.to_string());
         let _ = sender.send(UpdateEvent::Checked { manual, result });
-    });
-}
-
-pub fn download(asset: ReleaseAsset, config_path: String, sender: Sender<UpdateEvent>) {
-    thread::spawn(move || {
-        let result = download_blocking(&asset, &config_path).map_err(|error| error.to_string());
-        let _ = sender.send(UpdateEvent::Downloaded(result));
     });
 }
 

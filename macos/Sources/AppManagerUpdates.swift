@@ -101,7 +101,56 @@ extension AppManager {
 
     func installUpdate() {
         guard updateInstallEnabled else { return }
-        installCoreDownloadedUpdate()
+        performUpdateAction("install")
+    }
+
+    /// Run an install step or fallback in the core, then follow its progress.
+    func performUpdateAction(_ action: String) {
+        guard !fixtureMode else {
+            return
+        }
+        let request = (state.appVersion, state.configPath)
+        Task { [weak self] in
+            let view = await Task.detached {
+                runDesktopUpdate(action, currentVersion: request.0, configPath: request.1)
+            }.value
+            await MainActor.run {
+                self?.applyUpdateView(view)
+            }
+        }
+    }
+
+    @MainActor
+    func applyUpdateView(_ view: DesktopUpdateView) {
+        updateView = view
+        if view.quit {
+            guard !updateQuitRequested else {
+                return
+            }
+            updateQuitRequested = true
+            NSApp.terminate(nil)
+            return
+        }
+        guard view.busy, updateViewPollTask == nil else {
+            return
+        }
+        updateViewPollTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self else {
+                    return
+                }
+                let request = (self.state.appVersion, self.state.configPath)
+                let view = await Task.detached {
+                    runDesktopUpdate("view", currentVersion: request.0, configPath: request.1)
+                }.value
+                self.updateViewPollTask = view.busy ? self.updateViewPollTask : nil
+                self.applyUpdateView(view)
+                if !view.busy {
+                    return
+                }
+            }
+        }
     }
 
     func fetchUpdateCheck() async throws -> UpdateCheck {
@@ -139,48 +188,6 @@ extension AppManager {
             updateStatus = "Up to date"
         } else {
             updateStatus = ""
-        }
-    }
-
-    func installCoreDownloadedUpdate() {
-        guard !updateInstalling else {
-            return
-        }
-        updateInstalling = true
-        updateStatus = "Downloading \(updateVersion)"
-        Task { [weak self] in
-            guard let self else {
-                return
-            }
-            do {
-                let downloadDir = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("NostrVpnDownloads", isDirectory: true)
-                let (currentVersion, configPath) = await MainActor.run {
-                    (self.state.appVersion, self.state.configPath)
-                }
-                let result = try await runCoreUpdateDownload(
-                    currentVersion: currentVersion,
-                    downloadDir: downloadDir,
-                    configPath: configPath
-                )
-                guard result.verified else {
-                    throw UpdateError.unverifiedSource(result.source)
-                }
-                guard result.available else {
-                    throw UpdateError.noNewerVerifiedRelease
-                }
-                guard let path = result.path, !path.isEmpty else {
-                    throw UpdateError.missingDownloadedPath
-                }
-                try await MainActor.run {
-                    try self.installDownloadedUpdate(URL(fileURLWithPath: path))
-                }
-            } catch {
-                await MainActor.run {
-                    self.updateInstalling = false
-                    self.updateStatus = error.localizedDescription
-                }
-            }
         }
     }
 
@@ -228,29 +235,6 @@ extension AppManager {
             if manager.fileExists(atPath: plistUrl.path) {
                 try manager.removeItem(at: plistUrl)
             }
-        }
-    }
-
-    func installDownloadedUpdate(_ archiveUrl: URL) throws {
-        updateStatus = "Installing \(updateVersion)"
-        if archiveUrl.lastPathComponent.hasSuffix(".app.tar.gz") {
-            let unpackDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("NostrVpnUpdate-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
-            try runProcess("/usr/bin/tar", arguments: ["-xzf", archiveUrl.path, "-C", unpackDir.path])
-            guard let newApp = findAppBundle(in: unpackDir) else {
-                throw UpdateError.missingAppBundle
-            }
-            let script = try updateInstallScript()
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = [script.path, Bundle.main.bundleURL.path, newApp.path]
-            try process.run()
-            NSApp.terminate(nil)
-        } else {
-            NSWorkspace.shared.activateFileViewerSelecting([archiveUrl])
-            updateInstalling = false
-            updateStatus = "Downloaded \(archiveUrl.lastPathComponent)"
         }
     }
 

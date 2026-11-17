@@ -18,6 +18,10 @@ use nostr_vpn_app_core::native_state::{
     NativePaidExitSellerState, NativePaidRouteOfferState, NativePaidRouteSessionState,
     NativePaidRouteWalletMintState,
 };
+use nostr_vpn_app_core::desktop_update::{
+    ACTION_INSTALL, ACTION_VIEW, DesktopUpdateView, UpdateRequest, desktop_update,
+    desktop_update_restore_download,
+};
 use nostr_vpn_app_core::{
     FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
     SettingsPatch, UpdateAutoCheckPolicy,
@@ -226,6 +230,7 @@ impl AppModel {
         let update = updater::UpdateState {
             auto_download: update_preferences.auto_download,
             downloaded: update_preferences.downloaded,
+            view: desktop_update(ACTION_VIEW, &UpdateRequest::default()),
             ..updater::UpdateState::default()
         };
         let update_policy =
@@ -283,4 +288,5 @@ include!("main/settings_page.rs");
 include!("main/saved_networks.rs");
 include!("main/widgets.rs");
 include!("main/tests_and_selection.rs");
+include!("main/update_stripe_tests.rs");
 include!("main/utilities.rs");

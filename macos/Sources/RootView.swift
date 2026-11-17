@@ -165,7 +165,7 @@ struct RootView: View {
             if manager.serviceUpdateRecommended {
                 serviceUpdateStripe
             }
-            if manager.updateAvailable {
+            if manager.updateBannerVisible {
                 updateStripe
             }
             Divider()
@@ -394,28 +394,52 @@ struct RootView: View {
     }
 
     var updateStripe: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle.fill")
+        let update = manager.updateView
+        let failed = update.step == "failed"
+        return HStack(spacing: 10) {
+            Image(systemName: failed ? "exclamationmark.triangle.fill" : "arrow.down.circle.fill")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(failed ? Color.orange : Color.secondary)
             Text(updateStripeText)
                 .font(.callout)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Spacer(minLength: 12)
-            Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
-                .toggleStyle(.checkbox)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button {
-                manager.installUpdate()
-            } label: {
-                Text(manager.updateInstalling ? "Installing…" : "Install")
+                .help(update.detail.isEmpty ? manager.updateStatus : update.detail)
+            if update.busy {
+                if let progress = update.progress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .frame(width: 140)
+                } else {
+                    ProgressView()
+                        .controlSize(.small)
+                }
             }
-            .controlSize(.small)
-            .disabled(!manager.updateInstallEnabled)
-            .help(manager.updateStatus)
+            Spacer(minLength: 12)
+            if !update.active {
+                Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !update.secondaryAction.isEmpty {
+                Button(update.secondaryLabel) {
+                    manager.performUpdateAction(update.secondaryAction)
+                }
+                .controlSize(.small)
+            }
+            if !update.busy && !update.primaryAction.isEmpty {
+                Button(update.primaryLabel) {
+                    if update.active {
+                        manager.performUpdateAction(update.primaryAction)
+                    } else {
+                        manager.installUpdate()
+                    }
+                }
+                .controlSize(.small)
+                .disabled(update.active ? manager.updateChecking : !manager.updateInstallEnabled)
+            }
         }
         .padding(.leading, 104)
         .padding(.trailing, 18)
@@ -427,6 +451,9 @@ struct RootView: View {
     }
 
     var updateStripeText: String {
+        if manager.updateView.active {
+            return manager.updateView.title
+        }
         if !manager.updateStatus.isEmpty {
             return manager.updateStatus
         }

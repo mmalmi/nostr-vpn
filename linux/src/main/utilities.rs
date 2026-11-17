@@ -296,6 +296,8 @@ const CSS: &str = r#"
 
 .nvpn-update-stripe {
     padding: 6px 16px;
+    /* Button height, so the stripe stays put while a step has no buttons. */
+    min-height: 34px;
     background: alpha(@window_fg_color, 0.05);
     box-shadow: inset 0 -1px 0 alpha(@window_fg_color, 0.08);
 }

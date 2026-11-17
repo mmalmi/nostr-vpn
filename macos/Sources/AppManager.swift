@@ -37,7 +37,7 @@ final class AppManager: ObservableObject {
     @Published var copiedPeerNpub: String?
     @Published var serviceSettling = false
     @Published var updateChecking = false
-    @Published var updateInstalling = false
+    @Published var updateView = DesktopUpdateView()
     @Published var updateAvailable = false
     @Published var updateVersion = ""
     @Published var updateStatus = ""
@@ -67,6 +67,8 @@ final class AppManager: ObservableObject {
     var updateTask: Task<Void, Never>?
     var updateRetryTask: Task<Void, Never>?
     var updatePollTask: Task<Void, Never>?
+    var updateViewPollTask: Task<Void, Never>?
+    var updateQuitRequested = false
     var refreshInFlight = false
     var refreshPending = false
     var startupUrlsDrained = false
@@ -169,8 +171,17 @@ final class AppManager: ObservableObject {
         return "Off"
     }
 
+    var updateInstalling: Bool {
+        updateView.busy
+    }
+
     var updateInstallEnabled: Bool {
         updateAvailable && !updateChecking && !updateInstalling
+    }
+
+    /// The update banner shows an available update or any install step.
+    var updateBannerVisible: Bool {
+        updateAvailable || updateView.active
     }
 
     func start() {
@@ -185,6 +196,7 @@ final class AppManager: ObservableObject {
             return
         }
         syncLaunchAgentWithSettings()
+        performUpdateAction("resume")
         startAutomaticUpdateChecks()
         refresh()
         guard refreshTask == nil else {
@@ -207,6 +219,7 @@ final class AppManager: ObservableObject {
         updateTask?.cancel()
         updateRetryTask?.cancel()
         updatePollTask?.cancel()
+        updateViewPollTask?.cancel()
     }
 
     func refresh() {

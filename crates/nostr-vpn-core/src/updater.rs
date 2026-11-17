@@ -14,14 +14,15 @@ use fips_core::config::{
 };
 use fips_core::{Config as FipsConfig, FipsEndpoint};
 use hashtree_updater::{
-    ProductAssetPolicy, SecurePubsubBlossomConfig, SecurePubsubBlossomSelection, UpdateAsset,
+    DownloadOptions, ProductAssetPolicy, SecurePubsubBlossomConfig, SecurePubsubBlossomSelection, UpdateAsset,
     UpdateManifest, build_secure_pubsub_blossom_updater, current_archive_target, dedupe_nonempty,
     download_product_selection, env_csv, preferred_app_asset_for_suffixes,
     preferred_cli_asset_for_target, select_product_update,
     selected_download_path as shared_selected_download_path, update_ref_from_override,
+    write_downloaded_asset,
 };
 pub use hashtree_updater::{
-    ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy, UpdateEventCache, UpdateRef,
+    DownloadCallback, DownloadEvent, ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy, UpdateEventCache, UpdateRef,
 };
 use nostr_pubsub::NostrEventSubscriber;
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
@@ -43,6 +44,9 @@ const UPDATE_MANIFEST_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
 const UPDATE_USER_AGENT: &str = "nvpn-updater";
 const UPDATE_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
+/// Hashtree stores files in 2 MiB chunks. Smaller progress reads would fetch
+/// each chunk several times.
+const UPDATE_PROGRESS_CHUNK: u64 = 2 * 1024 * 1024;
 const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
     "https://cdn.iris.to",
     "https://upload.iris.to",
@@ -208,6 +212,72 @@ pub async fn download_product_update_with_config(
         &selection,
         Some(&destination),
     ))
+}
+
+/// The signed desktop app release chosen for an install.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedAppRelease {
+    pub tag: String,
+    pub asset: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VerifiedAppDownload {
+    UpToDate { tag: String },
+    Downloaded {
+        release: VerifiedAppRelease,
+        path: PathBuf,
+    },
+}
+
+/// Resolve the signed app release over the mesh, then download it with byte
+/// progress. `on_found` runs before any asset bytes are read.
+pub fn download_verified_app_update_blocking(
+    current_version: &str,
+    config_path: Option<&Path>,
+    download_dir: Option<&Path>,
+    on_found: Box<dyn FnOnce(&VerifiedAppRelease) + Send>,
+    on_event: DownloadCallback,
+) -> Result<VerifiedAppDownload> {
+    let current_version = current_version.to_owned();
+    let config_path = config_path.map(Path::to_path_buf);
+    let download_dir = download_dir.map(Path::to_path_buf);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_stack_size(UPDATE_WORKER_STACK_SIZE)
+        .build()
+        .context("failed to start update runtime")?;
+    runtime
+        .block_on(runtime.spawn(async move {
+            let selection =
+                secure_selection(&current_version, ProductUpdateMode::App, config_path.as_deref())
+                    .await?;
+            if !selection.update_available {
+                return Ok(VerifiedAppDownload::UpToDate { tag: selection.tag });
+            }
+            let release = VerifiedAppRelease {
+                tag: selection.tag.clone(),
+                asset: selection.asset.name.clone(),
+            };
+            on_found(&release);
+            let path = selected_download_path(download_dir.as_deref(), &release.asset)?;
+            let downloaded = selection
+                .updater
+                .download(
+                    &selection.check,
+                    DownloadOptions {
+                        progress_chunk: Some(UPDATE_PROGRESS_CHUNK),
+                        ..DownloadOptions::default()
+                    },
+                    Some(on_event),
+                )
+                .await
+                .with_context(|| format!("failed to download {}", release.asset))?;
+            write_downloaded_asset(&path, &downloaded.bytes)
+                .with_context(|| format!("failed to save {}", path.display()))?;
+            Ok(VerifiedAppDownload::Downloaded { release, path })
+        }))
+        .context("update download task failed")?
 }
 
 async fn select_update(
