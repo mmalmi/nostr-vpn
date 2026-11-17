@@ -679,3 +679,61 @@ fn test_peer_status(pubkey: &str, now: u64) -> MeshPeerStatus {
         error: None,
     }
 }
+
+#[test]
+fn manual_renewal_adopts_the_sellers_latest_signed_offer() {
+    let seller = Keys::generate();
+    let now = unix_timestamp();
+    let directory =
+        std::env::temp_dir().join(format!("nvpn-manual-offer-{}-{now}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create manual buyer test directory");
+    let config_path = directory.join("config.toml");
+    let store_path = paid_route_store_file_path(&config_path);
+    let config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
+    let ttl = nostr_vpn_core::paid_routes::PAID_ROUTE_OFFER_TTL_SECS;
+    let sign = |signed_at| {
+        nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config(
+            "internet-exit",
+            &seller,
+            &config,
+            None,
+            signed_at,
+        )
+        .expect("signed offer")
+    };
+    // Manual stores the offer once, at purchase; the seller re-signs it later.
+    let purchased = sign(now - ttl - 60);
+    let republished = sign(now - 60);
+    let offer = purchased.offer().expect("offer");
+    let key = nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+        &offer.seller_npub,
+        &offer.offer_id,
+    );
+    update_paid_route_store(&store_path, |store| {
+        store.upsert_signed_offer(purchased, vec![], now - ttl - 60)?;
+        Ok(())
+    })
+    .expect("write store");
+    assert!(
+        !load_paid_route_store(&store_path).unwrap().offers[&key]
+            .signed_offer
+            .is_live_at(now)
+    );
+    std::fs::write(
+        crate::control_pubsub_runtime::control_pubsub_store_file_path(&config_path),
+        serde_json::to_vec(&json!({"version": 1, "events": [republished.event]}))
+            .expect("encode received advert"),
+    )
+    .expect("persist received advert");
+
+    adopt_latest_seller_offer(&config_path, &offer.seller_npub, &offer.offer_id)
+        .expect("adopt offer");
+
+    let stored = load_paid_route_store(&store_path).expect("reloaded store");
+    assert!(stored.offers[&key].signed_offer.is_live_at(now));
+    assert_eq!(stored.offers.len(), 1);
+    let _ = std::fs::remove_dir_all(directory);
+}

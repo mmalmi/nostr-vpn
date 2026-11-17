@@ -97,6 +97,14 @@ pub(crate) async fn renew_selected_paid_exit(
     {
         return Ok(RenewalStep::Idle);
     }
+    if manual && !store.buyer_session_renewals.contains_key(session_id) {
+        let channel = store
+            .sessions
+            .get(session_id)
+            .and_then(|record| store.channels.get(&record.session.payment.channel_id))
+            .ok_or_else(|| anyhow!("missing buyer channel"))?;
+        adopt_latest_seller_offer(config_path, &channel.counterparty_npub, &channel.offer_id)?;
+    }
     let next = update_paid_route_store(&store_path, |store| {
         if manual {
             store.prepare_manual_buyer_session_renewal(session_id, now_unix)
@@ -160,4 +168,37 @@ pub(crate) async fn renew_selected_paid_exit(
         *retry_at = now_unix.saturating_add(2);
     }
     Ok(RenewalStep::Idle)
+}
+
+/// Renewal reopens the stored seller offer, which stops being live an hour after
+/// signing. Only Automatic selection copies received offers into the store, so
+/// Manual adopts the seller's latest signed copy of the same offer first.
+pub(super) fn adopt_latest_seller_offer(
+    config_path: &Path,
+    seller_npub: &str,
+    offer_id: &str,
+) -> Result<()> {
+    let offer_key =
+        nostr_vpn_core::paid_route_store::paid_route_offer_store_key(seller_npub, offer_id);
+    let offers = crate::control_pubsub_runtime::load_control_pubsub_events(config_path)?
+        .into_iter()
+        .filter_map(|event| SignedPaidRouteOffer::from_event(event).ok())
+        .filter(|signed| {
+            signed.offer().is_ok_and(|offer| {
+                nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+                    &offer.seller_npub,
+                    &offer.offer_id,
+                ) == offer_key
+            })
+        })
+        .collect::<Vec<_>>();
+    if !offers.is_empty() {
+        persist_paid_exit_discovered_offers(
+            &paid_route_store_file_path(config_path),
+            &offers,
+            &[],
+            None,
+        )?;
+    }
+    Ok(())
 }
