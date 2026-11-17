@@ -7,6 +7,8 @@ mod funding;
 mod payments;
 #[path = "automatic/renewal.rs"]
 mod renewal;
+#[cfg(test)]
+use renewal::adopt_latest_seller_offer;
 pub(crate) use renewal::{RenewalStep, renew_selected_paid_exit};
 #[path = "automatic/reselection.rs"]
 mod reselection;
