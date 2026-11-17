@@ -20,6 +20,10 @@ def snapshot():
 store, original, session = snapshot()
 capacity_msat = session['payment']['capacity_sat'] * 1000
 price = int(sys.argv[2])
+# Manual renewal keeps the approved channel limit; Automatic may grow it.
+manual = len(sys.argv) > 3 and sys.argv[3] == 'manual'
+if manual:
+    assert store.get('manual_renewal_session_id') == original, 'manual session lacks renewal consent'
 original_channel = store['channels'][session['payment']['channel_id']]
 capacities = {original: session['payment']['capacity_sat']}
 # Deliver more than twice the original channel's entire capacity, without
@@ -63,7 +67,9 @@ while delivered < target_bytes or len(seen) < 3:
     time.sleep(0.2)
 connection.close()
 assert len(seen) >= 3, f'expected at least two channel renewals, observed {len(seen) - 1}'
-if capacities[original] < original_channel['accepted_terms']['channel']['max_channel_capacity_sat']:
+if manual:
+    assert set(capacities.values()) == {capacities[original]}, 'manual renewal changed the channel limit'
+elif capacities[original] < original_channel['accepted_terms']['channel']['max_channel_capacity_sat']:
     assert max(capacities.values()) > capacities[original], 'sustained traffic did not grow a renewal'
 print(f'Renewal: {delivered} bytes on one continuously open TCP connection across {len(seen)} channels', flush=True)
 
