@@ -69,6 +69,29 @@ class AndroidVpnRoutingPolicyTest {
     }
 
     @Test
+    fun memberRoutesUnderASelectedExitDoNotChangeTheInterface() {
+        val exit = listOf("0.0.0.0/0", "10.44.0.53/32", "10.44.116.211/32")
+        assertEquals(setOf("0.0.0.0/0"), AndroidVpnRoutingPolicy.effectiveRoutes(exit))
+        assertEquals(
+            AndroidVpnRoutingPolicy.effectiveRoutes(exit),
+            AndroidVpnRoutingPolicy.effectiveRoutes(exit + "10.44.46.86/32"),
+        )
+
+        val split = listOf("10.44.0.53/32", "10.44.116.211/32")
+        assertEquals(split.toSet(), AndroidVpnRoutingPolicy.effectiveRoutes(split))
+        assertEquals(
+            setOf("10.44.0.0/16", "10.72.0.9/32"),
+            AndroidVpnRoutingPolicy.effectiveRoutes(
+                listOf("10.44.0.0/16", "10.44.9.9/32", "10.72.0.9/32"),
+            ),
+        )
+        assertEquals(
+            setOf("0.0.0.0/0", "fd00::1/128"),
+            AndroidVpnRoutingPolicy.effectiveRoutes(listOf("0.0.0.0/0", "fd00::1/128")),
+        )
+    }
+
+    @Test
     fun missingOrMalformedRouteConfigCannotEnableAlwaysOn() {
         assertEquals(
             emptyList<String>(),

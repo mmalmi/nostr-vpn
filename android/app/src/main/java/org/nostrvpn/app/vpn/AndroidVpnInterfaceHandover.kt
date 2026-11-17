@@ -160,13 +160,27 @@ internal class AndroidVpnInterfaceHandover(
         blockingInterface = descriptor
     }
 
+    // Settings with the same fingerprint need the same interface. Android
+    // leaves packets on the device network for a moment while it swaps
+    // interfaces, so a change the current routes already cover, like a
+    // member joining under a selected exit, keeps the interface.
     private fun fingerprint(config: JSONObject): String =
-        SETTINGS_KEYS.joinToString("\n") { key -> config.opt(key)?.toString().orEmpty() }
+        SETTINGS_KEYS.joinToString("\n") { key ->
+            if (key == ROUTE_TARGETS) {
+                AndroidVpnRoutingPolicy
+                    .effectiveRoutes(AndroidVpnRoutingPolicy.routeTargets(config))
+                    .sorted()
+                    .joinToString(",")
+            } else {
+                config.opt(key)?.toString().orEmpty()
+            }
+        }
 
     private companion object {
         const val TAG = "NostrVpnService"
         const val REFRESH_DEBOUNCE_MILLIS = 500L
         const val RETRY_MILLIS = 15_000L
-        val SETTINGS_KEYS = listOf("routeTargets", "dnsServers", "magicDnsServer", "dnsMatchDomains")
+        const val ROUTE_TARGETS = "routeTargets"
+        val SETTINGS_KEYS = listOf(ROUTE_TARGETS, "dnsServers", "magicDnsServer", "dnsMatchDomains")
     }
 }
