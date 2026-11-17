@@ -23,7 +23,11 @@ while Direct stays selected.
 
 The follow-on traffic check crosses two channel renewals without retrying
 failed requests, checks that renewal retains the agreed capacity, then idles
-for 75 seconds and resumes traffic. A funding regression in
+for 75 seconds and resumes traffic. In Manual, a purchase without
+`--auto-renew`, and one whose renewal was turned off with `stop-renewal`, must
+reach its channel limit without opening a replacement or spending from the
+wallet; the renewal check then runs on a purchase made with `--auto-renew`,
+which must keep the purchased channel limit. A funding regression in
 `vendor/cashu-service/tests/spilman_channel_capacity.rs` covers surplus funding,
 sender change, idempotent recovery, and rejection before spending an
 insufficient token. Wallet regressions also check that mixed proof denominations

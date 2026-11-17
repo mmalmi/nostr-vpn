@@ -698,6 +698,74 @@ normalize_paid_exit_payment_mode() {
   esac
 }
 
+buy_manual_paid_exit() {
+  local buy_json session_id lease_id status=""
+  buy_json="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit buy \
+    --config "$CONFIG_PATH" \
+    --mint "$PAID_EXIT_MINT" \
+    --channel-capacity-sat "$PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT" \
+    --initial-paid-msat "$PAID_EXIT_SPILMAN_OPEN_PAID_MSAT" \
+    --json \
+    "$@" \
+    "$ALICE_NPUB:internet-exit" | tr -d '\r')"
+  session_id="$(jq -r '.session.session_id // empty' <<<"$buy_json" 2>/dev/null || true)"
+  lease_id="$(jq -r '.session.lease_id // empty' <<<"$buy_json" 2>/dev/null || true)"
+  if [[ -z "$session_id" || -z "$lease_id" ]]; then
+    echo "exit-node docker e2e failed: manual purchase did not create a session" >&2
+    printf '%s\n' "$buy_json" >&2
+    return 1
+  fi
+  for _ in $(seq 1 60); do
+    status="$("${COMPOSE[@]}" exec -T node-b nvpn paid-exit status --json | tr -d '\r')"
+    if jq -e --arg sid "$session_id" '
+      any(.sessions[]?; .session_id == $sid
+        and .payment.cashu_spilman != null
+        and .routing.allow_routing == true)
+    ' <<<"$status" >/dev/null \
+      && "${COMPOSE[@]}" exec -T node-b cat /root/.config/nvpn/paid-routes.json \
+        | jq -e --arg sid "$session_id" --arg lease "$lease_id" '
+          .selected_buyer_session_id == $sid and (.buyer_session_admissions | has($lease))
+        ' >/dev/null; then
+      printf '%s\n' "$session_id"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "exit-node docker e2e failed: manual purchase $session_id was not admitted by the seller" >&2
+  printf '%s\n' "$status" >&2
+  return 1
+}
+
+run_manual_paid_exit_limit_check() {
+  "${COMPOSE[@]}" exec -T node-b python3 - \
+    "$PROBE_BASE_URL" "$PAID_EXIT_PRICE_MSAT_PER_GB" "$PAID_EXIT_MINT" "$1" \
+    < "$ROOT_DIR/scripts/e2e-paid-exit-manual-limit.py"
+}
+
+run_manual_renewal_consent_checks() {
+  # Renewal spends from the wallet, so a Manual purchase renews only with
+  # explicit consent. Fund the extra purchases here so the billing checks above
+  # stay tightly funded.
+  local topup_sat="$((10 * PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT))"
+  "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit wallet \
+    --config "$CONFIG_PATH" \
+    --json \
+    topup "$topup_sat" \
+    --mint "$PAID_EXIT_MINT" >/dev/null
+  wait_for_paid_exit_wallet_balance node-b "$PAID_EXIT_MINT" "$topup_sat" >/dev/null
+
+  # The purchase above was made without --auto-renew.
+  run_manual_paid_exit_limit_check default
+
+  buy_manual_paid_exit --auto-renew >/dev/null
+  "${COMPOSE[@]}" exec -T node-b nvpn paid-exit stop-renewal --config "$CONFIG_PATH" >/dev/null
+  run_manual_paid_exit_limit_check cancelled
+
+  buy_manual_paid_exit --auto-renew >/dev/null
+  "${COMPOSE[@]}" exec -T node-b python3 - "$PROBE_BASE_URL" "$PAID_EXIT_PRICE_MSAT_PER_GB" manual \
+    < "$ROOT_DIR/scripts/e2e-paid-exit-renewal.py"
+}
+
 wait_for_paid_exit_wallet_balance() {
   local node="$1"
   local mint="$2"
@@ -1467,6 +1535,8 @@ fi
 if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_SELECTION_MODE" == "automatic" ]]; then
   "${COMPOSE[@]}" exec -T node-b python3 - "$PROBE_BASE_URL" "$PAID_EXIT_PRICE_MSAT_PER_GB" \
     < "$ROOT_DIR/scripts/e2e-paid-exit-renewal.py"
+elif truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+  run_manual_renewal_consent_checks
 fi
 
 if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
