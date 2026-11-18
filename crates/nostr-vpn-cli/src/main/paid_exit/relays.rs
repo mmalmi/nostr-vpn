@@ -30,7 +30,9 @@ fn set_paid_exit_upstream(app: &mut AppConfig, value: &str) -> Result<()> {
 }
 
 fn ensure_paid_exit_advertisable(app: &AppConfig) -> Result<()> {
-    paid_exit_offer_config(app).map(drop)
+    paid_exit_offer_config(app)?
+        .channel
+        .validate_seller_free_probe_budget()
 }
 
 const PAID_EXIT_SELLER_READY_TIMEOUT: Duration = Duration::from_secs(15);

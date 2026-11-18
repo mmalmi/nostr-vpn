@@ -287,7 +287,7 @@ fn unix_daemon_instance_lock_refuses_a_symlink_substitution() {
 
 #[cfg(unix)]
 #[test]
-fn unix_daemon_instance_lock_reports_a_protected_lock_as_already_running() {
+fn unix_daemon_instance_lock_reports_permission_failure_without_claiming_a_running_daemon() {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
     if unsafe { libc::geteuid() } == 0 {
@@ -316,9 +316,10 @@ fn unix_daemon_instance_lock_reports_a_protected_lock_as_already_running() {
         .expect("restore parent permissions for cleanup");
     let message = format!("{error:#}");
     assert!(
-        message.contains("daemon already running or protected instance lock"),
-        "a client must receive the safe singleton result, not a raw inspection error: {message}"
+        message.contains("cannot access protected daemon instance lock"),
+        "permission failure must identify the protected lock: {message}"
     );
+    assert!(!message.contains("already running"), "{message}");
     assert!(
         !message.contains("failed to inspect"),
         "the protected singleton case must not be reported as an unexpected inspection failure: \
@@ -445,6 +446,7 @@ fn daemon_control_result_preserves_the_full_error_chain() {
         "the control result must retain the actionable inner failure"
     );
 
+    assert!(crate::read_daemon_control_result(&config).unwrap().is_some(), "keep the last outcome visible until the next request");
     let _ = fs::remove_dir_all(&dir);
 }
 

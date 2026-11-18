@@ -143,6 +143,8 @@ impl Fixture {
                     funding_required_balance_sat: 0,
                     funding_started_unix: 0,
                     last_successful_probe_unix: 0,
+                    last_usage_at_unix: 0,
+                    usage_started_at_unix: 0,
                     created_at_unix: created,
                     updated_at_unix: 1,
                 },

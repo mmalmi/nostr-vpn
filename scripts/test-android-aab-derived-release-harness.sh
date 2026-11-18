@@ -178,4 +178,6 @@ do
   require_token "$PUBLISH" "$token"
 done
 
+python3 "$ROOT/scripts/test-android-unbuilt-artifact.py"
+
 echo "ANDROID_AAB_DERIVED_RELEASE_CONTRACT_OK"

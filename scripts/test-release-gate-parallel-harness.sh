@@ -738,10 +738,9 @@ grep -Fq "EXPECTED_PLATFORMS = ['linux', 'macos']" \
   || fail "seller UI receipt verifier differs from the product support matrix"
 grep -Fq 'run_umbrel_release_gate' <<<"$docker_functional_body" \
   || fail "isolated Docker gates omit the authenticated Umbrel release gate"
-umbrel_function="$(sed -n '/^run_umbrel_release_gate() {$/,/^}$/p' "$release_gate")"
 grep -Fq 'pnpm --dir "$ROOT_DIR/web/control-panel" install --frozen-lockfile' \
-  <<<"$umbrel_function" \
-  || fail "Umbrel release gate assumes preinstalled Playwright dependencies"
+  <<<"$docker_functional_body" \
+  || fail "parallel browser gates assume preinstalled Playwright dependencies"
 umbrel_gate="$ROOT_DIR/scripts/e2e-umbrel-auth-join-docker.sh"
 [[ -x "$umbrel_gate" ]] \
   || fail "authenticated Umbrel release gate is missing or not executable"

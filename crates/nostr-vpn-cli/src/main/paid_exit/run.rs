@@ -293,11 +293,7 @@ fn print_paid_exit_run_result(result: &PaidExitRunResult) {
         result.offer.channel.channel_expiry_secs,
         paid_exit_binary_bytes_text(result.offer.channel.free_probe_units),
         paid_exit_binary_bytes_text(result.offer.channel.grace_units),
-        if result.offer.channel.accepted_mints.is_empty() {
-            "none".to_string()
-        } else {
-            result.offer.channel.accepted_mints.join(", ")
-        }
+        paid_exit_mints_text(&result.offer.channel.accepted_mints)
     );
     println!(
         "location: country={} asn={}",

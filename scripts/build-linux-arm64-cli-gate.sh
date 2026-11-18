@@ -4,14 +4,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/release_common.sh"
+source "$ROOT/scripts/lib-linux-musl-image.sh"
 enable_deterministic_build_env "$ROOT"
 
 OUTPUT_DIR="${1:?Linux ARM64 CLI gate output directory is required}"
 TARGET=aarch64-unknown-linux-musl
 ARCHIVE="$OUTPUT_DIR/nvpn-$TARGET.tar.gz"
 RECEIPT="$OUTPUT_DIR/receipt.json"
-BUILDER_IMAGE="${NVPN_LINUX_MUSL_IMAGE:-messense/rust-musl-cross:aarch64-musl}"
-SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-ubuntu:24.04}"
+BUILDER_IMAGE="${NVPN_LINUX_MUSL_IMAGE:-$(linux_musl_default_image "$TARGET")}"
+SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-ubuntu:24.04@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e}"
+linux_require_immutable_image "$BUILDER_IMAGE"
+linux_require_immutable_image "$SMOKE_IMAGE"
 TEMP_DIR=""
 
 cleanup() {

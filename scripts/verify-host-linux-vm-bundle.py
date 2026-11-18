@@ -7,6 +7,7 @@ import hashlib
 import json
 import pathlib
 import re
+import runpy
 import stat
 import sys
 
@@ -29,9 +30,14 @@ def sha256_path(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-if len(sys.argv) != 26:
+scope = "full"
+if len(sys.argv) > 1 and sys.argv[1].startswith("--scope="):
+    scope = sys.argv.pop(1).split("=", 1)[1]
+if scope not in {"full", "daemon"}:
+    fail("unsupported build scope")
+if len(sys.argv) not in (26, 27):
     fail(
-        "usage: verify-host-linux-vm-bundle.py "
+        "usage: verify-host-linux-vm-bundle.py [--scope=full|daemon] "
         "BUNDLE RECEIPT APP_SHA APP_TREE APP_VERSION "
         "FIPS_SHA FIPS_TREE FIPS_VERSION "
         "ROOT_CARGO_LOCK_SHA256 ROOT_REALIZED_CARGO_LOCK_SHA256 "
@@ -75,6 +81,19 @@ try:
 except (OSError, ValueError) as error:
     fail(f"could not parse receipt: {error}")
 
+# Release callers default to full. An explicit validation-only invocation is
+# required to accept the smaller daemon artifact set; ambient env cannot opt in.
+if receipt.get("buildScope", "full") != scope:
+    fail("receipt build scope differs; partial daemon builds are not release bundles")
+if scope == "daemon":
+    if (receipt.get("partial") is not True or
+            receipt.get("candidateBuildOnly") is not True or
+            receipt.get("releaseGatesPassed") is not False or
+            builder_mode != "remote-native"):
+        fail("daemon receipt lacks explicit partial native-build qualification")
+elif receipt.get("partial", False) or receipt.get("candidateBuildOnly", False):
+    fail("partial candidate cannot satisfy full release bundle gates")
+
 for label, value in (
     ("root committed Cargo lock", root_cargo_lock_sha256),
     ("root realized Cargo lock", root_realized_cargo_lock_sha256),
@@ -88,27 +107,10 @@ for label, value in (
 if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", rust_toolchain) is None:
     fail("Rust toolchain version is invalid")
 
-fips_patch_packages: dict[str, str] = {}
-for specification in fips_patch_specs:
-    name, separator, version = specification.partition("=")
-    if (
-        separator != "="
-        or name in fips_patch_packages
-        or re.fullmatch(r"[0-9A-Za-z_.+-]+", version) is None
-    ):
-        fail("exact FIPS patched lock package specification is invalid")
-    fips_patch_packages[name] = version
-if set(fips_patch_packages) != {
-    "nvpn-fips-core",
-    "nvpn-fips-endpoint",
-    "nvpn-fips-identity",
-    "nvpn-mdns-sd",
-    "nvpn-turn",
-    "nvpn-webrtc",
-    "nvpn-webrtc-ice",
-    "nvpn-webrtc-util",
-}:
-    fail("exact FIPS patched lock package set differs")
+lock_verifier = runpy.run_path(
+    str(pathlib.Path(__file__).with_name("verify-cargo-path-patch-lock.py"))
+)
+fips_patch_packages = lock_verifier["package_specs"](fips_patch_specs)
 
 expected_metadata = {
     "schema": 2,
@@ -188,6 +190,9 @@ expected_artifacts = {
     "debianPackage": "nostr-vpn.deb",
     "muslCliArchive": "nvpn-x86_64-unknown-linux-musl.tar.gz",
 }
+if scope == "daemon":
+    expected_artifacts = {k: v for k, v in expected_artifacts.items()
+                          if k in {"cli", "muslCli"}}
 if not isinstance(artifacts, dict) or set(artifacts) != set(expected_artifacts):
     fail("receipt artifact set is not exact")
 
@@ -237,7 +242,7 @@ if not isinstance(cli_verbose, str) or f"(rev {fips_sha[:10]})" not in cli_verbo
 
 if receipt.get("muslTarget") != "x86_64-unknown-linux-musl":
     fail("receipt lacks the exact static Linux CLI target")
-if receipt.get("cargoDebVersion") != "3.7.0":
+if scope == "full" and receipt.get("cargoDebVersion") != "3.7.0":
     fail("receipt lacks the pinned cargo-deb version")
 if receipt.get("muslCliShortVersion") != f"nvpn {app_version}":
     fail("receipt static CLI short version differs from app version")
@@ -247,6 +252,12 @@ if (
     or f"(rev {fips_sha[:10]})" not in musl_verbose
 ):
     fail("receipt static CLI verbose version differs from exact FIPS revision")
+
+if scope == "daemon":
+    if receipt.get("debianPackage") is not None or receipt.get("cargoDebVersion") is not None:
+        fail("daemon validation must not claim Debian packaging")
+    print("HOST_LINUX_DAEMON_BUILD_VERIFIED_PARTIAL")
+    raise SystemExit(0)
 
 package = receipt.get("debianPackage")
 if (

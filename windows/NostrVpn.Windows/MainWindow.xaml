@@ -145,6 +145,40 @@
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=Devices}">
+            <DockPanel Margin="0,0,0,12" LastChildFill="True">
+              <Button DockPanel.Dock="Right" Content="Received files" Click="ShowReceivedFiles_Click" />
+              <TextBlock Text="Files" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </DockPanel>
+            <Border Style="{StaticResource Card}" Margin="0,0,0,8" Visibility="{Binding PreparingFiles, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="{Binding FilePreparationDetail}" TextWrapping="Wrap" />
+                <ProgressBar IsIndeterminate="True" Height="4" Margin="0,8" />
+                <Button Content="Cancel" Click="CancelFilePreparation_Click" HorizontalAlignment="Left" />
+              </StackPanel>
+            </Border>
+            <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="FileTransferList" ItemsSource="{Binding State.FileTransfers}" Margin="0,0,0,12">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Style="{StaticResource Card}" Margin="0,0,0,8">
+                    <StackPanel>
+                      <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource TextSecondary}" Margin="0,5" TextWrapping="Wrap" />
+                      <ProgressBar Value="{Binding TransferredBytes}" Maximum="{Binding TotalBytes}" Height="4" Visibility="{Binding ShowsProgress, Converter={StaticResource BoolToVisibility}}" />
+                      <TextBlock Text="{Binding Error}" Foreground="{DynamicResource Warn}" TextWrapping="Wrap" />
+                      <WrapPanel Margin="0,8,0,0">
+                        <Button Content="Accept" Tag="{Binding}" CommandParameter="accept" Click="FileTransferAction_Click" IsEnabled="{Binding DataContext.State.VpnActive, RelativeSource={RelativeSource AncestorType=Window}}" ToolTip="Connect VPN to continue transfers" Visibility="{Binding CanAccept, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
+                        <Button Content="Decline" Tag="{Binding}" CommandParameter="decline" Click="FileTransferAction_Click" Visibility="{Binding CanAccept, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
+                        <Button Content="Resume" Tag="{Binding}" CommandParameter="resume" Click="FileTransferAction_Click" IsEnabled="{Binding DataContext.State.VpnActive, RelativeSource={RelativeSource AncestorType=Window}}" ToolTip="Connect VPN to continue transfers" Visibility="{Binding CanResume, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
+                        <Button Content="Cancel" Tag="{Binding}" CommandParameter="cancel" Click="FileTransferAction_Click" Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibility}}" Margin="0,0,8,0" />
+                        <Button Content="Show files" Tag="{Binding}" Click="ShowTransferFiles_Click" Visibility="{Binding CanShowFiles, Converter={StaticResource BoolToVisibility}}" />
+                      </WrapPanel>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            </ScrollViewer>
             <Grid Visibility="{Binding HasActiveNetwork, Converter={StaticResource BoolToVisibility}}">
               <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="320" />
@@ -220,7 +254,7 @@
                 </StackPanel>
               </Border>
 
-              <Border Grid.Column="2" Style="{StaticResource Card}">
+              <Border Grid.Column="2" Style="{StaticResource Card}" AllowDrop="True" Drop="DeviceFiles_Drop">
                 <StackPanel>
                   <StackPanel Visibility="{Binding SelectedParticipant, Converter={StaticResource ObjectToVisibility}}">
                     <DockPanel LastChildFill="True">
@@ -239,6 +273,8 @@
                         </WrapPanel>
                       </StackPanel>
                     </DockPanel>
+
+                    <Button Content="Send files" ToolTip="Connect VPN to send files to an online device" Click="SendFiles_Click" HorizontalAlignment="Left" Margin="0,14,0,0" IsEnabled="{Binding SelectedParticipantCanSendFiles}" />
 
                     <Grid Margin="0,20,0,0" Visibility="{Binding SelectedParticipantCanRename, Converter={StaticResource BoolToVisibility}}">
                       <Grid.ColumnDefinitions>

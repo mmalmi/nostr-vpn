@@ -287,6 +287,8 @@ test('component proof retains only unchanged platform product inputs', () => {
 
 for (const [helper, nearbyHelper] of [
   ['native-lab.py', 'native-lab-helper.py'],
+  ['lib-macos-vm-imported-release.sh', 'lib-macos-vm-build.sh'],
+  ['security-audit-rust.sh', 'security-build-rust.sh'],
   ['docker-replace-nvpn-binary', 'docker-replace-nvpn-image'],
   ['verify.sh', 'verify-build.sh'],
   ['startos-release.mjs', 'startos-release-helper.mjs'],
@@ -350,7 +352,7 @@ for (const [helper, nearbyHelper] of [
   })
 }
 
-test('component proof separates the Umbrel web product from native platform inputs', () => {
+test('component proof separates Umbrel deployment and web inputs from native platforms', () => {
   const root = mkdtempSync(join(tmpdir(), 'nvpn-umbrel-publisher-component-proof-'))
   const git = (...args) => {
     const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' })
@@ -368,6 +370,28 @@ test('component proof separates the Umbrel web product from native platform inpu
     git('config', 'user.name', 'Release Test')
     git('config', 'user.email', 'release@example.invalid')
     const receipt = commit('README.md', 'base\n', 'receipt source')
+    const deployment = commit(
+      'umbrel/docker-compose.yml',
+      'services:\n  nvpn:\n    volumes: ["app-state:/var/lib/nvpn/egress"]\n',
+      'Umbrel runtime persistence change',
+    )
+    for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+      assert.doesNotThrow(() => proveUnchangedPlatformInputs({
+        candidateRoot: root, platform,
+        receiptCommit: receipt.commit, receiptTree: receipt.tree,
+        candidateCommit: deployment.commit, candidateTree: deployment.tree,
+      }))
+    }
+    for (const path of ['umbrel/Dockerfile', 's9pk.mk', 'Makefile']) {
+      const containerRecipe = commit(path, 'pinned package recipe\n', 'Package-only input')
+      for (const platform of ['android', 'ios', 'linux', 'macos', 'windows']) {
+        assert.doesNotThrow(() => proveUnchangedPlatformInputs({
+          candidateRoot: root, platform,
+          receiptCommit: receipt.commit, receiptTree: receipt.tree,
+          candidateCommit: containerRecipe.commit, candidateTree: containerRecipe.tree,
+        }))
+      }
+    }
     const publisher = commit(
       'scripts/umbrel-release.mjs',
       'console.log("publish Umbrel image")\n',
@@ -495,6 +519,7 @@ test('component proof scopes desktop crates and Rust test modules', () => {
     'crates/nostr-vpn-app-core/src/c_abi/ios_packet_flow.rs',
     'crates/nostr-vpn-app-core/src/mobile_tunnel.rs',
     'scripts/e2e-wireguard-exit-docker.sh',
+    'scripts/lib-linux-musl-image.sh',
   ]
   try {
     git('init', '-q')
@@ -536,6 +561,7 @@ test('component proof scopes desktop crates and Rust test modules', () => {
     assertScope('windows-wintun', [paths[2]], ['windows'])
     assertScope('harness-only', paths.slice(3, 7), [])
     assertScope('wireguard-exit-harness', [paths[19]], [])
+    assertScope('linux-builder-pins', [paths[20]], ['linux'])
     assertScope('linux-wireguard-exit-module', [paths[7]], ['linux'])
     assertScope('linux-wireguard-exit-sources', paths.slice(8, 10), ['linux'])
     assertScope('linux-wireguard-exit-tests', paths.slice(10, 12), [])
@@ -2529,6 +2555,61 @@ test('release receipt collection requires exact source and strict public UI gate
       /quad9 DNS UI readback is not bound to the exact gated app and CLI/,
     )
     writeFileSync(paths.windows.network, windowsNetwork)
+
+    // Profile selection is permitted only for Windows, with exact bindings.
+    const defaultWindowsJoin = readFileSync(paths.windows.public_ui_join, 'utf8')
+    const isolatedWindowsJoin = JSON.parse(defaultWindowsJoin)
+    isolatedWindowsJoin.appLaunchArgumentsOrEnvironment = true
+    isolatedWindowsJoin.profileIsolation = {
+      schema: 1, kind: 'production-data-directory',
+      environmentKeys: ['NVPN_APP_DATA_DIR'], appArguments: [],
+      guiDirectorySha256: 'c'.repeat(64), serviceDirectorySha256: 'c'.repeat(64),
+      originalDirectorySha256: 'd'.repeat(64),
+      originalBeforeSha256: 'e'.repeat(64), originalAfterSha256: 'e'.repeat(64),
+      originalProfileUnchanged: true,
+      appSha256: isolatedWindowsJoin.artifact.desktop.appSha256,
+      serviceCliSha256: isolatedWindowsJoin.artifact.desktop.cliSha256,
+      guiModes: ['AdminAdd', 'Bootstrap', 'CreateAdmin', 'ManualJoin', 'Verify', 'Verify'],
+      serviceInstallCount: 2,
+    }
+    const collectWithIsolation = () => collectReleaseGateReceipts({
+      commit, tree, releaseGateSummaryPath: summary, platformReceiptPaths: paths,
+    })
+    writeFileSync(paths.windows.public_ui_join, JSON.stringify(isolatedWindowsJoin))
+    assert.doesNotThrow(collectWithIsolation)
+    for (const mutate of [
+      (r) => { r.appLaunchArgumentsOrEnvironment = false },
+      (r) => { delete r.profileIsolation },
+      (r) => { r.profileIsolation.environmentKeys.push('NVPN_CLI_PATH') },
+      (r) => { r.profileIsolation.appArguments.push('--injected-peer') },
+      (r) => { r.profileIsolation.serviceDirectorySha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.originalDirectorySha256 = 'c'.repeat(64) },
+      (r) => { r.profileIsolation.originalAfterSha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.originalProfileUnchanged = false },
+      (r) => { r.profileIsolation.appSha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.serviceCliSha256 = 'f'.repeat(64) },
+      (r) => { r.profileIsolation.serviceInstallCount = 1 },
+      (r) => { r.profileIsolation.guiModes.pop() },
+      (r) => { r.profileIsolation.extra = true },
+      (r) => { r.privateStateRead = true },
+      (r) => { r.fixtureInvoked = true },
+      (r) => { r.completionDeadlineSeconds = 16 },
+      (r) => { r.desktopAdminPixelJoiner.desktopRelaunchAccepted = false },
+      (r) => { r.pixelAdminDesktopJoiner.deliveryMilliseconds = 15001 },
+    ]) {
+      const rejected = structuredClone(isolatedWindowsJoin)
+      mutate(rejected)
+      writeFileSync(paths.windows.public_ui_join, JSON.stringify(rejected))
+      assert.throws(collectWithIsolation)
+    }
+    writeFileSync(paths.windows.public_ui_join, defaultWindowsJoin)
+    const defaultLinuxJoin = readFileSync(paths.linux.public_ui_join, 'utf8')
+    const linuxWithOverride = JSON.parse(defaultLinuxJoin)
+    linuxWithOverride.appLaunchArgumentsOrEnvironment = true
+    linuxWithOverride.profileIsolation = isolatedWindowsJoin.profileIsolation
+    writeFileSync(paths.linux.public_ui_join, JSON.stringify(linuxWithOverride))
+    assert.throws(collectWithIsolation, /profile isolation/)
+    writeFileSync(paths.linux.public_ui_join, defaultLinuxJoin)
 
     writeFileSync(paths.windows.public_ui_join, JSON.stringify({
       ...source,

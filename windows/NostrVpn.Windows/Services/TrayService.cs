@@ -15,6 +15,9 @@ public sealed class TrayService : IDisposable
     private AppViewModel? _viewModel;
     private Action? _showWindow;
     private Action? _quit;
+    private readonly Dictionary<string, string> _transferStatuses = [];
+    private bool _transfersInitialized;
+    private string _notificationTransferId = "";
 
     public TrayService()
     {
@@ -27,6 +30,7 @@ public sealed class TrayService : IDisposable
             Visible = true,
         };
         _notifyIcon.DoubleClick += (_, _) => _showWindow?.Invoke();
+        _notifyIcon.BalloonTipClicked += (_, _) => ShowTransfer(_notificationTransferId);
     }
 
     public void Attach(AppViewModel viewModel, Action showWindow, Action quit)
@@ -49,6 +53,32 @@ public sealed class TrayService : IDisposable
         _notifyIcon.Icon = _viewModel.State.ExitNodeBlocked ? _blockedIcon : _normalIcon;
         _notifyIcon.ContextMenuStrip?.Dispose();
         _notifyIcon.ContextMenuStrip = BuildMenu(_viewModel);
+        UpdateFileNotifications(_viewModel.State.FileTransfers);
+    }
+
+    private void ShowTransfer(string id)
+    {
+        _showWindow?.Invoke();
+        _viewModel?.ShowFileTransfer(id);
+    }
+
+    private void UpdateFileNotifications(IReadOnlyList<NativeFileTransferState> transfers)
+    {
+        NativeFileTransferState? latest = null;
+        foreach (var transfer in transfers.Where(transfer => !transfer.IsSender))
+        {
+            _transferStatuses.TryGetValue(transfer.Id, out var previous);
+            if (previous != transfer.Status && (transfer.Status == "offered" || (_transfersInitialized && previous is not null && transfer.Status == "completed"))) latest = transfer;
+            _transferStatuses[transfer.Id] = transfer.Status;
+        }
+        var liveIds = transfers.Select(transfer => transfer.Id).ToHashSet();
+        foreach (var id in _transferStatuses.Keys.Where(id => !liveIds.Contains(id)).ToArray()) _transferStatuses.Remove(id);
+        _transfersInitialized = true;
+        if (latest is null) return;
+        _notificationTransferId = latest.Id;
+        _notifyIcon.ShowBalloonTip(8000,
+            latest.Status == "offered" ? $"Files from {latest.PeerLabel}" : "Files received",
+            $"{latest.Title} · {NativeFileTransferState.FormatSize(latest.TotalBytes)}\n{(latest.Status == "offered" ? "Open to accept or decline." : "Open to show your files.")}", ToolTipIcon.Info);
     }
 
     public void Dispose()
@@ -131,6 +161,17 @@ public sealed class TrayService : IDisposable
         }
 
         menu.Items.Add(new ToolStripSeparator());
+        var incoming = viewModel.State.FileTransfers.Where(transfer => transfer.CanAccept).ToArray();
+        var files = new ToolStripMenuItem(incoming.Length == 0 ? "Files" : $"Files · {incoming.Length} waiting");
+        files.DropDownItems.Add(Item("Show files", (_, _) => ShowTransfer(incoming.FirstOrDefault()?.Id ?? "")));
+        foreach (var transfer in incoming.Take(3))
+        {
+            var request = new ToolStripMenuItem($"From {transfer.PeerLabel} · {NativeFileTransferState.FormatSize(transfer.TotalBytes)}");
+            request.DropDownItems.Add(Item("Accept", async (_, _) => await viewModel.FileTransferActionAsync("accept", transfer.Id), viewModel.State.VpnActive));
+            request.DropDownItems.Add(Item("Decline", async (_, _) => await viewModel.FileTransferActionAsync("decline", transfer.Id)));
+            files.DropDownItems.Add(request);
+        }
+        menu.Items.Add(files);
         menu.Items.Add(Item("Open Nostr VPN", (_, _) => _showWindow?.Invoke()));
         menu.Items.Add(Item("Quit", (_, _) => _quit?.Invoke()));
         return menu;

@@ -15,7 +15,7 @@ fips_tree="$(git -C "$FIPS_ROOT" rev-parse 'HEAD^{tree}')"
 [[ "$fips_sha" == 12a7b154fa2fe8e86483c51ac10708501e50cdfe ]]
 [[ -z "$(git diff --name-only HEAD)" && -z "$(git -C "$FIPS_ROOT" status --porcelain)" ]]
 mapfile -t packages < <(python3 scripts/verify-cargo-path-patch-lock.py --manifest-specs "$FIPS_ROOT")
-[[ ${#packages[@]} == 8 ]]
+python3 scripts/verify-cargo-path-patch-lock.py --validate-specs "${packages[@]}"
 root_lock="$(python3 scripts/verify-cargo-path-patch-lock.py --expected-sha256 Cargo.lock "${packages[@]}")"
 linux_lock="$(python3 scripts/verify-cargo-path-patch-lock.py --expected-sha256 linux/Cargo.lock "${packages[@]}")"
 runs="$HOME/.cache/nostr-vpn-linux-release-builder/runs"

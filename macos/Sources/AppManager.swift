@@ -13,6 +13,19 @@ let defaultUpdatePollIntervalNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000
 
 @MainActor
 final class AppManager: ObservableObject {
+    var processingFileShare = false
+    @Published var fileTransfersRequested = false
+    @Published var highlightedFileTransfer: String?
+    @Published var observedFileTransfers: [FileTransferPresentation] = []
+    @Published var filePreparationText = ""
+    @Published var filePreparationProgress: Double = 0
+    @Published var fileNotificationsEnabled = false
+    var filePreparation: FilePreparation?
+    var pendingFileURLs: [URL] = []
+    var fileNotificationDelegate = FileNotificationDelegate()
+    var fileNotifications = FileTransferNotifications()
+    var fileObservation: FileTransferObservation?
+    var pendingFileNotificationAction: (String, String)?
     @Published var state: NativeAppState
     @Published var paidExitChooserRequested = false
     @Published var sellingSettingsRequested = false
@@ -96,6 +109,7 @@ final class AppManager: ObservableObject {
         app.setPrivilegedCommandRunner(runner: AuthorizationServicesPrivilegedCommandRunner())
         self.app = app
         self.state = app.state()
+        configureFileTransfers()
     }
 
     private static func appDataDir() -> String {
@@ -222,6 +236,11 @@ final class AppManager: ObservableObject {
                 return
             }
             state = nextState
+            configureFileTransfers()
+            processFileNotificationAction()
+            continuePendingFileShare()
+            publishFileSharePeers()
+            consumeFileShareRequests()
             maybePromptServiceUpdate(nextState)
         } while refreshPending && !Task.isCancelled
     }
@@ -297,6 +316,7 @@ final class AppManager: ObservableObject {
             }.value
             await MainActor.run {
                 self.state = nextState
+                self.publishFileSharePeers()
                 self.actionInFlight = false
                 self.actionStatus = nextState.error.isEmpty ? successStatus : nextState.error
                 self.actionError = nextState.error

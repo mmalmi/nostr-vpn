@@ -47,6 +47,7 @@ build_release_gate_docker_node_image() { echo build-node; }
 build_release_gate_paid_exit_image() { echo build-private-mint; }
 build_release_gate_web_image() { echo build-web; }
 run_docker_signal_gates() { echo routing-and-roaming; }
+pnpm() { echo "web-dependency:$*"; }
 release_gate_parallel_start() { echo "lane:$1"; RELEASE_GATE_PARALLEL_LAST_INDEX=0; }
 release_gate_parallel_wait_group() { echo joined-functional-lanes; }
 windows_platform_lane_requested() {
@@ -400,4 +401,15 @@ test('serial full gate preserves every phase from the default route', () => {
   const executed = serial.stdout.split('\n').filter(line => line.startsWith('executed:')).map(line => line.slice(9))
   assert.deepEqual(executed, lanes)
   assert.match(serial.stdout, /Release gate passed/)
+})
+
+test('shared browser inputs are installed before any parallel reader', () => {
+  const result = runRoute('run_docker_isolated_functional_gates --hosted')
+  assert.equal(result.status, 0, result.stderr)
+  const lines = result.stdout.split('\n')
+  const install = lines.findIndex(line => line.includes('install --frozen-lockfile'))
+  const chromium = lines.findIndex(line => line.includes('exec playwright install chromium'))
+  const reader = lines.findIndex(line => line.startsWith('lane:'))
+  assert.ok(install >= 0 && chromium > install && reader > chromium, result.stdout)
+  assert.equal(lines.filter(line => line.includes('install --frozen-lockfile')).length, 1)
 })
