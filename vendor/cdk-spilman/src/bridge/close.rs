@@ -532,6 +532,224 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
         )
     }
 
+    /// Recover the receiver's close outputs with a NUT-09 restore after the mint
+    /// spent the close swap but its response was lost, then persist the closed state.
+    async fn restore_receiver_close_outputs<N: SpilmanAsyncNetworking>(
+        &self,
+        channel_id: &str,
+        cd: &ClosingData,
+        prep: &PreparedClose,
+        net: &N,
+    ) -> Result<CloseSuccess, CloseError> {
+        use crate::parse_keyset_info_from_json;
+
+        let keyset_info = parse_keyset_info_from_json(&prep.keyset_info_json)
+            .map_err(CloseError::unblind_failed)?;
+        let output_keyset_info = parse_keyset_info_from_json(&prep.output_keyset_info.to_string())
+            .map_err(CloseError::unblind_failed)?;
+        let channel_secret_bytes = hex::decode(&prep.channel_secret)
+            .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+        let channel_secret: [u8; 32] = channel_secret_bytes
+            .try_into()
+            .map_err(|_| CloseError::unblind_failed("Invalid channel secret length"))?;
+        let params = ChannelParameters::from_json_with_channel_secret(
+            &prep.params_json,
+            keyset_info,
+            channel_secret,
+        )
+        .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+        let commitment = CommitmentOutputs::for_balance(cd.balance, &params)
+            .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+        let outputs = commitment
+            .receiver_outputs
+            .get_secrets_with_blinding()
+            .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+
+        let mut restored = Vec::with_capacity(outputs.len());
+        let mut receiver_sum = 0u64;
+        for output in &outputs {
+            let proof = self
+                .restore_one_receiver_output(
+                    &params,
+                    &output_keyset_info,
+                    output,
+                    &prep.mint_url,
+                    net,
+                )
+                .await?;
+            receiver_sum = receiver_sum
+                .checked_add(u64::from(proof.amount))
+                .ok_or_else(|| CloseError::unblind_failed("receiver proof amount overflow"))?;
+            restored.push((proof, output.amount, output.index));
+        }
+
+        let mut signed_receiver_proofs: Vec<Proof> = Vec::with_capacity(restored.len());
+        for (proof, amount, index) in &restored {
+            signed_receiver_proofs.push(self.sign_receiver_close_proof(
+                &params,
+                &ProofWithMeta {
+                    proof: proof.clone(),
+                    amount: *amount,
+                    index: *index,
+                    is_receiver: true,
+                },
+            )?);
+        }
+
+        let receiver_proofs_json =
+            serde_json::to_string(&signed_receiver_proofs).unwrap_or_default();
+        // Sender outputs belong to the buyer, whose own NUT-09 refund recovers them.
+        self.host
+            .mark_channel_closed(
+                channel_id,
+                cd.expiry_timestamp,
+                cd.balance,
+                &receiver_proofs_json,
+                "[]",
+                receiver_sum,
+                0,
+            )
+            .map_err(CloseError::storage_failed)?;
+        Ok(CloseSuccess {
+            channel_id: channel_id.to_string(),
+            total_value: receiver_sum,
+            receiver_sum,
+            sender_sum: 0,
+            sender_proofs: "[]".to_string(),
+            already_closed: false,
+        })
+    }
+
+    async fn restore_one_receiver_output<N: SpilmanAsyncNetworking>(
+        &self,
+        params: &ChannelParameters,
+        output_keyset_info: &KeysetInfo,
+        output: &DeterministicSecretWithBlinding,
+        mint_url: &str,
+        net: &N,
+    ) -> Result<Proof, CloseError> {
+        use cashu::Amount;
+
+        let mut keyset_info = output_keyset_info.clone();
+        let mut blinded_message = output
+            .to_blinded_message(Amount::from(output.amount), keyset_info.keyset_id)
+            .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+        let mut response = self
+            .request_restore_output(mint_url, &blinded_message, net)
+            .await?;
+        // A restore lookup is by blinded secret, but the signature names the
+        // keyset that issued it; re-request under that keyset to unblind with
+        // its keys.
+        if let Some(signature) = response.signatures.first() {
+            if signature.keyset_id != keyset_info.keyset_id {
+                let issued_json = self
+                    .host
+                    .get_keyset_info(&params.mint, &signature.keyset_id)
+                    .ok_or_else(|| {
+                        CloseError::unblind_failed(format!(
+                            "missing keyset info for restored keyset {}",
+                            signature.keyset_id
+                        ))
+                    })?;
+                keyset_info = crate::parse_keyset_info_from_json(&issued_json)
+                    .map_err(CloseError::unblind_failed)?;
+                blinded_message = output
+                    .to_blinded_message(Amount::from(output.amount), keyset_info.keyset_id)
+                    .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+                response = self
+                    .request_restore_output(mint_url, &blinded_message, net)
+                    .await?;
+            }
+        }
+        if response.outputs.len() != response.signatures.len() || response.signatures.len() > 1 {
+            return Err(CloseError::unblind_failed(format!(
+                "mint restore response has invalid output/signature counts for amount {} index {}",
+                output.amount, output.index
+            )));
+        }
+        let Some(blind_signature) = response.signatures.pop() else {
+            return Err(CloseError::unblind_failed(format!(
+                "mint has no restored signature for close output amount {} index {}",
+                output.amount, output.index
+            )));
+        };
+        if response.outputs[0].blinded_secret != blinded_message.blinded_secret
+            || u64::from(blind_signature.amount) != output.amount
+        {
+            return Err(CloseError::unblind_failed(format!(
+                "mint restore response does not match requested output for amount {} index {}",
+                output.amount, output.index
+            )));
+        }
+        if blind_signature.keyset_id != keyset_info.keyset_id {
+            return Err(CloseError::unblind_failed(format!(
+                "mint restored keyset {} instead of requested keyset {}",
+                blind_signature.keyset_id, keyset_info.keyset_id
+            )));
+        }
+        let mut proofs = cashu::dhke::construct_proofs(
+            vec![blind_signature],
+            vec![output.blinding_factor.clone()],
+            vec![output.secret.clone()],
+            &keyset_info.active_keys,
+        )
+        .map_err(|e| CloseError::unblind_failed(format!("Failed to construct proofs: {}", e)))?;
+        let mut proof = proofs
+            .pop()
+            .ok_or_else(|| CloseError::unblind_failed("construct_proofs returned no proofs"))?;
+
+        params
+            .attach_stage2_p2pk_e(
+                &mut proof,
+                Stage2Role::Receiver,
+                output.amount,
+                output.index,
+            )
+            .map_err(|e| {
+                CloseError::unblind_failed(format!("Failed to attach stage2 metadata: {}", e))
+            })?;
+        let expected_pubkey = params
+            .get_receiver_blinded_pubkey_for_stage2_output(output.amount, output.index)
+            .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+        let secret_json: serde_json::Value = serde_json::from_str(&proof.secret.to_string())
+            .map_err(|e| CloseError::unblind_failed(e.to_string()))?;
+        if secret_json.get(0).and_then(|v| v.as_str()) != Some("P2PK")
+            || secret_json
+                .get(1)
+                .and_then(|v| v.get("data"))
+                .and_then(|v| v.as_str())
+                != Some(&expected_pubkey.to_hex())
+        {
+            return Err(CloseError::unblind_failed(
+                "Receiver proof locked to wrong pubkey".to_string(),
+            ));
+        }
+        Ok(proof)
+    }
+
+    async fn request_restore_output<N: SpilmanAsyncNetworking>(
+        &self,
+        mint_url: &str,
+        blinded_message: &cashu::nuts::BlindedMessage,
+        net: &N,
+    ) -> Result<cashu::nuts::RestoreResponse, CloseError> {
+        use cashu::nuts::RestoreRequest;
+
+        let request = RestoreRequest {
+            outputs: vec![blinded_message.clone()],
+        };
+        let raw = net
+            .call_mint_restore(
+                mint_url,
+                &serde_json::to_string(&request)
+                    .map_err(|e| CloseError::unblind_failed(e.to_string()))?,
+            )
+            .await
+            .map_err(|e| CloseError::unblind_failed(format!("mint restore failed: {}", e)))?;
+        serde_json::from_str(&raw)
+            .map_err(|e| CloseError::unblind_failed(format!("invalid restore response: {}", e)))
+    }
+
     pub async fn execute_close_for_closing_channel_async<N: SpilmanAsyncNetworking>(
         &self,
         channel_id: &str,
@@ -565,6 +783,21 @@ impl<H: SpilmanHost<C>, C> SpilmanBridge<H, C> {
             Err(e) => {
                 // Only retry on keyset errors (12xxx); fail immediately otherwise
                 if !should_retry_swap_error(&e) {
+                    // A spent-input rejection means the mint processed this swap
+                    // and holds the signatures; restore the receiver's share.
+                    if is_spent_input_error(&e) {
+                        match self
+                            .restore_receiver_close_outputs(channel_id, &cd, &prep, net)
+                            .await
+                        {
+                            Ok(success) => return Ok(success),
+                            Err(restore_error) => tracing::warn!(
+                                channel_id,
+                                error = %restore_error,
+                                "receiver restore after spent-input close rejection failed"
+                            ),
+                        }
+                    }
                     return Err(CloseError::mint_rejected(parse_mint_error_value(&e)));
                 }
                 let _ = net.refresh_all_keysets(&prep.mint_url).await;
