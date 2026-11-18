@@ -57,7 +57,7 @@ nostr_pubkey_from_config() {
 fips_dns_aaaa() {
   local service="$1"
   local npub="$2"
-  "${COMPOSE[@]}" exec -T "$service" sh -lc "dig +time=1 +tries=1 @127.0.0.1 -p 53 +short AAAA '${npub}.fips' 2>/dev/null | awk '/^[0-9A-Fa-f:]+$/ { print; exit }'" | tr -d '\r'
+  "${COMPOSE[@]}" exec -T "$service" sh -lc "dig +time=1 +tries=1 @127.0.0.55 -p 53 +short AAAA '${npub}.fips' 2>/dev/null | awk '/^[0-9A-Fa-f:]+$/ { print; exit }'" | tr -d '\r'
 }
 
 wait_for_fips_dns_aaaa() {

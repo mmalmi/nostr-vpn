@@ -183,6 +183,37 @@ async fn split_dns_keeps_private_queries_on_the_selected_link_and_protects_tcp_r
 }
 
 #[tokio::test]
+async fn native_loopback_resolver_remains_usable_beside_the_vpn_stub() {
+    let server = Server::start().await;
+    let mut snapshot = config::direct(b"nameserver 127.0.0.1\noptions no-aaaa\n").unwrap();
+    for connection in &mut snapshot.links[0].servers[0].connections {
+        connection.port = server.address.port();
+    }
+    let (policy, count) = protector(false);
+    assert_eq!(
+        snapshot
+            .resolve("mint.example.", 443, policy)
+            .await
+            .unwrap(),
+        vec!["10.4.0.7:443".parse::<SocketAddr>().unwrap()]
+    );
+    assert_eq!(*server.seen.lock().unwrap(), ["mint.example."]);
+    assert!(count.load(Ordering::SeqCst) >= 2);
+    assert!(config::direct(b"nameserver ::1\n").is_ok());
+    for server in ["127.0.0.55", "127.0.0.53", "127.0.0.54"] {
+        assert!(config::direct(format!("nameserver {server}\n").as_bytes()).is_err());
+    }
+    for server in ["127.0.0.1", "127.0.0.55"] {
+        assert!(
+            config::direct(
+                format!("# Managed by nvpn secure DNS\nnameserver {server}\n").as_bytes()
+            )
+            .is_err()
+        );
+    }
+}
+
+#[tokio::test]
 async fn denied_dns_socket_policy_sends_no_queries() {
     let server = Server::start().await;
     let snapshot = Snapshot {

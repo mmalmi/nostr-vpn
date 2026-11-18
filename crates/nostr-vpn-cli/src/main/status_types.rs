@@ -309,8 +309,12 @@ impl ConnectMagicDnsRuntime {
     }
 
     fn start_records(suffix: &str, records: HashMap<String, Ipv4Addr>) -> Option<Self> {
+        #[cfg(target_os = "linux")]
+        let bind_ip = crate::secure_dns_runtime::LINUX_DNS_IP;
+        #[cfg(not(target_os = "linux"))]
+        let bind_ip = Ipv4Addr::LOCALHOST;
         let server = match MagicDnsServer::start(
-            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, MAGIC_DNS_PORT)),
+            SocketAddr::V4(SocketAddrV4::new(bind_ip, MAGIC_DNS_PORT)),
             records.clone(),
         ) {
             Ok(server) => server,
@@ -325,7 +329,7 @@ impl ConnectMagicDnsRuntime {
                     "magicdns: preferred port {MAGIC_DNS_PORT} unavailable ({error}); trying random local port"
                 );
                 match MagicDnsServer::start(
-                    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, fallback_port)),
+                    SocketAddr::V4(SocketAddrV4::new(bind_ip, fallback_port)),
                     records.clone(),
                 ) {
                     Ok(server) => server,

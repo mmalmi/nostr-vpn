@@ -145,6 +145,14 @@ fn systemd_properties_preserve_split_dns_security_and_refresh_without_the_vpn_st
     let values: Shared = Arc::new(Mutex::new((
         vec![
             (0, libc::AF_INET, vec![203, 0, 113, 53], 0, String::new()),
+            (0, libc::AF_INET, vec![127, 0, 0, 1], 0, String::new()),
+            (
+                0,
+                libc::AF_INET6,
+                std::net::Ipv6Addr::LOCALHOST.octets().to_vec(),
+                0,
+                String::new(),
+            ),
             (
                 link_index,
                 libc::AF_INET,
@@ -152,7 +160,21 @@ fn systemd_properties_preserve_split_dns_security_and_refresh_without_the_vpn_st
                 8853,
                 "resolver.office.example".into(),
             ),
-            (9999, libc::AF_INET, vec![127, 0, 0, 1], 0, String::new()),
+            (9999, libc::AF_INET, vec![127, 0, 0, 55], 53, String::new()),
+            (
+                9999,
+                libc::AF_INET,
+                vec![127, 0, 0, 55],
+                1053,
+                String::new(),
+            ),
+            (
+                9999,
+                libc::AF_INET,
+                vec![127, 0, 0, 55],
+                32553,
+                String::new(),
+            ),
         ],
         vec![
             (link_index, "office.example".into(), false),
@@ -184,6 +206,14 @@ fn systemd_properties_preserve_split_dns_security_and_refresh_without_the_vpn_st
         public[0].servers[0].ip,
         "203.0.113.53".parse::<IpAddr>().unwrap()
     );
+    assert_eq!(
+        public[0]
+            .servers
+            .iter()
+            .map(|server| server.ip)
+            .collect::<Vec<_>>(),
+        ["203.0.113.53", "127.0.0.1", "::1"].map(|ip| ip.parse::<IpAddr>().unwrap())
+    );
     let mut opportunistic = Bus::start();
     opportunistic.serve(values.clone(), link_index, "opportunistic");
     let snapshot = config::resolved_connection(&opportunistic.connection()).unwrap();
@@ -192,7 +222,7 @@ fn systemd_properties_preserve_split_dns_security_and_refresh_without_the_vpn_st
     assert!(private.servers[0].connections.iter().any(|connection| {
         matches!(&connection.protocol, ProtocolConfig::Tls { server_name } if server_name.as_ref() == "resolver.office.example")
     }));
-    values.lock().unwrap().0[1].2 = vec![192, 0, 2, 54];
+    values.lock().unwrap().0[3].2 = vec![192, 0, 2, 54];
     let refreshed = config::resolved_connection(&connection).unwrap();
     assert_eq!(
         refreshed.selected_links(&Name::from_ascii("mint.office.example.").unwrap())[0].servers[0]
