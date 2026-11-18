@@ -55,5 +55,14 @@ if [[ "$(cat ios/app-store-build-number)" == 4001032 &&
   audit_args+=(--ignore RUSTSEC-2026-0459 --ignore RUSTSEC-2026-0441)
 fi
 
+# Release 4.1.23 accepts only the unmaintained chrono and pin-utils notices
+# for these two lockfiles. Both resolve libsqlite3-sys 0.39.1. Keep the SQLite
+# vulnerability in the audit so a change to the bundled library fails closed.
+if [[ "$(cat ios/app-store-build-number)" == 4001033 &&
+      "$(git hash-object Cargo.lock)" == 31371799b7ed9f542b906c570d89c23cc7f061fc &&
+      "$(git hash-object linux/Cargo.lock)" == 8c21ac6740559aa10945be09a0a894947dfd0a41 ]]; then
+  audit_args+=(--ignore RUSTSEC-2026-0543 --ignore RUSTSEC-2026-0441)
+fi
+
 cargo audit "${audit_args[@]}"
 (cd linux && cargo audit "${audit_args[@]}")
