@@ -183,7 +183,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -194,7 +194,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1876,7 +1876,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1984,7 +1984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2853,7 +2853,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tokio",
  "tower-service",
  "tracing",
@@ -3895,19 +3895,29 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.6.5"
+version = "0.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ed00bcf7627f4b9ab1c4185d72d130637b32a9e9270c11edcc113208eacdea6"
+checksum = "1242e86e6eb5d3cd8654e8211dd82a7775cdd49c37ffb146c090d9b4c3efc61e"
 dependencies = [
  "async-trait",
  "nostr",
  "nostr-pubsub",
+ "nostr-pubsub-reconcile",
  "nostr-pubsub-social-graph",
  "nvpn-fips-core",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "nostr-pubsub-reconcile"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63865303e25e95741c1ccaf51873124bfb2ebe74660a8d4c9c7df15b02d2f18a"
+dependencies = [
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4151,7 +4161,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4400,9 +4410,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.123"
+version = "0.4.124"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b23ab830c7abdd3510dd2586688a0b29f4a34646d524e7937145df70903599c"
+checksum = "cfdf586bc3a1f21f39bdcd7dea79c994afe005c54c2d87a23389ddfdc033ab63"
 dependencies = [
  "async-wsocket",
  "base64 0.22.1",
@@ -4451,18 +4461,18 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.123"
+version = "0.4.124"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fc3adaa33ed34c197e7d3dd3390fd1ea308c8ac3e2012caf65b3c533c5328b2"
+checksum = "dbf78a03ddebe5dfeeb82f46b87dcde4634480da6c17225bc9226afdb8d2fc5e"
 dependencies = [
  "nvpn-fips-core",
 ]
 
 [[package]]
 name = "nvpn-fips-file-transfer"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb2a357c1975069db052a763adfe6a0144deb507c42b76a2024247f19b3e37f2"
+checksum = "b87f98f6295da9d31e976ead191e67921aee8f4c1e8b622720af6b2fe079c795"
 dependencies = [
  "flume",
  "libc",
@@ -4499,9 +4509,9 @@ checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.57"
+version = "0.2.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f3fa2f912e0d105a7ee4166c15df11ac5179d453a152b339e351868ecb871eb"
+checksum = "7e53480d239ea8e367f78d9b3cf5c2205ded0f103854e468fafb3a0e8d9b1c9a"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -5300,7 +5310,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5338,9 +5348,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.4",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5859,7 +5869,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5917,7 +5927,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6485,7 +6495,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6650,7 +6660,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7776,7 +7786,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
