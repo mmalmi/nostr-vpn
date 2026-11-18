@@ -410,8 +410,7 @@ class NostrVpnService : VpnService() {
             Log.w("NostrVpnService", message, error)
         }
         if (interfaceHandover.recovering) {
-            // Recovery from a failed handover did not get a working tunnel.
-            // Stay up behind the blocking interface and try again.
+            // Recovery failed: stay up behind the blocking interface and retry.
             interfaceHandover.retryRecovery()
             return false
         }
