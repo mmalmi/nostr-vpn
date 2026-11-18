@@ -158,26 +158,16 @@ pub(super) fn open_owned(config: &Path, path: &Path) -> Result<File> {
 #[cfg(any(target_os = "ios", all(test, target_os = "macos")))]
 pub(super) struct IdleCommandQueue {
     path: PathBuf,
-    handle: File,
-    device: u64,
-    inode: u64,
-    owner: u32,
+    verified: Option<(File, fs::Metadata)>,
 }
 
 #[cfg(any(target_os = "ios", all(test, target_os = "macos")))]
 impl IdleCommandQueue {
-    pub(super) fn open(config: &Path) -> Result<Self> {
-        let path = state_dir(config).join("commands");
-        let handle = directory(&path)?;
-        let metadata = handle.metadata()?;
-        check_owner(config, &metadata)?;
-        Ok(Self {
-            path,
-            handle,
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            owner: metadata.uid(),
-        })
+    pub(super) fn new(config: &Path) -> Self {
+        Self {
+            path: state_dir(config).join("commands"),
+            verified: None,
+        }
     }
 
     pub(super) fn is_empty(&mut self, config: &Path) -> Result<bool> {
@@ -186,12 +176,23 @@ impl IdleCommandQueue {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
             Err(error) => return Err(error.into()),
         };
-        if (metadata.dev(), metadata.ino(), metadata.uid()) != (self.device, self.inode, self.owner)
-            || metadata.mode() & 0o022 != 0
-        {
-            *self = Self::open(config)?;
-        }
-        for entry in rustix::fs::Dir::read_from(&self.handle)? {
+        let handle = match &self.verified {
+            Some((handle, saved))
+                if metadata.dev() == saved.dev()
+                    && metadata.ino() == saved.ino()
+                    && metadata.uid() == saved.uid()
+                    && metadata.mode() & 0o022 == 0 =>
+            {
+                handle
+            }
+            _ => {
+                let handle = directory(&self.path)?;
+                let saved = handle.metadata()?;
+                check_owner(config, &saved)?;
+                &self.verified.insert((handle, saved)).0
+            }
+        };
+        for entry in rustix::fs::Dir::read_from(handle)? {
             let entry = entry?;
             if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
                 return Ok(false);
@@ -276,8 +277,9 @@ mod ios_queue_tests {
         let state = state_dir(&config);
         let queue = state.join("commands");
         owned_dir(&config, &state).unwrap();
+        let mut probe = IdleCommandQueue::new(&config);
+        assert!(probe.is_empty(&config).unwrap());
         owned_dir(&config, &queue).unwrap();
-        let mut probe = IdleCommandQueue::open(&config).unwrap();
         assert!(probe.is_empty(&config).unwrap());
 
         let command = queue.join("first.json");

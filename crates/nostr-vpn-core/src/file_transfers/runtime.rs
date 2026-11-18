@@ -211,7 +211,7 @@ async fn run(
         .map(|state| state.id)
         .collect::<HashSet<_>>();
     #[cfg(target_os = "ios")]
-    let mut idle_queue = unix_storage::IdleCommandQueue::open(&config)?;
+    let mut idle_queue = unix_storage::IdleCommandQueue::new(&config);
     let mut pending_cleanup = fs::read_dir(state_dir(&config).join("sources"))?
         .filter_map(std::result::Result::ok)
         .filter_map(|entry| {
