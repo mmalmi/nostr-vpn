@@ -223,7 +223,7 @@ if "status.label" in transition or "status.value" in transition:
 if "unexpectedStatus.exists" not in transition or "NSCompoundPredicate" not in transition:
     raise SystemExit("route readiness does not reject errors in the same accessibility query")
 lifecycle = source.split("func testReleaseNetworkLifecycle() throws {", 1)[1].split(
-    "func testReleaseDisconnectCleanup() throws {", 1
+    "\n    }\n", 1
 )[0]
 teardown_blocks = lifecycle.split("addTeardownBlock", 2)
 if len(teardown_blocks) != 3:
