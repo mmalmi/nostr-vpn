@@ -13,10 +13,14 @@ scripts/**
 
 !vendor
 vendor/**
+!vendor/cashu-credit
+!vendor/cashu-credit/**
 !vendor/cashu-service
 !vendor/cashu-service/**
 !vendor/cdk-spilman
 !vendor/cdk-spilman/**
+!vendor/peer-payments
+!vendor/peer-payments/**
 
 !linux
 linux/**
