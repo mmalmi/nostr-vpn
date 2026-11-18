@@ -268,6 +268,27 @@ async fn local_hosts_and_loopback_names_work_without_a_dns_service() {
     );
 }
 
+#[tokio::test]
+async fn offline_direct_dns_can_be_captured_before_installing_the_overlay_listener() {
+    let files = Files::new();
+    let path = files.0.join("resolv.conf");
+    let offline = b"# No native resolver until the VPN is paired\n";
+    std::fs::write(&path, offline).unwrap();
+    let resolver = Arc::new(UnderlayDns {
+        source: native_source(path.clone()).unwrap(),
+        hosts: files.0.join("hosts"),
+    });
+    resolver.capture_direct_config(offline).unwrap();
+    std::fs::write(&path, b"# Managed by nvpn secure DNS\nnameserver 127.0.0.1\n").unwrap();
+    let snapshot = resolver.snapshot().unwrap();
+    assert!(snapshot.links.is_empty() && snapshot.fallback.is_empty());
+    assert_eq!(
+        resolver.resolve("example.test", 443).await.unwrap_err().kind(),
+        io::ErrorKind::NotFound
+    );
+    assert!(config::direct(b"nameserver invalid-address\n").is_err());
+}
+
 #[test]
 fn direct_dns_refreshes_external_changes_without_reading_the_owned_listener() {
     let files = Files::new();

@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn direct(bytes: &[u8]) -> io::Result<Snapshot> {
-    let (config, _) = resolv_conf::Config::parse_with_errors(bytes);
+    let (config, errors) = resolv_conf::Config::parse_with_errors(bytes);
     let mut options = ResolverOpts::default();
     options.ndots = config.ndots as usize;
     options.timeout = std::time::Duration::from_secs(u64::from(config.timeout));
@@ -36,8 +36,10 @@ pub(super) fn direct(bytes: &[u8]) -> io::Result<Snapshot> {
         };
         grouped.entry(interface).or_default().push(server);
     }
-    if grouped.is_empty() {
-        return Err(invalid("no native DNS servers are configured"));
+    // An offline host can install overlay DNS with no native upstream.
+    // An empty link set keeps underlay DNS lookups local and unsuccessful.
+    if grouped.is_empty() && !errors.is_empty() {
+        return Err(invalid("invalid native DNS configuration"));
     }
     let links = grouped
         .into_iter()
