@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.23 - 2026-11-18
+
+### Release notes
+
+- Your private exit node now appears in the exit picker. Update the device that
+  provides the exit node for this fix to take effect.
+- On Umbrel, secure DNS now explains when another service is using port 53.
+  If you use AdGuard Home, bind its DNS listener to the Umbrel LAN address and
+  leave loopback port 53 available for Nostr VPN.
+- An offline Linux device can start Nostr VPN and accept a pairing request
+  before it has an upstream DNS server.
+- On iOS, incoming file offers now use the peer list from the running VPN tunnel.
+- Desktop apps show progress while installing an update.
+
 ## 4.1.22 - 2026-11-14
 
 ### Release notes
