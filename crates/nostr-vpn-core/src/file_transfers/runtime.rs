@@ -210,6 +210,8 @@ async fn run(
         .filter(|state| !state.status.terminal())
         .map(|state| state.id)
         .collect::<HashSet<_>>();
+    #[cfg(target_os = "ios")]
+    let mut idle_queue = unix_storage::IdleCommandQueue::open(&config)?;
     let mut pending_cleanup = fs::read_dir(state_dir(&config).join("sources"))?
         .filter_map(std::result::Result::ok)
         .filter_map(|entry| {
@@ -322,7 +324,15 @@ async fn run(
             pending_cleanup.insert(job.state.id.clone());
             failures.push(job.state.clone());
         }
-        let mut commands = command_paths(&config)?
+        #[cfg(target_os = "ios")]
+        let paths = if idle_queue.is_empty(&config)? {
+            Vec::new()
+        } else {
+            command_paths(&config)?
+        };
+        #[cfg(not(target_os = "ios"))]
+        let paths = command_paths(&config)?;
+        let mut commands = paths
             .into_iter()
             .map(|path| {
                 let record = read_command(&config, &path);

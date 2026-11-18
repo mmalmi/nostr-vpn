@@ -152,6 +152,55 @@ pub(super) fn open_owned(config: &Path, path: &Path) -> Result<File> {
     Ok(file)
 }
 
+/// The iOS app and its share extension publish commands from separate processes.
+/// Probe the already-verified directory handle on idle ticks. A nonempty or
+/// replaced queue goes through the normal protected path walk before processing.
+#[cfg(any(target_os = "ios", all(test, target_os = "macos")))]
+pub(super) struct IdleCommandQueue {
+    path: PathBuf,
+    handle: File,
+    device: u64,
+    inode: u64,
+    owner: u32,
+}
+
+#[cfg(any(target_os = "ios", all(test, target_os = "macos")))]
+impl IdleCommandQueue {
+    pub(super) fn open(config: &Path) -> Result<Self> {
+        let path = state_dir(config).join("commands");
+        let handle = directory(&path)?;
+        let metadata = handle.metadata()?;
+        check_owner(config, &metadata)?;
+        Ok(Self {
+            path,
+            handle,
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            owner: metadata.uid(),
+        })
+    }
+
+    pub(super) fn is_empty(&mut self, config: &Path) -> Result<bool> {
+        let metadata = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error.into()),
+        };
+        if (metadata.dev(), metadata.ino(), metadata.uid()) != (self.device, self.inode, self.owner)
+            || metadata.mode() & 0o022 != 0
+        {
+            *self = Self::open(config)?;
+        }
+        for entry in rustix::fs::Dir::read_from(&self.handle)? {
+            let entry = entry?;
+            if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 pub(super) fn visit_names(
     config: &Path,
     path: &Path,
@@ -212,4 +261,44 @@ pub(super) fn remove(path: &Path, is_directory: bool) -> Result<()> {
         },
     )?;
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod ios_queue_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn idle_probe_follows_atomic_commands_and_directory_replacement() {
+        let root = std::env::temp_dir().join(format!("nvpn-idle-queue-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let config = root.join("config.toml");
+        let state = state_dir(&config);
+        let queue = state.join("commands");
+        owned_dir(&config, &state).unwrap();
+        owned_dir(&config, &queue).unwrap();
+        let mut probe = IdleCommandQueue::open(&config).unwrap();
+        assert!(probe.is_empty(&config).unwrap());
+
+        let command = queue.join("first.json");
+        write_atomic(&config, &command, b"{}").unwrap();
+        assert!(!probe.is_empty(&config).unwrap());
+        fs::remove_file(&command).unwrap();
+        assert!(probe.is_empty(&config).unwrap());
+
+        let old = state.join("old-commands");
+        fs::rename(&queue, &old).unwrap();
+        assert!(probe.is_empty(&config).unwrap());
+        owned_dir(&config, &queue).unwrap();
+        write_atomic(&config, &command, b"{}").unwrap();
+        assert!(!probe.is_empty(&config).unwrap());
+
+        fs::remove_file(&command).unwrap();
+        fs::set_permissions(&queue, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(probe.is_empty(&config).is_err());
+        fs::remove_dir(&queue).unwrap();
+        symlink(&old, &queue).unwrap();
+        assert!(probe.is_empty(&config).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
