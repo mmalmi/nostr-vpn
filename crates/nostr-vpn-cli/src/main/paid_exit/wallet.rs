@@ -18,7 +18,109 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
     let store_path = paid_route_store_file_path(&config_path);
     let json_output = args.json;
 
+    use crate::fips_private_mesh::credit::{self, Command as Credit};
     match args.command {
+        PaidExitWalletCommand::ConnectLightning => {
+            print_credit_command(&config_path, Credit::ConnectWallet).await
+        }
+        PaidExitWalletCommand::StopAutoCashout => {
+            print_credit_command(&config_path, Credit::AutoCashout { policy: None }).await
+        }
+        PaidExitWalletCommand::AutoCashout {
+            min_sat,
+            max_sat,
+            max_fee_sat,
+            interval_secs,
+        } => {
+            print_credit_command(
+                &config_path,
+                Credit::AutoCashout {
+                    policy: Some(fips_credit_link::AutoCashout {
+                        min_sat,
+                        max_sat,
+                        max_fee_sat,
+                        interval_secs,
+                    }),
+                },
+            )
+            .await
+        }
+        PaidExitWalletCommand::EnableCredit {
+            peers,
+            per_peer_sat,
+            total_sat,
+            trial_peer_sat,
+            trial_pool_sat,
+        } => {
+            let app = load_or_default_config(&config_path)?;
+            let trial = trial_peer_sat
+                .zip(trial_pool_sat)
+                .map(|(initial_peer_sat, pool_sat)| peer_payments::TrialPolicy {
+                    initial_peer_sat,
+                    pool_sat,
+                });
+            credit::initialize(
+                &data_dir,
+                &app.nostr.secret_key,
+                &peers,
+                total_sat,
+                per_peer_sat,
+                trial,
+            )?;
+            println!(
+                "{}",
+                json!({"enabled":true,"trusted_peers":peers.len(),"per_peer_sat":per_peer_sat,"total_sat":total_sat,"restart_tunnel":true})
+            );
+            Ok(())
+        }
+        PaidExitWalletCommand::OfferPayout { peer } => {
+            print_credit_command(&config_path, Credit::OfferPayout { peer }).await
+        }
+        PaidExitWalletCommand::CreditBalance => {
+            if !daemon_status(&config_path)?.running {
+                println!(
+                    "{}",
+                    json!({"available":false,"configured":data_dir.join(credit::JOURNAL).try_exists()?,"earned_credit_sat":null})
+                );
+                return Ok(());
+            }
+            print_credit_command(&config_path, Credit::Balance).await
+        }
+        PaidExitWalletCommand::PaymentStatus {
+            payment_hash,
+            own_wallet,
+        } => {
+            print_credit_command(
+                &config_path,
+                Credit::Status {
+                    payment_hash,
+                    own_wallet,
+                },
+            )
+            .await
+        }
+        PaidExitWalletCommand::BuyCreditExit {
+            provider,
+            bytes,
+            price_msat_per_gb,
+            max_amount_sat,
+            duration_secs,
+        } => {
+            print_credit_command(
+                &config_path,
+                Credit::BuyExit {
+                    provider,
+                    bytes,
+                    price_msat_per_gb,
+                    max_amount_sat,
+                    duration_secs,
+                },
+            )
+            .await
+        }
+        PaidExitWalletCommand::SettleCreditExit { agreement_id } => {
+            print_credit_command(&config_path, Credit::SettleExit { agreement_id }).await
+        }
         PaidExitWalletCommand::Show(show) => {
             let wallet_before = load_paid_route_store(&store_path)?.wallet;
             let overview = if show.refresh || show.activity || daemon_status(&config_path)?.running {
@@ -50,6 +152,20 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                 None
             };
 
+            let credit_balance =
+                if data_dir.join(credit::JOURNAL).try_exists()? && overview.is_some() {
+                    Some(
+                        daemon_cashu_wallet_request::<serde_json::Value>(
+                            &config_path,
+                            crate::cashu_wallet_daemon::DaemonCashuWalletCommand::PeerCredit {
+                                command: Credit::Balance,
+                            },
+                        )
+                        .await?,
+                    )
+                } else {
+                    None
+                };
             if json_output {
                 println!(
                     "{}",
@@ -60,6 +176,7 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                         "wallet": store.wallet,
                         "cashu": overview.as_ref().map(cashu_wallet_overview_json),
                         "offline": overview.is_none(),
+                        "peer_credit": credit_balance,
                         "activity": activity,
                     }))?
                 );
@@ -67,6 +184,11 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
                 println!("store: {} changed={changed}", store_path.display());
                 println!("data_dir: {}", data_dir.display());
                 print_paid_exit_wallet(&store);
+                if let Some(credit) = credit_balance
+                    && let Some(sat) = credit["earned_credit_sat"].as_u64()
+                {
+                    println!("Earned credit: {sat} sat");
+                }
                 if let Some(overview) = &overview {
                     print_cashu_wallet_overview(overview);
                 } else {
@@ -244,7 +366,50 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
             }
             Ok(())
         }
-        PaidExitWalletCommand::Withdraw(withdraw) => {
+        PaidExitWalletCommand::Withdraw(mut withdraw) => {
+            if withdraw.invoice == "-" {
+                use std::io::Read;
+                let mut raw = String::new();
+                std::io::stdin().take(32769).read_to_string(&mut raw)?;
+                anyhow::ensure!(raw.len() <= 32768, "invoice input too long");
+                if withdraw.confirm_credit.as_deref() == Some("-") {
+                    #[derive(serde::Deserialize)]
+                    #[serde(deny_unknown_fields)]
+                    struct Confirmation {
+                        invoice: String,
+                        quote: fips_credit_link::InvoiceQuote,
+                    }
+                    let confirmation: Confirmation = serde_json::from_str(&raw)?;
+                    withdraw.invoice = confirmation.invoice;
+                    withdraw.confirm_credit = Some(serde_json::to_string(&confirmation.quote)?);
+                } else {
+                    withdraw.invoice = raw.trim().to_owned();
+                }
+            }
+            if let Some(raw) = withdraw.confirm_credit {
+                let quote = serde_json::from_str(&raw)
+                    .context("expected the exact quote object from review")?;
+                return print_credit_command(
+                    &config_path,
+                    Credit::Confirm {
+                        invoice: withdraw.invoice,
+                        quote,
+                        own_wallet: withdraw.own_wallet,
+                    },
+                )
+                .await;
+            }
+            if withdraw.credit
+                || (withdraw.mint.is_none() && data_dir.join(credit::JOURNAL).try_exists()?)
+            {
+                return print_credit_command(
+                    &config_path,
+                    Credit::Quote {
+                        invoice: withdraw.invoice,
+                    },
+                )
+                .await;
+            }
             let mint = paid_exit_wallet_mint(
                 &load_paid_route_store(&store_path)?,
                 withdraw.mint.as_deref(),
@@ -721,4 +886,17 @@ mod paid_exit_wallet_tests {
 
         assert!(error.to_string().contains("No mint configured"));
     }
+}
+
+async fn print_credit_command(
+    path: &Path,
+    command: crate::fips_private_mesh::credit::Command,
+) -> Result<()> {
+    let result = daemon_cashu_wallet_request::<serde_json::Value>(
+        path,
+        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::PeerCredit { command },
+    )
+    .await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    Ok(())
 }

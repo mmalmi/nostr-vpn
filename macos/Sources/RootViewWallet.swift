@@ -153,6 +153,7 @@ extension RootView {
                 }
             }
 
+            WalletCreditAccountView(configPath: state.configPath)
             paidRouteWalletActionResult(wallet.lastAction)
             paidRouteWalletHistory(wallet.history)
         }

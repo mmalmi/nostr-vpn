@@ -107,6 +107,8 @@ pub struct FipsEndpointSourceAdmitter<'a> {
     runtime: &'a FipsMeshRuntime,
     peer: &'a FipsMeshPeerRuntime,
     credit_session: bool,
+    #[cfg(feature = "peer-credit")]
+    credit_window: Option<&'a CreditWindow>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -118,7 +120,9 @@ pub struct FipsEndpointAdmissionCache {
 #[derive(Debug, Clone)]
 pub struct FipsMeshRuntime {
     #[cfg(feature = "peer-credit")]
-    credit_allowances: HashMap<[u8; 32], (String, Arc<Mutex<peer_payments::Allowance>>)>,
+    credit_allowances: HashMap<[u8; 32], Arc<CreditWindow>>,
+    #[cfg(feature = "peer-credit")]
+    credit_snapshot_active: Arc<std::sync::atomic::AtomicBool>,
     peers: Vec<FipsMeshPeerRuntime>,
     local_routes: Vec<IpRoute>,
     paid_route_admissions: HashMap<[u8; 32], FipsPaidRouteAdmission>,
@@ -281,6 +285,8 @@ impl FipsMeshRuntime {
         Self {
             #[cfg(feature = "peer-credit")]
             credit_allowances: HashMap::new(),
+            #[cfg(feature = "peer-credit")]
+            credit_snapshot_active: Arc::new(true.into()),
             peers,
             local_routes,
             paid_route_admissions,
@@ -303,6 +309,9 @@ impl FipsMeshRuntime {
         self.exit_flows = Arc::clone(&previous.exit_flows);
         #[cfg(feature = "peer-credit")]
         {
+            previous
+                .credit_snapshot_active
+                .store(false, std::sync::atomic::Ordering::Release);
             self.credit_allowances = previous.credit_allowances.clone();
         }
     }
@@ -311,6 +320,12 @@ impl FipsMeshRuntime {
         &mut self,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) {
+        #[cfg(feature = "peer-credit")]
+        {
+            self.credit_snapshot_active
+                .store(false, std::sync::atomic::Ordering::Release);
+            self.credit_snapshot_active = Arc::new(true.into());
+        }
         self.paid_route_admissions = normalize_paid_route_admissions(paid_route_admissions);
         self.paid_route_destination_routes =
             paid_route_destination_routes_from_admissions(&self.paid_route_admissions);
@@ -379,14 +394,23 @@ impl FipsMeshRuntime {
         source_node_addr: &[u8; 16],
     ) -> Option<FipsEndpointSourceAdmitter<'a>> {
         let peer = self.peer_for_endpoint_node_addr(source_node_addr)?;
+        let credit = peer.participant_pubkey.as_ref().and_then(|key| {
+            self.paid_route_admissions
+                .get(key)
+                .filter(|a| a.session_id.starts_with(CREDIT_SESSION_PREFIX))
+                .map(|a| (key, a))
+        });
         Some(FipsEndpointSourceAdmitter {
             runtime: self,
             peer,
-            credit_session: peer
-                .participant_pubkey
-                .as_ref()
-                .and_then(|key| self.paid_route_admissions.get(key))
-                .is_some_and(|a| a.session_id.starts_with(CREDIT_SESSION_PREFIX)),
+            credit_session: credit.is_some(),
+            #[cfg(feature = "peer-credit")]
+            credit_window: credit.and_then(|(key, a)| {
+                self.credit_allowances
+                    .get(key)
+                    .filter(|w| w.session == a.session_id)
+                    .map(AsRef::as_ref)
+            }),
         })
     }
 
@@ -681,7 +705,7 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         {
             return None;
         }
-        if self.credit_session && !self.runtime.admit_credit_packet(self.peer, data.len()) {
+        if self.credit_session && !self.admit_credit_packet(data.len()) {
             return None;
         }
         Some(self.peer)

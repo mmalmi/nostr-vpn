@@ -1,0 +1,15 @@
+[package]
+name = "fips-credit-link"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+description = "Private invoice quotes and peer-credit settlement over authenticated FIPS sessions"
+
+[dependencies]
+nvpn-fips-core = { version = "=0.4.123" }
+peer-payments = { version = "=0.1.0", path = "../peer-payments" }
+rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "sync", "time"] }

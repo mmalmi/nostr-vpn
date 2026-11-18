@@ -10,7 +10,7 @@ members = [
   "vendor/cashu-service",
   "vendor/cdk-spilman",
 ]
-exclude = ["linux", "vendor/peer-payments", "vendor/cashu-credit"]
+exclude = ["linux", "vendor/peer-payments", "vendor/cashu-credit", "vendor/fips-credit-link"]
 default-members = [
   "crates/nostr-vpn-app-core",
   "crates/nostr-vpn-app-core/uniffi-bindgen",

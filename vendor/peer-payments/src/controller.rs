@@ -54,8 +54,8 @@ pub struct Opened {
 /// Borrow one durable account and its existing Nostr-compatible identity for a
 /// control operation. Every outgoing obligation follows a successful commit.
 pub struct Controller<'a> {
-    store: &'a mut AccountStore,
-    key: &'a Keypair,
+    pub(crate) store: &'a mut AccountStore,
+    pub(crate) key: &'a Keypair,
 }
 
 impl<'a> Controller<'a> {
@@ -73,11 +73,19 @@ impl<'a> Controller<'a> {
         if terms.provider != self.store.book().owner() {
             return Err(Error::Authentication);
         }
-        if !self.store.book().seller().accepts(&terms.payer) {
+        let seller = self.store.book().seller();
+        if !seller.accepts(&terms.payer) {
             return Err(Error::NotAccepted);
         }
         if terms.created_at > now || terms.expires_at <= now {
             return Err(Error::Expired);
+        }
+        match seller.agreement(&terms.id) {
+            Some(old) if old != &terms => return Err(Error::Conflict),
+            None if terms.max_amount_sat > seller.available_credit_sat(&terms.payer)? => {
+                return Err(Error::Limit);
+            }
+            _ => {}
         }
         let signature = sign_message(self.key, &WireMessage::Agreement(terms.clone()))?;
         Ok(Signed {
@@ -227,12 +235,15 @@ impl<'a> Controller<'a> {
     deny_unknown_fields
 )]
 pub enum ControlMessage {
+    Usage { agreement_id: String, units: u64 },
     Offer(Signed<Agreement>),
     Acceptance(Signed<Agreement>),
     Receipt(Signed<Receipt>),
     Acknowledgement(Signed<Receipt>),
     NettingProposal(Signed<Netting>),
     NettingAcknowledgement(Signed<Netting>),
+    RedemptionRequest(Signed<crate::redemption::Redemption>),
+    RedemptionPaid(Signed<crate::redemption::RedemptionProof>),
 }
 
 impl ControlMessage {

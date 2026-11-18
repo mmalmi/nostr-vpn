@@ -2045,6 +2045,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "fips-credit-link"
+version = "0.1.0"
+dependencies = [
+ "nvpn-fips-core",
+ "peer-payments",
+ "rand 0.10.1",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4212,6 +4224,7 @@ dependencies = [
  "dbus",
  "dbus-crossroads",
  "dirs 6.0.0",
+ "fips-credit-link",
  "futures-util",
  "hex",
  "hickory-proto",
@@ -4236,6 +4249,7 @@ dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
  "nvpn-igd-next",
+ "peer-payments",
  "plist",
  "qrcode",
  "rand 0.9.4",
@@ -4831,6 +4845,7 @@ version = "0.1.0"
 dependencies = [
  "cashu-credit 0.3.1",
  "fs2",
+ "lightning-invoice",
  "nostr-social-graph",
  "rusqlite",
  "secp256k1 0.29.1",

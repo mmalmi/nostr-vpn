@@ -38,6 +38,15 @@ impl Default for Limits {
     }
 }
 
+/// Opt-in risk budget for authenticated peers outside the manual allowlist.
+/// A local, wallet-confirmed repayment raises only that debtor's ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrialPolicy {
+    pub initial_peer_sat: u64,
+    pub pool_sat: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Exposure {
     pub outstanding_sat: u64,
@@ -122,6 +131,14 @@ impl Record {
     fn amount(&self) -> Result<u64, Error> {
         self.agreement.amount_for(self.units())
     }
+    fn exposure_sat(&self) -> Result<u64, Error> {
+        let ceiling = if self.closed() {
+            self.amount()?
+        } else {
+            self.agreement.max_amount_sat
+        };
+        ceiling.checked_sub(self.cleared_sat).ok_or(Error::Conflict)
+    }
     fn grant(&self) -> Result<Grant, Error> {
         Ok(Grant {
             agreement: self.agreement.clone(),
@@ -141,6 +158,8 @@ pub struct Book {
     provider: String,
     limits: Limits,
     accepted: BTreeSet<String>,
+    trial: Option<TrialPolicy>,
+    trial_repaid: BTreeMap<String, u64>,
     records: BTreeMap<String, Record>,
     accounts: BTreeMap<String, CreditAccount>,
     revision: u64,
@@ -153,6 +172,10 @@ struct Snapshot {
     provider: String,
     limits: Limits,
     accepted: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trial: Option<TrialPolicy>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    trial_repaid: BTreeMap<String, u64>,
     records: BTreeMap<String, Record>,
     accounts: BTreeMap<String, CreditAccountSnapshotV1>,
     revision: u64,
@@ -191,6 +214,8 @@ impl Book {
             provider: provider.into(),
             limits,
             accepted: peers,
+            trial: None,
+            trial_repaid: BTreeMap::new(),
             records: BTreeMap::new(),
             accounts: BTreeMap::new(),
             revision: 0,
@@ -204,12 +229,111 @@ impl Book {
         self.revision
     }
 
+    pub fn agreement(&self, id: &str) -> Option<&Agreement> {
+        self.records.get(id).map(|r| &r.agreement)
+    }
+
+    pub fn accepted_receipt(&self, id: &str) -> Option<&Signed<Receipt>> {
+        self.records.get(id)?.receipt.as_ref()
+    }
+
     pub fn enabled(&self) -> bool {
         self.limits.enabled
     }
 
     pub fn accepts(&self, peer: &str) -> bool {
-        self.limits.enabled && self.accepted.contains(peer)
+        self.credit_limit_sat(peer) > 0
+    }
+
+    pub fn with_trial_policy(mut self, policy: TrialPolicy) -> Result<Self, Error> {
+        self.set_trial_policy(Some(policy))?;
+        Ok(self)
+    }
+
+    pub fn trial_policy(&self) -> Option<TrialPolicy> {
+        self.trial
+    }
+
+    pub(crate) fn set_trial_policy(&mut self, policy: Option<TrialPolicy>) -> Result<(), Error> {
+        if policy.is_some_and(|p| {
+            p.initial_peer_sat == 0
+                || p.initial_peer_sat > self.limits.max_peer_exposure_sat
+                || p.initial_peer_sat > p.pool_sat
+                || p.pool_sat > self.limits.max_total_exposure_sat
+        }) {
+            return Err(Error::Invalid("trial credit limits"));
+        }
+        if self.trial != policy {
+            self.revision = add(self.revision, 1)?;
+            self.trial = policy;
+            for r in self
+                .records
+                .values()
+                .filter(|r| self.trial_repaid.contains_key(&r.agreement.payer))
+            {
+                r.revoked.store(true, Ordering::Release);
+            }
+        }
+        Ok(())
+    }
+
+    /// Local per-issuer ceiling before deducting outstanding grants.
+    pub fn credit_limit_sat(&self, peer: &str) -> u64 {
+        if !self.limits.enabled || peer == self.provider {
+            return 0;
+        }
+        if self.accepted.contains(peer) {
+            return self.limits.max_peer_exposure_sat;
+        }
+        let Some(policy) = self.trial else { return 0 };
+        let repaid = match self.trial_repaid.get(peer) {
+            Some(value) => *value,
+            None if self.trial_repaid.len() + self.accepted.len() < self.limits.max_peers => 0,
+            None => return 0,
+        };
+        policy
+            .initial_peer_sat
+            .saturating_add(repaid)
+            .min(self.limits.max_peer_exposure_sat)
+    }
+
+    /// Remaining amount that can be reserved by one new service agreement.
+    pub fn available_credit_sat(&self, peer: &str) -> Result<u64, Error> {
+        let limit = self.credit_limit_sat(peer);
+        if limit == 0 || self.records.len() >= self.limits.max_agreements {
+            return Ok(0);
+        }
+        let trial = !self.accepted.contains(peer);
+        let (mut total, mut peer_exposure, mut trial_exposure) = (0, 0, 0);
+        for record in self.records.values() {
+            let amount = record.exposure_sat()?;
+            total = add(total, amount)?;
+            if record.agreement.payer == peer {
+                peer_exposure = add(peer_exposure, amount)?;
+            }
+            if trial && self.trial_repaid.contains_key(&record.agreement.payer) {
+                trial_exposure = add(trial_exposure, amount)?;
+            }
+        }
+        let remaining = limit
+            .saturating_sub(peer_exposure)
+            .min(self.limits.max_total_exposure_sat.saturating_sub(total));
+        Ok(if trial {
+            remaining.min(
+                self.trial
+                    .map_or(0, |p| p.pool_sat.saturating_sub(trial_exposure)),
+            )
+        } else {
+            remaining
+        })
+    }
+
+    pub(crate) fn record_wallet_repayment(&mut self, peer: &str, sat: u64) {
+        if let Some(repaid) = self.trial_repaid.get_mut(peer) {
+            *repaid = repaid
+                .saturating_add(sat)
+                .min(self.limits.max_peer_exposure_sat);
+        }
     }
 
     /// Disabling stops new grants and revokes every installed window. Re-enabling
@@ -299,20 +423,13 @@ impl Book {
             }
             return old.grant();
         }
-        if !self.limits.enabled || !self.accepted.contains(&agreement.payer) {
+        if !self.accepts(&agreement.payer) {
             return Err(Error::NotAccepted);
         }
         if agreement.expires_at <= now || agreement.created_at > now {
             return Err(Error::Expired);
         }
-        if self.records.len() >= self.limits.max_agreements
-            || add(self.exposure()?.total_sat, agreement.max_amount_sat)?
-                > self.limits.max_total_exposure_sat
-            || add(
-                self.exposure_for(Some(&agreement.payer))?.total_sat,
-                agreement.max_amount_sat,
-            )? > self.limits.max_peer_exposure_sat
-        {
+        if agreement.max_amount_sat > self.available_credit_sat(&agreement.payer)? {
             return Err(Error::Limit);
         }
         let next = add(self.revision, 1)?;
@@ -326,6 +443,11 @@ impl Book {
             revoked: Arc::new(AtomicBool::new(false)),
         };
         let grant = record.grant()?;
+        if !self.accepted.contains(&agreement.payer) {
+            self.trial_repaid
+                .entry(agreement.payer.clone())
+                .or_insert(0);
+        }
         self.records.insert(agreement.id.clone(), record);
         self.revision = next;
         Ok(grant)
@@ -528,6 +650,8 @@ impl Book {
             provider: self.provider.clone(),
             limits: self.limits.clone(),
             accepted: self.accepted.clone(),
+            trial: self.trial,
+            trial_repaid: self.trial_repaid.clone(),
             records: self.records.clone(),
             revision: self.revision,
             accounts: self
@@ -554,10 +678,26 @@ impl Book {
             return Err(Error::Invalid("snapshot version"));
         }
         let mut book = Self::new(&snapshot.provider, snapshot.limits, snapshot.accepted)?;
+        book.set_trial_policy(snapshot.trial)?;
+        if snapshot.trial_repaid.len() + book.accepted.len() > book.limits.max_peers {
+            return Err(Error::Limit);
+        }
+        for (id, repaid) in &snapshot.trial_repaid {
+            identifier(id)?;
+            if id == &book.provider
+                || book.accepted.contains(id)
+                || *repaid > book.limits.max_peer_exposure_sat
+            {
+                return Err(Error::Invalid("trial peer"));
+            }
+        }
+        book.trial_repaid = snapshot.trial_repaid;
         book.records = snapshot.records;
         book.revision = snapshot.revision;
         for (id, snapshot) in snapshot.accounts {
-            if !book.accepted.contains(&id) || snapshot.counterparty() != book.provider {
+            if !(book.accepted.contains(&id) || book.trial_repaid.contains_key(&id))
+                || snapshot.counterparty() != book.provider
+            {
                 return Err(Error::Invalid("account identity"));
             }
             let account = CreditAccount::from_snapshot(snapshot)?;
@@ -585,7 +725,8 @@ impl Book {
             record.agreement.validate()?;
             if *id != record.agreement.id
                 || record.agreement.provider != book.provider
-                || !book.accepted.contains(&record.agreement.payer)
+                || !(book.accepted.contains(&record.agreement.payer)
+                    || book.trial_repaid.contains_key(&record.agreement.payer))
                 || record.reserved_units > record.agreement.max_units
                 || record.units() > record.reserved_units
                 || record.cleared_sat > record.amount()?
@@ -608,7 +749,7 @@ impl Book {
                 }
             }
         }
-        for peer in &book.accepted {
+        for peer in book.accepted.iter().chain(book.trial_repaid.keys()) {
             let exposure = book.exposure_for(Some(peer))?;
             if exposure.total_sat > book.limits.max_peer_exposure_sat
                 || exposure.outstanding_sat != book.outstanding_sat(peer)?

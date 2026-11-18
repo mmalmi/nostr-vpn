@@ -77,6 +77,24 @@ impl Buyer {
             revision: 0,
         })
     }
+    pub fn agreement(&self, id: &str) -> Option<&Agreement> {
+        self.purchases.get(id).map(|p| &p.agreement)
+    }
+
+    pub fn authorized_receipt(&self, id: &str) -> Option<&Receipt> {
+        self.purchases.get(id)?.authorized_receipt.as_ref()
+    }
+
+    /// Final receipts awaiting their provider's acknowledgment, bounded by
+    /// the local maximum number of agreements. Re-sign these exact terms.
+    pub fn pending_receipts(&self) -> impl Iterator<Item = &Receipt> {
+        self.purchases
+            .values()
+            .filter(|p| p.completion.is_none())
+            .filter_map(|p| p.authorized_receipt.as_ref())
+            .filter(|r| r.final_receipt)
+    }
+
     pub fn payer(&self) -> &str {
         &self.payer
     }
