@@ -28,7 +28,10 @@ impl DesktopPlatform {
 pub enum UpdateStep {
     Idle,
     Fetching,
-    Downloading { received: u64, total: Option<u64> },
+    Downloading {
+        received: u64,
+        total: Option<u64>,
+    },
     Verifying,
     Installing,
     Restarting,
@@ -112,7 +115,10 @@ pub fn install_label(platform: DesktopPlatform) -> &'static str {
 }
 
 #[must_use]
-pub fn desktop_update_view(snapshot: &UpdateSnapshot, platform: DesktopPlatform) -> DesktopUpdateView {
+pub fn desktop_update_view(
+    snapshot: &UpdateSnapshot,
+    platform: DesktopPlatform,
+) -> DesktopUpdateView {
     let version = display_version(&snapshot.version);
     let mut view = DesktopUpdateView {
         step: step_name(&snapshot.step).to_string(),

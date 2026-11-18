@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -182,7 +182,10 @@ fn install_shows_every_step_then_restarts_and_reports_the_result_after_relaunch(
     );
     let idle = harness.view(DesktopPlatform::Macos);
     assert!(!idle.active && !idle.busy);
-    assert_eq!((idle.primary_action.as_str(), idle.primary_label.as_str()), ("install", "Install"));
+    assert_eq!(
+        (idle.primary_action.as_str(), idle.primary_label.as_str()),
+        ("install", "Install")
+    );
 
     harness.flow.start(&harness.request);
     let fetching = harness.wait_for("Finding the update…");
@@ -206,7 +209,10 @@ fn install_shows_every_step_then_restarts_and_reports_the_result_after_relaunch(
     let restarting = harness.advance_to("Restarting to finish the update…");
     assert!(restarting.busy && restarting.quit);
     assert!(restarting.download_path.ends_with(".verified"));
-    assert!(harness.marker().exists(), "the relaunched app needs the marker");
+    assert!(
+        harness.marker().exists(),
+        "the relaunched app needs the marker"
+    );
 
     let relaunched = UpdateFlow::new(harness.backend.clone(), Timeouts::default());
     let mut new_version = harness.request.clone();
@@ -238,7 +244,10 @@ fn an_install_that_did_not_finish_offers_retry_and_the_download_after_relaunch()
     // The fake download path does not exist on disk, so only the website is offered.
     let view = desktop_update_view(&snapshot, DesktopPlatform::Macos);
     assert_eq!(view.title, "The update to v4.1.23 didn't finish.");
-    assert_eq!((view.primary_action.as_str(), view.primary_label.as_str()), ("retry", "Retry"));
+    assert_eq!(
+        (view.primary_action.as_str(), view.primary_label.as_str()),
+        ("retry", "Retry")
+    );
     assert_eq!(view.secondary_label, "Download page");
 
     let with_file = UpdateSnapshot {
@@ -247,7 +256,10 @@ fn an_install_that_did_not_finish_offers_retry_and_the_download_after_relaunch()
     };
     let windows = desktop_update_view(&with_file, DesktopPlatform::Windows);
     assert_eq!(
-        (windows.secondary_action.as_str(), windows.secondary_label.as_str()),
+        (
+            windows.secondary_action.as_str(),
+            windows.secondary_label.as_str()
+        ),
         ("open_installer", "Open installer")
     );
     let mac = desktop_update_view(&with_file, DesktopPlatform::Macos);
@@ -332,15 +344,23 @@ fn each_failed_step_says_what_went_wrong() {
         }],
         quick_timeouts(),
     );
-    damaged.backend.verify.lock().unwrap().push(Err(StepError::new(
-        UpdateFailure::Damaged,
-        "codesign failed",
-    )));
+    damaged
+        .backend
+        .verify
+        .lock()
+        .unwrap()
+        .push(Err(StepError::new(
+            UpdateFailure::Damaged,
+            "codesign failed",
+        )));
     damaged.flow.start(&damaged.request);
     damaged.wait_for("Finding the update…");
     damaged.advance_to("Downloading v4.1.23… 0.0 MB");
     let view = damaged.advance_to("The download was damaged, so it wasn't installed.");
-    assert_eq!(view.secondary_label, "Download page", "never offer a damaged file");
+    assert_eq!(
+        view.secondary_label, "Download page",
+        "never offer a damaged file"
+    );
 
     let read_only = Harness::new(
         vec![Script {
@@ -349,16 +369,23 @@ fn each_failed_step_says_what_went_wrong() {
         }],
         quick_timeouts(),
     );
-    read_only.backend.install.lock().unwrap().push(Err(StepError::new(
-        UpdateFailure::NoPermission,
-        "/Applications is not writable",
-    )));
+    read_only
+        .backend
+        .install
+        .lock()
+        .unwrap()
+        .push(Err(StepError::new(
+            UpdateFailure::NoPermission,
+            "/Applications is not writable",
+        )));
     read_only.flow.start(&read_only.request);
     read_only.wait_for("Finding the update…");
     read_only.advance_to("Downloading v4.1.23… 0.0 MB");
     let view = read_only.advance_to("Nostr VPN can't replace itself in this folder.");
     assert_eq!(view.secondary_label, "Show in Finder");
-    read_only.flow.perform(&view.secondary_action, &read_only.request);
+    read_only
+        .flow
+        .perform(&view.secondary_action, &read_only.request);
     assert_eq!(
         read_only.backend.opened.lock().unwrap().as_slice(),
         [(
@@ -403,7 +430,10 @@ fn linux_stops_at_a_verified_download_the_user_installs() {
         .lock()
         .unwrap()
         .push(Ok(InstallOutcome::Downloaded));
-    assert_eq!(harness.view(DesktopPlatform::Linux).primary_label, "Download update");
+    assert_eq!(
+        harness.view(DesktopPlatform::Linux).primary_label,
+        "Download update"
+    );
     harness.flow.start(&harness.request);
     harness.wait_for("Finding the update…");
     harness.advance_to("Downloading v4.1.23… 0.0 MB");
@@ -480,7 +510,10 @@ mod macos_swap {
         reaper.join().unwrap().unwrap();
         assert!(status.success());
         assert!(started.elapsed() >= Duration::from_millis(500));
-        assert_eq!(fs::read_to_string(current.join("Contents/version")).unwrap(), "new");
+        assert_eq!(
+            fs::read_to_string(current.join("Contents/version")).unwrap(),
+            "new"
+        );
         assert!(!staged.exists() && !dir.join("Nostr VPN.app.previous").exists());
         fs::remove_dir_all(dir).unwrap();
     }
@@ -505,7 +538,10 @@ mod macos_swap {
         running.kill().unwrap();
         running.wait().unwrap();
         assert!(!status.success());
-        assert_eq!(fs::read_to_string(current.join("Contents/version")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(current.join("Contents/version")).unwrap(),
+            "old"
+        );
         assert!(!staged.exists());
         fs::remove_dir_all(dir).unwrap();
     }
@@ -521,7 +557,10 @@ mod macos_swap {
         let error = install_bundle(&new_app, &current, std::process::id()).unwrap_err();
         fs::set_permissions(&apps, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(error.failure, UpdateFailure::NoPermission);
-        assert_eq!(fs::read_to_string(current.join("Contents/version")).unwrap(), "old");
+        assert_eq!(
+            fs::read_to_string(current.join("Contents/version")).unwrap(),
+            "old"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 }

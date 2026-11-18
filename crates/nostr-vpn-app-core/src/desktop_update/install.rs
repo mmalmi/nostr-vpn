@@ -13,8 +13,7 @@ use nostr_vpn_core::updater::{
 };
 
 use super::flow::{
-    DownloadResult, InstallOutcome, Progress, ProgressSink, StepError, UpdateBackend,
-    UpdateRequest,
+    DownloadResult, InstallOutcome, Progress, ProgressSink, StepError, UpdateBackend, UpdateRequest,
 };
 use super::view::{
     ACTION_OPEN_INSTALLER, ACTION_OPEN_WEBSITE, ACTION_SHOW_FILE, RELEASES_URL, UpdateFailure,
@@ -69,10 +68,12 @@ impl UpdateBackend for SystemBackend {
             on_event,
         ) {
             Ok(VerifiedAppDownload::UpToDate { tag }) => Ok(DownloadResult::UpToDate { tag }),
-            Ok(VerifiedAppDownload::Downloaded { release, path }) => Ok(DownloadResult::Downloaded {
-                tag: release.tag,
-                path,
-            }),
+            Ok(VerifiedAppDownload::Downloaded { release, path }) => {
+                Ok(DownloadResult::Downloaded {
+                    tag: release.tag,
+                    path,
+                })
+            }
             Err(error) => {
                 let failure = if found.load(Ordering::SeqCst) {
                     UpdateFailure::DownloadFailed
@@ -105,7 +106,10 @@ impl UpdateBackend for SystemBackend {
 fn download_dir() -> PathBuf {
     std::env::var_os("NVPN_UPDATE_DOWNLOAD_DIR")
         .filter(|value| !value.is_empty())
-        .map_or_else(|| std::env::temp_dir().join("NostrVpnDownloads"), PathBuf::from)
+        .map_or_else(
+            || std::env::temp_dir().join("NostrVpnDownloads"),
+            PathBuf::from,
+        )
 }
 
 fn damaged(detail: impl Into<String>) -> StepError {
@@ -167,7 +171,7 @@ pub(super) mod platform {
     use std::os::unix::process::CommandExt;
 
     use super::{
-        Command, InstallOutcome, OsStr, Path, PathBuf, StepError, Stdio, UpdateFailure, damaged,
+        Command, InstallOutcome, OsStr, Path, PathBuf, Stdio, StepError, UpdateFailure, damaged,
         dir_writable, file_name, fs, install_failed, run,
     };
 
@@ -205,10 +209,8 @@ fi
         if !name.ends_with(".app.tar.gz") {
             return Err(damaged(format!("Expected a macOS app archive, got {name}")));
         }
-        let unpack = download.with_file_name(format!(
-            "{}-unpacked",
-            name.trim_end_matches(".app.tar.gz")
-        ));
+        let unpack =
+            download.with_file_name(format!("{}-unpacked", name.trim_end_matches(".app.tar.gz")));
         let _ = fs::remove_dir_all(&unpack);
         fs::create_dir_all(&unpack).map_err(|error| install_failed(error.to_string()))?;
         run(
@@ -221,8 +223,8 @@ fi
             ],
         )
         .map_err(damaged)?;
-        let app = find_app_bundle(&unpack)
-            .ok_or_else(|| damaged("The archive has no Nostr VPN app"))?;
+        let app =
+            find_app_bundle(&unpack).ok_or_else(|| damaged("The archive has no Nostr VPN app"))?;
         run(
             "/usr/bin/codesign",
             &[
@@ -237,9 +239,7 @@ fi
             if let Some(team) = team_identifier(&current)
                 && team_identifier(&app).as_deref() != Some(team.as_str())
             {
-                return Err(damaged(format!(
-                    "The new app is not signed by team {team}"
-                )));
+                return Err(damaged(format!("The new app is not signed by team {team}")));
             }
             let expected = bundle_identifier(&current);
             if expected.is_some() && bundle_identifier(&app) != expected {
@@ -352,7 +352,7 @@ pub(super) mod platform {
     use std::os::windows::process::CommandExt;
 
     use super::{
-        Command, InstallOutcome, OsStr, Path, PathBuf, StepError, Stdio, damaged, file_name, fs,
+        Command, InstallOutcome, OsStr, Path, PathBuf, Stdio, StepError, damaged, file_name, fs,
         install_failed, read_magic,
     };
 

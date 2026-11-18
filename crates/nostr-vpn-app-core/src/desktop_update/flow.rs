@@ -144,7 +144,9 @@ impl UpdateFlow {
     pub fn snapshot(&self) -> UpdateSnapshot {
         let mut inner = lock(&self.inner);
         if inner.snapshot.step == UpdateStep::Updated
-            && inner.updated_until.is_some_and(|until| Instant::now() >= until)
+            && inner
+                .updated_until
+                .is_some_and(|until| Instant::now() >= until)
         {
             inner.snapshot = UpdateSnapshot::default();
             inner.updated_until = None;
@@ -418,5 +420,7 @@ fn is_busy(step: &UpdateStep) -> bool {
 }
 
 fn lock(inner: &Mutex<Inner>) -> MutexGuard<'_, Inner> {
-    inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    inner
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }

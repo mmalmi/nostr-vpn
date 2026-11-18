@@ -191,4 +191,74 @@ public sealed partial class AppViewModel
             ExitDnsThroughExitServers = ExitDnsThroughExitServers,
         }), "Saving Exit DNS");
     }
+
+    public Task SetLaunchOnStartupAsync(bool enabled)
+    {
+        try
+        {
+            StartupService.SetLaunchOnStartup(enabled);
+        }
+        catch (Exception error)
+        {
+            Notice = error.Message;
+            return Task.CompletedTask;
+        }
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { LaunchOnStartup = enabled }),
+            "Saving startup");
+    }
+
+    private void SyncLaunchOnStartupRegistration()
+    {
+        try
+        {
+            StartupService.SyncLaunchOnStartup(State.StartupSettingsSupported && State.LaunchOnStartup);
+        }
+        catch (Exception error)
+        {
+            Notice = error.Message;
+        }
+    }
+
+    public Task SetCloseToTrayAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { CloseToTrayOnClose = enabled }),
+            "Saving tray behavior");
+    }
+
+    public Task SetAutoconnectAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { Autoconnect = enabled }),
+            "Saving VPN option");
+    }
+
+    public Task SetFipsHostTunnelAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { FipsHostTunnelEnabled = enabled }),
+            "Saving FIPS option");
+    }
+
+    public Task SetConnectToNonRosterFipsPeersAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { ConnectToNonRosterFipsPeers = enabled }),
+            "Saving FIPS option");
+    }
+
+    public Task SetFipsNostrDiscoveryEnabledAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { FipsNostrDiscoveryEnabled = enabled }),
+            "Saving FIPS option");
+    }
+
+    public Task SetFipsBootstrapEnabledAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { FipsBootstrapEnabled = enabled }),
+            "Saving FIPS option");
+    }
 }

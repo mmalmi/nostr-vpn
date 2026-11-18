@@ -199,6 +199,8 @@ pub(crate) use crate::platform_routing::*;
 pub(crate) use crate::service_management::parse_nonzero_pid;
 #[cfg(any(target_os = "windows", test))]
 pub(crate) use crate::service_management::windows_should_apply_config_via_service;
+#[cfg(any(target_os = "macos", test))]
+pub(crate) use crate::service_management::xml_escape;
 #[cfg(test)]
 pub(crate) use crate::service_management::{
     WindowsServiceState, WindowsServiceStopAction, windows_command_line_argv,
@@ -211,8 +213,6 @@ pub(crate) use crate::service_management::{
     linux_service_executable_path_from_unit_contents, linux_service_status_from_show_output,
     linux_service_unit_content, linux_service_unit_matches_config,
 };
-#[cfg(any(target_os = "macos", test))]
-pub(crate) use crate::service_management::xml_escape;
 pub(crate) use crate::session_runtime::*;
 #[cfg(target_os = "linux")]
 pub(crate) use crate::wireguard_exit::*;

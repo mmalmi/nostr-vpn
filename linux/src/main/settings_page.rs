@@ -985,28 +985,3 @@ fn import_wireguard_exit_config_file(app: &AppRef, button: &gtk::Button) {
 }
 
 /// The install step, its detail and actions, as the core words them.
-fn update_progress_row(app: &AppRef, update: &updater::UpdateState) -> gtk::Box {
-    let view = &update.view;
-    let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let title = gtk::Label::new(Some(&view.title));
-    title.set_xalign(0.0);
-    title.set_wrap(true);
-    title.set_hexpand(!view.busy);
-    row.append(&title);
-    if view.busy {
-        row.append(&update_progress_widget(view));
-    }
-    append_update_actions(app, &row, update);
-    column.append(&row);
-    if !view.detail.is_empty() {
-        let detail = gtk::Label::new(Some(&view.detail));
-        detail.add_css_class("caption");
-        detail.add_css_class("dim-label");
-        detail.set_xalign(0.0);
-        detail.set_wrap(true);
-        detail.set_selectable(true);
-        column.append(&detail);
-    }
-    column
-}
