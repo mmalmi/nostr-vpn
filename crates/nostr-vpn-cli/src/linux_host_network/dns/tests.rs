@@ -279,11 +279,19 @@ async fn offline_direct_dns_can_be_captured_before_installing_the_overlay_listen
         hosts: files.0.join("hosts"),
     });
     resolver.capture_direct_config(offline).unwrap();
-    std::fs::write(&path, b"# Managed by nvpn secure DNS\nnameserver 127.0.0.1\n").unwrap();
+    std::fs::write(
+        &path,
+        b"# Managed by nvpn secure DNS\nnameserver 127.0.0.1\n",
+    )
+    .unwrap();
     let snapshot = resolver.snapshot().unwrap();
     assert!(snapshot.links.is_empty() && snapshot.fallback.is_empty());
     assert_eq!(
-        resolver.resolve("example.test", 443).await.unwrap_err().kind(),
+        resolver
+            .resolve("example.test", 443)
+            .await
+            .unwrap_err()
+            .kind(),
         io::ErrorKind::NotFound
     );
     assert!(config::direct(b"nameserver invalid-address\n").is_err());
