@@ -74,7 +74,7 @@ nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
 nostr-pubsub = "0.1.22"
 nostr-pubsub-fips = "=0.6.5"
 nostr-pubsub-relay = "0.1.14"
-nostr-pubsub-social-graph = "=0.2.4"
+nostr-pubsub-social-graph = "0.3.1"
 nostr-social-graph = "0.2.1"
 nostr-social-memory = "0.2.1"
 nostr-identity = "0.4.0"

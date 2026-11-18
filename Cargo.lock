@@ -183,7 +183,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -194,7 +194,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1876,7 +1876,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1984,7 +1984,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2853,7 +2853,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -3852,20 +3852,6 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848aac810edafec01cd47650e31bfe920129a9d1422df0385cca286625caeed4"
-dependencies = [
- "anyhow",
- "nostr-sdk",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "nostr-identity"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95fd048871579a175d1c38d1ea947f1034206d93696ea7ac74d140979e8022bb"
@@ -3916,7 +3902,7 @@ dependencies = [
  "async-trait",
  "nostr",
  "nostr-pubsub",
- "nostr-pubsub-social-graph 0.3.1",
+ "nostr-pubsub-social-graph",
  "nvpn-fips-core",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
@@ -3939,20 +3925,6 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-social-graph"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82f49b582d5b174358516a230372196691bd014ff997ff58bc039e554198f7fe"
-dependencies = [
- "async-trait",
- "nostr",
- "nostr-pubsub",
- "nostr-social-graph 0.1.4",
- "nostr-social-memory 0.1.1",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nostr-pubsub-social-graph"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd"
@@ -3960,8 +3932,8 @@ dependencies = [
  "async-trait",
  "nostr",
  "nostr-pubsub",
- "nostr-social-graph 0.2.2",
- "nostr-social-memory 0.2.1",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "thiserror 2.0.18",
 ]
 
@@ -4000,19 +3972,6 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe75a62e7939ca311dce77039443ea14af0c8e0a9969c01746992acf7ef40b17"
-dependencies = [
- "hex",
- "indexmap 2.14.0",
- "serde",
- "thiserror 2.0.18",
- "uuid",
-]
-
-[[package]]
-name = "nostr-social-graph"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"
@@ -4026,23 +3985,6 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-memory"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d0a51c186658b0602aebc9566ee405adfcc1c92d082c697543d0b50358da7f0f"
-dependencies = [
- "anyhow",
- "chrono",
- "nostr-identity 0.1.5",
- "nostr-sdk",
- "nostr-social-graph 0.1.4",
- "serde",
- "serde_json",
- "toml 0.8.23",
- "uuid",
-]
-
-[[package]]
-name = "nostr-social-memory"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1"
@@ -4051,7 +3993,7 @@ dependencies = [
  "chrono",
  "nostr-identity 0.6.0",
  "nostr-sdk",
- "nostr-social-graph 0.2.2",
+ "nostr-social-graph",
  "serde",
  "serde_json",
  "toml 0.8.23",
@@ -4116,10 +4058,10 @@ dependencies = [
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-pubsub-relay",
- "nostr-pubsub-social-graph 0.2.4",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
- "nostr-social-graph 0.2.2",
- "nostr-social-memory 0.2.1",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nvpn-cashu-service",
  "nvpn-fips-core",
  "nvpn-fips-endpoint",
@@ -4153,10 +4095,10 @@ dependencies = [
  "anyhow",
  "hex",
  "nostr-pubsub-fips",
- "nostr-pubsub-social-graph 0.2.4",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
- "nostr-social-graph 0.2.2",
- "nostr-social-memory 0.2.1",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nostr-vpn-core",
  "nvpn",
  "nvpn-fips-core",
@@ -4209,7 +4151,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4318,8 +4260,8 @@ dependencies = [
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-sdk",
- "nostr-social-graph 0.2.2",
- "nostr-social-memory 0.2.1",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nostr-vpn-core",
  "nostr-vpn-wintun",
  "nvpn-cashu-service",
@@ -4922,7 +4864,7 @@ version = "0.1.0"
 dependencies = [
  "cashu-credit 0.3.1",
  "fs2",
- "nostr-social-graph 0.2.2",
+ "nostr-social-graph",
  "rusqlite",
  "secp256k1 0.29.1",
  "serde",
@@ -5358,7 +5300,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -5396,9 +5338,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5917,7 +5859,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5975,7 +5917,7 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6543,7 +6485,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6708,7 +6650,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7834,7 +7776,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
