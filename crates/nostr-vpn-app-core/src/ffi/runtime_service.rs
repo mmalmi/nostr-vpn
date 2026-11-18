@@ -60,6 +60,33 @@ impl NativeAppRuntime {
         Ok(())
     }
 
+    /// The macOS privileged runner reports success for any completed child
+    /// and hides its exit status, so confirm the CLI installation by its
+    /// observable result: the canonical install destination must now resolve
+    /// to the bundled CLI the app ran.
+    #[cfg(target_os = "macos")]
+    fn verify_cli_install(&self, privileged_output: &Output) -> Result<()> {
+        const MACOS_CLI_INSTALL_PATH: &str = "/usr/local/bin/nvpn";
+        let installed = std::fs::canonicalize(MACOS_CLI_INSTALL_PATH)
+            .ok()
+            .is_some_and(|installed| {
+                self.nvpn_bin.as_deref().is_some_and(|nvpn_bin| {
+                    std::fs::canonicalize(nvpn_bin).is_ok_and(|source| installed == source)
+                })
+            });
+        if installed {
+            return Ok(());
+        }
+        Err(privileged_output_failure("nvpn install-cli", privileged_output))
+    }
+
+    // Signature is cfg-paired with the macOS implementation above.
+    #[cfg(not(target_os = "macos"))]
+    #[allow(clippy::unused_self, clippy::unnecessary_wraps)]
+    fn verify_cli_install(&self, _privileged_output: &Output) -> Result<()> {
+        Ok(())
+    }
+
     fn arm_daemon_status_grace(&mut self) {
         self.daemon_status_grace_until = Some(Instant::now() + DAEMON_STARTUP_STATUS_GRACE);
     }
@@ -420,6 +447,24 @@ impl NativeAppRuntime {
         if !error.trim().is_empty() {
             self.vpn_status = error;
         }
+    }
+}
+
+/// Build the error for a privileged command whose observable result does not
+/// match its fabricated success, embedding everything the runner captured so
+/// the root-side cause (for example a rejected system directory) is visible.
+fn privileged_output_failure(command: &str, output: &Output) -> anyhow::Error {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = [stdout.trim(), stderr.trim()]
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if detail.is_empty() {
+        anyhow!("{command} did not take effect and produced no output")
+    } else {
+        anyhow!("{command} did not take effect:\n{detail}")
     }
 }
 

@@ -47,12 +47,34 @@ impl NativeAppRuntime {
             NativeAppAction::ConnectVpn => self.connect_vpn(),
             NativeAppAction::DisconnectVpn => self.disconnect_vpn(),
             NativeAppAction::InstallCli => {
+                // /usr/local/bin is root-owned on stock macOS, so the install
+                // must go through the administrator prompt there.
+                #[cfg(target_os = "macos")]
+                let output = self.run_nvpn_service_action(["install-cli", "--force"])?;
+                #[cfg(not(target_os = "macos"))]
                 let output = self.run_nvpn(["install-cli", "--force"])?;
-                ensure_success("nvpn install-cli", &output)
+                ensure_success("nvpn install-cli", &output)?;
+                self.verify_cli_install(&output)
             }
             NativeAppAction::UninstallCli => {
+                // Same root-owned destination as the install on macOS.
+                #[cfg(target_os = "macos")]
+                let output = self.run_nvpn_service_action(["uninstall-cli"])?;
+                #[cfg(not(target_os = "macos"))]
                 let output = self.run_nvpn(["uninstall-cli"])?;
-                ensure_success("nvpn uninstall-cli", &output)
+                ensure_success("nvpn uninstall-cli", &output)?;
+                #[cfg(target_os = "macos")]
+                {
+                    // The privileged runner hides the child's exit status, so
+                    // judge the uninstall by the destination instead.
+                    if std::path::Path::new("/usr/local/bin/nvpn")
+                        .symlink_metadata()
+                        .is_ok()
+                    {
+                        return Err(privileged_output_failure("nvpn uninstall-cli", &output));
+                    }
+                }
+                Ok(())
             }
             NativeAppAction::InstallSystemService => {
                 // Preserve "VPN was on" across the service swap: --force tears
@@ -73,6 +95,12 @@ impl NativeAppRuntime {
                 self.invalidate_service_status();
                 self.recover_from_startup_error()?;
                 self.refresh_service_status()?;
+                // The macOS privileged runner cannot report the root process's
+                // exit status, so a failed install only shows up here. Surface
+                // it (with the captured output) instead of flashing success.
+                if !self.service_installed {
+                    return Err(privileged_output_failure("nvpn service install", &output));
+                }
                 self.arm_daemon_status_grace();
                 // Refresh the daemon state after the service swap before
                 // deciding whether to reconnect. Otherwise stale pre-bootout

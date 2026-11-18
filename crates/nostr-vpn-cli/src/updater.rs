@@ -41,6 +41,7 @@ pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
     let source = core_source(args.source);
     #[cfg(target_os = "macos")]
     let helper_update = if mode == UpdateMode::Cli && !args.check && !args.download_only {
+        reject_app_managed_destination(&args)?;
         let destination = args
             .path
             .clone()
@@ -205,6 +206,40 @@ fn current_exe_display() -> String {
         |_| "<current executable>".to_string(),
         |path| path.display().to_string(),
     )
+}
+
+// The app-managed CLI lives at the bundle through the /usr/local/bin symlink
+// (or a direct bundle invocation). Self-updating from there would replace the
+// symlink with a stale root-owned copy or corrupt the signed bundle, so the
+// app is the only update path.
+#[cfg(target_os = "macos")]
+fn reject_app_managed_destination(args: &UpdateArgs) -> Result<()> {
+    if args.path.is_some() {
+        return Ok(());
+    }
+    let executable = std::env::current_exe().context("failed to resolve current executable")?;
+    let resolved = fs::canonicalize(&executable)
+        .with_context(|| format!("failed to canonicalize {}", executable.display()))?;
+    if path_is_inside_app_bundle(&resolved) {
+        return Err(anyhow!(
+            "this nvpn is managed by the Nostr VPN app; update the app instead, \
+             or pass --path to install a standalone copy"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn path_is_inside_app_bundle(path: &Path) -> bool {
+    let mut inside_app = false;
+    for component in path.components() {
+        let name = component.as_os_str().to_string_lossy();
+        if inside_app && name == "Contents" {
+            return true;
+        }
+        inside_app = name.ends_with(".app");
+    }
+    false
 }
 
 fn extract_archive(archive_path: &Path, destination: &Path) -> Result<()> {
@@ -519,10 +554,30 @@ mod tests {
         );
         assert_eq!(
             fs::read(destination_dir.join("drivers").join("extra.dll"))
-                .expect("read installed nested helper"),
+                .expect("read nested helper"),
             b"extra"
         );
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn app_bundle_detection_covers_bundle_paths_and_standalone_copies() {
+        assert!(path_is_inside_app_bundle(Path::new(
+            "/Applications/Nostr VPN.app/Contents/Resources/nvpn"
+        )));
+        assert!(path_is_inside_app_bundle(Path::new(
+            "/Users/example/Applications/Nostr VPN.app/Contents/MacOS/NostrVpnMac"
+        )));
+        assert!(!path_is_inside_app_bundle(Path::new("/usr/local/bin/nvpn")));
+        assert!(!path_is_inside_app_bundle(Path::new(
+            "/Applications/Nostr VPN.app"
+        )));
+        assert!(!path_is_inside_app_bundle(Path::new(
+            "/Applications/Tools.applist/nvpn"
+        )));
+        assert!(!path_is_inside_app_bundle(Path::new(
+            "/Applications/Contents/nvpn"
+        )));
     }
 }

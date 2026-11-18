@@ -419,6 +419,19 @@ pub fn clear_inherited_acl(file: &File) -> io::Result<()> {
 // Deny and read-only entries are fine; reject every write grant, including
 // inherited grants. This deliberately fails closed for unusual system ACLs.
 pub fn reject_write_acl(file: &File) -> Result<()> {
+    reject_write_acl_impl(file, false)
+}
+
+/// Stock macOS ships root-owned system directories (`/Library`,
+/// `/Library/Application Support`) that are group-writable by the built-in
+/// `admin` group and inherit a matching ACL grant. Admin-group write is
+/// sudo-equivalent on macOS, so it grants nothing to unprivileged users;
+/// this variant rejects write grants from every other principal.
+pub fn reject_untrusted_ancestor_write_acl(file: &File) -> Result<()> {
+    reject_write_acl_impl(file, true)
+}
+
+fn reject_write_acl_impl(file: &File, allow_builtin_admin_group: bool) -> Result<()> {
     use std::ffi::c_void;
     unsafe extern "C" {
         fn acl_get_fd_np(fd: i32, kind: u32) -> *mut c_void;
@@ -460,7 +473,10 @@ pub fn reject_write_acl(file: &File) -> Result<()> {
             {
                 return Err(io::Error::last_os_error()).context("read ACL permissions");
             }
-            if tag == ACL_EXTENDED_ALLOW && permissions & WRITE_PERMISSIONS != 0 {
+            if tag == ACL_EXTENDED_ALLOW
+                && permissions & WRITE_PERMISSIONS != 0
+                && !(allow_builtin_admin_group && qualifier_is_builtin_admin_or_wheel(entry))
+            {
                 bail!("system artifact path has a write-granting ACL");
             }
         }
@@ -468,4 +484,35 @@ pub fn reject_write_acl(file: &File) -> Result<()> {
     })();
     unsafe { acl_free(acl) };
     result
+}
+
+// Apple synthesizes GUIDs for POSIX groups from the fixed prefix
+// ABCDEFAB-CDEF-ABCD-EFAB-CDEF followed by the big-endian GID, so the built-in
+// `wheel` (0) and `admin` (80) groups are stable without DirectoryService
+// calls. The kernel enforces membership by GUID, so a spoofed qualifier grants
+// nothing. Fail closed when the qualifier is missing or unreadable.
+fn qualifier_is_builtin_admin_or_wheel(entry: *mut std::ffi::c_void) -> bool {
+    use std::ffi::c_void;
+    unsafe extern "C" {
+        fn acl_get_qualifier(entry: *mut c_void) -> *mut c_void;
+        fn acl_free(acl: *mut c_void) -> i32;
+    }
+    const GROUP_GUID_PREFIX: [u8; 12] = [
+        0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF, 0xAB, 0xCD, 0xEF,
+    ];
+    let mut qualifier = [0u8; 16];
+    // SAFETY: `entry` came from acl_get_entry on a live ACL and outlives this
+    // call; acl_get_qualifier returns a 16-byte guid_t (uuid_t) for extended
+    // entries and NULL when the entry carries no qualifier.
+    let raw = unsafe { acl_get_qualifier(entry) };
+    if raw.is_null() {
+        return false;
+    }
+    qualifier.copy_from_slice(unsafe { std::slice::from_raw_parts(raw.cast::<u8>(), 16) });
+    unsafe { acl_free(raw) };
+    qualifier[..12] == GROUP_GUID_PREFIX
+        && matches!(
+            u32::from_be_bytes([qualifier[12], qualifier[13], qualifier[14], qualifier[15]]),
+            0 | 80
+        )
 }

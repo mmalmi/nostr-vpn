@@ -76,6 +76,12 @@ different user's configuration and create a separate identity and network.
 On Windows, run `nvpn service install` from an elevated shell and check it with
 `nvpn service status`.
 
+On macOS, the desktop app's **Install CLI** action puts `nvpn` on `PATH` for
+you: after one administrator prompt it links `/usr/local/bin/nvpn` to the
+app's bundled copy, and the link keeps the command current across app
+updates. The **Install Service** action installs and starts the background
+daemon the same way.
+
 Linux update checks select packages for your distribution and architecture. Automatic downloads stay in the background and are remembered across app restarts. Choose **Show download** to open the folder and install the package; the app never opens an installer or browser automatically.
 
 ## Containers and headless nodes
