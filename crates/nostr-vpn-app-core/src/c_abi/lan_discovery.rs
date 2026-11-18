@@ -8,7 +8,12 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_lan_discovery_info_json(
         return json_raw_string("");
     }
     let tunnel = unsafe { &*handle };
-    json_raw_string(&tunnel.tunnel.lan_discovery_info_json().unwrap_or_default())
+    let json = catch_panic(
+        "mobile tunnel lan discovery info json",
+        String::new(),
+        || tunnel.tunnel.lan_discovery_info_json().unwrap_or_default(),
+    );
+    json_raw_string(&json)
 }
 
 /// # Safety
@@ -23,8 +28,10 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_observe_lan_peer(
         return false;
     }
     let tunnel = unsafe { &*handle };
-    tunnel
-        .tunnel
-        .observe_lan_peer(&c_string_lossy(npub), &c_string_lossy(addresses_json))
-        .is_ok()
+    catch_panic("mobile tunnel observe lan peer", false, || {
+        tunnel
+            .tunnel
+            .observe_lan_peer(&c_string_lossy(npub), &c_string_lossy(addresses_json))
+            .is_ok()
+    })
 }
