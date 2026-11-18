@@ -202,9 +202,31 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) error: String,
 }
 
-/// The part of a running tunnel's config that the host installs on the OS
+/// How a host puts the mesh on its interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MobileMeshRoutes {
+    /// A route per member and one for the DNS stub. Android follows the roster
+    /// while the tunnel runs, so a local network numbered inside the mesh
+    /// range keeps its gateway and DNS.
+    Members,
+    /// The whole mesh range. The iOS provider installs its routes once, at
+    /// start, so the range is what reaches a member added later.
+    Range,
+}
+
+impl MobileMeshRoutes {
+    const HOST: Self = if cfg!(target_os = "ios") {
+        Self::Range
+    } else {
+        Self::Members
+    };
+}
+
+/// The part of a running tunnel's config that Android installs on the VPN
 /// interface: its routes and resolvers. A roster update can change it while
-/// the tunnel runs, so hosts re-read it and re-apply it without a restart.
+/// the tunnel runs, so the service re-reads it and re-establishes the
+/// interface without a restart.
+#[cfg(any(test, target_os = "android"))]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MobileTunnelInterfaceSettings {
@@ -214,6 +236,7 @@ pub(crate) struct MobileTunnelInterfaceSettings {
     dns_match_domains: Vec<String>,
 }
 
+#[cfg(any(test, target_os = "android"))]
 impl From<&MobileTunnelConfig> for MobileTunnelInterfaceSettings {
     fn from(config: &MobileTunnelConfig) -> Self {
         Self {
@@ -222,30 +245,6 @@ impl From<&MobileTunnelConfig> for MobileTunnelInterfaceSettings {
             magic_dns_server: config.magic_dns_server.clone(),
             dns_match_domains: config.dns_match_domains.clone(),
         }
-    }
-}
-
-/// Advances whenever the running tunnel's interface settings change. The iOS
-/// packet tunnel provider waits on it; Android re-reads the settings when the
-/// runtime saves the roster that changed them.
-#[derive(Clone)]
-pub(crate) struct MobileInterfaceSettingsRevision(Arc<tokio::sync::watch::Sender<u64>>);
-
-impl Default for MobileInterfaceSettingsRevision {
-    fn default() -> Self {
-        Self(Arc::new(tokio::sync::watch::channel(0).0))
-    }
-}
-
-impl MobileInterfaceSettingsRevision {
-    fn advance(&self) {
-        self.0
-            .send_modify(|revision| *revision = revision.wrapping_add(1));
-    }
-
-    #[cfg(any(test, target_os = "ios"))]
-    fn subscribe(&self) -> tokio::sync::watch::Receiver<u64> {
-        self.0.subscribe()
     }
 }
 
@@ -426,8 +425,16 @@ impl MobileTunnelConfig {
         Self::from_app_with_config_path(app, Path::new(""))
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn from_app_with_config_path(app: &AppConfig, config_path: &Path) -> Result<Self> {
+        Self::from_app_with_mesh_routes(app, config_path, MobileMeshRoutes::HOST)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn from_app_with_mesh_routes(
+        app: &AppConfig,
+        config_path: &Path,
+        mesh_routes: MobileMeshRoutes,
+    ) -> Result<Self> {
         let own_pubkey = app.own_nostr_pubkey_hex()?;
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
@@ -506,6 +513,14 @@ impl MobileTunnelConfig {
             )?);
         }
 
+        if mesh_routes == MobileMeshRoutes::Range
+            && !network_id.trim().is_empty()
+            && !route_targets
+                .iter()
+                .any(|route| route == MESH_TUNNEL_IPV4_CIDR)
+        {
+            route_targets.push(MESH_TUNNEL_IPV4_CIDR.to_string());
+        }
         let internet_source = serialized_mobile_internet_source(app);
         preserve_mobile_pending_exit_default_routes(
             &mut route_targets,
@@ -568,7 +583,7 @@ impl MobileTunnelConfig {
         // Members already have their own /32 routes. Route the MagicDNS stub
         // the same way instead of the whole mesh range, which would also
         // capture a local network numbered inside it, with its gateway and DNS.
-        if !magic_dns_server.is_empty() {
+        if mesh_routes == MobileMeshRoutes::Members && !magic_dns_server.is_empty() {
             route_targets.push(format!("{magic_dns_server}/32"));
             route_targets.sort();
             route_targets.dedup();
@@ -776,8 +791,6 @@ pub(crate) struct MobileTunnel {
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
-    #[cfg(target_os = "ios")]
-    interface_settings: MobileInterfaceSettingsRevision,
     peer_hints: Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,

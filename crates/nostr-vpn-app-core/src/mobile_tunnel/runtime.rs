@@ -63,8 +63,6 @@ impl MobileTunnel {
             mesh: started.mesh,
             presence: started.presence,
             config: started.config,
-            #[cfg(target_os = "ios")]
-            interface_settings: started.interface_settings,
             peer_hints: started.peer_hints,
             app_config: started.app_config,
             app_config_dirty: started.app_config_dirty,
@@ -168,7 +166,6 @@ impl MobileTunnel {
         let peer_hints = Arc::new(RwLock::new(config.peer_hints.clone()));
         let presence = Arc::new(RwLock::new(HashMap::new()));
         let config_state = Arc::new(RwLock::new(config.clone()));
-        let interface_settings = MobileInterfaceSettingsRevision::default();
         let app_config = Arc::new(RwLock::new(app_config));
         let app_config_dirty = Arc::new(AtomicBool::new(false));
         let pending_join_roster_receipts = Arc::new(PendingJoinRosterReceiptQueue::load(
@@ -538,7 +535,6 @@ impl MobileTunnel {
             let peer_hints = Arc::clone(&peer_hints);
             let presence = Arc::clone(&presence);
             let config_state = Arc::clone(&config_state);
-            let interface_settings = interface_settings.clone();
             let app_config = Arc::clone(&app_config);
             let app_config_dirty = Arc::clone(&app_config_dirty);
             let pending_join_roster_receipts = Arc::clone(&pending_join_roster_receipts);
@@ -555,7 +551,6 @@ impl MobileTunnel {
                     peer_hints: &peer_hints,
                     presence: &presence,
                     config_state: &config_state,
-                    interface_settings: &interface_settings,
                     app_config: &app_config,
                     app_config_dirty: app_config_dirty.as_ref(),
                     pending_join_roster_receipts: &pending_join_roster_receipts,
@@ -614,8 +609,6 @@ impl MobileTunnel {
             mesh,
             presence,
             config: config_state,
-            #[cfg(target_os = "ios")]
-            interface_settings,
             peer_hints,
             app_config,
             app_config_dirty,
@@ -692,7 +685,7 @@ impl MobileTunnel {
 
     /// Routes and resolvers the running tunnel applies, for the host to
     /// install on the OS interface.
-    #[cfg(any(target_os = "android", target_os = "ios"))]
+    #[cfg(target_os = "android")]
     pub(crate) fn interface_settings_json(&self) -> Result<String> {
         let config = self
             .config
@@ -701,19 +694,6 @@ impl MobileTunnel {
         Ok(serde_json::to_string(&MobileTunnelInterfaceSettings::from(
             &*config,
         ))?)
-    }
-
-    /// Calls the iOS packet tunnel provider whenever a roster update changes
-    /// the interface settings, so it can re-apply them while the app is
-    /// closed. The callbacks are released when the tunnel stops.
-    #[cfg(target_os = "ios")]
-    pub(crate) fn watch_interface_settings(&mut self, callbacks: IosInterfaceSettingsCallbacks) {
-        let mut revision = self.interface_settings.subscribe();
-        self.tasks.push(self.runtime.spawn(async move {
-            while revision.changed().await.is_ok() {
-                callbacks.changed();
-            }
-        }));
     }
 
     #[cfg(target_os = "ios")]

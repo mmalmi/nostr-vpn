@@ -599,7 +599,6 @@
         let peer_hints = Arc::new(RwLock::new(HashMap::new()));
         let presence = Arc::new(RwLock::new(HashMap::new()));
         let config_state = Arc::new(RwLock::new(admin_mobile));
-        let interface_settings = MobileInterfaceSettingsRevision::default();
         let join_request_active = AtomicBool::new(false);
         let pending_join_roster_receipts =
             Arc::new(PendingJoinRosterReceiptQueue::default());
@@ -611,7 +610,6 @@
             peer_hints: &peer_hints,
             presence: &presence,
             config_state: &config_state,
-            interface_settings: &interface_settings,
             app_config: &admin_app_config,
             app_config_dirty: &app_config_dirty,
             pending_join_roster_receipts: &pending_join_roster_receipts,

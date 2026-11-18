@@ -1,7 +1,6 @@
     // A signed roster that reaches the running tunnel changes the routes the
     // host has to install. The runtime reports that through its interface
-    // settings, so the Android service and the iOS provider can re-apply
-    // them without the app.
+    // settings, so the Android service can re-apply them without the app.
     #[test]
     fn roster_updates_change_running_tunnel_interface_settings() {
         run_roster_route_test(false);
@@ -99,6 +98,17 @@
             )
         );
         assert!(!phone_mobile.route_targets.contains(&laptop_route));
+        // The iOS provider installs its routes once, at start. Its route set
+        // keeps the mesh range, which reaches a member that joins later.
+        let ios_routes = MobileTunnelConfig::from_app_with_mesh_routes(
+            &phone_app,
+            &config_path,
+            MobileMeshRoutes::Range,
+        )
+        .expect("iOS mobile config")
+        .route_targets;
+        assert!(ios_routes.iter().any(|route| route == MESH_TUNNEL_IPV4_CIDR));
+        assert!(!phone_mobile.route_targets.iter().any(|route| route == MESH_TUNNEL_IPV4_CIDR));
         assert_eq!(
             phone_mobile.route_targets.iter().any(|route| route == "0.0.0.0/0"),
             exit_selected
@@ -120,7 +130,6 @@
         let peer_hints = Arc::new(RwLock::new(HashMap::new()));
         let presence = Arc::new(RwLock::new(HashMap::new()));
         let config_state = Arc::new(RwLock::new(phone_mobile));
-        let interface_settings = MobileInterfaceSettingsRevision::default();
         let join_request_active = AtomicBool::new(false);
         let pending_join_roster_receipts = Arc::new(PendingJoinRosterReceiptQueue::default());
         let control = MobileEndpointReceiveContext {
@@ -131,7 +140,6 @@
             peer_hints: &peer_hints,
             presence: &presence,
             config_state: &config_state,
-            interface_settings: &interface_settings,
             app_config: &app_config,
             app_config_dirty: &app_config_dirty,
             pending_join_roster_receipts: &pending_join_roster_receipts,
@@ -139,7 +147,10 @@
             join_request_active: &join_request_active,
             state_control: &state_control,
         };
-        let mut revision = interface_settings.subscribe();
+        let settings = || {
+            MobileTunnelInterfaceSettings::from(&*config_state.read().expect("config state"))
+        };
+        let joined = settings();
         let routes = || {
             config_state
                 .read()
@@ -160,8 +171,8 @@
         .expect("apply roster adding the laptop");
         assert!(routes().contains(&laptop_route), "added member gets a route");
         assert_eq!(routes().iter().any(|route| route == "0.0.0.0/0"), exit_selected);
-        assert!(revision.has_changed().expect("revision sender"));
-        revision.mark_unchanged();
+        let with_laptop = settings();
+        assert_ne!(with_laptop, joined);
 
         let mut aliases = HashMap::new();
         aliases.insert(laptop_hex.clone(), "laptop".to_string());
@@ -175,8 +186,9 @@
         )
         .await
         .expect("apply alias-only roster");
-        assert!(
-            !revision.has_changed().expect("revision sender"),
+        assert_eq!(
+            settings(),
+            with_laptop,
             "a roster that keeps the routes must not ask the host to re-apply them"
         );
 
@@ -192,7 +204,7 @@
         .expect("apply roster removing the laptop");
         assert!(!routes().contains(&laptop_route), "removed member loses its route");
         assert_eq!(routes().iter().any(|route| route == "0.0.0.0/0"), exit_selected);
-        assert!(revision.has_changed().expect("revision sender"));
+        assert_eq!(settings(), joined);
 
         let _ = std::fs::remove_dir_all(dir);
     }

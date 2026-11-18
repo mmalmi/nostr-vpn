@@ -184,8 +184,6 @@ struct MobileTunnelStarted {
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
-    #[cfg(target_os = "ios")]
-    interface_settings: MobileInterfaceSettingsRevision,
     peer_hints: Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,

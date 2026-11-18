@@ -15,7 +15,6 @@ typedef bool (*NvpnPacketFlowWriteCallback)(
 );
 typedef void (*NvpnPacketFlowFailureCallback)(void *context, const char *message);
 typedef void (*NvpnPacketFlowReleaseCallback)(void *context);
-typedef void (*NvpnInterfaceSettingsChangedCallback)(void *context);
 
 NvpnAppHandle *nostr_vpn_app_new(const char *data_dir, const char *app_version);
 void nostr_vpn_app_free(NvpnAppHandle *handle);
@@ -55,13 +54,6 @@ bool nostr_vpn_mobile_tunnel_packet_flow_send(
     size_t byte_count,
     const size_t *lengths,
     size_t packet_count
-);
-char *nostr_vpn_mobile_tunnel_interface_settings_json(const NvpnMobileTunnelHandle *handle);
-bool nostr_vpn_mobile_tunnel_interface_settings_watch(
-    NvpnMobileTunnelHandle *handle,
-    void *context,
-    NvpnInterfaceSettingsChangedCallback changed,
-    NvpnPacketFlowReleaseCallback release
 );
 void nostr_vpn_string_free(char *value);
 
