@@ -62,9 +62,14 @@ pub struct PaidRouteStore {
     pub buyer_session_renewal_starts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub selected_buyer_session_id: String,
+    /// Only this selected manual purchase may renew at its accepted price.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub manual_renewal_session_id: String,
     /// Local request to choose a different seller once, without publishing a rating.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub automatic_reselect_from: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub automatic_reselect_session_id: String,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_open_attempts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -78,6 +83,7 @@ impl Default for PaidRouteStore {
         Self {
             exit_ratings: BTreeMap::new(),
             automatic_reselect_from: String::new(),
+            automatic_reselect_session_id: String::new(),
             version: CURRENT_VERSION,
             wallet: PaidRouteWalletState::default(),
             buyer_mint_retries: BTreeMap::new(),
@@ -90,6 +96,7 @@ impl Default for PaidRouteStore {
             buyer_session_renewals: BTreeMap::new(),
             buyer_session_renewal_starts: BTreeMap::new(),
             selected_buyer_session_id: String::new(),
+            manual_renewal_session_id: String::new(),
             buyer_session_open_attempts: BTreeMap::new(),
             seller_session_tunnel_ips: BTreeMap::new(),
             seller_free_probe_sources: BTreeMap::new(),
@@ -221,6 +228,11 @@ pub struct PaidRouteSessionRecord {
     pub funding_started_unix: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub last_successful_probe_unix: u64,
+    /// Last local traffic observation; payment retries must not change its rate.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub last_usage_at_unix: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub usage_started_at_unix: u64,
     pub session: PaidRouteSession,
     pub created_at_unix: u64,
     #[serde(default, skip_serializing_if = "is_zero")]

@@ -66,7 +66,10 @@ sync_repo() {
     # The VM checkout is disposable release-gate scratch space. Interrupted
     # builds and UI gates can leave tracked files modified, so discard those
     # before switching it to the exact candidate tree.
-    /usr/bin/git -C '$guest_repo' reset --hard HEAD
+    # A newly initialized bare remote may not have a default branch yet.
+    if /usr/bin/git -C '$guest_repo' rev-parse --verify -q HEAD >/dev/null; then
+      /usr/bin/git -C '$guest_repo' reset --hard HEAD
+    fi
     /usr/bin/git -C '$guest_repo' remote set-url origin '$guest_bare'
     /usr/bin/git -C '$guest_repo' fetch origin '$REMOTE_REF'
     /usr/bin/git -C '$guest_repo' checkout -B '${REMOTE_REF#refs/heads/}' FETCH_HEAD

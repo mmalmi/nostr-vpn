@@ -32,6 +32,8 @@ APP_NAME = "Nostr VPN.app"
 APP_EXECUTABLE = "Nostr VPN"
 TUNNEL_NAME = "Nostr VPN Tunnel.appex"
 TUNNEL_EXECUTABLE = "Nostr VPN Tunnel"
+SHARE_NAME = "ShareFiles.appex"
+SHARE_EXECUTABLE = "ShareFiles"
 RECEIPT_SCHEMA = 1
 
 
@@ -123,10 +125,13 @@ def unsigned_content_manifest(
         pathlib.PurePosixPath("embedded.mobileprovision"),
         pathlib.PurePosixPath("PlugIns") / TUNNEL_NAME / TUNNEL_EXECUTABLE,
         pathlib.PurePosixPath("PlugIns") / TUNNEL_NAME / "embedded.mobileprovision",
+        pathlib.PurePosixPath("PlugIns") / SHARE_NAME / SHARE_EXECUTABLE,
+        pathlib.PurePosixPath("PlugIns") / SHARE_NAME / "embedded.mobileprovision",
     }
     semantic_plists = {
         pathlib.PurePosixPath("Info.plist"),
         pathlib.PurePosixPath("PlugIns") / TUNNEL_NAME / "Info.plist",
+        pathlib.PurePosixPath("PlugIns") / SHARE_NAME / "Info.plist",
     }
     entries: list[dict[str, Any]] = []
     for current, directories, files in os.walk(app, followlinks=False):
@@ -142,7 +147,7 @@ def unsigned_content_manifest(
             if path.is_symlink():
                 entries.append(safe_symlink(path, app))
                 continue
-            if relative != pathlib.Path("PlugIns") / TUNNEL_NAME and (
+            if relative not in {pathlib.Path("PlugIns") / TUNNEL_NAME, pathlib.Path("PlugIns") / SHARE_NAME} and (
                 name.endswith((".app", ".appex", ".framework"))
             ):
                 raise ValueError(f"unexpected nested iOS code bundle: {relative}")
@@ -193,6 +198,7 @@ def read_plist(path: pathlib.Path) -> dict[str, Any]:
 
 def app_paths(app: pathlib.Path) -> dict[str, pathlib.Path]:
     tunnel = app / "PlugIns" / TUNNEL_NAME
+    share = app / "PlugIns" / SHARE_NAME
     paths = {
         "app": app,
         "appExecutable": app / APP_EXECUTABLE,
@@ -202,9 +208,13 @@ def app_paths(app: pathlib.Path) -> dict[str, pathlib.Path]:
         "tunnelExecutable": tunnel / TUNNEL_EXECUTABLE,
         "tunnelInfo": tunnel / "Info.plist",
         "tunnelProfile": tunnel / "embedded.mobileprovision",
+        "share": share,
+        "shareExecutable": share / SHARE_EXECUTABLE,
+        "shareInfo": share / "Info.plist",
+        "shareProfile": share / "embedded.mobileprovision",
     }
     for name, path in paths.items():
-        if name in {"app", "tunnel"}:
+        if name in {"app", "tunnel", "share"}:
             require(path.is_dir(), f"iOS bundle is missing: {path}")
         else:
             require(path.is_file(), f"iOS bundle file is missing: {path}")
@@ -215,6 +225,7 @@ def bundle_identity(app: pathlib.Path) -> dict[str, Any]:
     paths = app_paths(app)
     app_info = read_plist(paths["appInfo"])
     tunnel_info = read_plist(paths["tunnelInfo"])
+    share_info = read_plist(paths["shareInfo"])
     content_sha, content_count = unsigned_content_manifest(app)
     return {
         "appBundleIdentifier": str(app_info.get("CFBundleIdentifier", "")),
@@ -245,6 +256,12 @@ def bundle_identity(app: pathlib.Path) -> dict[str, Any]:
         "packetTunnelNormalizedExecutableSha256": normalized_executable_sha256(
             paths["tunnelExecutable"]
         ),
+        "shareFilesBundleIdentifier": str(share_info.get("CFBundleIdentifier", "")),
+        "shareFilesBuildGitSha": str(share_info.get("NVPNBuildGitSha", "")),
+        "shareFilesBuildTimestampUTC": str(share_info.get("NVPNBuildTimestampUTC", "")),
+        "shareFilesBuildNumber": str(share_info.get("CFBundleVersion", "")),
+        "shareFilesMarketingVersion": str(share_info.get("CFBundleShortVersionString", "")),
+        "shareFilesNormalizedExecutableSha256": normalized_executable_sha256(paths["shareExecutable"]),
         "unsignedContentFileCount": content_count,
         "unsignedContentManifestSha256": content_sha,
     }
@@ -470,6 +487,17 @@ def signed_bundle_audit(
         signer_sha=signer_sha,
         device_udid=device_udid,
     )
+    share_bundle_id = f"{app_bundle_id}.ShareFiles"
+    run(["codesign", "--verify", "--strict", str(paths["share"])])
+    share_details = codesign_details(paths["share"])
+    require(share_details["Identifier"] == share_bundle_id, "signed file sharing extension has the wrong bundle identifier")
+    require(share_details["TeamIdentifier"] == team_id, "signed file sharing extension has the wrong team")
+    require(certificate_sha256(paths["share"]) == signer_sha, "signed file sharing extension has the wrong certificate")
+    validate_profile(
+        decoded_profile(paths["shareProfile"]), signed_entitlements(paths["share"]),
+        distribution=distribution, team_id=team_id, bundle_id=share_bundle_id,
+        app_group_id=app_group_id, signer_sha=signer_sha, device_udid=device_udid,
+    )
     app_network_extensions = app_entitlements.get(
         "com.apple.developer.networking.networkextension"
     )
@@ -498,6 +526,8 @@ def signed_bundle_audit(
         "packetTunnelProvisioningProfileSha256": sha256_file(
             paths["tunnelProfile"]
         ),
+        "shareFilesCodeDirectoryHash": share_details["CDHash"].lower(),
+        "shareFilesProvisioningProfileSha256": sha256_file(paths["shareProfile"]),
         "signerCertificateSha256": signer_sha,
         "signingTeamIdentifier": team_id,
     }
@@ -521,6 +551,10 @@ def validate_identity(
         "packetTunnelBuildGitSha": app_head,
         "packetTunnelBuildNumber": build,
         "packetTunnelMarketingVersion": version,
+        "shareFilesBundleIdentifier": f"{app_bundle_id}.ShareFiles",
+        "shareFilesBuildGitSha": app_head,
+        "shareFilesBuildNumber": build,
+        "shareFilesMarketingVersion": version,
     }
     for name, value in expected.items():
         require(
@@ -569,7 +603,10 @@ def require_clean_checkout(root: pathlib.Path, label: str) -> None:
         )
 
 
-def validate_source_and_fips(args: argparse.Namespace) -> None:
+def validate_source_and_fips(
+    args: argparse.Namespace,
+    archive_receipt: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     require(
         args.rust_profile == "release",
         "frozen iOS archive requires the Release Rust profile",
@@ -584,17 +621,69 @@ def validate_source_and_fips(args: argparse.Namespace) -> None:
     require(fips_tree == args.fips_tree, "FIPS tree changed")
     require_clean_checkout(source_root, "application")
     require_clean_checkout(fips_root, "FIPS")
+    checkout_path_sha = path_sha256(fips_root)
+    relocation_path = getattr(args, "fips_source_relocation", None)
+    relocation_sha = getattr(args, "fips_source_relocation_sha256", None)
+    relocation = None
+    if relocation_path or relocation_sha:
+        require(archive_receipt is not None, "FIPS relocation cannot authorize a new archive")
+        require(
+            bool(relocation_path)
+            and re.fullmatch(r"[0-9a-f]{64}", relocation_sha or "") is not None,
+            "FIPS relocation requires an evidence file and its SHA256",
+        )
+        raw = pathlib.Path(relocation_path).read_bytes()
+        require(hashlib.sha256(raw).hexdigest() == relocation_sha, "FIPS relocation evidence changed")
+        proof = json.loads(raw)
+        build_path_sha = archive_receipt.get("fipsCheckoutPathSha256")
+        require(
+            isinstance(build_path_sha, str)
+            and re.fullmatch(r"[0-9a-f]{64}", build_path_sha) is not None,
+            "Frozen FIPS build path hash is invalid",
+        )
+        expected = {
+            "receiptSchema": 1,
+            "artifactType": "FIPS validation source relocation",
+            "archiveReceiptSha256": sha256_file(pathlib.Path(args.archive_receipt)),
+            "fipsCargoMetadataReceiptSha256": sha256_file(pathlib.Path(args.fips_metadata)),
+            "historicalCheckoutPathSha256": build_path_sha,
+            "validationCheckoutPathSha256": checkout_path_sha,
+            "fipsGitSha": args.fips_head,
+            "fipsGitTree": args.fips_tree,
+            "fipsCoreVersion": args.fips_version,
+        }
+        require(
+            isinstance(proof, dict)
+            and type(proof.get("receiptSchema")) is int
+            and proof == expected,
+            "FIPS relocation does not match the exact source and historical receipts",
+        )
+        checkout_path_sha = build_path_sha
+        relocation = {**expected, "relocationReceiptSha256": relocation_sha}
     validate_fips_metadata(
         pathlib.Path(args.fips_metadata),
-        path_sha256(fips_root),
+        checkout_path_sha,
         args.fips_head,
         args.fips_tree,
         args.fips_version,
     )
+    return relocation
 
 
 def archive_app(archive: pathlib.Path) -> pathlib.Path:
     return archive / "Products" / "Applications" / APP_NAME
+
+
+def verify_build_path_privacy(app: pathlib.Path, args: argparse.Namespace) -> None:
+    roots = (pathlib.Path.home(), pathlib.Path(args.source_root), pathlib.Path(args.fips_root))
+    prefixes = [os.fsencode(root.resolve()) + b"/" for root in roots]
+    paths = app_paths(app)
+    for name in ("appExecutable", "tunnelExecutable"):
+        executable = paths[name].read_bytes()
+        require(
+            all(prefix not in executable for prefix in prefixes),
+            f"{name} embeds a private build path",
+        )
 
 
 def freeze_archive(args: argparse.Namespace) -> None:
@@ -603,6 +692,7 @@ def freeze_archive(args: argparse.Namespace) -> None:
     require(archive.is_dir(), f"iOS archive is missing: {archive}")
     validate_source_and_fips(args)
     app = archive_app(archive)
+    verify_build_path_privacy(app, args)
     identity = bundle_identity(app)
     validate_identity(
         identity,
@@ -655,8 +745,9 @@ def validate_archive_receipt(
         and receipt.get("artifactType") == "iOS frozen App Store xcarchive",
         "frozen iOS archive receipt has the wrong schema or type",
     )
-    validate_source_and_fips(args)
+    relocation = validate_source_and_fips(args, receipt)
     app = archive_app(archive)
+    verify_build_path_privacy(app, args)
     fips_metadata = pathlib.Path(args.fips_metadata).resolve()
     expected_receipt = {
         "appGitSha": args.app_head,
@@ -666,8 +757,9 @@ def validate_archive_receipt(
         "archiveTreeSha256": tree_sha256(archive),
         "fipsCargoMetadataReceiptPathSha256": path_sha256(fips_metadata),
         "fipsCargoMetadataReceiptSha256": sha256_file(fips_metadata),
-        "fipsCheckoutPathSha256": path_sha256(
-            pathlib.Path(args.fips_root)
+        "fipsCheckoutPathSha256": (
+            relocation["historicalCheckoutPathSha256"] if relocation
+            else path_sha256(pathlib.Path(args.fips_root))
         ),
         "fipsCoreVersion": args.fips_version,
         "fipsGitSha": args.fips_head,
@@ -704,6 +796,14 @@ def validate_archive_receipt(
         device_udid="",
     )
     require(signing == receipt.get("signing"), "frozen archive signing changed")
+    if relocation:
+        require(
+            validate_source_and_fips(args, receipt) == relocation,
+            "FIPS relocation changed during archive validation",
+        )
+        # Keep the immutable archive/Cargo/export receipts byte-compatible.
+        # Record the explicit relocation separately in the validation log.
+        print(json.dumps({"frozenArchiveSourceValidated": True, "fipsSourceRelocation": relocation}))
     return receipt, app, identity
 
 
@@ -727,6 +827,8 @@ def validate_export(args: argparse.Namespace) -> None:
         app_group_id=args.app_group_id,
         device_udid=args.device_udid,
     )
+    if getattr(args, "fips_source_relocation", None):
+        validate_source_and_fips(args, receipt)
     export_receipt = {
         "receiptSchema": RECEIPT_SCHEMA,
         "artifactType": "iOS export from frozen xcarchive",
@@ -772,6 +874,11 @@ def add_revision_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--{name.replace('_', '-')}", required=True)
 
 
+def add_relocation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--fips-source-relocation")
+    parser.add_argument("--fips-source-relocation-sha256")
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subparsers = result.add_subparsers(dest="command", required=True)
@@ -796,6 +903,7 @@ def parser() -> argparse.ArgumentParser:
     validate_archive.add_argument("--archive", required=True)
     validate_archive.add_argument("--archive-receipt", required=True)
     add_revision_arguments(validate_archive)
+    add_relocation_arguments(validate_archive)
 
     export = subparsers.add_parser("validate-export")
     export.add_argument("--archive", required=True)
@@ -810,6 +918,7 @@ def parser() -> argparse.ArgumentParser:
     )
     export.add_argument("--device-udid", default="")
     add_revision_arguments(export)
+    add_relocation_arguments(export)
 
     seal = subparsers.add_parser("seal-gate")
     seal.add_argument("--archive-receipt", required=True)

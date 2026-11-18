@@ -27,6 +27,24 @@ impl NativeAppRuntime {
         }
 
         match action {
+            NativeAppAction::SendFiles { npub, paths } => {
+                nostr_vpn_core::file_transfers::enqueue(
+                    &self.config_path,
+                    nostr_vpn_core::file_transfers::FileCommand::Send { npub, paths },
+                ).map(|_| ())
+            }
+            NativeAppAction::AcceptFileTransfer { id } => nostr_vpn_core::file_transfers::enqueue(
+                &self.config_path, nostr_vpn_core::file_transfers::FileCommand::Accept { id },
+            ).map(|_| ()),
+            NativeAppAction::DeclineFileTransfer { id } => nostr_vpn_core::file_transfers::enqueue(
+                &self.config_path, nostr_vpn_core::file_transfers::FileCommand::Decline { id },
+            ).map(|_| ()),
+            NativeAppAction::CancelFileTransfer { id } => nostr_vpn_core::file_transfers::enqueue(
+                &self.config_path, nostr_vpn_core::file_transfers::FileCommand::Cancel { id },
+            ).map(|_| ()),
+            NativeAppAction::ResumeFileTransfer { id } => nostr_vpn_core::file_transfers::enqueue(
+                &self.config_path, nostr_vpn_core::file_transfers::FileCommand::Resume { id },
+            ).map(|_| ()),
             NativeAppAction::GetState | NativeAppAction::Tick => {
                 #[cfg(feature = "paid-exit")]
                 self.refresh_pending_paid_route_wallet();
@@ -72,7 +90,7 @@ impl NativeAppRuntime {
                 ensure_success("nvpn service install", &output)?;
                 self.invalidate_service_status();
                 self.recover_from_startup_error()?;
-                self.refresh_service_status()?;
+                self.refresh_service_after_install()?;
                 self.arm_daemon_status_grace();
                 // Refresh the daemon state after the service swap before
                 // deciding whether to reconnect. Otherwise stale pre-bootout

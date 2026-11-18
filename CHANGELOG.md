@@ -2,14 +2,106 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.19 - 2026-10-23
+## 4.1.22 - 2026-11-14
+
+### Release notes
+
+- Send files to a network peer and resume interrupted transfers.
+- Paid Internet channels adapt renewals to recent traffic and recover unused
+  credit after reconnecting.
+- Linux can pause a VPN session without flushing routes it never changed.
+
+## 4.1.21 - 2026-11-04
+
+### Release notes
+
+- Paid Internet channels now size renewals from recent traffic. The app also
+  recovers unused channel credit after reconnecting and shows why an offer
+  cannot be selected.
+- The wallet log now shows how much was recovered after an interrupted
+  withdrawal. Sellers get an error when their advertised free trial exceeds
+  the amount they can provide.
+- Send files to a network peer and resume interrupted transfers. Received
+  files are available from the inbox.
+- Upgraded seeds can reconnect a restarted peer over a secure WebSocket
+  when its UDP path is unavailable.
+- On Linux, a VPN session that did not change system routes or forwarding
+  can pause even when the kernel's route-cache control is read-only.
+- The built-in updater uses Hashtree 0.3.0 to read signed releases.
+
+## 4.1.20 - 2026-11-03
+
+### Release notes
+
+Nostr VPN does less discovery work once a peer is connected and recovers
+peer messaging more reliably after a restart. This release also fixes paid
+Internet refunds and seller payouts, and removes network join secrets from
+diagnostic bundles.
+
+In release testing, the iPhone VPN tunnel averaged 2.47% of one CPU core
+while idle, above our 2% target. A mesh connection also timed out during a
+test with a heavily loaded relay. We are still investigating the cause.
+
+### Improved
+
+- Honor peer capacity and gossip settings across desktop and mobile, and spread
+  announcements fairly among equally ranked peers.
+- Avoid unnecessary background peer discovery when a client has a usable uplink,
+  while retaining discovery during startup and connection recovery.
+- Reduce allocations for idle and receipt-only network activity, and reuse
+  transport batching buffers.
+- Avoid rebuilding direct routes when their state has not changed.
+- Reuse otherwise unused TLS setup for plain Linux DNS queries.
+- Avoid repeating parsing and verification within peer reputation updates.
+
+### Fixed
+
+- Make new paid Internet refunds and seller payouts spendable by mints that
+  enforce the Cashu secret format, with agreement before funding and preserved
+  recovery data for existing channels.
+- Preserve bootstrap and approval peer retries when mobile endpoints refresh.
+- Recover peer messaging promptly after restarting its service on a live endpoint.
+- Keep peer discovery and replay subject to the application's peer policy.
+- Update compression dependencies to fix reported stream and memory-safety issues.
+- Redact network join secrets from diagnostic bundles.
+- Exit the background service when failed connection recovery leaves no running
+  endpoint, allowing the service manager to restart it.
+- Update the control panel's serialization dependency to address security issues.
+- Pin and verify the Windows tunnel driver's build input.
+- Reject untrusted Linux network cleanup files instead of changing their
+  permissions before reading them.
+
+### Known issues
+
+- The VPN exceeded its 2% idle CPU target on an iPhone in release testing.
+- A mesh connection timed out during a test with a heavily loaded relay. The cause is still under investigation.
+
+## 4.1.19 - 2026-10-26
+
+### Release notes
+
+This release improves network joining and reconnects, fixes desktop networking
+and controls, and strengthens connection security. Windows adds appearance
+choices and IPv6 exit routes. iPhone VPN idle CPU remains higher than intended;
+the latest release test measured about 5.4%, and further reduction is pending.
 
 ### Improved
 
 - Describe desktop and command-line source builds in a versioned Haps manifest.
+- Choose light, dark, or system appearance on Windows.
+- Preserve IPv6 addresses in imported WireGuard configurations and support
+  IPv6 exit routes on Windows.
 
 ### Fixed
 
+- Prevent paid Internet buyers from accessing the seller's private host,
+  local network, or other mesh routes.
+- Preserve Umbrel firewall protection state when its container is recreated.
+- Manage Windows services directly and handle installation paths with spaces.
+- Let Linux users select an available webcam for QR scanning, hide inaccessible
+  and metadata-only camera devices, and stop scanning when the scanner closes.
+- Keep Linux device details and form controls open during background telemetry
+  updates, and preserve scroll position and safe focus when pages refresh.
 - Keep macOS peers on connected LANs and VM bridges reachable instead of
   routing them through the default Internet gateway.
 - Recover retained Nostr relay updates after incoming bursts fill the queue,
@@ -30,6 +122,13 @@ All notable changes to this project are documented in this file.
   directory owned by the user.
 - Update TLS certificate validation dependencies on desktop and mobile,
   including the separately resolved Linux desktop app.
+- Fix cryptographic timing vulnerabilities in WebRTC connections and update
+  asynchronous I/O dependencies for the latest security fixes.
+
+### Known issues
+
+- iPhone VPN idle CPU measured about 5.4% in the latest release test; further reduction
+  is pending.
 
 ## 4.1.18 - 2026-10-19
 

@@ -854,6 +854,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     state_control: FipsControlTcpRuntime,
+    file_transfers: nostr_vpn_core::file_transfers::FileTransferService,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     pending_paid_exit_dns: Option<crate::ConnectMagicDnsRuntime>,
     manages_secure_dns: bool,

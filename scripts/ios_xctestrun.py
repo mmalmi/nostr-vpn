@@ -256,6 +256,10 @@ def rewrite_xctestrun(args: argparse.Namespace) -> None:
                 f"PlugIns/{UI_TEST_BUNDLE}"
             )
             target["UITargetAppBundleIdentifier"] = app_bundle_id
+            # This case supplies the target explicitly. A retained runner plan
+            # may instead leave target selection to the tests, which gives
+            # parameterless XCUIApplication() no configured application.
+            target["UseUITargetAppProvidedByTests"] = False
             for key in (
                 "TestBundlePath",
                 "TestHostPath",
@@ -300,7 +304,8 @@ def rewrite_xctestrun(args: argparse.Namespace) -> None:
                 and target.get("TestHostBundleIdentifier") == runner_bundle_id
                 and target.get("TestBundleDestinationRelativePath")
                 == f"PlugIns/{UI_TEST_BUNDLE}"
-                and target.get("UITargetAppBundleIdentifier") == app_bundle_id,
+                and target.get("UITargetAppBundleIdentifier") == app_bundle_id
+                and target.get("UseUITargetAppProvidedByTests") is False,
                 "rewritten xctestrun lacks destination artifact identity",
             )
             require(

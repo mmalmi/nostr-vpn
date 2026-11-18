@@ -32,15 +32,19 @@ impl NativeAppRuntime {
     }
 
     fn refresh_service_status(&mut self) -> Result<()> {
+        self.read_service_status(false)
+    }
+
+    fn read_service_status(&mut self, include_binary_version: bool) -> Result<()> {
         self.last_service_status_refresh_at = Some(Instant::now());
-        let output = self.run_nvpn([
-            "service",
-            "status",
-            "--json",
-            "--skip-binary-version",
-            "--config",
-            self.config_path_str()?,
-        ])?;
+        let config = self.config_path_str()?;
+        let output = if include_binary_version {
+            self.run_nvpn(["service", "status", "--json", "--config", config])?
+        } else {
+            self.run_nvpn([
+                "service", "status", "--json", "--skip-binary-version", "--config", config,
+            ])?
+        };
         if !output.status.success() {
             return Err(command_failure("nvpn service status", &output));
         }
@@ -57,6 +61,27 @@ impl NativeAppRuntime {
         self.service_binary_version
             .clone_from(&status.binary_version);
         self.service_status_detail = service_status_detail(&status);
+        Ok(())
+    }
+
+    fn refresh_service_after_install(&mut self) -> Result<()> {
+        // The macOS authorization API confirms that the installer launched,
+        // but does not return its exit status. Check the protected helper once.
+        if !cfg!(target_os = "macos") {
+            return self.refresh_service_status();
+        }
+        self.read_service_status(true)?;
+        if !self.service_installed || !self.service_running {
+            return Err(anyhow!("The background service did not start after installation."));
+        }
+        let expected = &self.expected_service_binary_version;
+        let actual = &self.service_binary_version;
+        if !expected.is_empty() && actual != expected {
+            if actual.is_empty() {
+                return Err(anyhow!("Could not verify that background service v{expected} was installed."));
+            }
+            return Err(anyhow!("The background service is still on v{actual}. The app requires v{expected}."));
+        }
         Ok(())
     }
 

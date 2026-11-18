@@ -815,6 +815,38 @@ export function validateMacosPixelJoinReceipt(args) {
   return { ...receipt.deliveryMilliseconds }
 }
 
+function requireDesktopProfileIsolation(receipt, platform, desktopArtifact) {
+  const proof = receipt.profileIsolation
+  if (receipt.appLaunchArgumentsOrEnvironment === false && proof === undefined) return
+  const label = `${platform} desktop profile isolation`
+  const keys = [
+    'schema', 'kind', 'environmentKeys', 'appArguments', 'guiDirectorySha256',
+    'serviceDirectorySha256', 'originalDirectorySha256', 'originalBeforeSha256',
+    'originalAfterSha256', 'originalProfileUnchanged', 'appSha256', 'serviceCliSha256',
+    'guiModes', 'serviceInstallCount',
+  ]
+  if (platform !== 'windows' || receipt.appLaunchArgumentsOrEnvironment !== true
+    || !proof || !isDeepStrictEqual(Object.keys(proof).sort(), keys.sort())
+    || proof.schema !== 1 || proof.kind !== 'production-data-directory'
+    || !isDeepStrictEqual(proof.environmentKeys, ['NVPN_APP_DATA_DIR'])
+    || !isDeepStrictEqual(proof.appArguments, [])
+    || proof.originalProfileUnchanged !== true || proof.serviceInstallCount !== 2
+    || !isDeepStrictEqual(proof.guiModes,
+      ['AdminAdd', 'Bootstrap', 'CreateAdmin', 'ManualJoin', 'Verify', 'Verify'])
+    || proof.appSha256 !== desktopArtifact.artifacts?.app?.sha256
+    || proof.serviceCliSha256 !== desktopArtifact.artifacts?.cli?.sha256) {
+    throw new Error(`${label} lacks exact production profile/artifact bindings.`)
+  }
+  for (const key of keys.filter((key) => key.endsWith('Sha256'))) {
+    requireSha256(proof[key], `${label} ${key}`)
+  }
+  if (proof.guiDirectorySha256 !== proof.serviceDirectorySha256
+    || proof.guiDirectorySha256 === proof.originalDirectorySha256
+    || proof.originalBeforeSha256 !== proof.originalAfterSha256) {
+    throw new Error(`${label} changed the original profile or mismatched GUI/service directories.`)
+  }
+}
+
 function requireDesktopMobileJoinReceipt({
   receipt,
   platform,
@@ -825,9 +857,9 @@ function requireDesktopMobileJoinReceipt({
 }) {
   const label = `${platform} / Pixel public-UI join receipt`
   requirePublicUiJoinReceipt(receipt, platform, label, 2)
+  requireDesktopProfileIsolation(receipt, platform, desktopArtifact)
   if (
-    receipt.appLaunchArgumentsOrEnvironment !== false
-    || !Number.isSafeInteger(receipt.completionDeadlineSeconds)
+    !Number.isSafeInteger(receipt.completionDeadlineSeconds)
     || receipt.completionDeadlineSeconds <= 0
     || receipt.completionDeadlineSeconds > 15
   ) {

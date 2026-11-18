@@ -420,13 +420,45 @@ impl<H: SpilmanClientHost, N: SpilmanClientNetworking> SpilmanClientBridge<H, N>
         requested_capacity: Option<u64>,
         async_networking: &AN,
     ) -> Result<OpenChannelResult, String> {
+        self.open_channel_from_token_async_with_output_version(
+            token_string,
+            receiver_pubkey_hex,
+            sender_pubkey_hex,
+            expiry_timestamp,
+            keyset_info_json,
+            max_amount,
+            requested_capacity,
+            crate::ChannelOutputVersion::Legacy,
+            async_networking,
+        )
+        .await
+    }
+
+    /// Open a new channel using the output format agreed by both peers.
+    /// The format is bound into its parameters before the first mint swap.
+    #[cfg(feature = "wallet")]
+    #[allow(clippy::too_many_arguments)]
+    pub async fn open_channel_from_token_async_with_output_version<
+        AN: SpilmanClientAsyncNetworking,
+    >(
+        &self,
+        token_string: &str,
+        receiver_pubkey_hex: &str,
+        sender_pubkey_hex: &str,
+        expiry_timestamp: u64,
+        keyset_info_json: &str,
+        max_amount: u64,
+        requested_capacity: Option<u64>,
+        output_version: crate::ChannelOutputVersion,
+        async_networking: &AN,
+    ) -> Result<OpenChannelResult, String> {
         // Step 1: Compute channel secret via host (ECDH delegation)
         let channel_secret_hex = self
             .host
             .compute_channel_secret(sender_pubkey_hex, receiver_pubkey_hex)?;
 
         // Step 2: Parse token and compute channel parameters
-        let compute_result = compute_channel_from_token(
+        let compute_result = super::bindings::compute_channel_from_token_with_output_version(
             token_string,
             receiver_pubkey_hex,
             sender_pubkey_hex,
@@ -435,6 +467,7 @@ impl<H: SpilmanClientHost, N: SpilmanClientNetworking> SpilmanClientBridge<H, N>
             keyset_info_json,
             max_amount,
             requested_capacity,
+            output_version,
         )?;
 
         let compute_json: serde_json::Value = serde_json::from_str(&compute_result)
