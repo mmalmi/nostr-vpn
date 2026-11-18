@@ -6,6 +6,22 @@
             .port()
     }
 
+    fn private_exit_state_at(
+        config: &MobileTunnelConfig,
+        mobile: &MobileTunnelStarted,
+        now: u64,
+    ) -> DaemonRuntimeState {
+        mobile_runtime_state_with_tun_counters(
+            config,
+            &mobile.mesh.read().expect("mesh"),
+            &mobile.presence.read().expect("presence"),
+            Vec::new(),
+            Vec::new(),
+            MobileTunCounters::default(),
+            now,
+        )
+    }
+
     #[test]
     fn mobile_discovers_private_exit_before_selection_over_fips() {
         let runtime = RuntimeBuilder::new_multi_thread()
@@ -81,12 +97,7 @@
                         tokio::time::sleep(Duration::from_millis(20)).await;
                     }
                 }).await.expect("mobile receives capabilities");
-                let state = mobile_runtime_state_with_tun_counters(
-                    &config,
-                    &mobile.mesh.read().expect("mesh"),
-                    &mobile.presence.read().expect("presence"),
-                    Vec::new(), Vec::new(), MobileTunCounters::default(), now,
-                );
+                let state = private_exit_state_at(&config, &mobile, now);
                 let peer = state.peers.iter().find(|peer| peer.participant_pubkey == exit_pubkey)
                     .expect("private peer");
                 assert_eq!(peer.advertised_routes, expected_routes,
@@ -98,12 +109,7 @@
                 let received_at = mobile.presence.read().expect("presence")
                     .get(&exit_pubkey).expect("exit presence")
                     .capabilities_received_at.expect("received capabilities");
-                let expired = mobile_runtime_state_with_tun_counters(
-                    &config,
-                    &mobile.mesh.read().expect("mesh"),
-                    &mobile.presence.read().expect("presence"),
-                    Vec::new(), Vec::new(), MobileTunCounters::default(), received_at + 601,
-                );
+                let expired = private_exit_state_at(&config, &mobile, received_at + 601);
                 assert!(expired.peers.iter().find(|peer| peer.participant_pubkey == exit_pubkey)
                     .expect("expired exit peer").advertised_routes.is_empty(),
                     "expired advertisements must stop offering an exit");
