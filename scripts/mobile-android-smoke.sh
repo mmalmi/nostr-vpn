@@ -1060,10 +1060,18 @@ android_open_internet_settings_ui() {
   }
 }
 
+# Validation and Save are below their text fields. A previous check can leave
+# the viewport past the next control.
+android_ui_reveal_control() {
+  android_ui_query "$1" "$2" safe-center >/dev/null && return 0
+  android_ui_reset_scroll || return 1
+  android_ui_scroll_to "$1" "$2"
+}
+
 replace_android_ui_text() {
   local selector="$1"
   local value="$2"
-  android_ui_scroll_to resource "$selector" || return 1
+  android_ui_reveal_control resource "$selector" || return 1
   tap_android_ui resource "$selector" || return 1
   local deadline=$((SECONDS + 3))
   while ((SECONDS < deadline)); do
@@ -1136,7 +1144,7 @@ replace_android_ui_multiline_text() {
 assert_android_ui_validation() {
   local expected="$1"
   local description="Exit DNS validation error: $expected"
-  android_ui_scroll_to description "$description" || {
+  android_ui_reveal_control description "$description" || {
     echo "Android shipped Exit DNS UI did not show validation: $expected" >&2
     return 1
   }
@@ -1424,27 +1432,27 @@ configure_android_exit_dns_ui() {
     sleep 0.25
 
     if [[ "$EXIT_DNS_DOH_PROVIDER" == "custom" ]]; then
-      replace_android_ui_text exit-dns-custom-url ""
-      replace_android_ui_text exit-dns-custom-bootstrap-ips ""
+      replace_android_ui_text exit-dns-custom-url "" || return 1
+      replace_android_ui_text exit-dns-custom-bootstrap-ips "" || return 1
       assert_android_ui_validation "Enter an HTTPS DoH URL." || return 1
 
       replace_android_ui_text \
         exit-dns-custom-url \
-        "http://resolver.invalid/dns-query"
+        "http://resolver.invalid/dns-query" || return 1
       assert_android_ui_validation "DoH URL must use HTTPS." || return 1
 
-      replace_android_ui_text exit-dns-custom-url "$EXIT_DNS_CUSTOM_DOH_URL"
+      replace_android_ui_text exit-dns-custom-url "$EXIT_DNS_CUSTOM_DOH_URL" || return 1
       assert_android_ui_validation "Enter at least one bootstrap IP." || return 1
       replace_android_ui_text \
         exit-dns-custom-bootstrap-ips \
-        "$EXIT_DNS_CUSTOM_DOH_BOOTSTRAP_IPS"
+        "$EXIT_DNS_CUSTOM_DOH_BOOTSTRAP_IPS" || return 1
     fi
   elif [[ "$EXIT_DNS_MODE" == "through_exit" ]]; then
-    replace_android_ui_text exit-dns-through-exit-servers ""
+    replace_android_ui_text exit-dns-through-exit-servers "" || return 1
     assert_android_ui_validation "Enter at least one DNS server IP." || return 1
     replace_android_ui_text \
       exit-dns-through-exit-servers \
-      "$EXIT_DNS_THROUGH_EXIT_SERVERS"
+      "$EXIT_DNS_THROUGH_EXIT_SERVERS" || return 1
   fi
 
   assert_android_ui_save_enabled || return 1
