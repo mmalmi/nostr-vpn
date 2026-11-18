@@ -48,7 +48,9 @@ fn refresh_header(app: &AppRef, state: &NativeAppState) {
 }
 
 fn render_background_change(app: &AppRef) {
-    let editing = gtk::prelude::GtkWindowExt::focus(&app.borrow().window).is_some_and(|focus| {
+    let window = app.borrow().window.clone();
+    let focus = gtk::prelude::GtkWindowExt::focus(&window);
+    let editing = focus.as_ref().is_some_and(|focus| {
         [
             gtk::Entry::static_type(),
             gtk::TextView::static_type(),
@@ -62,8 +64,31 @@ fn render_background_change(app: &AppRef) {
     if editing {
         app.borrow_mut().render_pending = true;
     } else {
+        let key = focus.as_ref().map(|widget| widget.widget_name())
+            .filter(|name| name.starts_with("nvpn-"));
         render(app);
+        if let Some(key) = key {
+            // A refresh replaces the controls. Resume Tab navigation on the same
+            // action, even if a peer appeared or the route list changed order.
+            if let Some(widget) = find_named_control(window.upcast_ref(), &key) {
+                widget.grab_focus();
+            }
+        }
     }
+}
+
+fn find_named_control(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {
+    if root.widget_name() == name {
+        return Some(root.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Some(found) = find_named_control(&widget, name) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
 }
 
 fn render(app: &AppRef) {
@@ -339,6 +364,7 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
             target == Page::Devices && has_incoming_join_requests,
         );
         let app = app.clone();
+        button.set_widget_name(&format!("nvpn-nav-{target:?}"));
         button.connect_clicked(move |_| set_page(&app, target));
         sidebar.append(&button);
     }

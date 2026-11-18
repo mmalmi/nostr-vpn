@@ -193,6 +193,7 @@ fn build_exit_dns_settings_card(app: &AppRef, page: &gtk::Box) {
     }
 
     let save = icon_text_button("Save Exit DNS", "");
+    save.set_widget_name("nvpn-exit-dns-save");
     selectors.expose_object("nvpn-exit-dns-save", &save);
     save.update_property(&[gtk::accessible::Property::Label(
         "Save Exit DNS",

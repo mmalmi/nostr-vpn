@@ -132,6 +132,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
             }
             let retry = gtk::Button::with_label("Try another");
             let app = app.clone();
+            retry.set_widget_name("nvpn-route-retry");
             retry.connect_clicked(move |_| {
                 dispatch(&app, NativeAppAction::ReselectPaidExit);
             });
@@ -178,6 +179,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     page.append(&offer);
     if state.paid_exit_seller.supported {
         let sell = icon_text_button("Sell internet access · Experimental", "mail-send-symbolic");
+        sell.set_widget_name("nvpn-paid-exit-seller-open");
         sell.update_property(&[gtk::accessible::Property::Label(
             "nvpn-paid-exit-seller-open",
         )]);
@@ -214,6 +216,14 @@ fn route_choice(
     let button = gtk::Button::new();
     button.add_css_class("flat");
     button.add_css_class("nvpn-route-choice");
+    let route = match &choice {
+        ExitChoice::Direct => "direct",
+        ExitChoice::WireGuard => "wireguard",
+        ExitChoice::Peer(npub) => npub.as_str(),
+        ExitChoice::PaidAutomatic => "paid-automatic",
+        ExitChoice::PaidManual => "paid-manual",
+    };
+    button.set_widget_name(&format!("nvpn-route-{route}"));
     button.set_sensitive(enabled);
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);

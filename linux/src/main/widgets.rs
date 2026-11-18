@@ -22,6 +22,7 @@ fn switch_row_enabled<F>(
     label.set_hexpand(true);
     row.append(&label);
     let switch = gtk::Switch::builder().active(active).build();
+    switch.set_widget_name(&format!("nvpn-setting-{}", title.replace(' ', "-")));
     switch.set_sensitive(enabled);
     {
         let app = app.clone();
