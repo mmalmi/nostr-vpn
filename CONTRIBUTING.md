@@ -29,7 +29,7 @@ unchanged code rather than repeating expensive builds.
 | Rust | Format the changed package with `cargo fmt --check -p <package>`, then run focused tests with `cargo test --locked -p <package> <filter>`. CI runs workspace lint and tests. |
 | Linux desktop | Run `(cd linux && cargo check --locked)` on Linux, plus focused tests for the changed behavior. This crate is outside the root workspace. |
 | Web | Run `npm ci && npm run check`; exercise visible changes in the app. |
-| macOS app | Build the app using `just macos-build`; scanner compatibility CI alone does not compile the whole app. |
+| macOS app | Build the app with `just macos-build`. The scanner compatibility check uses the minimum supported build toolchain, Xcode 16.0, and targets macOS 13. |
 | Windows app | Build on native Windows (maintainers use the configured dev VM): `dotnet build windows\NostrVpn.Windows\NostrVpn.Windows.csproj -p:EnableWindowsTargeting=true`. Exercise changed service/VPN behavior there. |
 | Mobile | Run `just mobile-test-kit`. Use `just mobile-test-kit-sim` for simulator UI and `just mobile-test-kit-device` for relevant physical VPN/TUN paths. Coordinate shared devices and preserve their existing state. |
 | Release tooling | Run the affected existing contract harness. Release candidates additionally require `just release-gate`; see [AGENTS.md](AGENTS.md) for release gates. |
