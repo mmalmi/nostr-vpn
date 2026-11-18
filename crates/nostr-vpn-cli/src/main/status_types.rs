@@ -140,6 +140,8 @@ struct MacosNetworkCleanupState {
     ipv4_forward_was_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pf_was_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pf_exit_anchor: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     secure_dns_resolver_files: bool,
 }
