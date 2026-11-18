@@ -225,8 +225,11 @@ dispatch = app.split("func dispatch(", 1)[1].split(
 adoption = app.split("func adoptAppStoreCompatibleState(", 1)[1].split(
     "private func reconcileAppStoreTunnelAfterSanitization", 1
 )[0]
-if "nativeStateBeforeAction = core.state()" not in dispatch:
-    raise SystemExit("native VPN start preservation does not verify an OFF-to-ON transition")
+transport_check = "let transportWasOff = requiresPacketTunnelConfigSync && !core.state().vpnEnabled"
+if dispatch.count("core.state()") != 1 or transport_check not in dispatch:
+    raise SystemExit("only transport actions should read the pre-action native VPN state")
+if dispatch.index(transport_check) > dispatch.index("core.dispatch(action)"):
+    raise SystemExit("native VPN start preservation must check transport before dispatch")
 if "shouldStartPacketTunnelAfterAction" not in dispatch:
     raise SystemExit("iOS does not start its admin carrier after creating a network")
 start_policy = app.split("static func shouldStartPacketTunnelAfterAction", 1)[1].split(
@@ -240,12 +243,10 @@ if not dispatch.index("actionInFlight = false") < dispatch.index(
     raise SystemExit("iOS starts an admin carrier before completing its native action")
 if "actionRequiresPacketTunnelConfigSync(" not in dispatch:
     raise SystemExit("native VPN start preservation is not limited to transport/config actions")
-if "nativeStateBeforeAction.error" in dispatch:
-    raise SystemExit("a stale pre-action error suppresses a successful VPN start")
 if "successfulTransportStart:" not in dispatch or not all(
     condition in dispatch
     for condition in (
-        "!nativeStateBeforeAction.vpnEnabled",
+        "successfulTransportStart: transportWasOff",
         "nativeState.error.isEmpty",
         "nativeState.vpnEnabled",
     )

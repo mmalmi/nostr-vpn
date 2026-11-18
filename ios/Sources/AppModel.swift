@@ -35,6 +35,7 @@ final class AppModel: ObservableObject {
     @Published var fileNotificationsEnabled = false
     var filePreparation: FilePreparation?
     var fileObservation: FileTransferObservation?
+    var lastPublishedFileSharePeers: [FileSharePeer]?
     var fileNotificationDelegate = FileNotificationDelegate()
     var pendingFileNotificationAction: (String, String)?
 
@@ -292,14 +293,13 @@ final class AppModel: ObservableObject {
         if fixtureMode {
             state = ScreenshotFixtures.dispatch(action, state: state)
         } else if let core {
-            let nativeStateBeforeAction = core.state()
+            let transportWasOff = requiresPacketTunnelConfigSync && !core.state().vpnEnabled
             let nativeState = core.dispatch(action)
             adoptAppStoreCompatibleState(
                 nativeState,
                 core: core,
                 reason: actionType,
-                successfulTransportStart: requiresPacketTunnelConfigSync
-                    && !nativeStateBeforeAction.vpnEnabled
+                successfulTransportStart: transportWasOff
                     && nativeState.error.isEmpty
                     && nativeState.vpnEnabled
             )
@@ -356,12 +356,13 @@ final class AppModel: ObservableObject {
         successfulTransportStart: Bool = false
     ) -> Bool {
         let compatibility = Self.appStoreCompatibleState(current, core: core)
-        state = compatibility.state
-        publishFileSharePeers()
-        state.vpnEnabled = vpnDesiredState.adoptNativeState(
-            runtimeEnabled: state.vpnEnabled,
+        var nextState = compatibility.state
+        nextState.vpnEnabled = vpnDesiredState.adoptNativeState(
+            runtimeEnabled: nextState.vpnEnabled,
             successfulTransportStart: successfulTransportStart
         )
+        state = nextState
+        publishFileSharePeers()
         if compatibility.removedPaidConfiguration && compatibility.vpnWasRunning {
             appStoreTunnelRefreshPending = true
             _ = reconcileAppStoreTunnelAfterSanitization(reason: reason)

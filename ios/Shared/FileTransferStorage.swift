@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 import UniformTypeIdentifiers
 
-struct FileSharePeer: Codable, Identifiable {
+struct FileSharePeer: Codable, Identifiable, Equatable {
     var npub: String
     var name: String
     var detail: String? = nil
@@ -23,6 +23,15 @@ final class FilePreparation: @unchecked Sendable {
 }
 
 enum FileTransferStorage {
+    static func writeSharePeers(_ peers: [FileSharePeer], in supportDir: URL, lastWritten: inout [FileSharePeer]?) throws {
+        let url = supportDir.appendingPathComponent("file-share-peers.json")
+        guard peers != lastWritten || !FileManager.default.fileExists(atPath: url.path) else { return }
+        lastWritten = nil
+        try JSONEncoder().encode(peers).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        lastWritten = peers
+    }
+
     /// Only use for fresh copies returned by stage() when enqueue did not succeed.
     static func discard(_ stagedPaths: [String]) {
         for path in stagedPaths { try? FileManager.default.removeItem(atPath: path) }
