@@ -69,3 +69,15 @@ export function preflightHtreeRelease({ repoRoot, env, dryRun = false }) {
   })
   return { identity: npub, verified: true }
 }
+
+export function verifyPublishedUpdate({ repoRoot, env, releaseTree, tag }) {
+  const reference = `htree://${env.NVPN_HTREE_PUBLISHER_NPUB}/${encodeURIComponent(releaseTree)}/latest`
+  const result = JSON.parse(run('nvpn', ['update', '--source', 'hashtree', '--app', '--check', '--json'], {
+    cwd: repoRoot,
+    env: { ...env, NVPN_UPDATE_HTREE_REF: reference, NVPN_UPDATE_MANIFEST_URL: '' },
+  }))
+  if (result.verified !== true || result.tag !== tag || !result.asset) {
+    throw new Error(`Installed updater did not verify ${tag} through the mesh (observed ${result.tag || 'no release'}).`)
+  }
+  console.log(`Installed updater verified ${tag} via signed mesh discovery.`)
+}

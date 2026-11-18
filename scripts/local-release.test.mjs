@@ -60,7 +60,7 @@ import {
   githubReleaseRepairPlan,
   validateGithubReleaseMetadata,
 } from './github-release-publication.mjs'
-import { parseActiveHtreeIdentity } from './htree-release-publication.mjs'
+import { parseActiveHtreeIdentity, verifyPublishedUpdate } from './htree-release-publication.mjs'
 import {
   validateFrozenIosPublication,
 } from './ios-release-publication.mjs'
@@ -145,6 +145,31 @@ test('splitCsv trims and drops empties', () => {
     'android',
     'macos',
   ])
+})
+
+test('release verification uses signed mesh discovery and rejects stale or unverified results', () => {
+  const bin = mkdtempSync(join(tmpdir(), 'nvpn-mesh-update-reader-'))
+  try {
+    const cli = join(bin, 'nvpn')
+    writeFileSync(cli, [
+      '#!/bin/sh',
+      'test "$*" = "update --source hashtree --app --check --json" || exit 2',
+      'test "$NVPN_UPDATE_HTREE_REF" = "htree://publisher/releases%2Fvpn/latest" || exit 2',
+      'test -z "$NVPN_UPDATE_MANIFEST_URL" || exit 2',
+      'echo "$TEST_RESULT"',
+    ].join('\n'), { mode: 0o755 })
+    const check = (overrides) => verifyPublishedUpdate({
+      repoRoot: bin, releaseTree: 'releases/vpn', tag: 'v4.1.22',
+      env: { PATH: bin, NVPN_HTREE_PUBLISHER_NPUB: 'publisher', NVPN_UPDATE_MANIFEST_URL: 'old',
+        TEST_RESULT: JSON.stringify({ tag: 'v4.1.22', asset: 'vpn.app.tar.gz', verified: true, ...overrides }) },
+    })
+    check({})
+    assert.throws(() => check({ tag: 'v4.1.20' }), /did not verify/)
+    assert.throws(() => check({ verified: false }), /did not verify/)
+    assert.throws(() => check({ asset: '' }), /did not verify/)
+  } finally {
+    rmSync(bin, { recursive: true, force: true })
+  }
 })
 
 test('htree identity parser accepts current and legacy active identity output', () => {
@@ -1667,7 +1692,7 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
     'status',
     'release publish --help',
     `haps import-release ${sourceStage} --config ${join(realpathSync(repo), 'haps-release.json')} --tag v4.1.5 --publish-source`,
-    `add --no-ignore ${stage}`,
+    `add --no-ignore --legacy-keys ${stage}`,
     'user',
     'status',
     'release publish --help',
@@ -1676,7 +1701,7 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
     'user',
     'status',
     'release publish --help',
-    `release publish releases/test v4.1.5 ${fakeCid} --draft`,
+    `release publish releases/test v4.1.5 ${fakeCid} --legacy-keys --draft`,
   ])
   assert.match(
     readFileSync(join(scripts, 'local-release.mjs'), 'utf8'),

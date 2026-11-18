@@ -69,7 +69,7 @@ import {
   preflightGithubRelease,
   publishExactGithubRelease,
 } from './github-release-publication.mjs'
-import { preflightHtreeRelease } from './htree-release-publication.mjs'
+import { preflightHtreeRelease, verifyPublishedUpdate } from './htree-release-publication.mjs'
 import {
   preflightIosPublication,
   publishExactIosDistribution,
@@ -2033,7 +2033,8 @@ function publishRelease({
   beforeMutation()
   publishHapsSource({ stageDir, tag, draft, env, dryRun })
   // The validated stage is an exact allowlist; Git ignores must not omit assets.
-  const addOutput = run('htree', ['add', '--no-ignore', stageDir], { capture: true, dryRun })
+  // Installed 4.1.20 readers require 32-byte keys throughout the release tree.
+  const addOutput = run('htree', ['add', '--no-ignore', '--legacy-keys', stageDir], { capture: true, dryRun })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
   if (!match) {
     throw new Error('Could not parse htree add output for release CID.')
@@ -2048,13 +2049,14 @@ function publishRelease({
     metadataBindings,
     dryRun,
   })
-  const args = ['release', 'publish', releaseTree, tag, cid]
+  const args = ['release', 'publish', releaseTree, tag, cid, '--legacy-keys']
   if (draft) {
     args.push('--draft')
   }
   beforeMutation()
   run('htree', args, { dryRun })
   if (!draft) {
+    verifyPublishedUpdate({ repoRoot, env, releaseTree, tag })
     beforeMutation()
     run('haps', [...hapsArgs, '--publish'], { env, dryRun })
   }
