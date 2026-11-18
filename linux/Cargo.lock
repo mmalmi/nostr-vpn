@@ -4132,6 +4132,7 @@ dependencies = [
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
  "peer-payments",
+ "rand 0.9.4",
  "reqwest",
  "rustix",
  "security-framework 2.11.1",

@@ -1,17 +1,3 @@
-fn mobile_join_roster_destination(
-    app: &AppConfig,
-    recipient: &str,
-) -> Result<Option<PeerIdentity>> {
-    let recipient = normalize_nostr_pubkey(recipient)?;
-    if !app.participant_pubkeys_hex().contains(&recipient) {
-        return Ok(None);
-    }
-    let peer = FipsMeshPeerConfig::from_participant_pubkey(&recipient, Vec::new())?;
-    PeerIdentity::from_npub(&peer.endpoint_npub)
-        .with_context(|| format!("invalid FIPS endpoint identity {}", peer.endpoint_npub))
-        .map(Some)
-}
-
 fn queued_mobile_join_roster_destination(queued: &QueuedJoinRoster) -> Result<PeerIdentity> {
     let recipient = normalize_nostr_pubkey(&queued.recipient_npub)?;
     queued.join_roster.signed_roster.verify()?;
@@ -189,6 +175,10 @@ async fn push_mobile_wg_inbound_batch(
 
 struct MobileTunnelStarted {
     endpoint: Arc<FipsEndpoint>,
+    // Production tasks receive clones of the sender before this struct is
+    // built; the handle is retained only so tests can observe and inject
+    // control frames.
+    #[cfg(test)]
     state_control: FipsControlTcpSender,
     control_pubsub: Option<ControlPubsubFipsRuntime>,
     mesh: MobileMesh,

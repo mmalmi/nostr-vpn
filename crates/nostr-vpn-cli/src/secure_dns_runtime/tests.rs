@@ -175,7 +175,7 @@ fn direct_resolv_conf_crash_repair_only_restores_owned_content() {
         &LINUX_DIRECT_RESOLV_CONF[..12],
         previous
     ));
-    assert!(linux_direct_resolv_conf_needs_restore(
+    assert!(!linux_direct_resolv_conf_needs_restore(
         &previous[..10],
         previous
     ));

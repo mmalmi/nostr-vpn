@@ -146,7 +146,7 @@ Use `just run-macos` or `just run-linux` for a specific desktop target. See [ver
 ## Documentation
 
 - [Protocol](docs/protocol.md): enrollment, roster sync, routing, and DNS privacy
-- [StartOS packaging](CONTRIBUTING.md): contributor build and validation notes
+- [Contributing](CONTRIBUTING.md): small PRs, relevant checks, and StartOS packaging
 - [Changelog](CHANGELOG.md): release history
 - [Security reports](SECURITY.md): private vulnerability reporting
 - [Experiments](docs/EXPERIMENTS.md): performance and reliability results

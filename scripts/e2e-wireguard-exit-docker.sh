@@ -319,6 +319,32 @@ if [[ -z "$FIPS_IFACE" ]] \
   echo "mesh reply route: ${MESH_REPLY_ROUTE:-unavailable}" >&2
   exit 1
 fi
+# A local network inside the mesh source range, such as a container or VM
+# bridge, must keep its own routes while the WG exit policy is installed:
+# replies to it stay local and traffic forwarded from it keeps the host's
+# ordinary routes instead of the WG exit table.
+LOCAL_NET_ROUTES="$("${COMPOSE[@]}" exec -T node-a sh -lc '
+  set -e
+  ip link add nvpn-e2e-lan type veth peer name nvpn-e2e-lanp
+  ip addr add 10.44.0.1/24 dev nvpn-e2e-lan
+  ip link set nvpn-e2e-lanp up
+  ip link set nvpn-e2e-lan up
+  echo "reply: $(ip -4 -o route get 10.44.0.5 from 10.44.0.1 || true)"
+  echo "forward: $(ip -4 -o route get '"$TARGET_IP"' from 10.44.0.5 iif nvpn-e2e-lan || true)"
+  ip link del nvpn-e2e-lan' | tr -d '\r')"
+LOCAL_REPLY_ROUTE="$(sed -n 's/^reply: //p' <<<"$LOCAL_NET_ROUTES")"
+LOCAL_FORWARD_ROUTE="$(sed -n 's/^forward: //p' <<<"$LOCAL_NET_ROUTES")"
+LOCAL_REPLY_IFACE="$(awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$LOCAL_REPLY_ROUTE")"
+LOCAL_FORWARD_IFACE="$(awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }' <<<"$LOCAL_FORWARD_ROUTE")"
+if [[ "$LOCAL_REPLY_IFACE" != "nvpn-e2e-lan" ]] \
+  || [[ -z "$LOCAL_FORWARD_IFACE" ]] \
+  || [[ "$LOCAL_FORWARD_IFACE" == "$WG_IFACE" ]] \
+  || grep -q 'table 51888' <<<"$LOCAL_FORWARD_ROUTE"; then
+  echo "wireguard-exit e2e failed: the WG exit policy captured a local network in the mesh range" >&2
+  echo "local network reply route: ${LOCAL_REPLY_ROUTE:-unavailable}" >&2
+  echo "local network forward route: ${LOCAL_FORWARD_ROUTE:-unavailable}" >&2
+  exit 1
+fi
 if ! "${COMPOSE[@]}" exec -T node-a ping -I "$ALICE_TUNNEL_IP" -c 5 -W 2 "$BOB_TUNNEL_IP" \
   >/tmp/nvpn-wg-exit-mesh-a-to-b.log; then
   echo "wireguard-exit e2e failed: node-a could not reach node-b while the WG exit was active" >&2

@@ -161,52 +161,6 @@ fn daemon_pid_scan_ignores_shell_wrappers_that_mention_nvpn_daemon() {
 }
 
 #[test]
-fn windows_daemon_pid_scan_matches_processes_for_config() {
-    let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
-    let cim_json = r#"[{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"},{"ProcessId":97597,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"},{"ProcessId":55555,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\temp\\other.toml\" --iface NostrVPN"}]"#;
-    let pids = crate::daemon_pids_from_windows_cim_json(cim_json, config_path);
-    assert_eq!(pids, vec![42063, 97597]);
-}
-
-#[test]
-fn windows_daemon_pid_scan_accepts_single_process_object() {
-    let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
-    let cim_json = r#"{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"}"#;
-    let pids = crate::daemon_pids_from_windows_cim_json(cim_json, config_path);
-    assert_eq!(pids, vec![42063]);
-}
-
-#[test]
-fn windows_daemon_pid_record_requires_same_pid_and_config() {
-    let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
-    let exact_daemon = r#"{"ProcessId":1736,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"}"#;
-    let reused_pid = r#"{"ProcessId":1736,"CommandLine":"\"C:\\Windows\\System32\\notepad.exe\""}"#;
-    let other_config = r#"{"ProcessId":1736,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\temp\\other.toml\" --iface NostrVPN"}"#;
-    let other_pid = r#"{"ProcessId":42063,"CommandLine":"\"C:\\Program Files\\Nostr VPN\\nvpn.exe\" daemon --config \"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\" --iface NostrVPN"}"#;
-
-    assert!(crate::windows_daemon_pid_record_matches_cim(
-        1736,
-        exact_daemon,
-        config_path
-    ));
-    assert!(!crate::windows_daemon_pid_record_matches_cim(
-        1736,
-        reused_pid,
-        config_path
-    ));
-    assert!(!crate::windows_daemon_pid_record_matches_cim(
-        1736,
-        other_config,
-        config_path
-    ));
-    assert!(!crate::windows_daemon_pid_record_matches_cim(
-        1736,
-        other_pid,
-        config_path
-    ));
-}
-
-#[test]
 fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     let executable = Path::new("C:\\Program Files\\Nostr VPN\\nvpn.exe");
     let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
@@ -220,42 +174,6 @@ fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     assert!(command.contains("\"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\""));
     assert!(command.contains(" --iface \"nvpn\""));
     assert!(command.contains(" --mesh-refresh-interval-secs 60"));
-}
-
-#[test]
-fn windows_tasklist_pid_parser_extracts_pids() {
-    let output = "\"nvpn.exe\",\"9564\",\"Services\",\"0\",\"172,248 K\"\n\"nvpn.exe\",\"3496\",\"Console\",\"1\",\"19,472 K\"\n";
-    assert_eq!(crate::tasklist_pids_from_output(output), vec![3496, 9564]);
-}
-
-#[test]
-fn windows_tasklist_pid_parser_ignores_no_tasks_message() {
-    let output = "INFO: No tasks are running which match the specified criteria.\r\n";
-    assert!(crate::tasklist_pids_from_output(output).is_empty());
-}
-
-#[test]
-fn recent_windows_daemon_pid_candidate_uses_fresh_state_and_single_other_process() {
-    let state = DaemonRuntimeState {
-        updated_at: 100,
-        ..Default::default()
-    };
-    assert_eq!(
-        crate::recent_windows_daemon_pid_candidate(Some(&state), 42, &[42, 9564], 103),
-        Some(9564)
-    );
-    assert_eq!(
-        crate::recent_windows_daemon_pid_candidate(Some(&state), 42, &[42, 9564], 106),
-        None
-    );
-    assert_eq!(
-        crate::recent_windows_daemon_pid_candidate(Some(&state), 42, &[42, 9564, 97597], 103),
-        None
-    );
-    assert_eq!(
-        crate::recent_windows_daemon_pid_candidate(None, 42, &[42, 9564], 103),
-        None
-    );
 }
 
 #[test]

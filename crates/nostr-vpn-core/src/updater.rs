@@ -564,7 +564,7 @@ fn legacy_selection(
             current_target()
         )
     })?;
-    let asset_url = manifest_asset_url(&manifest_url, &asset.path);
+    let asset_url = manifest_asset_url(&manifest_url, &asset.path)?;
     let source_name = if manifest_url.contains("api.github.com") {
         GITHUB_SOURCE_NAME
     } else {
@@ -762,15 +762,20 @@ fn fetch_manifest(url: &str) -> Result<ReleaseManifest> {
     serde_json::from_slice(&output.stdout).context("failed to parse release manifest")
 }
 
-fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
-    if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("file://") {
-        return path.to_string();
+fn manifest_asset_url(manifest_url: &str, path: &str) -> Result<String> {
+    match path.split_once("://") {
+        Some(("https", _)) => Ok(path.to_string()),
+        Some((scheme, _)) => Err(anyhow!(
+            "update asset URL must use https, got {scheme} in {path}"
+        )),
+        None => {
+            let base = manifest_url
+                .rsplit_once('/')
+                .map(|(base, _)| base)
+                .unwrap_or(manifest_url);
+            Ok(format!("{}/{}", base, path.trim_start_matches('/')))
+        }
     }
-    let base = manifest_url
-        .rsplit_once('/')
-        .map(|(base, _)| base)
-        .unwrap_or(manifest_url);
-    format!("{}/{}", base, path.trim_start_matches('/'))
 }
 
 fn download_asset(url: &str, destination: &Path) -> Result<()> {

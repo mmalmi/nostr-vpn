@@ -39,9 +39,31 @@ fn resolves_relative_manifest_asset_urls() {
         manifest_asset_url(
             "https://example.invalid/latest/release.json",
             "assets/nvpn.tgz"
-        ),
+        )
+        .expect("relative asset URL"),
         "https://example.invalid/latest/assets/nvpn.tgz"
     );
+}
+
+#[test]
+fn rejects_non_https_manifest_asset_urls() {
+    assert_eq!(
+        manifest_asset_url(
+            "https://example.invalid/latest/release.json",
+            "https://cdn.example.invalid/assets/nvpn.tgz"
+        )
+        .expect("https asset URL"),
+        "https://cdn.example.invalid/assets/nvpn.tgz"
+    );
+    for path in [
+        "http://cdn.example.invalid/assets/nvpn.tgz",
+        "file:///tmp/nvpn.tgz",
+    ] {
+        assert!(
+            manifest_asset_url("https://example.invalid/latest/release.json", path).is_err(),
+            "non-https asset URL {path} must be rejected"
+        );
+    }
 }
 
 #[tokio::test]

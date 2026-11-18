@@ -1,6 +1,28 @@
 use super::*;
 
 #[test]
+fn verified_updates_download_into_the_users_own_data_directory() {
+    if std::env::var_os("NVPN_UPDATE_DOWNLOAD_DIR").is_some() {
+        // The override is exercised by the e2e update script.
+        return;
+    }
+    let directory = update_download_dir();
+    assert_eq!(
+        directory,
+        download_dir_under(&crate::default_data_dir()),
+        "downloads must follow the user's own data directory"
+    );
+    assert_eq!(
+        directory.file_name().and_then(|name| name.to_str()),
+        Some("update-downloads")
+    );
+    assert!(
+        !directory.starts_with(std::env::temp_dir()),
+        "verified updates must not default into a shared temporary directory"
+    );
+}
+
+#[test]
 fn download_preparation_never_launches_an_application() {
     if let Some(directory) = std::env::var_os("NVPN_TEST_UPDATE_PREPARATION_CHILD") {
         let directory = PathBuf::from(directory);

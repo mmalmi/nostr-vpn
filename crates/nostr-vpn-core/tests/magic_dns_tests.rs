@@ -221,6 +221,64 @@ fn magic_dns_server_update_records_reflects_newly_added_alias() {
     server.stop();
 }
 
+#[test]
+fn magic_dns_server_survives_roster_swap_and_identical_reapplication() {
+    let old_ip = Ipv4Addr::new(10, 44, 0, 7);
+    let new_ip = Ipv4Addr::new(10, 44, 0, 8);
+    let mut initial = HashMap::new();
+    initial.insert("old-peer.nvpn".to_string(), old_ip);
+
+    let mut server = MagicDnsServer::start(
+        SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)),
+        initial,
+    )
+    .expect("start dns server");
+    let server_addr = server.local_addr();
+
+    let socket = UdpSocket::bind(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0)))
+        .expect("bind client socket");
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .expect("set timeout");
+
+    let before = send_dns_query(&socket, server_addr, "old-peer.nvpn.", RecordType::A);
+    assert_eq!(before.response_code, ResponseCode::NoError);
+    assert!(
+        before
+            .answers
+            .iter()
+            .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == old_ip))
+    );
+
+    let mut roster = HashMap::new();
+    roster.insert("new-peer.nvpn".to_string(), new_ip);
+    server.update_records(roster.clone());
+
+    let removed = send_dns_query(&socket, server_addr, "old-peer.nvpn.", RecordType::A);
+    assert_eq!(removed.response_code, ResponseCode::NXDomain);
+    let added = send_dns_query(&socket, server_addr, "new-peer.nvpn.", RecordType::A);
+    assert_eq!(added.response_code, ResponseCode::NoError);
+    assert!(
+        added
+            .answers
+            .iter()
+            .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == new_ip))
+    );
+
+    // Re-applying an identical roster must keep the same names resolving.
+    server.update_records(roster);
+    let replay = send_dns_query(&socket, server_addr, "new-peer.nvpn.", RecordType::A);
+    assert_eq!(replay.response_code, ResponseCode::NoError);
+    assert!(
+        replay
+            .answers
+            .iter()
+            .any(|answer| matches!(&answer.data, RData::A(A(ip)) if *ip == new_ip))
+    );
+
+    server.stop();
+}
+
 fn send_dns_query(
     socket: &UdpSocket,
     server_addr: SocketAddr,
