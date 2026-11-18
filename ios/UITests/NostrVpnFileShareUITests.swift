@@ -5,6 +5,27 @@ import XCTest
 /// The host prepares an isolated recipient snapshot and verifies the durable
 /// command and copied bytes through USB after this real Files share-sheet flow.
 final class NostrVpnFileShareUITests: XCTestCase {
+    func testEnableFileNotifications() throws {
+        #if targetEnvironment(simulator)
+        let app = XCUIApplication()
+        app.launchArguments = ["--nvpn-fixture-mode", "--nvpn-screenshot-tab", "devices"]
+        app.launch()
+        let enable = app.buttons["Enable notifications"]
+        XCTAssertTrue(enable.waitForExistence(timeout: 8))
+        XCTAssertTrue(enable.isHittable)
+        screenshot("enable-file-notifications")
+
+        enable.tap()
+        let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").alerts.buttons["Allow"]
+        if allow.waitForExistence(timeout: 5) { allow.tap() }
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: enable)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        XCTAssertEqual(app.state, .runningForeground)
+        #else
+        throw XCTSkip("This opt-in test uses a simulator.")
+        #endif
+    }
+
     func testFilesShareQueuesWithMainAppClosed() throws {
         guard let recipient = ProcessInfo.processInfo.environment["NVPN_XCUITEST_FILE_SHARE_PEER_NAME"],
               !recipient.isEmpty else {

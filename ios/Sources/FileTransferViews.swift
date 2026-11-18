@@ -105,10 +105,11 @@ extension AppModel {
         FileShareSuggestions.migrateRecents()
         let peers = fileSharePeers
         FileShareSuggestions.retain(peers)
-        guard let data = try? JSONEncoder().encode(peers) else { return }
-        let url = supportDir.appendingPathComponent("file-share-peers.json")
-        try? data.write(to: url, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        do {
+            try FileTransferStorage.writeSharePeers(peers, in: supportDir, lastWritten: &lastPublishedFileSharePeers)
+        } catch {
+            debugLog("Could not save the file sharing recipient list.")
+        }
     }
 
     private var fileSharePeers: [FileSharePeer] {

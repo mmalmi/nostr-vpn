@@ -109,7 +109,7 @@ jobs:
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcrun simctl list devices available --json | python3 -c \
-            'import json,sys; print("NVPN_IOS_SIMULATOR_NAME=" + next(d["name"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"].startswith("iPhone")))' >> "$GITHUB_ENV"
+            'import json,sys; print("NVPN_IOS_SIMULATOR_ID=" + next(d["udid"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"].startswith("iPhone")))' >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           key: consumer-ios
@@ -120,6 +120,17 @@ jobs:
           mkdir -p validation
           tools/run-ios build 2>&1 | tee validation/ios.log
           git diff --exit-code -- Cargo.toml Cargo.lock linux/Cargo.lock
+      - name: Verify file notification opt-in
+        shell: bash
+        run: |
+          xcodebuild test -project ios/NostrVpnIos.xcodeproj -scheme NostrVpnIos \
+            -configuration Debug -derivedDataPath ios/.build/DerivedData \
+            -destination "platform=iOS Simulator,id=$NVPN_IOS_SIMULATOR_ID" \
+            -parallel-testing-enabled NO -resultBundlePath "$RUNNER_TEMP/file-notifications.xcresult" \
+            -only-testing:NostrVpnIosUITests/NostrVpnFileShareUITests/testEnableFileNotifications \
+            2>&1 | tee validation/file-notifications.log
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/file-notifications.xcresult" \
+            --output-path validation/file-notifications
       - uses: actions/upload-artifact@v6
         if: always()
         with:

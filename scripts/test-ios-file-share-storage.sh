@@ -21,6 +21,22 @@ import UniformTypeIdentifiers
         defer { try? FileManager.default.removeItem(at: root) }
         let support = root.appendingPathComponent("shared")
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+        var peers = [FileSharePeer(npub: "fixture-peer", name: "Phone", reachable: true)]
+        var lastWritten: [FileSharePeer]?
+        let recipientFile = support.appendingPathComponent("file-share-peers.json")
+        try FileTransferStorage.writeSharePeers(peers, in: support, lastWritten: &lastWritten)
+        let originalInfo = try FileManager.default.attributesOfItem(atPath: recipientFile.path)
+        try FileTransferStorage.writeSharePeers(peers, in: support, lastWritten: &lastWritten)
+        let unchangedInfo = try FileManager.default.attributesOfItem(atPath: recipientFile.path)
+        require(originalInfo[.systemFileNumber] as? NSNumber == unchangedInfo[.systemFileNumber] as? NSNumber,
+                "An unchanged recipient list must not be replaced")
+        peers[0].reachable = false
+        try FileTransferStorage.writeSharePeers(peers, in: support, lastWritten: &lastWritten)
+        let decoded = try JSONDecoder().decode([FileSharePeer].self, from: Data(contentsOf: recipientFile))
+        require(decoded == peers, "A reachability change must reach the share extension")
+        try FileManager.default.removeItem(at: recipientFile)
+        try FileTransferStorage.writeSharePeers(peers, in: support, lastWritten: &lastWritten)
+        require(FileManager.default.fileExists(atPath: recipientFile.path), "Restore a missing recipient list")
         let original = root.appendingPathComponent("selected.txt")
         let bytes = Data("complete file contents".utf8)
         try bytes.write(to: original)
