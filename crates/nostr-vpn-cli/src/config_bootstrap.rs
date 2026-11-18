@@ -242,7 +242,7 @@ pub(crate) fn default_config_path() -> PathBuf {
 
     #[cfg(target_os = "linux")]
     {
-        return nostr_vpn_core::platform_paths::linux_user_config_path();
+        nostr_vpn_core::platform_paths::linux_user_config_path()
     }
     #[cfg(not(target_os = "linux"))]
     if let Some(dir) = dirs::config_dir() {

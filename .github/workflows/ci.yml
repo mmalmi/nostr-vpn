@@ -18,7 +18,7 @@ jobs:
     name: Release tooling contracts
     # Several harnesses compile tiny ownership fixtures with xcrun. Linux import
     # contracts run independently on their native platform below.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
