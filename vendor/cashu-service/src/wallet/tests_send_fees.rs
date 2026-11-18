@@ -24,7 +24,7 @@ async fn lightning_withdraw_covers_the_reported_600_sat_fee_boundary() {
     let mut keyset = build_test_keyset(2048);
     keyset.input_fee_ppk = 150;
     let mint: MintUrl = "https://fee-mint.example".parse().unwrap();
-    let db = Arc::new(cdk_sqlite::wallet::memory::empty().await.unwrap());
+    let db = Arc::new(crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap());
     db.update_proofs(binary_proof_infos(mint.clone(), keyset.id, 1220), vec![])
         .await
         .unwrap();
@@ -72,7 +72,7 @@ async fn payment_token_covers_recipient_fees_with_fragmented_wallet_proofs() {
         let mut keyset = build_test_keyset(128);
         keyset.input_fee_ppk = 400;
         let mint: MintUrl = "https://fee-mint.example".parse().unwrap();
-        let db = Arc::new(cdk_sqlite::wallet::memory::empty().await.unwrap());
+        let db = Arc::new(crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap());
         let mut proofs: Vec<_> = (0..32 / denomination)
             .map(|_| make_proof_info(keyset.id, denomination, mint.clone()))
             .collect();

@@ -395,7 +395,7 @@ async fn cross_mint_test_wallets(
     let keyset = build_test_keyset(250_002);
     let source_mint: MintUrl = "https://source.example".parse().unwrap();
     let destination_mint: MintUrl = "https://destination.example".parse().unwrap();
-    let db = cdk_sqlite::wallet::memory::empty().await.unwrap();
+    let db = crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap();
     db.update_proofs(
         binary_proof_infos(source_mint.clone(), keyset.id, 250_002),
         vec![],

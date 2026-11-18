@@ -108,3 +108,8 @@ spending or reclaiming. Stop using the original device copy before restoring.
 The ignored `reviewed_wallet_local` acceptance test requires an explicitly started,
 owned loopback CDK FakeWallet mint via `CASHU_OWNED_TEST_MINT`. It rejects public
 URLs and uses no real funds. The normal wallet request budget remains enabled.
+
+The SQLite adapter in `src/sqlite` comes from CDK 0.18.0, commit
+`d3dec24c784e8fec1fd65f853241c7a2261c7abd`, under the included MIT license.
+It uses the original CDK SQL schema and migrations with the patched SQLite
+bundled by rusqlite 0.41.1. [Upstream compatibility issue](https://github.com/cashubtc/cdk/issues/2922).

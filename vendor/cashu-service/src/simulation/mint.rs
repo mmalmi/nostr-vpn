@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use cdk::mint::{Mint, MintBuilder, MintMeltLimits};
 use cdk::nuts::{CurrencyUnit, Id, PaymentMethod};
 use cdk_common::nut00::KnownMethod;
-use cdk_sqlite::MintSqliteDatabase;
+use crate::sqlite::MintSqliteDatabase;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 

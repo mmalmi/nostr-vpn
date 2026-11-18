@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use cashu_service::CashuWalletService;
 use cdk::cdk_database::WalletDatabase;
 use cdk::nuts::{CurrencyUnit, PaymentMethod};
-use cdk_sqlite::WalletSqliteDatabase;
+use cashu_service::sqlite::WalletSqliteDatabase;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 struct Mint {

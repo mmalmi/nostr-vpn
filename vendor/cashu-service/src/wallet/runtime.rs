@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cdk::wallet::{WalletRepository, WalletRepositoryBuilder};
-use cdk_sqlite::WalletSqliteDatabase;
+use crate::sqlite::WalletSqliteDatabase;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

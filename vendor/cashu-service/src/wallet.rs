@@ -4,7 +4,7 @@ use cdk::mint_url::MintUrl;
 use cdk::nuts::{CurrencyUnit, MeltQuoteState, MintQuoteState, PaymentMethod, Proof, State, Token};
 use cdk::wallet::{types::ProofInfo, ReceiveOptions, WalletRepository};
 use cdk::Amount;
-use cdk_sqlite::WalletSqliteDatabase;
+use crate::sqlite::WalletSqliteDatabase;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

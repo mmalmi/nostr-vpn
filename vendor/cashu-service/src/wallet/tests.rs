@@ -72,7 +72,7 @@ async fn refresh_active_keyset_replaces_stale_cached_rotation() {
     let old_keyset_id = old_keyset.id;
     let new_keyset_id = new_keyset.id;
     let mint_url: MintUrl = "https://mint.example".parse().unwrap();
-    let db = cdk_sqlite::wallet::memory::empty().await.unwrap();
+    let db = crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap();
     let mock = Arc::new(LightningMockMintConnector::new(
         old_keyset,
         "quote-123",
@@ -107,7 +107,7 @@ async fn refresh_active_keyset_ignores_active_keysets_for_other_units() {
     usd_keyset.unit = CurrencyUnit::Usd;
     usd_keyset.input_fee_ppk = 0;
     let mint_url: MintUrl = "https://mint.example".parse().unwrap();
-    let db = cdk_sqlite::wallet::memory::empty().await.unwrap();
+    let db = crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap();
     let mock = Arc::new(LightningMockMintConnector::new(
         sat_keyset,
         "quote-123",
@@ -138,7 +138,7 @@ async fn refresh_active_keyset_rejects_network_failure_even_with_a_populated_cac
     let wallet = WalletBuilder::new()
         .mint_url("https://mint.example".parse().unwrap())
         .unit(CurrencyUnit::Sat)
-        .localstore(Arc::new(cdk_sqlite::wallet::memory::empty().await.unwrap()))
+        .localstore(Arc::new(crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap()))
         .seed([7; 64])
         .shared_client(mock.clone())
         .build()
@@ -167,7 +167,7 @@ async fn refresh_active_keyset_ignores_cheaper_inactive_keysets_and_rejects_none
     let wallet = WalletBuilder::new()
         .mint_url("https://mint.example".parse().unwrap())
         .unit(CurrencyUnit::Sat)
-        .localstore(Arc::new(cdk_sqlite::wallet::memory::empty().await.unwrap()))
+        .localstore(Arc::new(crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap()))
         .seed([7; 64])
         .shared_client(mock.clone())
         .build()
@@ -547,7 +547,7 @@ async fn test_send_lightning_payment_with_wallet_returns_preimage() {
     let keyset = build_test_keyset(250_000);
     let mint_url: MintUrl = "https://mint.example".parse().unwrap();
     let proof_infos = binary_proof_infos(mint_url.clone(), keyset.id, 250_000);
-    let db = cdk_sqlite::wallet::memory::empty().await.unwrap();
+    let db = crate::sqlite::WalletSqliteDatabase::new(":memory:").await.unwrap();
     db.update_proofs(proof_infos, vec![]).await.unwrap();
 
     let mock = Arc::new(LightningMockMintConnector::new(keyset, "quote-123", "00ff"));

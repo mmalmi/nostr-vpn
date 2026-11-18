@@ -13,7 +13,7 @@
 edition = "2021"
 rust-version = "1.85.0"
 name = "nvpn-cdk-spilman"
-version = "0.17.8"
+version = "0.17.9"
 build = false
 autolib = false
 autobins = false
@@ -93,7 +93,7 @@ optional = true
 default-features = false
 
 [dependencies.rusqlite]
-version = "0.31"
+version = "0.41.1"
 features = ["bundled"]
 optional = true
 

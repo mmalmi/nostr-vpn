@@ -15,6 +15,8 @@ mod credit_settlement;
 pub use credit_settlement::{execute_cashu_settlement, prepare_cashu_settlement, CashuIssuerRoute};
 
 #[cfg(feature = "wallet")]
+pub mod sqlite;
+#[cfg(feature = "wallet")]
 pub mod wallet;
 #[cfg(feature = "wallet")]
 pub use wallet::*;

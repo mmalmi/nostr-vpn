@@ -271,7 +271,7 @@ impl Mint {
 
 async fn assert_wallet_refund(mint: &Mint, directory: &std::path::Path, expected: u64) {
     use cdk::cdk_database::WalletDatabase;
-    let db = cdk_sqlite::WalletSqliteDatabase::new(cashu_service::cashu_wallet_db_path(directory))
+    let db = cashu_service::sqlite::WalletSqliteDatabase::new(cashu_service::cashu_wallet_db_path(directory))
         .await
         .unwrap();
     let proofs = db

@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "nvpn-cashu-service"
-version = "0.4.12"
+version = "0.4.13"
 authors = ["Martti Malmi"]
 build = false
 autolib = false
@@ -44,7 +44,8 @@ simulation = [
     "dep:cdk-common",
     "dep:futures",
     "cdk/mint",
-    "cdk-sqlite/mint",
+    "cdk-sql-common/mint",
+    "cdk-common/mint",
     "tokio/net",
 ]
 spilman = [
@@ -84,7 +85,9 @@ spilman-wallet-http = [
 wallet = [
     "dep:rusqlite",
     "dep:sha2",    "dep:cdk",
-    "dep:cdk-sqlite",
+    "cdk-sql-common/wallet",
+    "cdk-common/wallet",
+    "dep:tracing",
     "dep:fs2",
     "dep:rand",
     "dep:url",
@@ -155,24 +158,25 @@ default-features = false
 
 [dependencies.cdk-common]
 version = "=0.18.0"
-features = ["mint"]
 optional = true
 default-features = false
 package = "cdk-common"
 
 [dependencies.cdk-spilman]
 package = "nvpn-cdk-spilman"
-version = "=0.17.8"
+version = "=0.17.9"
 path = "../cdk-spilman"
 optional = true
 default-features = false
 
-[dependencies.cdk-sqlite]
+[dependencies.cdk-sql-common]
 version = "=0.18.0"
-features = ["wallet"]
 optional = true
 default-features = false
-package = "cdk-sqlite"
+
+[dependencies.tracing]
+version = "0.1"
+optional = true
 
 [dependencies.fs2]
 version = "0.4"
@@ -205,7 +209,7 @@ optional = true
 default-features = false
 
 [dependencies.rusqlite]
-version = "0.31"
+version = "0.41.1"
 features = ["bundled"]
 optional = true
 
