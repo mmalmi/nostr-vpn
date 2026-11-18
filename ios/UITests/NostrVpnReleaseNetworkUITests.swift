@@ -179,14 +179,20 @@ final class NostrVpnReleaseNetworkUITests: XCTestCase {
         app.launch()
         let wasOn = vpnIsOn(try vpnToggle())
         openInternetTab()
+        var restoreVPNOn = wasOn
         if spec.restoreInterruptedSelection == true {
             let picker = scrollToElement("internet-source-picker")
             if "\(picker.label) \(picker.value as? String ?? "")".contains("Private VPN device") {
-                assertInternetStatus(contains: "Pending")
+                let status = scrollToElement("internet-source-status").label
+                XCTAssertTrue(
+                    status.hasPrefix("Private exit · Pending") || status.hasPrefix("Private exit · Selecting provider"),
+                    "Only an interrupted private selection can be restored"
+                )
                 let selected = app.buttons.matching(NSPredicate(
                     format: "identifier BEGINSWITH %@ AND selected == true", "private-exit-"
                 ))
                 XCTAssertEqual(selected.count, 0, "An existing private exit must be preserved")
+                restoreVPNOn = false
                 emit("NVPN_IOS_PRIVATE_EXIT_RESTORE_VPN_ON=0")
                 selectMenu(picker: "internet-source-picker", option: "internet-source-direct")
                 try waitForInternetTransitionToSettle()
@@ -195,8 +201,8 @@ final class NostrVpnReleaseNetworkUITests: XCTestCase {
         assertPicker("internet-source-picker", contains: "This device")
         let probe = spec.probeURL.absoluteString
         try NostrVpnReleaseNetworkProbe.requireControlledHTTPUnavailable(probe)
-        emit("NVPN_IOS_PRIVATE_EXIT_RESTORE_VPN_ON=\(wasOn && spec.restoreInterruptedSelection != true ? 1 : 0)")
-        if !wasOn || spec.restoreInterruptedSelection == true {
+        emit("NVPN_IOS_PRIVATE_EXIT_RESTORE_VPN_ON=\(restoreVPNOn ? 1 : 0)")
+        if !restoreVPNOn {
             addTeardownBlock { try self.turnVPNOffIfNeeded() }
         }
         if !wasOn {
