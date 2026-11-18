@@ -459,6 +459,7 @@ fn test_channel_id_derivation() {
     let keyset = mock_keyset_info(vec![1, 2, 4, 8, 16], 0);
 
     let params = ChannelParameters {
+        output_version: ChannelOutputVersion::Legacy,
         sender_pubkey: alice_sk.public_key(),
         receiver_pubkey: charlie_sk.public_key(),
         mint: "https://mint.host".to_string(),

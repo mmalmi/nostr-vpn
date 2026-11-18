@@ -211,7 +211,7 @@ pub(crate) use crate::service_management::{
     linux_service_unit_content, linux_service_unit_matches_config,
 };
 #[cfg(any(target_os = "macos", test))]
-pub(crate) use crate::service_management::{xml_escape, xml_unescape};
+pub(crate) use crate::service_management::xml_escape;
 pub(crate) use crate::session_runtime::*;
 #[cfg(target_os = "linux")]
 pub(crate) use crate::wireguard_exit::*;
@@ -272,6 +272,7 @@ include!("main/runtime_helpers.rs");
 include!("main/runtime_roster.rs");
 include!("main/daemon_commands.rs");
 include!("main/doctor_and_parsing.rs");
+include!("main/file_transfers.rs");
 
 #[cfg(test)]
 mod tests {

@@ -81,6 +81,11 @@ pub(crate) enum DaemonCashuWalletCommand {
     OpenSpilmanChannel {
         request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
     },
+    // Old daemons reject this command before spending, rather than ignoring
+    // the new format field and silently creating a legacy channel.
+    OpenSpilmanChannelV2 {
+        request: StreamingRouteOpenCashuSpilmanChannelFromWalletRequest,
+    },
     ImportProofs {
         mint_url: String,
         unit: String,
@@ -103,6 +108,8 @@ struct DaemonCashuWalletResponse {
     retry_after_secs: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     insufficient_funds: Option<cashu_service::CashuInsufficientFunds>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rejected_request_status: Option<u16>,
 }
 
 pub(crate) fn mint_http_client() -> Result<reqwest::Client> {
@@ -138,6 +145,9 @@ impl DaemonCashuWallet {
         let service = CashuWalletService::open_with_seed_store(&data_dir, seed_store).await;
         let service = service.context("failed to open the daemon-owned CDK SQLite Cashu wallet")?;
         let recovery = service.recover_startup_state().await;
+        for (unit, amount) in recovery.recovered_reserved_amounts {
+            eprintln!("cashu-wallet: recovered {amount} {unit} from abandoned reservations");
+        }
         for warning in recovery.warnings {
             eprintln!("cashu-wallet: startup recovery incomplete: {warning}");
         }
@@ -217,6 +227,7 @@ impl DaemonCashuWallet {
                     error: None,
                     retry_after_secs: None,
                     insufficient_funds: None,
+                    rejected_request_status: None,
                 },
                 Err(error) => DaemonCashuWalletResponse {
                     id: request.id.clone(),
@@ -225,6 +236,7 @@ impl DaemonCashuWallet {
                     retry_after_secs: error
                         .downcast_ref::<cashu_service::MintRetryAfter>()
                         .map(|delay| delay.0),
+                    rejected_request_status: error.downcast_ref::<cashu_service::MintRequestRejected>().map(|rejection| rejection.0),
                     insufficient_funds: error
                         .downcast_ref::<cashu_service::CashuInsufficientFunds>()
                         .cloned(),
@@ -238,6 +250,10 @@ impl DaemonCashuWallet {
     }
 
     async fn execute(&self, command: DaemonCashuWalletCommand) -> Result<Value> {
+        let legacy_open_command = matches!(
+            &command,
+            DaemonCashuWalletCommand::OpenSpilmanChannel { .. }
+        );
         // A pooled socket may still have the source address of a previous
         // Internet mode. Do not let it spend the next channel's credit waiting
         // for a timeout before reconnecting through the current route.
@@ -303,7 +319,15 @@ impl DaemonCashuWallet {
                     .send_lightning_payment(&mint_url, &invoice)
                     .await?,
             )?,
-            DaemonCashuWalletCommand::OpenSpilmanChannel { request } => {
+            DaemonCashuWalletCommand::OpenSpilmanChannel { request }
+            | DaemonCashuWalletCommand::OpenSpilmanChannelV2 { request } => {
+                if legacy_open_command
+                    && request.output_version != cdk_spilman::ChannelOutputVersion::Legacy
+                {
+                    return Err(anyhow!(
+                        "new channel formats require the versioned wallet command"
+                    ));
+                }
                 let pending_before =
                     pending_cashu_sends(&self.service.load_wallet_activity().await?);
                 let pending_before = pending_before
@@ -448,6 +472,7 @@ fn legacy_route_open_recovery_requests(
             Some((
                 session_id.clone(),
                 cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+                    output_version: quote.quote.output_version.try_into().ok()?,
                     mint_url: channel.mint_url.clone(),
                     receiver_pubkey_hex: quote.quote.receiver_pubkey_hex.clone(),
                     capacity_sat: session.session.payment.capacity_sat,
@@ -720,7 +745,7 @@ pub(crate) async fn request_daemon_cashu_wallet(
     let status = daemon_status(config_path)?;
     if !status.running {
         return Err(anyhow!(
-            "Cashu wallet requires the nvpn daemon; start or reinstall the Nostr VPN service"
+            "Cashu wallet requires a running nvpn daemon for this config; start the installed Nostr VPN service, or run `nvpn daemon --config <same config path>`"
         ));
     }
     wait_for_running_daemon_control_ready(config_path, &status)?;
@@ -769,6 +794,9 @@ pub(crate) async fn request_daemon_cashu_wallet_worker(
                 (_, Some(error)) if response.insufficient_funds.is_some() => Err(
                     anyhow::Error::new(response.insufficient_funds.expect("checked shortfall"))
                         .context(error),
+                ),
+                (_, Some(error)) if response.rejected_request_status.is_some() => Err(
+                    anyhow::Error::new(cashu_service::MintRequestRejected(response.rejected_request_status.expect("checked rejection"))).context(error)
                 ),
                 (_, Some(error)) => Err(match response.retry_after_secs {
                     Some(seconds) => {

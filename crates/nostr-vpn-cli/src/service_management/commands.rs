@@ -14,6 +14,12 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
     #[cfg(target_os = "windows")]
     let config_path = windows_service_install_config_path(args.config)?;
 
+    #[cfg(target_os = "linux")]
+    if args.config.is_none() && crate::config_bootstrap::configured_config_path(std::env::var_os(crate::config_bootstrap::CONFIG_PATH_ENV)).is_none()
+        && unsafe { libc::geteuid() } == 0
+        && std::env::var("SUDO_UID").ok().and_then(|uid| uid.parse::<u32>().ok()).is_some_and(|uid| uid != 0) {
+        return Err(anyhow!("Pass --config with your existing user's config when installing the service with sudo"));
+    }
     #[cfg(not(target_os = "windows"))]
     let config_path = args.config.unwrap_or_else(default_config_path);
 
@@ -269,9 +275,10 @@ pub(crate) fn query_service_status_with_binary_version(
 ) -> Result<ServiceStatusView> {
     #[cfg(target_os = "macos")]
     {
-        let plist_path = macos_service::macos_service_plist_path(_config_path);
-        let label = macos_service::macos_service_label(_config_path);
-        let installed = plist_path.exists();
+        let registration = macos_service::Registration::for_config(_config_path)?;
+        let label = registration.label;
+        let plist_path = macos_service::macos_service_plist_path(&label);
+        let installed = registration.executable.is_some();
         if !installed {
             return Ok(ServiceStatusView {
                 supported: true,
@@ -287,11 +294,11 @@ pub(crate) fn query_service_status_with_binary_version(
             });
         }
 
-        let disabled = macos_service::macos_service_disabled(_config_path).unwrap_or(false);
+        let disabled = macos_service::macos_service_disabled(&label).unwrap_or(false);
         let (loaded, running, pid) = if disabled {
             (false, false, None)
         } else {
-            match macos_service::macos_service_print(_config_path) {
+            match macos_service::macos_service_print(&label) {
                 Ok(output) => (
                     true,
                     macos_service::macos_service_print_is_running(&output),
@@ -300,7 +307,7 @@ pub(crate) fn query_service_status_with_binary_version(
                 Err(_) => (false, false, None),
             }
         };
-        let service_binary = macos_service::macos_service_executable_path(&plist_path);
+        let service_binary = registration.executable;
         let binary_version = if include_binary_version {
             service_binary
                 .as_ref()

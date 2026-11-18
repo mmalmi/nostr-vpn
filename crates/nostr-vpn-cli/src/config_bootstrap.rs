@@ -1,6 +1,6 @@
 use super::*;
 
-const CONFIG_PATH_ENV: &str = "NVPN_CONFIG_PATH";
+pub(crate) const CONFIG_PATH_ENV: &str = "NVPN_CONFIG_PATH";
 
 pub(crate) fn install_cli(args: InstallCliArgs) -> Result<()> {
     let destination = args.path.unwrap_or_else(default_cli_install_path);
@@ -240,6 +240,11 @@ pub(crate) fn default_config_path() -> PathBuf {
         return path;
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        return nostr_vpn_core::platform_paths::linux_user_config_path();
+    }
+    #[cfg(not(target_os = "linux"))]
     if let Some(dir) = dirs::config_dir() {
         #[cfg(target_os = "windows")]
         {
@@ -269,6 +274,7 @@ pub(crate) fn default_config_path() -> PathBuf {
         }
     }
 
+    #[cfg(not(target_os = "linux"))]
     PathBuf::from("nvpn.toml")
 }
 

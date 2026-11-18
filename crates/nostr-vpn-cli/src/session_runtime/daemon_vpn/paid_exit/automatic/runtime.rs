@@ -63,6 +63,11 @@ pub(crate) async fn update_automatic_paid_exit(
         return Ok(false);
     }
 
+    if automatic.reselection.is_some()
+        && reselection::advance(automatic, runtime, app, config_path, now_unix).await?
+    {
+        return Ok(true);
+    }
     if let Some(candidate) = automatic.candidate.as_mut() {
         candidate.observe_presence(&runtime.peer_statuses(), now_unix);
         candidate.observe_usage(buyer_delta, now_unix);
@@ -99,13 +104,18 @@ pub(crate) async fn update_automatic_paid_exit(
             feedback_generation: feedback.generation(),
             generation: automatic.generation,
             task: tokio::spawn(async move {
-                paid_exit_route_probe_measurement(
-                    &dns_health,
-                    &probe_app,
-                    now_unix,
-                    &bind_interface,
-                )
-                .await
+                let measure = |now| {
+                    paid_exit_route_probe_measurement(&dns_health, &probe_app, now, &bind_interface)
+                };
+                match measure(now_unix).await {
+                    Ok(measurement) => Ok(measurement),
+                    Err(first) => {
+                        eprintln!("[{now_unix}] paid-exit: retrying seller Internet check after {first:#}");
+                        tokio::time::sleep(Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS))
+                            .await;
+                        measure(unix_timestamp()).await
+                    }
+                }
             }),
         });
     }
@@ -143,7 +153,7 @@ pub(crate) async fn update_automatic_paid_exit(
                     }
                 }
                 Err(error) => {
-                    eprintln!("paid-exit: automatic free probe failed: {error}");
+                    eprintln!("[{now_unix}] paid-exit: automatic free probe failed: {error}");
                     update_paid_route_store(&paid_route_store_file_path(config_path), |store| {
                         store.fail_selected_buyer_session(
                             &format!("Provider internet check failed: {error:#}"),
@@ -204,6 +214,7 @@ pub(crate) async fn update_automatic_paid_exit(
         }
         app.set_internet_source(nostr_vpn_core::config::InternetSource::PaidAutomatic);
         app.save(config_path)?;
+        eprintln!("[{now_unix}] paid-exit: selected provider unavailable, looking for another provider");
         automatic.cancel_candidate(true, now_unix);
         return Ok(true);
     }

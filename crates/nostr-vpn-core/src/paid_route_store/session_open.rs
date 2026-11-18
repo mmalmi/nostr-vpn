@@ -63,6 +63,28 @@ impl PaidRouteStore {
         now_unix: u64,
     ) -> Result<Option<String>> {
         let seller_pubkey = normalize_nostr_pubkey(seller_pubkey)?;
+        // A transient failure does not discard prepaid credit. Recover the
+        // selected contract before ordinary reconciliation can clear it.
+        // Expired, exhausted, unfunded or settled contracts remain ineligible.
+        let retry = self
+            .sessions
+            .get(&self.selected_buyer_session_id)
+            .and_then(|session| {
+                let channel = self.channels.get(&session.session.payment.channel_id)?;
+                (channel.role == PaidRouteChannelRole::Buyer
+                    && normalize_nostr_pubkey(&channel.counterparty_npub)
+                        .ok()
+                        .as_deref()
+                        == Some(seller_pubkey.as_str()))
+                .then(|| session.session.session_id.clone())
+            });
+        if let Some(session_id) = retry
+            && self
+                .retry_failed_funded_buyer_session(&session_id, now_unix)
+                .unwrap_or(false)
+        {
+            self.begin_buyer_session_open_attempt(&session_id, now_unix)?;
+        }
         let selected_is_current_seller = self
             .sessions
             .get(&self.selected_buyer_session_id)
@@ -294,6 +316,23 @@ impl PaidRouteStore {
                 "paid route buyer session {session_id} cannot be retried without a funded channel"
             ));
         }
+        if [channel.status, lease.status].iter().any(|status| {
+            matches!(
+                status,
+                PaidRouteLifecycleStatus::Closing
+                    | PaidRouteLifecycleStatus::Closed
+                    | PaidRouteLifecycleStatus::Expired
+            )
+        }) {
+            return Err(anyhow!(
+                "paid route buyer session {session_id} is settling or closed"
+            ));
+        }
+        if !self.buyer_session_has_remaining_capacity(&session_id)? {
+            return Err(anyhow!(
+                "paid route buyer session {session_id} has no remaining credit"
+            ));
+        }
 
         let before = self.clone();
         let status = if self.buyer_session_admissions.contains_key(&lease_id) {
@@ -452,7 +491,14 @@ impl PaidRouteStore {
             return Err(anyhow!("paid route session has expired"));
         }
         Ok(PaidRouteSessionOpen {
-            version: PAID_ROUTE_OFFER_VERSION.to_string(),
+            version: crate::paid_routes::paid_route_session_version(
+                self.quotes
+                    .get(&lease.lease.quote_id)
+                    .ok_or_else(|| anyhow!("paid route session has no quote"))?
+                    .quote
+                    .output_version,
+            )?
+            .to_string(),
             service_id: offer.offer_id,
             lease_id: lease.lease.lease_id.clone(),
             channel_id: channel.channel_id.clone(),
@@ -558,12 +604,16 @@ impl PaidRouteStore {
             return Err(anyhow!("paid exit selling is disabled"));
         }
         let open = request.open;
-        if open.version != PAID_ROUTE_OFFER_VERSION {
-            return Err(anyhow!(
-                "unsupported paid route session version {}",
-                open.version
-            ));
-        }
+        let output_version = match open.version.as_str() {
+            PAID_ROUTE_OFFER_VERSION => crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION,
+            crate::paid_routes::PAID_ROUTE_LEGACY_OFFER_VERSION => 1,
+            _ => {
+                return Err(anyhow!(
+                    "unsupported paid route session version {}",
+                    open.version
+                ));
+            }
+        };
         let seller_npub = normalize_paid_route_npub(&request.seller_npub, "seller")?;
         if normalize_paid_route_npub(&open.seller_npub, "seller")? != seller_npub {
             return Err(anyhow!("paid route session targets a different seller"));
@@ -579,6 +629,34 @@ impl PaidRouteStore {
         let channel_id = validated_session_component(&open.channel_id, "channel id")?;
         if open.expires_at_unix <= request.now_unix {
             return Err(anyhow!("paid route free probe request has expired"));
+        }
+        // Reserve addresses across live leases, including a paused lease that
+        // may resume. Renewals belonging to the same authenticated buyer share
+        // one return route. Terminal or expired leases release the address.
+        if self.seller_session_tunnel_ips.iter().any(|(id, address)| {
+            if address != &buyer_tunnel_ip {
+                return false;
+            }
+            let Some(record) = self.sessions.get(id) else {
+                return false;
+            };
+            let Some(channel) = self.channels.get(&record.session.payment.channel_id) else {
+                return false;
+            };
+            let Some(lease) = self.leases.get(&record.session.lease_id) else {
+                return false;
+            };
+            let reserves =
+                |s| paid_route_lifecycle_allows_routing(s) || s == PaidRouteLifecycleStatus::Paused;
+            channel.role == PaidRouteChannelRole::Seller
+                && channel.counterparty_npub != buyer_npub
+                && reserves(channel.status)
+                && reserves(lease.status)
+                && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > request.now_unix
+        }) {
+            return Err(anyhow!(
+                "buyer tunnel address is reserved by another paid lease"
+            ));
         }
         let expires_at_unix = open.expires_at_unix.min(
             request
@@ -604,14 +682,70 @@ impl PaidRouteStore {
                     "existing paid route session does not match authenticated probe request"
                 ));
             }
+            let quote = self
+                .quotes
+                .get(&lease.lease.quote_id)
+                .ok_or_else(|| anyhow!("existing paid route session has no quote"))?;
+            if quote.quote.output_version != output_version {
+                return Err(anyhow!(
+                    "paid route session output format differs from its accepted agreement"
+                ));
+            }
+            if output_version != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION
+                && self.sessions[&session_id]
+                    .session
+                    .payment
+                    .cashu_spilman_payment
+                    .is_none()
+            {
+                return Err(anyhow!(
+                    "Upgrade the buyer before funding an existing unpaid route session"
+                ));
+            }
             if self
                 .seller_session_tunnel_ips
                 .get(&session_id)
-                .is_some_and(|existing| existing != &buyer_tunnel_ip)
+                .is_some_and(|old| old != &buyer_tunnel_ip)
             {
-                return Err(anyhow!(
-                    "existing paid route session uses a different buyer tunnel IP"
-                ));
+                let record = &self.sessions[&session_id].session;
+                let channel = self
+                    .channels
+                    .get(&record.payment.channel_id)
+                    .ok_or_else(|| anyhow!("existing paid route session has no channel"))?;
+                // The seller persists a verified signed balance after traffic flows.
+                // Updates omit the opening funding proofs, including in older stores.
+                let funded = match record.payment.mode {
+                    PaidRoutePaymentMode::CashuSpilman => record
+                        .payment
+                        .cashu_spilman_payment
+                        .as_ref()
+                        .is_some_and(|payment| {
+                            validate_streaming_route_cashu_payment_claim(
+                                payment,
+                                &channel_id,
+                                &paid_route_payment_cashu_unit(&channel.payment),
+                                record.payment.paid_msat,
+                                channel.payment.capacity_sat,
+                                false,
+                            )
+                            .is_ok()
+                        }),
+                    PaidRoutePaymentMode::CashuTokenLease => {
+                        record.payment.cashu_token_lease.is_some()
+                    }
+                };
+                if record.payment.channel_id != channel_id
+                    || channel.role != PaidRouteChannelRole::Seller
+                    || !funded
+                    || !paid_route_lifecycle_allows_routing(channel.status)
+                    || !paid_route_lifecycle_allows_routing(lease.status)
+                    || channel.routing_expires_at_unix(lease.lease.expires_at_unix)
+                        <= request.now_unix
+                {
+                    return Err(anyhow!(
+                        "changing the buyer tunnel address requires the same live funded channel"
+                    ));
+                }
             }
             if !self.seller_session_tunnel_ips.contains_key(&session_id) {
                 let session = &self.sessions[&session_id].session;
@@ -651,6 +785,11 @@ impl PaidRouteStore {
             });
         }
 
+        if output_version != crate::paid_routes::PAID_ROUTE_OUTPUT_VERSION {
+            return Err(anyhow!(
+                "Upgrade the buyer before opening a new paid route session"
+            ));
+        }
         for existing in self.sessions.values() {
             let Some(existing_lease) = self.leases.get(&existing.session.lease_id) else {
                 continue;
@@ -699,6 +838,7 @@ impl PaidRouteStore {
         };
         self.upsert_quote(
             PaidRouteQuote {
+                output_version,
                 quote_id: quote_id.clone(),
                 offer_id: service_id.clone(),
                 payment_mode: PaidRoutePaymentMode::CashuSpilman,

@@ -506,6 +506,39 @@
         mint.abort();
     }
 
+    #[tokio::test]
+    async fn rejected_refund_records_its_cause_without_blocking_other_wallet_payments() {
+        let directory = TestDirectory::new();
+        let config = directory.0.join("config.toml");
+        let path = paid_route_store_file_path(&config);
+        let mint = "https://mint.example";
+        update_paid_route_store(&path, |store| {
+            let mut record = channel("rejected", PaidRouteChannelRole::Buyer, PaidRouteLifecycleStatus::Closing);
+            record.mint_url = mint.into();
+            store.upsert_channel(record);
+            Ok(())
+        }).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut client, _) = listener.accept().await.unwrap();
+            let mut request = [0; 1024];
+            assert!(client.read(&mut request).await.unwrap() > 0);
+            client.write_all(b"HTTP/1.1 422 Unprocessable Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let response = reqwest::get(format!("http://{address}/v1/restore")).await.unwrap();
+        server.await.unwrap();
+        let error = cashu_service::check_mint_response(response).unwrap_err();
+        assert!(error.is::<cashu_service::MintRequestRejected>());
+        apply_paid_exit_buyer_refund_attempt(&config, PaidExitBuyerRefundAttempt {
+            channel_id: "rejected".into(), contacted_mint: true,
+            outcome: PaidExitBuyerRefundOutcome::Failed(error.context("invalid refund")),
+        }).unwrap();
+        let store = load_paid_route_store(&path).unwrap();
+        assert_eq!(store.buyer_mint_failure_retry_at(mint), 0);
+        assert!(store.channels["rejected"].error.contains("HTTP 422"));
+    }
+
     #[test]
     fn mint_failures_back_off_persistently_and_healthy_polling_does_not_starve_funding() {
         let directory = TestDirectory::new();

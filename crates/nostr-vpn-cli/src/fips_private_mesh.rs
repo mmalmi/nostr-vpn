@@ -249,6 +249,8 @@ pub(crate) struct FipsPrivateMeshRuntime {
     peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
     #[cfg(feature = "paid-exit")]
     paid_route_accounting: Mutex<FipsPaidRouteAccounting>,
+    #[cfg(feature = "paid-exit")]
+    candidate_probe: arc_swap::ArcSwapOption<exit_probe::ProbeFlow>,
 }
 
 impl FipsPrivateMeshRuntime {
@@ -261,6 +263,9 @@ include!("fips_private_mesh/types_and_mtu.rs");
 include!("fips_private_mesh/mtu_and_policy.rs");
 include!("fips_private_mesh/peer_status_and_events.rs");
 include!("fips_private_mesh/tun_pipeline.rs");
+#[cfg(feature = "paid-exit")]
+#[path = "fips_private_mesh/exit_probe.rs"]
+mod exit_probe;
 include!("fips_private_mesh/runtime_send.rs");
 include!("fips_private_mesh/runtime_receive.rs");
 include!("fips_private_mesh/runtime_status.rs");

@@ -408,6 +408,10 @@ run_release_gate_candidate_preflight() {
   if bool_is_true "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}"; then
     verify_production_ios_idle_cpu
   fi
+  # StartOS package errors must fail before compiling or preparing native apps.
+  npm ci
+  npm run check
+  npm run build
   # Fail on cheap source-quality errors before any remote platform starts an
   # expensive exact-candidate build. These use the locked release graph and
   # are not repeated by the later full host validation lane.
@@ -472,13 +476,11 @@ seal_release_gate_app_candidate() {
 }
 
 run_release_gate_static_preflight() {
-  npm ci
-  npm run check
-  npm run build
   if [[ "$(uname -s)" == "Darwin" ]]; then
     ./scripts/test-ios-generated-project.sh
     ./scripts/test-ios-rust-build-workspace.sh
     ./scripts/test-ios-qr-image-import-launch-environment.sh
+    ./scripts/test-ios-file-share-storage.sh
     NVPN_IOS_RUST_PROFILE=release ./tools/run-ios xcframework
     ./scripts/test-ios-appstore-policy.sh
   else

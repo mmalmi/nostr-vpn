@@ -147,19 +147,8 @@ impl NativeAppRuntime {
         // Selection and recovery can temporarily leave no pending session
         // selected. Derive the blocker from the same mint choice as the buyer,
         // rather than losing it whenever the route changes.
-        let selection = store.select_automatic_offer(now).ok();
-        if let Some(selection) = selection.as_ref().filter(|selection| !selection.funded)
-            && store.buyer_mint_needs_funds(&selection.mint_url, selection.channel_capacity_sat)
-        {
-            return Some((
-                format!(
-                    "More funds needed · {}",
-                    paid_route_mint_host(&selection.mint_url)
-                ),
-                true,
-            ));
-        }
-        if selection.is_none()
+        let selection = store.select_automatic_offer(now);
+        if selection.is_err()
             && !store.wallet.mints.is_empty()
             && store
                 .wallet
@@ -169,20 +158,10 @@ impl NativeAppRuntime {
         {
             return Some(("More funds needed · Wallet empty".to_string(), true));
         }
-        if let Some(selection) = selection.as_ref().filter(|selection| !selection.funded)
-            && store.buyer_mint_failure_retry_at(&selection.mint_url) > now
+        if !store.offers.is_empty()
+            && let Err(error) = selection
         {
-            let retry = &store.buyer_mint_retries[&selection.mint_url];
-            let mint = paid_route_mint_host(&selection.mint_url);
-            let cause = if retry.error.is_empty() {
-                String::new()
-            } else {
-                format!(" · {}", retry.error)
-            };
-            return Some((
-                format!("Payment unavailable · {mint}{cause} · No payable alternative · Retrying in {} s", retry.retry_at_unix - now),
-                true,
-            ));
+            return Some((error.to_string(), true));
         }
         let session = store.sessions.get(&store.selected_buyer_session_id)?;
         let channel = store.channels.get(&session.session.payment.channel_id)?;
@@ -224,31 +203,22 @@ impl NativeAppRuntime {
         let selected_exit_node = normalize_nostr_pubkey(selected_exit_node).ok()?;
         let store = load_paid_route_store(&self.paid_route_store_path()).ok()?;
         let now_unix = unix_timestamp();
-        store
-            .sessions
-            .values()
-            .filter_map(|record| {
-                let channel = store.channels.get(&record.session.payment.channel_id)?;
-                let counterparty = normalize_nostr_pubkey(&channel.counterparty_npub).ok()?;
-                (channel.role == PaidRouteChannelRole::Buyer
-                    && counterparty == selected_exit_node
-                    && store
-                        .buyer_session_is_seller_admitted(&record.session.session_id)
-                        .unwrap_or(false)
-                    && store
-                        .buyer_session_allows_routing(&record.session.session_id, now_unix)
-                        .unwrap_or(false))
-                .then(|| {
-                    (
-                        record.updated_at_unix,
-                        record.session.realized_exit_ip.clone().unwrap_or_default(),
-                    )
-                })
-            })
-            .max_by_key(|(updated_at, _)| *updated_at)
-            .and_then(|(_, realized_exit_ip)| {
-                (!realized_exit_ip.trim().is_empty()).then_some(realized_exit_ip)
-            })
+        let session_id = &store.selected_buyer_session_id;
+        let session = &store.sessions.get(session_id)?.session;
+        let channel = store.channels.get(&session.payment.channel_id)?;
+        if channel.role != PaidRouteChannelRole::Buyer
+            || normalize_nostr_pubkey(&channel.counterparty_npub).ok()? != selected_exit_node
+            || !store.buyer_session_is_seller_admitted(session_id).ok()?
+            || !store
+                .buyer_session_allows_routing(session_id, now_unix)
+                .ok()?
+        {
+            return None;
+        }
+        session
+            .realized_exit_ip
+            .clone()
+            .filter(|ip| !ip.trim().is_empty())
     }
 
     fn mutate_paid_route_store(
@@ -669,6 +639,7 @@ impl NativeAppRuntime {
             }
             if source != InternetSource::PaidAutomatic {
                 store.automatic_reselect_from.clear();
+                store.automatic_reselect_session_id.clear();
             }
             store.begin_buyer_session_open_attempt(session_id, now_unix)?;
             let endpoint_hints = store.buyer_session_seller_fips_endpoints(session_id)?;

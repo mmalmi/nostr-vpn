@@ -8,7 +8,7 @@
         assert!(!super::fips_host_disabled_cleanup_due(true, false));
     }
 
-    fn available_udp_port() -> u16 {
+    pub(super) fn available_udp_port() -> u16 {
         UdpSocket::bind("127.0.0.1:0")
             .expect("bind test port")
             .local_addr()
@@ -147,7 +147,7 @@
         config
     }
 
-    fn direct_udp_endpoint_config_many(local_port: u16, peers: &[(&str, u16, bool)]) -> Config {
+    pub(super) fn direct_udp_endpoint_config_many(local_port: u16, peers: &[(&str, u16, bool)]) -> Config {
         let mut config = Config::new();
         config.node.routing.mode = RoutingMode::ReplyLearned;
         config.transports.udp = TransportInstances::Single(UdpConfig {
@@ -205,7 +205,7 @@
         );
     }
 
-    async fn wait_for_fips_peer(runtime: &FipsPrivateMeshRuntime, peer_npub: &str) {
+    pub(super) async fn wait_for_fips_peer(runtime: &FipsPrivateMeshRuntime, peer_npub: &str) {
         let mut last_snapshot = Vec::new();
         let mut last_error = None;
         for _ in 0..50 {

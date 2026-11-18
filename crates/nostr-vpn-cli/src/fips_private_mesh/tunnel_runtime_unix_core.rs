@@ -69,6 +69,10 @@ impl FipsPrivateTunnelRuntime {
         )
         .await?;
         let state_control = FipsControlTcpRuntime::start(Arc::clone(mesh.endpoint())).await?;
+        let file_transfers = nostr_vpn_core::file_transfers::FileTransferService::start(
+            Arc::clone(mesh.endpoint()),
+            cleanup_journal_config_path.to_path_buf(),
+        );
         let tun = Arc::new(
             SystemTun::new(&config.iface)
                 .with_context(|| fips_tun_create_context(&config.iface))?
@@ -90,6 +94,7 @@ impl FipsPrivateTunnelRuntime {
             mesh,
             control_pubsub,
             state_control,
+            file_transfers,
             secure_dns: None,
             pending_paid_exit_dns: None,
             manages_secure_dns: true,
@@ -356,6 +361,7 @@ impl FipsPrivateTunnelRuntime {
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
         }
+        drop(runtime.file_transfers);
         runtime.state_control.stop().await;
         runtime.event_rx.close();
         if let Some(worker) = runtime.tun_send_worker.take() {

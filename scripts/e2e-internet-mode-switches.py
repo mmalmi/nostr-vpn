@@ -29,7 +29,7 @@ def fetch(path, payload=None):
         return response.read()
 
 
-def ready(mode):
+def ready(mode, network=None):
     expected_ip = {'direct': direct_ip, 'private_vpn': upstream_ip,
                    'wireguard': upstream_ip}.get(mode, seller_ip)
     deadline = time.monotonic() + 90
@@ -38,12 +38,20 @@ def ready(mode):
         try:
             status = json.loads(cli('status', '--json', '--discover-secs', '0'))
             assert status['internet_source'] == mode, status['internet_source']
+            if network:
+                assert status['network_id'] == network, 'private network change pending'
+                actual = {addr['local'] for link in json.loads(subprocess.check_output(
+                    ['ip', '-j', '-4', 'addr'])) for addr in link['addr_info']
+                    if addr['local'].startswith('10.44.')}
+                assert actual == {status['tunnel_ip'].split('/')[0]}, 'old or missing kernel address'
             assert json.loads(fetch('/source-ip'))['ip'] == expected_ip, 'wrong egress'
             if mode.startswith('paid_'):
                 _, session, channel = snapshot()
                 assert session and channel['status'] not in ('closing', 'closed', 'failed')
                 assert session['session']['payment'].get('cashu_spilman_payment'), 'not funded'
                 assert session['session'].get('realized_exit_ip'), 'no fresh health check'
+                issues = {issue['code'] for issue in status['daemon']['state']['health']}
+                assert not any(code.startswith('exit_node.') for code in issues), issues
             answer = subprocess.check_output(
                 ['dig', '+short', '+time=3', '+tries=1', 'example.com', 'A'],
                 text=True, timeout=5).strip()
@@ -74,6 +82,21 @@ def choose(mode):
     else:
         cli('set', '--internet-source', mode)
 
+
+# Reproduce changing the private network while a public exit remains funded.
+status = json.loads(cli('status', '--json', '--discover-secs', '0'))
+original_network = status['network_id']
+original_ip = status['tunnel_ip']
+before, saved, funded = snapshot()
+for network in (original_network + '-moved', original_network):
+    cli('set', '--network-id', network)
+    after, session, channel = ready('paid_automatic', network)
+    address = json.loads(cli('status', '--json', '--discover-secs', '0'))['tunnel_ip']
+    assert (address == original_ip) == (network == original_network), 'tunnel address did not move'
+    assert channel['channel_id'] == funded['channel_id'], 'bought a new channel on address change'
+    assert session['session']['lease_id'] == saved['session']['lease_id'], 'replaced the lease'
+    assert set(after['sessions']) == set(before['sessions']), 'opened another session'
+print('Private network switched and restored: same funded channel carried DNS and traffic', flush=True)
 
 # An Euler walk visits every directed edge, including each self-transition,
 # once without resetting the fixture between pairs.

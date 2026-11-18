@@ -805,6 +805,27 @@ mod tests {
     }
 
     #[test]
+    fn public_buyer_cannot_claim_seller_or_private_peer_address() {
+        let mut app = AppConfig::generated();
+        app.set_active_network_id("address-test").unwrap();
+        let buyer = normalize_nostr_pubkey(&generate_nostr_identity().1).unwrap();
+        let peer = normalize_nostr_pubkey(&generate_nostr_identity().1).unwrap();
+        app.networks[0].devices.push(peer.clone());
+        for key in [app.own_nostr_pubkey_hex().unwrap(), peer] {
+            let reserved = super::derive_mesh_tunnel_ip(&app.effective_network_id(), &key).unwrap();
+            assert!(
+                app.validate_paid_exit_seller_session(&buyer, &reserved)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            app.validate_paid_exit_seller_session(&buyer, "10.44.0.1/32")
+                .unwrap(),
+            buyer
+        );
+    }
+
+    #[test]
     fn paid_exit_seller_rejects_paid_upstream_chains() {
         let mut config = AppConfig::generated();
         config.set_internet_source(InternetSource::PaidAutomatic);

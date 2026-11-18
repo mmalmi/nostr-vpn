@@ -41,6 +41,7 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+      - path: Shared
       - path: Resources
         buildPhase: resources
     settings:
@@ -70,15 +71,48 @@ targets:
         codeSign: true
         copy:
           destination: plugins
+      - target: ShareFiles
+        embed: true
+        codeSign: true
+        copy:
+          destination: plugins
       - sdk: NetworkExtension.framework
       - sdk: AppIntents.framework
       - sdk: SystemConfiguration.framework
+
+  ShareFiles:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareFiles
+      - path: Shared
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_NAME: ShareFiles
+        PRODUCT_MODULE_NAME: ShareFiles
+        PRODUCT_BUNDLE_IDENTIFIER: ${NVPN_IOS_BUNDLE_ID}.ShareFiles
+        INFOPLIST_FILE: ShareFiles/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShareFiles/ShareFiles.entitlements
+        APPLICATION_EXTENSION_API_ONLY: YES
+      configs:
+        DeviceDebug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: $(NVPN_IOS_CODE_SIGN_IDENTITY)
+          PROVISIONING_PROFILE: $(NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID)
+        Release:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: $(NVPN_IOS_CODE_SIGN_IDENTITY)
+          PROVISIONING_PROFILE: $(NVPN_IOS_SHARE_FILES_PROVISIONING_PROFILE_UUID)
 
   PacketTunnel:
     type: app-extension
     platform: iOS
     sources:
       - path: PacketTunnel
+      - path: Shared/FileTransferPresentation.swift
+      - path: Shared/FileTransferObservation.swift
       - path: Resources/PrivacyInfo.xcprivacy
         buildPhase: resources
     settings:

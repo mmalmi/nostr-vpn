@@ -524,6 +524,7 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     .expect("write store");
 
     let buy = paid_exit_buy_once(PaidExitBuyArgs {
+        auto_renew: true,
         config: Some(config_path.clone()),
         offer: Some("internet-exit".to_string()),
         best_rated: false,
@@ -536,6 +537,13 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     })
     .expect("buy paid exit");
 
+    assert_eq!(
+        load_paid_route_store(&store_path)
+            .unwrap()
+            .manual_renewal_session_id,
+        buy.session.session_id
+    );
+    assert_eq!(load_paid_route_store(&store_path).unwrap().selected_buyer_session_id, buy.session.session_id);
     assert_eq!(buy.session.seller_npub, offer.seller_npub);
     let seller_hex = seller.public_key().to_hex();
     assert_eq!(buy.selected_exit_node.as_deref(), Some(seller_hex.as_str()));
@@ -562,12 +570,19 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     reset.save(&config_path).expect("save reset config");
 
     let selected = paid_exit_use_once(PaidExitUseArgs {
+        auto_renew: false,
         config: Some(config_path.clone()),
         session: buy.session.session_id,
         no_reload_daemon: true,
         json: false,
     })
     .expect("use paid exit session");
+    assert!(
+        load_paid_route_store(&store_path)
+            .unwrap()
+            .manual_renewal_session_id
+            .is_empty()
+    );
 
     assert_eq!(selected.seller_npub, offer.seller_npub);
     assert_eq!(selected.selected_exit_node, seller_hex);
@@ -636,6 +651,7 @@ fn paid_exit_buy_selects_route_before_payment_or_free_probe() {
     .expect("write store");
 
     let buy = paid_exit_buy_once(PaidExitBuyArgs {
+        auto_renew: false,
         config: Some(config_path.clone()),
         offer: Some("internet-exit".to_string()),
         best_rated: false,

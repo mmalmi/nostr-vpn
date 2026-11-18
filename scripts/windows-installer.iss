@@ -33,6 +33,8 @@ Source: "{#ProjectRoot}\windows\installer\windows-installer-migrate.ps1"; Flags:
 Name: "{autoprograms}\Nostr VPN"; Filename: "{app}\NostrVpn.Windows.exe"; IconFilename: "{app}\Assets\nostr-vpn.ico"
 Name: "{autodesktop}\Nostr VPN"; Filename: "{app}\NostrVpn.Windows.exe"; IconFilename: "{app}\Assets\nostr-vpn.ico"; Tasks: desktopicon
 
+Name: "{userappdata}\Microsoft\Windows\SendTo\Nostr VPN"; Filename: "{app}\NostrVpn.Windows.exe"; Parameters: "--send-files"; IconFilename: "{app}\Assets\nostr-vpn.ico"
+
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 

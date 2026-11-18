@@ -27,6 +27,16 @@ final class AppModel: ObservableObject {
     @Published var statusMessage = ""
     @Published var copiedValue = ""
     @Published var vpnDisclosurePromptVisible = false
+    @Published var fileTransfersRequested = false
+    @Published var highlightedFileTransfer: String?
+    @Published var observedFileTransfers: [FileTransferPresentation] = []
+    @Published var filePreparationText = ""
+    @Published var filePreparationProgress = 0.0
+    @Published var fileNotificationsEnabled = false
+    var filePreparation: FilePreparation?
+    var fileObservation: FileTransferObservation?
+    var fileNotificationDelegate = FileNotificationDelegate()
+    var pendingFileNotificationAction: (String, String)?
 
     var core: NativeCoreClient?
     let vpnController = PacketTunnelController()
@@ -101,12 +111,14 @@ final class AppModel: ObservableObject {
         core = client
         let compatibility = Self.appStoreCompatibleState(client.state(), core: client)
         state = compatibility.state
+        publishFileSharePeers()
         appStoreTunnelRefreshPending =
             compatibility.removedPaidConfiguration && compatibility.vpnWasRunning
         #if DEBUG
         NSLog("nvpn-app: shared storage ready at \(appGroupSupportDir.path)")
         #endif
         debugLog("init args=\(Self.redactedDebugArguments(ProcessInfo.processInfo.arguments))")
+        configureFileTransfers()
     }
 
     deinit {
@@ -125,6 +137,7 @@ final class AppModel: ObservableObject {
         guard !fixtureMode else {
             return
         }
+        configureFileTransfers()
         let appStoreReconciliationScheduled =
             reconcileAppStoreTunnelAfterSanitization(reason: "startup")
         guard refreshTask == nil else {
@@ -251,6 +264,7 @@ final class AppModel: ObservableObject {
         if !hadActiveNetwork, activeNetwork != nil {
             ensureAutoconnectPacketTunnel(reason: "network joined")
         }
+        processFileNotificationAction()
     }
 
     @discardableResult
@@ -342,6 +356,7 @@ final class AppModel: ObservableObject {
     ) -> Bool {
         let compatibility = Self.appStoreCompatibleState(current, core: core)
         state = compatibility.state
+        publishFileSharePeers()
         state.vpnEnabled = vpnDesiredState.adoptNativeState(
             runtimeEnabled: state.vpnEnabled,
             successfulTransportStart: successfulTransportStart
