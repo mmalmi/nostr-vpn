@@ -265,7 +265,9 @@ fi
 # Local patches must already agree with the committed lock. Never resolve new
 # dependencies during a build; the native release path has a separately verified
 # FIPS lock-materialization step when that workflow is required.
-cargo "${cargo_config_args[@]}" fetch --locked --target "$TARGET"
+# Cross builds also run build scripts and procedural macros on the compiler host.
+build_host=$(rustc --print host-tuple)
+cargo "${cargo_config_args[@]}" fetch --locked --target "$TARGET" --target "$build_host"
 
 cargo_feature_args=()
 if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
