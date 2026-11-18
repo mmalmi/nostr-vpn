@@ -76,6 +76,8 @@ struct InternetPage: View {
                                     enabled: true,
                                     action: { selectPeer(participant.npub) }
                                 )
+                                .accessibilityIdentifier("private-exit-\(participant.npub)")
+                                .accessibilityAddTraits(model.state.exitNode == participant.npub ? .isSelected : [])
                             }
                         }
                     }

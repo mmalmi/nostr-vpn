@@ -20,6 +20,16 @@ device or exit mode for dataplane claims.
 
 ## Device safety and recovery
 
+Run `scripts/test-ios-private-exit.sh PROVIDER_SPEC.json` with the installed
+Release app and runner from the iOS network preparation. The paired test provider
+must stay online through cleanup and serve a fresh 32-character hexadecimal
+challenge only behind its exit. The fixture JSON contains its `providerNpub`,
+`challenge`, and `probeURL`. Use an HTTP target in the benchmarking range
+`198.18.0.0/15` with the challenge as its query and response body. The runner
+starts from “This device”, opens the private picker, finds the expected peer
+before selection, verifies the returned challenge, and restores the source and
+VPN switch. The app receives no test configuration.
+
 Run simulator UI checks without physical devices. Before physical UI automation,
 require a bounded fresh unlocked-state check.
 

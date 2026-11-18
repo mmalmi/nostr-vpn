@@ -153,6 +153,114 @@ final class NostrVpnReleaseNetworkUITests: XCTestCase {
         emit("NVPN_IOS_RELEASE_NETWORK_PASSED=\(spec.caseName)")
     }
 
+    /// The paired fixture serves the random challenge only through its private exit.
+    func testReleasePrivateExit() throws {
+        struct PrivateExitSpec: Decodable {
+            let providerNpub: String
+            let probeURL: URL
+            let challenge: String
+            let restoreInterruptedSelection: Bool?
+        }
+        let env = ProcessInfo.processInfo.environment
+        guard env["NVPN_XCUITEST_RELEASE_NETWORK_GATE"] == "1",
+              let encoded = env["NVPN_XCUITEST_RELEASE_NETWORK_SPEC_BASE64"],
+              let data = Data(base64Encoded: encoded) else {
+            throw gateError("Private exit fixture was not supplied to the test runner")
+        }
+        let spec = try JSONDecoder().decode(PrivateExitSpec.self, from: data)
+        guard spec.providerNpub.range(of: "^npub1[023456789acdefghjklmnpqrstuvwxyz]{58}$", options: .regularExpression) != nil,
+              spec.probeURL.scheme == "http", spec.probeURL.host != nil,
+              spec.probeURL.user == nil, spec.probeURL.password == nil,
+              spec.challenge.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil,
+              spec.probeURL.query == spec.challenge else {
+            throw gateError("Invalid private exit fixture")
+        }
+        XCTAssertTrue(app.launchArguments.isEmpty && app.launchEnvironment.isEmpty)
+        app.launch()
+        let wasOn = vpnIsOn(try vpnToggle())
+        openInternetTab()
+        if spec.restoreInterruptedSelection == true {
+            let picker = scrollToElement("internet-source-picker")
+            if "\(picker.label) \(picker.value as? String ?? "")".contains("Private VPN device") {
+                assertInternetStatus(contains: "Pending")
+                let selected = app.buttons.matching(NSPredicate(
+                    format: "identifier BEGINSWITH %@ AND selected == true", "private-exit-"
+                ))
+                XCTAssertEqual(selected.count, 0, "An existing private exit must be preserved")
+                emit("NVPN_IOS_PRIVATE_EXIT_RESTORE_VPN_ON=0")
+                selectMenu(picker: "internet-source-picker", option: "internet-source-direct")
+                try waitForInternetTransitionToSettle()
+            }
+        }
+        assertPicker("internet-source-picker", contains: "This device")
+        let probe = spec.probeURL.absoluteString
+        try NostrVpnReleaseNetworkProbe.requireControlledHTTPUnavailable(probe)
+        emit("NVPN_IOS_PRIVATE_EXIT_RESTORE_VPN_ON=\(wasOn && spec.restoreInterruptedSelection != true ? 1 : 0)")
+        if !wasOn || spec.restoreInterruptedSelection == true {
+            addTeardownBlock { try self.turnVPNOffIfNeeded() }
+        }
+        if !wasOn {
+            try turnVPNOn()
+        }
+        // XCTest executes teardown blocks in reverse order, including on assertion failures.
+        addTeardownBlock {
+            self.openInternetTab()
+            self.selectMenu(picker: "internet-source-picker", option: "internet-source-direct")
+            try self.waitForInternetTransitionToSettle()
+            self.assertPicker("internet-source-picker", contains: "This device")
+            try NostrVpnReleaseNetworkProbe.requireControlledHTTPUnavailable(probe)
+            self.emit("NVPN_IOS_PRIVATE_EXIT_DIRECT_RESTORED=1")
+        }
+        openInternetTab()
+        selectMenu(picker: "internet-source-picker", option: "internet-source-private-vpn")
+        let provider = app.buttons["private-exit-" + spec.providerNpub]
+        XCTAssertTrue(provider.waitForExistence(timeout: 90), "Paired provider did not appear")
+        XCTAssertTrue(provider.isHittable && !provider.isSelected, "Expected an unselected provider")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Private provider before selection"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        emit("NVPN_IOS_PRIVATE_EXIT_VISIBLE=1")
+        provider.tap()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in provider.isSelected }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 15), .completed)
+        try waitForInternetTransitionToSettle()
+        let deadline = Date().addingTimeInterval(30)
+        while true {
+            do {
+                try NostrVpnReleaseNetworkProbe.requireDNSURL(probe, expectedBody: spec.challenge)
+                break
+            } catch {
+                guard Date() < deadline else { throw error }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+        }
+        XCTAssertTrue(waitForVPNState(on: true, timeout: 5))
+        emit("NVPN_IOS_PRIVATE_EXIT_TRAFFIC_VERIFIED=1")
+    }
+
+    func testRestoreInterruptedPrivateExit() throws {
+        let env = ProcessInfo.processInfo.environment
+        guard env["NVPN_XCUITEST_RELEASE_NETWORK_GATE"] == "1",
+              let encoded = env["NVPN_XCUITEST_RELEASE_NETWORK_SPEC_BASE64"],
+              let data = Data(base64Encoded: encoded),
+              let wasOn = try JSONDecoder().decode([String: Bool].self, from: data)["restoreVPNOn"] else {
+            throw gateError("Private exit restoration requires the observed original VPN state")
+        }
+        app.launch()
+        openInternetTab()
+        selectMenu(picker: "internet-source-picker", option: "internet-source-direct")
+        try waitForInternetTransitionToSettle()
+        assertPicker("internet-source-picker", contains: "This device")
+        if wasOn {
+            if !vpnIsOn(try vpnToggle()) { try turnVPNOn() }
+        } else {
+            try turnVPNOffIfNeeded()
+        }
+        XCTAssertTrue(waitForVPNState(on: wasOn, timeout: 10))
+        emit("NVPN_IOS_PRIVATE_EXIT_RECOVERED=1")
+    }
+
     func testReleaseDisconnectCleanup() throws {
         XCTAssertEqual(
             ProcessInfo.processInfo.environment["NVPN_XCUITEST_RELEASE_NETWORK_GATE"],
