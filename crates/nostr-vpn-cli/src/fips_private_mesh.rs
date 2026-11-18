@@ -296,6 +296,7 @@ mod tests {
     include!("fips_private_mesh/tests_status.rs");
     include!("fips_private_mesh/tests_status_endpoint_data.rs");
     include!("fips_private_mesh/tests_runtime.rs");
+    include!("fips_private_mesh/tests_runtime_presence.rs");
     include!("fips_private_mesh/tests_endpoint_config.rs");
     include!("fips_private_mesh/tests_network_cleanup.rs");
     #[cfg(unix)]
