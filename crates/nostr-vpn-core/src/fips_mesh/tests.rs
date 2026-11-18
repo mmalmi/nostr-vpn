@@ -1,4 +1,6 @@
 mod tests {
+    #[cfg(feature = "peer-credit")]
+    include!("peer_credit_tests.rs");
     use super::{
         FipsEndpointAdmissionCache, FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission,
         endpoint_node_addr_from_pubkey_bytes,

@@ -72,6 +72,17 @@ type ResolverState = Arc<RwLock<SharedResolver>>;
 type FipsDnsEndpoint = Option<Arc<FipsEndpoint>>;
 const PAID_EXIT_DNS_HEALTH_HOST: &str = "api.ipify.org.";
 
+fn secure_dns_bind_error(transport: &str, error: std::io::Error) -> anyhow::Error {
+    let hint = if cfg!(target_os = "linux") && error.kind() == std::io::ErrorKind::AddrInUse {
+        ". If a LAN DNS server such as AdGuard Home uses all interfaces, bind its DNS listener to the LAN address"
+    } else {
+        ""
+    };
+    anyhow::Error::new(error).context(format!(
+        "failed to bind secure DNS {transport} on {SECURE_DNS_BIND}{hint}"
+    ))
+}
+
 #[derive(Clone)]
 pub(crate) struct SecureDnsHealthProbe {
     resolver: SharedResolver,
@@ -149,11 +160,11 @@ impl SecureDnsRuntime {
         let udp = Arc::new(
             tokio::net::UdpSocket::bind(SECURE_DNS_BIND)
                 .await
-                .with_context(|| format!("failed to bind secure DNS UDP on {SECURE_DNS_BIND}"))?,
+                .map_err(|error| secure_dns_bind_error("UDP", error))?,
         );
         let tcp = tokio::net::TcpListener::bind(SECURE_DNS_BIND)
             .await
-            .with_context(|| format!("failed to bind secure DNS TCP on {SECURE_DNS_BIND}"))?;
+            .map_err(|error| secure_dns_bind_error("TCP", error))?;
         let resolver = Arc::new(RwLock::new(dns_resolver(&resolver_config)?));
         let records = Arc::new(RwLock::new(records));
         let udp_task = tokio::spawn(run_udp(

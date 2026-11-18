@@ -662,6 +662,7 @@ struct QrCodeView: View {
 
 enum SidebarItem: Hashable {
     case devices
+    case files
     case internet
     case publicExits
     case sharing

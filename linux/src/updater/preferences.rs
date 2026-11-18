@@ -38,19 +38,9 @@ impl UpdateState {
         self.auto_download
             && self.available
             && !self.checking
-            && !self.downloading
+            && !self.view.busy
             && self.asset.as_ref().is_some_and(|asset| asset.verified)
             && self.downloaded_path().is_none()
-    }
-
-    pub fn download_action_label(&self) -> &'static str {
-        if self.downloading {
-            "Downloading"
-        } else if self.downloaded_path().is_some() {
-            "Show download"
-        } else {
-            "Download update"
-        }
     }
 }
 
@@ -123,7 +113,6 @@ mod tests {
         for _ in 0..3 {
             assert!(!state.should_auto_download());
         }
-        assert_eq!(state.download_action_label(), "Show download");
         state.asset.as_mut().unwrap().name = "next-release.pkg.tar.zst".into();
         assert!(state.should_auto_download());
         state.asset.as_mut().unwrap().name = "release.pkg.tar.zst".into();

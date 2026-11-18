@@ -1,5 +1,7 @@
 pub mod actions;
 pub mod c_abi;
+#[cfg(all(feature = "updater", not(any(target_os = "android", target_os = "ios"))))]
+pub mod desktop_update;
 #[cfg(feature = "paid-exit")]
 mod exchange_rate;
 #[cfg(not(feature = "paid-exit"))]

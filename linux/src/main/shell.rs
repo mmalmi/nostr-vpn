@@ -170,7 +170,8 @@ fn render(app: &AppRef) {
 
 fn build_update_stripe(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
     let update = app.borrow().update.clone();
-    if !update.available {
+    let view = &update.view;
+    if !update.available && !view.active {
         return;
     }
 
@@ -178,18 +179,31 @@ fn build_update_stripe(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) 
     row.add_css_class("nvpn-update-stripe");
     row.set_valign(gtk::Align::Center);
 
-    let title = gtk::Label::new(Some(&update_stripe_text(
-        &update.version,
-        &state.app_version,
-    )));
+    if view.step == "failed" {
+        let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+        icon.add_css_class("warning");
+        row.append(&icon);
+    }
+    let text = if view.active {
+        view.title.clone()
+    } else {
+        update_stripe_text(&update.version, &state.app_version)
+    };
+    let title = gtk::Label::new(Some(&text));
     title.set_xalign(0.0);
-    title.set_hexpand(true);
+    title.set_hexpand(!view.busy);
     title.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    if !view.detail.is_empty() {
+        title.set_tooltip_text(Some(&view.detail));
+    }
     row.append(&title);
+    if view.busy {
+        row.append(&update_progress_widget(view));
+    }
 
-    let auto_download = gtk::CheckButton::with_label("Download automatically");
-    auto_download.set_active(update.auto_download);
-    {
+    if !view.active {
+        let auto_download = gtk::CheckButton::with_label("Download automatically");
+        auto_download.set_active(update.auto_download);
         let app = app.clone();
         auto_download.connect_toggled(move |button| {
             let enabled = button.is_active();
@@ -200,25 +214,62 @@ fn build_update_stripe(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) 
             }
             let should_download = app.borrow().update.should_auto_download();
             if should_download {
-                download_update(&app);
+                run_update_action(&app, ACTION_INSTALL);
             } else {
                 render(&app);
             }
         });
+        row.append(&auto_download);
     }
-    row.append(&auto_download);
-
-    let install = icon_text_button(update.download_action_label(), "folder-download-symbolic");
-    install.set_sensitive(
-        update.available && update.asset.is_some() && !update.checking && !update.downloading,
-    );
-    {
-        let app = app.clone();
-        install.connect_clicked(move |_| show_or_download_update(&app));
-    }
-    row.append(&install);
-
+    append_update_actions(app, &row, &update);
     parent.append(&row);
+}
+
+/// A determinate bar while the size is known, otherwise a spinner.
+fn update_progress_widget(view: &DesktopUpdateView) -> gtk::Widget {
+    if let Some(progress) = view.progress {
+        let bar = gtk::ProgressBar::new();
+        bar.set_fraction(progress);
+        bar.set_valign(gtk::Align::Center);
+        bar.set_hexpand(true);
+        bar.set_size_request(140, -1);
+        bar.upcast()
+    } else {
+        let spinner = gtk::Spinner::new();
+        spinner.start();
+        spinner.set_halign(gtk::Align::Start);
+        spinner.set_hexpand(true);
+        spinner.upcast()
+    }
+}
+
+/// The core's fallback and primary buttons (Retry, Show download, Download page).
+fn append_update_actions(app: &AppRef, row: &gtk::Box, update: &updater::UpdateState) {
+    let view = &update.view;
+    if !view.secondary_action.is_empty() {
+        let secondary = gtk::Button::with_label(&view.secondary_label);
+        let app = app.clone();
+        let action = view.secondary_action.clone();
+        secondary.connect_clicked(move |_| run_update_action(&app, &action));
+        row.append(&secondary);
+    }
+    if view.busy || view.primary_action.is_empty() {
+        return;
+    }
+    let icon = if view.active {
+        "view-refresh-symbolic"
+    } else {
+        "folder-download-symbolic"
+    };
+    let primary = icon_text_button(&view.primary_label, icon);
+    primary.set_sensitive(!update.checking && (view.active || update.available));
+    if view.step == "failed" {
+        primary.add_css_class("suggested-action");
+    }
+    let app = app.clone();
+    let action = view.primary_action.clone();
+    primary.connect_clicked(move |_| run_update_action(&app, &action));
+    row.append(&primary);
 }
 
 fn update_stripe_text(version: &str, current: &str) -> String {

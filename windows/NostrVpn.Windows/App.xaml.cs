@@ -173,4 +173,11 @@ public partial class App : System.Windows.Application
         IsQuitting = true;
         Shutdown();
     }
+
+    /// The update installer waits for this process to exit.
+    public static void QuitForUpdate()
+    {
+        IsQuitting = true;
+        Current.Shutdown();
+    }
 }

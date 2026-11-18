@@ -77,18 +77,7 @@
         </Grid>
       </Border>
 
-      <Border DockPanel.Dock="Top" Padding="24,4" Background="{DynamicResource UpdateBannerBg}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Visibility="{Binding UpdateAvailable, Converter={StaticResource BoolToVisibility}}">
-        <DockPanel LastChildFill="True">
-          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-            <CheckBox Content="Install automatically" IsChecked="{Binding AutoInstallUpdates, Mode=TwoWay}" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,12,0" />
-            <Button Content="Install" Command="{Binding InstallUpdateCommand}" MinWidth="72" MinHeight="26" Padding="10,3" />
-          </StackPanel>
-          <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="13" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0" />
-            <TextBlock Text="{Binding UpdateStripeText}" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-          </StackPanel>
-        </DockPanel>
-      </Border>
+      <controls:UpdateBanner DockPanel.Dock="Top" />
 
       <ScrollViewer x:Name="ContentScroll"
                     VerticalScrollBarVisibility="Auto"
@@ -916,7 +905,7 @@
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="{Binding ServiceSummary}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,18,0" />
                   <TextBlock Text="{Binding CliSummary}" Foreground="{DynamicResource TextSecondary}" Margin="0,0,18,0" />
-                  <TextBlock Text="{Binding UpdateStatus}" Foreground="{DynamicResource TextSecondary}" />
+                  <TextBlock Text="{Binding UpdateSettingsText}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" MaxWidth="520" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
                   <Button Content="Install service" Command="{Binding InstallServiceCommand}" Margin="0,0,8,0" />

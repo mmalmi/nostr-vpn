@@ -141,7 +141,7 @@ fn drain_tray_commands(app: &AppRef) {
 fn check_updates(app: &AppRef, manual: bool) {
     let (current_version, config_path, sender) = {
         let mut model = app.borrow_mut();
-        if !model.core_ready || model.update.checking || model.update.downloading {
+        if !model.core_ready || model.update.checking || model.update.view.busy {
             return;
         }
         if manual {
@@ -176,51 +176,47 @@ fn check_updates_if_due(app: &AppRef) {
     }
 }
 
-fn download_update(app: &AppRef) {
-    let (asset, config_path, sender) = {
-        let mut model = app.borrow_mut();
-        if model.update.checking
-            || model.update.downloading
-            || model.update.downloaded_path().is_some()
-        {
-            return;
-        }
-        let Some(asset) = model.update.asset.clone() else {
-            model.update.status = "No Linux update asset found".to_string();
-            drop(model);
-            render(app);
-            return;
-        };
-        model.update.downloading = true;
-        model.update.status = format!("Downloading {}", model.update.version);
-        (
-            asset,
-            model.state.config_path.clone(),
-            model.update_sender.clone(),
-        )
-    };
-    render_background_change(app);
-    updater::download(asset, config_path, sender);
+fn update_request(app: &AppRef) -> Option<UpdateRequest> {
+    let model = app.borrow();
+    model.core_ready.then(|| UpdateRequest {
+        current_version: model.state.app_version.clone(),
+        config_path: model.state.config_path.clone(),
+    })
 }
 
-fn show_or_download_update(app: &AppRef) {
-    let downloaded = app.borrow().update.downloaded_path().map(PathBuf::from);
-    let Some(path) = downloaded else {
-        download_update(app);
-        return;
-    };
-    if let Some(parent) = path.parent() {
-        let uri = gio::File::for_path(parent).uri();
-        if let Err(error) =
-            gio::AppInfo::launch_default_for_uri(&uri, None::<&gio::AppLaunchContext>)
-        {
-            app.borrow_mut().update.status = format!("Could not show downloaded update: {error}");
-            render(app);
-        }
+/// Run an install step or fallback in the core and show the result.
+fn run_update_action(app: &AppRef, action: &str) {
+    if let Some(request) = update_request(app) {
+        apply_update_view(app, desktop_update(action, &request));
     }
 }
 
+fn apply_update_view(app: &AppRef, view: DesktopUpdateView) {
+    {
+        let mut model = app.borrow_mut();
+        if model.update.view == view {
+            return;
+        }
+        if view.step == "downloaded" && !view.download_path.is_empty() {
+            if let Some(asset) = model.update.asset.clone() {
+                model.update.downloaded = Some(updater::DownloadedUpdate {
+                    asset_name: asset.name,
+                    source: asset.source,
+                    path: PathBuf::from(&view.download_path),
+                });
+                save_update_preferences(&mut model.update);
+            }
+        }
+        model.update.view = view;
+    }
+    render_background_change(app);
+}
+
 fn drain_update_events(app: &AppRef) {
+    let polling = app.borrow().update.view.busy;
+    if polling {
+        run_update_action(app, ACTION_VIEW);
+    }
     let events = {
         let model = app.borrow();
         model.update_receiver.try_iter().collect::<Vec<_>>()
@@ -247,7 +243,11 @@ fn drain_update_events(app: &AppRef) {
                                         "Update {} found from unverified {}; download disabled",
                                         check.tag, check.source
                                     )
-                                } else if model.update.downloaded_path().is_some() {
+                                } else if let Some(path) =
+                                    model.update.downloaded_path().map(PathBuf::from)
+                                {
+                                    model.update.view =
+                                        desktop_update_restore_download(&check.tag, &path);
                                     format!("Update {} downloaded; ready to install", check.tag)
                                 } else if model.update.asset.is_some() {
                                     format!("Update {} available", check.tag)
@@ -273,32 +273,12 @@ fn drain_update_events(app: &AppRef) {
                         }
                     }
                 }
-                updater::UpdateEvent::Downloaded(result) => {
-                    model.update.downloading = false;
-                    match result {
-                        Ok(download) => {
-                            model.update.status = format!(
-                                "Downloaded {}; open the download folder to install it",
-                                download
-                                    .path
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("update")
-                            );
-                            model.update.downloaded = Some(download);
-                            save_update_preferences(&mut model.update);
-                        }
-                        Err(error) => {
-                            model.update.status = error;
-                        }
-                    }
-                }
             }
         }
     }
 
     if auto_download {
-        download_update(app);
+        run_update_action(app, ACTION_INSTALL);
     } else {
         render_background_change(app);
     }

@@ -71,3 +71,54 @@ fn newer_empty_profile_removes_old_name_and_unverified_profiles_never_name_a_pro
         provider_alias(&npub)
     );
 }
+
+#[cfg(feature = "peer-credit")]
+#[test]
+fn exit_credit_discovery_requires_an_authentic_path_and_signed_local_terms() {
+    use peer_payments::{Agreement, PurchaseIntent, Signed, WireMessage, sign_message};
+    let root = Keys::generate();
+    let friend = Keys::generate();
+    let seller = Keys::generate();
+    let terms = Agreement {
+        id: "exit-quote".into(),
+        payer: root.public_key().to_hex(),
+        provider: seller.public_key().to_hex(),
+        service: "vpn.exit.upload_bytes".into(),
+        resource: "internet-exit-upload:10.0.0.2".into(),
+        max_units: 1000,
+        price_sat: 1,
+        price_per_units: 100,
+        max_amount_sat: 10,
+        created_at: 100,
+        expires_at: 300,
+    };
+    let offers = [Signed {
+        signature: sign_message(
+            &seller.secret_key().to_secret_hex().parse().unwrap(),
+            &WireMessage::Agreement(terms.clone()),
+        )
+        .unwrap(),
+        payload: terms.clone(),
+    }];
+    let intents = [PurchaseIntent {
+        provider: &terms.provider,
+        service: &terms.service,
+        resource: &terms.resource,
+        units: 1000,
+        max_price_sat: 1,
+        price_per_units: 100,
+        max_amount_sat: 10,
+        max_duration_secs: 200,
+    }];
+    let mut forged = list(&friend, Kind::ContactList, &[&seller], 120);
+    forged.pubkey = root.public_key();
+    let mut events = vec![forged, list(&friend, Kind::ContactList, &[&seller], 110)];
+    let select = |events: &[Event]| {
+        select_exit_credit_offer(&root.public_key(), events, &offers, &intents, 200).unwrap()
+    };
+    assert!(select(&events).is_none());
+    events.push(list(&root, Kind::ContactList, &[&friend], 100));
+    assert_eq!(select(&events), Some(&offers[0]));
+    events.push(list(&root, Kind::MuteList, &[&friend], 121));
+    assert!(select(&events).is_none());
+}

@@ -515,13 +515,13 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     if update.checking {
         status_row.append(&badge("Checking", "muted"));
     }
-    if update.downloading {
-        status_row.append(&badge("Downloading", "muted"));
-    }
     system.append(&status_row);
 
+    if update.view.active {
+        system.append(&update_progress_row(app, &update));
+    }
     let status_detail = first_non_empty(&[&update.status, &state.service_status_detail]);
-    if let Some(status_detail) = status_detail {
+    if let Some(status_detail) = status_detail.filter(|_| !update.view.active) {
         let detail = gtk::Label::new(Some(&status_detail));
         detail.add_css_class("caption");
         detail.add_css_class("dim-label");
@@ -561,22 +561,20 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     }
     cli_row.append(&cli);
     let check_update_button = icon_text_button("Check Updates", "view-refresh-symbolic");
-    check_update_button.set_sensitive(!update.checking && !update.downloading);
+    check_update_button.set_sensitive(!update.checking && !update.view.busy);
     {
         let app = app.clone();
         check_update_button.connect_clicked(move |_| check_updates(&app, true));
     }
     cli_row.append(&check_update_button);
-    let download_update_button =
-        icon_text_button(update.download_action_label(), "folder-download-symbolic");
-    download_update_button.set_sensitive(
-        update.available && update.asset.is_some() && !update.checking && !update.downloading,
-    );
-    {
+    if !update.view.active {
+        let download_update_button =
+            icon_text_button(&update.view.primary_label, "folder-download-symbolic");
+        download_update_button.set_sensitive(update.available && !update.checking);
         let app = app.clone();
-        download_update_button.connect_clicked(move |_| show_or_download_update(&app));
+        download_update_button.connect_clicked(move |_| run_update_action(&app, ACTION_INSTALL));
+        cli_row.append(&download_update_button);
     }
-    cli_row.append(&download_update_button);
     let uninstall_cli = icon_text_button("Uninstall CLI", "edit-delete-symbolic");
     uninstall_cli.set_sensitive(state.cli_install_supported && state.cli_installed);
     {
@@ -984,4 +982,31 @@ fn import_wireguard_exit_config_file(app: &AppRef, button: &gtk::Button) {
             Err(error) => set_notice(&app, format!("Could not read config file: {error}")),
         }
     });
+}
+
+/// The install step, its detail and actions, as the core words them.
+fn update_progress_row(app: &AppRef, update: &updater::UpdateState) -> gtk::Box {
+    let view = &update.view;
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let title = gtk::Label::new(Some(&view.title));
+    title.set_xalign(0.0);
+    title.set_wrap(true);
+    title.set_hexpand(!view.busy);
+    row.append(&title);
+    if view.busy {
+        row.append(&update_progress_widget(view));
+    }
+    append_update_actions(app, &row, update);
+    column.append(&row);
+    if !view.detail.is_empty() {
+        let detail = gtk::Label::new(Some(&view.detail));
+        detail.add_css_class("caption");
+        detail.add_css_class("dim-label");
+        detail.set_xalign(0.0);
+        detail.set_wrap(true);
+        detail.set_selectable(true);
+        column.append(&detail);
+    }
+    column
 }

@@ -140,18 +140,13 @@ impl FipsPrivateTunnelRuntime {
             .send_join_roster_ack(&self.state_control, participant, roster_event_id)
             .await
     }
-    pub(crate) fn enqueue_capabilities(
+    pub(crate) fn enqueue_stateful_control_frame(
         &self,
         participant: &str,
-        network_id: &str,
-        capabilities: PeerCapabilities,
+        frame: &FipsControlFrame,
     ) -> Result<()> {
-        self.mesh.enqueue_capabilities(
-            &self.state_control.sender(),
-            participant,
-            network_id,
-            capabilities,
-        )
+        self.mesh
+            .enqueue_stateful_control_frame(&self.state_control.sender(), participant, frame)
     }
     #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_session_open(

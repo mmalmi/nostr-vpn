@@ -353,14 +353,14 @@ extension AppManager {
                 enabled: sellerScreenshot,
                 ready: sellerScreenshot,
                 statusText: sellerScreenshot ? "Selling internet is ready" : "Selling internet is off",
-                providerLink: "nvpn://paid-exit/npub1paidexitfinlanddemo?maxMsatPerGb=25000&mint=https%3A%2F%2Fmint.minibits.cash%2FBitcoin",
+                providerLink: "nvpn://paid-exit/npub1paidexitfinlanddemo?maxMsatPerGb=25000&mint=https%3A%2F%2Fmint.coinos.io",
                 upstream: "host_default",
                 privateVpnAccess: "denied",
                 internetText: "My internet",
                 publicIpText: "203.0.113.8",
                 priceText: "≈ $0.02/GB",
                 priceMsatPerGb: 25_000,
-                acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
+                acceptedMints: ["https://mint.coinos.io"],
                 maxChannelCapacitySat: 250,
                 channelExpirySecs: 86_400,
                 channelExpiryText: "1 day",
@@ -394,7 +394,7 @@ extension AppManager {
                         offerId: "internet-exit",
                         role: "seller",
                         status: "active",
-                        mintUrl: "https://mint.minibits.cash/Bitcoin",
+                        mintUrl: "https://mint.coinos.io",
                         counterpartyNpub: "npub1buyerstreamdemo",
                         capacitySat: 250,
                         capacityText: "≈ $0.20",
@@ -487,8 +487,8 @@ extension AppManager {
                             lastCheckedUnix: fixtureNow - 120
                         ),
                         NativePaidRouteWalletMintState(
-                            url: "https://mint.minibits.cash/Bitcoin",
-                            label: "Minibits",
+                            url: "https://mint.example",
+                            label: "Example mint",
                             isDefault: false,
                             balanceKnown: true,
                             balanceMsat: 120_000,
@@ -507,12 +507,12 @@ extension AppManager {
                             ),
                             NativePaidRouteWalletActivityState(
                                 id: "history-payment", kind: "lightning_payment", status: "complete",
-                                mintUrl: "https://mint.minibits.cash/Bitcoin", amountSat: 10, feeSat: 1,
+                                mintUrl: "https://mint.example", amountSat: 10, feeSat: 1,
                                 createdAtUnix: fixtureNow - 3600
                             ),
                             NativePaidRouteWalletActivityState(
                                 id: "history-expired", kind: "top_up", status: "expired",
-                                mintUrl: "https://mint.minibits.cash/Bitcoin", amountSat: 100, feeSat: 0,
+                                mintUrl: "https://mint.example", amountSat: 100, feeSat: 0,
                                 createdAtUnix: fixtureNow - 86400
                             )
                         ]
@@ -520,7 +520,7 @@ extension AppManager {
                     lastAction: NativePaidRouteWalletActionState(
                         kind: "topup",
                         statusText: "Invoice ready",
-                        mintUrl: "https://mint.minibits.cash/Bitcoin",
+                        mintUrl: "https://mint.coinos.io",
                         amountSat: 1_000,
                         amountText: "≈ $0.80",
                         feeSat: 0,
@@ -573,7 +573,7 @@ extension AppManager {
                         statusText: "Selected · FI · Residential · 42 ms · seen 2m ago",
                         priceText: "≈ $0.02/GB",
                         priceMsatPerGb: 25_000,
-                        acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
+                        acceptedMints: ["https://mint.coinos.io"],
                         maxChannelCapacitySat: 250,
                         channelExpirySecs: 900,
                         freeProbeUnits: 1_048_576,
@@ -611,7 +611,7 @@ extension AppManager {
                         statusText: "DE · Datacenter · 18 ms · seen 5m ago",
                         priceText: "≈ $0.0064/GB",
                         priceMsatPerGb: 8_000,
-                        acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
+                        acceptedMints: ["https://mint.coinos.io"],
                         maxChannelCapacitySat: 500,
                         channelExpirySecs: 900,
                         freeProbeUnits: 1_048_576,
@@ -651,7 +651,7 @@ extension AppManager {
                         offerId: "internet-exit",
                         role: "buyer",
                         status: "active",
-                        mintUrl: "https://mint.minibits.cash/Bitcoin",
+                        mintUrl: "https://mint.coinos.io",
                         counterpartyNpub: "npub1paidexitfinlanddemo",
                         capacitySat: 250,
                         capacityText: "≈ $0.20",

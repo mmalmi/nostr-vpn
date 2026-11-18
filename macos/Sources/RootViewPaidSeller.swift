@@ -198,7 +198,7 @@ extension RootView {
                         .foregroundStyle(Color.orange)
                 }
                 paidExitFormRow("Mint") {
-                    TextField("https://mint.minibits.cash/Bitcoin", text: $paidExitAcceptedMints)
+                    TextField("https://mint.coinos.io", text: $paidExitAcceptedMints)
                         .accessibilityIdentifier("paid-exit-accepted-mints")
                 }
             }

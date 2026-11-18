@@ -1,4 +1,28 @@
-# Release gate recovery
+# Release workflow and recovery
+
+## Preparing and publishing a candidate
+
+1. Before freezing a new candidate, bump the changelog with `## X.Y.Z - YYYY-MM-DD`
+   and the root version. Advance
+   `ios/app-store-build-number` to an unused build number. Run
+   `node scripts/sync-versions.mjs`, then `node scripts/sync-versions.mjs --check`.
+2. Before expensive builds or physical-device evidence, run
+   `scripts/testflight-internal preflight` and `scripts/appstore-draft preflight`.
+   Both must agree on the intended marketing version/build; a new candidate must
+   not reuse an already uploaded build.
+3. Before release, run `just release-gate` and the Linux GTK check
+   `( cd linux && cargo check )`.
+4. Stage the exact clean commit with
+   `node scripts/local-release.mjs --stage-dir <dir>`. Use
+   `--reuse-gate-receipts` only after composing a complete artifact-bound receipt
+   set, as described below.
+5. Publish with `--publish-staged-draft`, then
+   `scripts/publish-release-refs.mjs`, then `--promote-draft --require-zapstore`.
+   Direct `--publish` and `--final` modes are disabled.
+
+App Store availability and metadata must follow [the project requirements](../AGENTS.md).
+
+## Recovering an interrupted release
 
 Keep one clean candidate checkout throughout a release. Inspect the failed phase
 and retained evidence before restarting. Before physical-device evidence exists,
@@ -25,11 +49,6 @@ The Automatic Spilman fixture owns the complete Internet mode-transition and
 pending-funding matrices. The manual fixture retains its higher price and small
 wallet for billing checks; running the same matrix there both duplicates work
 and violates Automatic's price and funding prerequisites.
-
-Before freezing a new release, advance `ios/app-store-build-number`, synchronize
-versions, and run the TestFlight and App Store `preflight` commands. Both must
-identify the intended version and unused build number; do this before compiling
-or collecting physical-device evidence.
 
 The gate automatically retains successful **source quality, Rust regression,
 and Android static** checks in `artifacts/release-gate-state`. Reuse requires
@@ -138,9 +157,9 @@ The Android and iPhone DNS lanes finish independently, so a failed phone does no
 cancel the other phone's still-valid work. Radio recovery receives explicit
 artifact and runner pins from the completed preparation.
 
-A destination failure before any test method must not launch a second UI session
-for cleanup when a fresh USB check proves the untouched tunnel is still stopped.
-Cleanup remains mandatory after a method starts or the stopped proof is missing.
+Follow [device safety and recovery](mobile-test-kit.md#device-safety-and-recovery)
+for the bounded XCTest retry and untouched-device cleanup rules. Cleanup remains
+mandatory after a method starts or the stopped proof is missing.
 
 The full gate validates desktop seller evidence before phone work, then groups
 physical idle, WireGuard/DNS, Android replacement, radio recovery and mobile/Mac

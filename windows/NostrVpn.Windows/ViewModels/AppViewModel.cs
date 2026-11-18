@@ -1,7 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -79,10 +78,11 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private ulong? _lastSyncedPaidExitPriceMsatPerGb;
     private string _networkSetupMode = "";
     private string _updateStatus = "";
-    private Uri? _updateAssetUrl;
     private bool _updateUsesCoreDownload;
     private bool _updateChecking;
-    private bool _updateInstalling;
+    private DesktopUpdateView _updateView = new();
+    private readonly DispatcherTimer _updateViewTimer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private bool _updateQuitRequested;
     private bool _updateAvailable;
     private bool _autoInstallUpdates;
     private string _updateVersion = "";
@@ -166,7 +166,10 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         DisableServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.DisableSystemService(), "Disabling service"), _ => !ActionInFlight && State.ServiceEnablementSupported);
         InstallCliCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.InstallCli(), "Installing CLI"), _ => !ActionInFlight && State.CliInstallSupported);
         CheckUpdatesCommand = new AsyncRelayCommand(_ => CheckUpdatesAsync(), _ => !UpdateChecking && !UpdateInstalling);
-        InstallUpdateCommand = new AsyncRelayCommand(_ => InstallUpdateAsync(), _ => UpdateInstallEnabled);
+        InstallUpdateCommand = new AsyncRelayCommand(_ => RunUpdatePrimaryAsync(), _ => UpdatePrimaryEnabled);
+        UpdateSecondaryCommand = new AsyncRelayCommand(_ => PerformUpdateActionAsync(_updateView.SecondaryAction), _ => !string.IsNullOrEmpty(_updateView.SecondaryAction));
+        _updateViewTimer.Tick += async (_, _) => await PollUpdateViewAsync();
+        _ = PerformUpdateActionAsync("resume");
 
         StartupService.RegisterDeepLinkProtocol();
 
@@ -400,18 +403,51 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public bool UpdateInstalling
+    public bool UpdateInstalling => _updateView.Busy;
+
+    /// The install step as the core words it; the banner only renders it.
+    public DesktopUpdateView UpdateView
     {
-        get => _updateInstalling;
+        get => _updateView;
         private set
         {
-            if (SetField(ref _updateInstalling, value))
-            {
-                OnPropertyChanged(nameof(UpdateInstallEnabled));
-                CommandManager.InvalidateRequerySuggested();
-            }
+            _updateView = value;
+            OnPropertyChanged(nameof(UpdateView));
+            OnPropertyChanged(nameof(UpdateInstalling));
+            OnPropertyChanged(nameof(UpdateInstallEnabled));
+            OnPropertyChanged(nameof(UpdatePrimaryEnabled));
+            OnPropertyChanged(nameof(UpdateBannerVisible));
+            OnPropertyChanged(nameof(UpdateStripeText));
+            OnPropertyChanged(nameof(UpdateDetail));
+            OnPropertyChanged(nameof(UpdateFailed));
+            OnPropertyChanged(nameof(UpdateProgressVisible));
+            OnPropertyChanged(nameof(UpdateProgressIndeterminate));
+            OnPropertyChanged(nameof(UpdateProgressPercent));
+            OnPropertyChanged(nameof(UpdatePrimaryLabel));
+            OnPropertyChanged(nameof(UpdatePrimaryVisible));
+            OnPropertyChanged(nameof(UpdateSecondaryLabel));
+            OnPropertyChanged(nameof(UpdateSecondaryVisible));
+            OnPropertyChanged(nameof(UpdateAutoInstallVisible));
+            OnPropertyChanged(nameof(UpdateSettingsText));
+            CommandManager.InvalidateRequerySuggested();
         }
     }
+
+    public bool UpdateBannerVisible => UpdateAvailable || _updateView.Active;
+    public bool UpdateFailed => _updateView.Step == "failed";
+    public string UpdateDetail => _updateView.Detail;
+    public bool UpdateProgressVisible => _updateView.Busy;
+    public bool UpdateProgressIndeterminate => _updateView.Progress is null;
+    public double UpdateProgressPercent => (_updateView.Progress ?? 0) * 100;
+    public string UpdatePrimaryLabel => _updateView.PrimaryLabel;
+    public bool UpdatePrimaryVisible => !_updateView.Busy && !string.IsNullOrEmpty(_updateView.PrimaryAction);
+    public bool UpdatePrimaryEnabled => _updateView.Active ? !UpdateChecking && UpdatePrimaryVisible : UpdateInstallEnabled;
+    public string UpdateSecondaryLabel => _updateView.SecondaryLabel;
+    public bool UpdateSecondaryVisible => !string.IsNullOrEmpty(_updateView.SecondaryAction);
+    public bool UpdateAutoInstallVisible => !_updateView.Active;
+    public string UpdateSettingsText => _updateView.Active
+        ? string.IsNullOrWhiteSpace(_updateView.Detail) ? _updateView.Title : $"{_updateView.Title} {_updateView.Detail}"
+        : UpdateStatus;
 
     public bool UpdateAvailable
     {
@@ -421,6 +457,8 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
             if (SetField(ref _updateAvailable, value))
             {
                 OnPropertyChanged(nameof(UpdateStripeText));
+                OnPropertyChanged(nameof(UpdateBannerVisible));
+                OnPropertyChanged(nameof(UpdatePrimaryEnabled));
                 OnPropertyChanged(nameof(UpdateInstallEnabled));
                 CommandManager.InvalidateRequerySuggested();
             }
@@ -442,7 +480,13 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public string UpdateStatus
     {
         get => _updateStatus;
-        private set => SetField(ref _updateStatus, value);
+        private set
+        {
+            if (SetField(ref _updateStatus, value))
+            {
+                OnPropertyChanged(nameof(UpdateSettingsText));
+            }
+        }
     }
 
     public bool AutoInstallUpdates
@@ -455,18 +499,20 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
             SaveAutoInstallUpdates(value);
-            if (value && UpdateInstallEnabled)
+            if (value && UpdateInstallEnabled && _updateUsesCoreDownload)
             {
-                _ = InstallUpdateAsync();
+                _ = PerformUpdateActionAsync("install");
             }
         }
     }
 
-    public bool UpdateInstallEnabled => UpdateAvailable && _updateUsesCoreDownload && !UpdateChecking && !UpdateInstalling;
+    public bool UpdateInstallEnabled => UpdateAvailable && !UpdateChecking && !UpdateInstalling;
 
-    public string UpdateStripeText => string.IsNullOrWhiteSpace(State.AppVersion)
-        ? $"Update available: {UpdateVersion}"
-        : $"Update available: {UpdateVersion} (you're on {State.AppVersion})";
+    public string UpdateStripeText => _updateView.Active
+        ? _updateView.Title
+        : string.IsNullOrWhiteSpace(State.AppVersion)
+            ? $"Update available: {UpdateVersion}"
+            : $"Update available: {UpdateVersion} (you're on {State.AppVersion})";
 
     public QrMatrix JoinRequestQr
     {
@@ -699,6 +745,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand InstallCliCommand { get; }
     public ICommand CheckUpdatesCommand { get; }
     public ICommand InstallUpdateCommand { get; }
+    public ICommand UpdateSecondaryCommand { get; }
 
     public async Task RefreshAsync()
     {
@@ -836,7 +883,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
             var result = await _updateService.CheckAsync(State.AppVersion, State.ConfigPath);
             UpdateAvailable = result.Available;
             UpdateVersion = result.Tag;
-            _updateAssetUrl = result.Available ? result.AssetUrl : null;
             _updateUsesCoreDownload = result.Available && result.UseCoreDownload;
             OnPropertyChanged(nameof(UpdateInstallEnabled));
             CommandManager.InvalidateRequerySuggested();
@@ -845,7 +891,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
                 UpdateStatus = result.Message;
                 if (AutoInstallUpdates && result.UseCoreDownload)
                 {
-                    await InstallUpdateAsync();
+                    await PerformUpdateActionAsync("install");
                 }
             }
             else if (manual)
@@ -859,7 +905,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception error)
         {
-            _updateAssetUrl = null;
             _updateUsesCoreDownload = false;
             OnPropertyChanged(nameof(UpdateInstallEnabled));
             CommandManager.InvalidateRequerySuggested();
@@ -874,30 +919,47 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private async Task InstallUpdateAsync()
+    private Task RunUpdatePrimaryAsync()
     {
-        if (!_updateUsesCoreDownload || UpdateInstalling)
+        var action = _updateView.Active ? _updateView.PrimaryAction : "install";
+        return PerformUpdateActionAsync(action);
+    }
+
+    /// Run an install step or fallback in the core, then follow its progress.
+    private async Task PerformUpdateActionAsync(string action)
+    {
+        if (string.IsNullOrEmpty(action))
         {
             return;
         }
-        UpdateInstalling = true;
-        UpdateStatus = $"Downloading {UpdateVersion}";
-        try
+        var version = State.AppVersion;
+        var configPath = State.ConfigPath;
+        ApplyUpdateView(await Task.Run(() => AppCoreClient.DesktopUpdate(action, version, configPath)));
+    }
+
+    private async Task PollUpdateViewAsync()
+    {
+        var version = State.AppVersion;
+        var configPath = State.ConfigPath;
+        ApplyUpdateView(await Task.Run(() => AppCoreClient.DesktopUpdate("view", version, configPath)));
+    }
+
+    private void ApplyUpdateView(DesktopUpdateView view)
+    {
+        UpdateView = view;
+        if (view.Busy)
         {
-            var path = await _updateService.DownloadWithCoreAsync(State.AppVersion, State.ConfigPath);
-            UpdateStatus = $"Downloaded {Path.GetFileName(path)}";
-            if (!UpdateService.SkipOpen)
-            {
-                _ = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            }
+            _updateViewTimer.Start();
         }
-        catch (Exception error)
+        else
         {
-            UpdateStatus = error.Message;
+            _updateViewTimer.Stop();
         }
-        finally
+        if (view.Quit && !_updateQuitRequested && !UpdateService.SkipOpen)
         {
-            UpdateInstalling = false;
+            _updateQuitRequested = true;
+            _updateViewTimer.Stop();
+            App.QuitForUpdate();
         }
     }
 
@@ -906,6 +968,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         CancelFilePreparation();
         _refreshTimer.Stop();
         _updateTimer.Stop();
+        _updateViewTimer.Stop();
         _themeService.Dispose();
         _core.Dispose();
     }

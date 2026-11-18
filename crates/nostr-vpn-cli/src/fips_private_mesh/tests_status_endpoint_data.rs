@@ -44,13 +44,19 @@
         )
         .await;
         let source_peer = control_frame_participant_identity(&peer_pubkey).expect("peer identity");
-        for (signed_at, expected_reply) in [(10, true), (10, false), (9, false), (11, false)] {
+        for (signed_at, routes, expected_reply, expected_routes) in [
+            (10, vec!["0.0.0.0/0"], true, vec!["0.0.0.0/0"]),
+            (10, vec!["0.0.0.0/0"], false, vec!["0.0.0.0/0"]),
+            (9, vec![], false, vec!["0.0.0.0/0"]),
+            (11, vec![], false, vec![]),
+        ] {
             let received = runtime
                 .received_stateful_control_frame(ReceivedFipsControlFrame {
                     source_peer,
                     frame: FipsControlFrame::Capabilities {
                         network_id: "capability-reply-test".to_string(),
                         capabilities: PeerCapabilities {
+                            advertised_routes: routes.into_iter().map(str::to_owned).collect(),
                             signed_at,
                             ..Default::default()
                         },
@@ -61,6 +67,7 @@
                 Some(FipsPrivateMeshEvent::Capabilities { first_received, .. })
                     if first_received == expected_reply
             ));
+            assert_eq!(runtime.peer_advertised_routes(&peer_pubkey), expected_routes);
         }
         let unknown = Keys::generate().public_key().to_hex();
         let received = runtime

@@ -560,7 +560,9 @@ extension RootView {
                 badge(manager.updateAvailable ? "Update \(manager.updateVersion)" : "Up to date", style: manager.updateAvailable ? .warn : .ok)
             }
 
-            if manager.serviceUpdateRecommended || !state.serviceStatusDetail.isEmpty || !manager.updateStatus.isEmpty {
+            if manager.updateView.active {
+                updateProgressRow
+            } else if manager.serviceUpdateRecommended || !state.serviceStatusDetail.isEmpty || !manager.updateStatus.isEmpty {
                 Text(firstNonEmpty(manager.updateStatus, state.serviceStatusDetail, fallback: ""))
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -588,6 +590,41 @@ extension RootView {
                     Label(state.cliInstalled ? "Reinstall CLI" : "Install CLI", systemImage: "terminal")
                 }
                 .disabled(!state.cliInstallSupported || manager.actionInFlight)
+            }
+        }
+    }
+
+    /// The install step, its detail and actions, as the core words them.
+    var updateProgressRow: some View {
+        let update = manager.updateView
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(update.title)
+                    .font(.callout)
+                if update.busy, let progress = update.progress {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .frame(maxWidth: 220)
+                }
+                Spacer()
+                if !update.secondaryAction.isEmpty {
+                    Button(update.secondaryLabel) {
+                        manager.performUpdateAction(update.secondaryAction)
+                    }
+                }
+                if !update.busy && !update.primaryAction.isEmpty {
+                    Button(update.primaryLabel) {
+                        manager.performUpdateAction(update.primaryAction)
+                    }
+                    .disabled(manager.updateChecking)
+                }
+            }
+            if !update.detail.isEmpty {
+                Text(update.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(3)
             }
         }
     }

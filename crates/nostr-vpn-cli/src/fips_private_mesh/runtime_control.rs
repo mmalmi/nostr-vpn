@@ -126,23 +126,6 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
-    pub(crate) fn enqueue_capabilities(
-        &self,
-        control: &FipsControlTcpSender,
-        participant: &str,
-        network_id: &str,
-        capabilities: PeerCapabilities,
-    ) -> Result<()> {
-        self.enqueue_stateful_control_frame(
-            control,
-            participant,
-            &FipsControlFrame::Capabilities {
-                network_id: network_id.to_string(),
-                capabilities,
-            },
-        )
-    }
-
     #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_session_open(
         &self,

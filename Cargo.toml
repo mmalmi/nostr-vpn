@@ -10,7 +10,7 @@ members = [
   "vendor/cashu-service",
   "vendor/cdk-spilman",
 ]
-exclude = ["linux"]
+exclude = ["linux", "vendor/peer-payments", "vendor/cashu-credit"]
 default-members = [
   "crates/nostr-vpn-app-core",
   "crates/nostr-vpn-app-core/uniffi-bindgen",
@@ -30,6 +30,7 @@ authors = ["Nostr VPN contributors"]
 repository = "https://github.com/mmalmi/nostr-vpn"
 
 [workspace.dependencies]
+peer-payments = { version = "=0.1.0", path = "vendor/peer-payments" }
 anyhow = "1"
 arc-swap = "1"
 async-trait = "0.1"
@@ -70,7 +71,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
-nostr-pubsub = "0.1.20"
+nostr-pubsub = "0.1.22"
 nostr-pubsub-fips = "=0.6.5"
 nostr-pubsub-relay = "0.1.14"
 nostr-pubsub-social-graph = "=0.2.4"

@@ -313,6 +313,23 @@ pub extern "C" fn nostr_vpn_update_download_with_config_json(
     update_result_json(result)
 }
 
+/// Run a desktop update action (`view`, `resume`, `install`, `retry` or a
+/// fallback) and return the view JSON for the shell to render.
+#[cfg(all(feature = "updater", not(any(target_os = "android", target_os = "ios"))))]
+#[unsafe(no_mangle)]
+pub extern "C" fn nostr_vpn_desktop_update_json(
+    action: *const c_char,
+    request_json: *const c_char,
+) -> *mut c_char {
+    let action = c_string_lossy(action);
+    let request_json = c_string_lossy(request_json);
+    let json = panic::catch_unwind(|| {
+        crate::desktop_update::desktop_update_json(&action, &request_json)
+    })
+    .unwrap_or_else(|_| "{}".to_string());
+    into_c_string(&json)
+}
+
 /// # Safety
 ///
 /// `handle` must be null or a pointer returned by `nostr_vpn_mobile_tunnel_new` that has not

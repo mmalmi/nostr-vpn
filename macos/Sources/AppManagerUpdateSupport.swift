@@ -139,9 +139,6 @@ enum UpdateError: LocalizedError {
     case missingAppBundle
     case coreUpdaterFailed(String)
     case coreUpdaterOutputInvalid
-    case missingDownloadedPath
-    case unverifiedSource(String)
-    case noNewerVerifiedRelease
 
     var errorDescription: String? {
         switch self {
@@ -151,12 +148,6 @@ enum UpdateError: LocalizedError {
             return message.isEmpty ? "Update check failed." : message
         case .coreUpdaterOutputInvalid:
             return "Updater returned invalid output."
-        case .missingDownloadedPath:
-            return "Updater did not return a downloaded file."
-        case .unverifiedSource(let source):
-            return "Refusing to install unverified update from \(source)."
-        case .noNewerVerifiedRelease:
-            return "No newer verified update is available yet."
         }
     }
 }
@@ -399,13 +390,10 @@ func nostrVpnUpdateCheckWithConfigJson(
     _ configPath: UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar>?
 
-@_silgen_name("nostr_vpn_update_download_with_config_json")
-func nostrVpnUpdateDownloadWithConfigJson(
-    _ currentVersion: UnsafePointer<CChar>?,
-    _ mode: UnsafePointer<CChar>?,
-    _ source: UnsafePointer<CChar>?,
-    _ downloadDir: UnsafePointer<CChar>?,
-    _ configPath: UnsafePointer<CChar>?
+@_silgen_name("nostr_vpn_desktop_update_json")
+func nostrVpnDesktopUpdateJson(
+    _ action: UnsafePointer<CChar>?,
+    _ request: UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar>?
 
 @_silgen_name("nostr_vpn_string_free")
@@ -417,14 +405,59 @@ func runCoreUpdateCheck(currentVersion: String, configPath: String) async throws
     }.value
 }
 
-func runCoreUpdateDownload(currentVersion: String, downloadDir: URL, configPath: String) async throws -> CoreUpdateResult {
-    try await Task.detached {
-        try runCoreUpdateDownloadBlocking(
-            currentVersion: currentVersion,
-            downloadDir: downloadDir,
-            configPath: configPath
-        )
-    }.value
+/// The install steps as the core words them. The shell only renders this.
+struct DesktopUpdateView: Decodable, Equatable {
+    var step = "idle"
+    var active = false
+    var busy = false
+    var title = ""
+    var detail = ""
+    var progress: Double?
+    var primaryAction = "install"
+    var primaryLabel = "Install"
+    var secondaryAction = ""
+    var secondaryLabel = ""
+    var quit = false
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        step = try container.decodeIfPresent(String.self, forKey: .step) ?? step
+        active = try container.decodeIfPresent(Bool.self, forKey: .active) ?? false
+        busy = try container.decodeIfPresent(Bool.self, forKey: .busy) ?? false
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        detail = try container.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        progress = try container.decodeIfPresent(Double.self, forKey: .progress)
+        primaryAction = try container.decodeIfPresent(String.self, forKey: .primaryAction) ?? ""
+        primaryLabel = try container.decodeIfPresent(String.self, forKey: .primaryLabel) ?? ""
+        secondaryAction = try container.decodeIfPresent(String.self, forKey: .secondaryAction) ?? ""
+        secondaryLabel = try container.decodeIfPresent(String.self, forKey: .secondaryLabel) ?? ""
+        quit = try container.decodeIfPresent(Bool.self, forKey: .quit) ?? false
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case step, active, busy, title, detail, progress, primaryAction, primaryLabel
+        case secondaryAction, secondaryLabel, quit
+    }
+}
+
+/// Run an update action in the core (`view`, `resume`, `install`, `retry` or
+/// a fallback such as `show_file`) and return what to show.
+func runDesktopUpdate(_ action: String, currentVersion: String, configPath: String) -> DesktopUpdateView {
+    let request = (try? JSONSerialization.data(withJSONObject: [
+        "currentVersion": currentVersion,
+        "configPath": configPath
+    ])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    let json = action.withCString { action in
+        request.withCString { request in
+            try? takeRustString(nostrVpnDesktopUpdateJson(action, request))
+        }
+    }
+    guard let json, let view = try? JSONDecoder().decode(DesktopUpdateView.self, from: Data(json.utf8)) else {
+        return DesktopUpdateView()
+    }
+    return view
 }
 
 func runCoreUpdateCheckBlocking(currentVersion: String, configPath: String) throws -> CoreUpdateResult {
@@ -433,21 +466,6 @@ func runCoreUpdateCheckBlocking(currentVersion: String, configPath: String) thro
             try "auto".withCString { source in
                 try configPath.withCString { config in
                     try takeRustString(nostrVpnUpdateCheckWithConfigJson(current, mode, source, config))
-                }
-            }
-        }
-    }
-    return try decodeCoreUpdateResult(json)
-}
-
-func runCoreUpdateDownloadBlocking(currentVersion: String, downloadDir: URL, configPath: String) throws -> CoreUpdateResult {
-    let json = try currentVersion.withCString { current in
-        try "app".withCString { mode in
-            try "hashtree".withCString { source in
-                try downloadDir.path.withCString { dir in
-                    try configPath.withCString { config in
-                        try takeRustString(nostrVpnUpdateDownloadWithConfigJson(current, mode, source, dir, config))
-                    }
                 }
             }
         }
@@ -546,24 +564,6 @@ func findAppBundle(in directory: URL) -> URL? {
         }
     }
     return nil
-}
-
-func updateInstallScript() throws -> URL {
-    let script = FileManager.default.temporaryDirectory
-        .appendingPathComponent("nostr-vpn-install-update-\(UUID().uuidString).sh")
-    let contents = """
-    #!/bin/sh
-    set -eu
-    current_app="$1"
-    new_app="$2"
-    sleep 1
-    rm -rf "$current_app"
-    ditto "$new_app" "$current_app"
-    open "$current_app"
-    """
-    try contents.write(to: script, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-    return script
 }
 
 func settingsPatch(

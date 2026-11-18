@@ -1,0 +1,16 @@
+{
+  "upstream": "cashu-service",
+  "package": "peer-payments",
+  "status": "local development snapshot; not a published release",
+  "sha256": {
+    "src/account.rs": "d5a8c68e05c5fd191ae6fdefddcf2231a710c0127fb93640a84f71d1d541ba92",
+    "src/book.rs": "910282eb6b1402b51091e03786cf60654a0c4a74b74a24a9afa771a1cbe292a8",
+    "src/buyer.rs": "7c98ec831c5e78995f57693c48184f7367b4aa18be32af1643b4783ed78dfe43",
+    "src/controller.rs": "1f6658fb61e7a91021e0c1671fcb4b43dc04e80bcd50c6c3d52937e73b751f88",
+    "src/discovery.rs": "45aa81aa348d69646c1332c02b4c3a8ee79bbf38569b78e7d5e1a3ef3c6a3ce2",
+    "src/lib.rs": "976cd7cccfff4f9330e4156819f6b82cb0ec7a4e183a647ff8067a21b5a0f654",
+    "src/protocol.rs": "e8d9337d1ed9b67db95aa81d122b0294e93879b9c6750979188cb47ab37c4950",
+    "src/signature.rs": "9ab15fc132161c036c0af960e7ee5e2165a3d6f82f5e13e66e58362535f3f67d",
+    "src/store.rs": "63f50abe25a794f526b02aceabd744602cd2888e09cc634a285dbf05d8b0065d"
+  }
+}

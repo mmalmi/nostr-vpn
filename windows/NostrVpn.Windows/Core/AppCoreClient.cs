@@ -69,6 +69,15 @@ public sealed class AppCoreClient : IDisposable
         return DecodeUpdateResult(json);
     }
 
+    /// Run an update action in the core (view, resume, install, retry or a
+    /// fallback such as open_installer) and return what to show.
+    public static DesktopUpdateView DesktopUpdate(string action, string currentVersion, string configPath)
+    {
+        var request = JsonSerializer.Serialize(new { currentVersion, configPath }, JsonOptions);
+        var json = TakeString(NativeMethods.DesktopUpdateJson(action, request));
+        return JsonSerializer.Deserialize<DesktopUpdateView>(json, JsonOptions) ?? new DesktopUpdateView();
+    }
+
     public static NativeUpdateResult DownloadUpdate(
         string currentVersion,
         string downloadDir,
@@ -180,6 +189,11 @@ public sealed class AppCoreClient : IDisposable
             [MarshalAs(UnmanagedType.LPUTF8Str)] string source,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string downloadDir,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string configPath);
+
+        [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "nostr_vpn_desktop_update_json")]
+        public static extern IntPtr DesktopUpdateJson(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string action,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string requestJson);
 
         [DllImport(Library, CallingConvention = CallingConvention.Cdecl, EntryPoint = "nostr_vpn_string_free")]
         public static extern void StringFree(IntPtr value);

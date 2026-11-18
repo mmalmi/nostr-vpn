@@ -172,11 +172,10 @@ impl FipsPrivateTunnelRuntime {
     ) -> Result<()> {
         Ok(())
     }
-    pub(crate) fn enqueue_capabilities(
+    pub(crate) fn enqueue_stateful_control_frame(
         &self,
         _participant: &str,
-        _network_id: &str,
-        _capabilities: PeerCapabilities,
+        _frame: &FipsControlFrame,
     ) -> Result<()> {
         Ok(())
     }

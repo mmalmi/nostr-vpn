@@ -17,7 +17,7 @@ mod unix_destination;
 mod unix_storage;
 #[cfg(windows)]
 mod windows_storage;
-pub use runtime::FileTransferService;
+pub use runtime::{FileTransferRoster, FileTransferService};
 #[cfg(unix)]
 use unix_storage::{
     create_owned, open_owned, owned_dir, remove as remove_owned, visit_names, write_atomic,

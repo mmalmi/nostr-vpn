@@ -1,0 +1,19 @@
+<UserControl x:Class="NostrVpn.Windows.Controls.UpdateBanner"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Border Padding="24,4" Background="{DynamicResource UpdateBannerBg}" BorderBrush="{DynamicResource Line}" BorderThickness="0,0,0,1" Visibility="{Binding UpdateBannerVisible, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="UpdateBanner">
+    <DockPanel LastChildFill="True">
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+        <CheckBox Content="Install automatically" IsChecked="{Binding AutoInstallUpdates, Mode=TwoWay}" FontSize="11" Foreground="{DynamicResource TextSecondary}" Margin="0,0,12,0" Visibility="{Binding UpdateAutoInstallVisible, Converter={StaticResource BoolToVisibility}}" />
+        <Button Content="{Binding UpdateSecondaryLabel}" Command="{Binding UpdateSecondaryCommand}" MinHeight="26" Padding="10,3" Margin="0,0,8,0" Visibility="{Binding UpdateSecondaryVisible, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="UpdateSecondary" />
+        <Button Content="{Binding UpdatePrimaryLabel}" Command="{Binding InstallUpdateCommand}" MinWidth="72" MinHeight="26" Padding="10,3" Visibility="{Binding UpdatePrimaryVisible, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="UpdatePrimary" />
+      </StackPanel>
+      <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE896;" FontSize="13" Foreground="{DynamicResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding UpdateFailed, Converter={StaticResource InverseBoolToVisibility}}" />
+        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7BA;" FontSize="13" Foreground="{DynamicResource Warn}" VerticalAlignment="Center" Margin="0,0,8,0" Visibility="{Binding UpdateFailed, Converter={StaticResource BoolToVisibility}}" />
+        <TextBlock Text="{Binding UpdateStripeText}" ToolTip="{Binding UpdateDetail}" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" AutomationProperties.AutomationId="UpdateTitle" />
+        <ProgressBar Width="140" Height="6" Margin="12,0,0,0" VerticalAlignment="Center" Minimum="0" Maximum="100" Value="{Binding UpdateProgressPercent, Mode=OneWay}" IsIndeterminate="{Binding UpdateProgressIndeterminate}" Visibility="{Binding UpdateProgressVisible, Converter={StaticResource BoolToVisibility}}" AutomationProperties.AutomationId="UpdateProgress" />
+      </StackPanel>
+    </DockPanel>
+  </Border>
+</UserControl>
