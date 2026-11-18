@@ -35,16 +35,29 @@ pub(super) fn directory(path: &Path) -> Result<File> {
             }
         }
     }
+    open_directory(&path)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn open_directory(path: &Path) -> Result<File> {
+    ensure!(
+        !path.components().any(|part| part == Component::ParentDir),
+        "Invalid file storage directory"
+    );
+    // Darwin checks every component during this one lookup, including ancestors.
+    let no_symlinks = OFlags::from_bits_retain(libc::O_NOFOLLOW_ANY as u32);
+    Ok(File::from(rustix::fs::open(
+        path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC | no_symlinks,
+        Mode::empty(),
+    )?))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn open_directory(path: &Path) -> Result<File> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let access = OFlags::PATH;
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
-    #[cfg(not(any(
-        target_os = "linux",
-        target_os = "android",
-        target_os = "macos",
-        target_os = "ios"
-    )))]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     let access = OFlags::RDONLY;
     let mut current = File::from(rustix::fs::open(
         "/",

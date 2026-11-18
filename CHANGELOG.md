@@ -15,6 +15,7 @@ All notable changes to this project are documented in this file.
   before it has an upstream DNS server.
 - On iOS, incoming file offers now use the peer list from the running VPN tunnel.
   Tap **Enable notifications** in Files to get alerts when an offer arrives.
+  The VPN also uses less CPU to check for queued file actions.
 - Desktop apps show progress while installing an update.
 
 ## 4.1.22 - 2026-11-14
