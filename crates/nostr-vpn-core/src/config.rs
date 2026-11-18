@@ -61,6 +61,7 @@ use crate::network_roster::{
 };
 use crate::network_routes::is_exit_node_route;
 use crate::paid_routes::{ManualPaidExitProvider, PaidExitConfig, PaidExitUpstream};
+use crate::signed_rosters::signed_roster_artifact_wins;
 use serde::{Deserialize, Serialize};
 
 include!("config/types.rs");

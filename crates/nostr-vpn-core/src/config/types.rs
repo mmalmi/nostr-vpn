@@ -506,6 +506,12 @@ pub struct NetworkConfig {
     pub shared_roster_updated_at: u64,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub shared_roster_signed_by: String,
+    /// Artifact hash of the signed roster that produced
+    /// `shared_roster_updated_at`. Empty when the timestamp was advanced by a
+    /// local change whose artifact is not recorded here; an empty hash sorts
+    /// below every real artifact in the equal-timestamp tie-break.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub shared_roster_artifact_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -555,6 +561,9 @@ pub struct AdminSignedSharedRosterUpdate {
     pub aliases: HashMap<String, String>,
     pub signed_at: u64,
     pub signed_by: String,
+    /// Artifact hash of the signed roster this update came from; breaks
+    /// equal-timestamp ties exactly like the signed roster store.
+    pub artifact_hash: String,
 }
 
 impl Default for AppConfig {
@@ -576,6 +585,7 @@ impl Default for AppConfig {
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,
                 shared_roster_signed_by: String::new(),
+                shared_roster_artifact_hash: String::new(),
             }],
             node_name: default_node_name(),
             lan_discovery_enabled: default_lan_discovery_enabled(),

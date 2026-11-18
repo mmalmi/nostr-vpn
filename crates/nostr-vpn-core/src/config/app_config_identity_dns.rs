@@ -315,6 +315,7 @@ impl AppConfig {
         network.shared_roster_updated_at =
             next_shared_roster_updated_at(network.shared_roster_updated_at);
         network.shared_roster_signed_by = own_pubkey;
+        network.shared_roster_artifact_hash.clear();
         Ok(())
     }
 }

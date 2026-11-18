@@ -66,7 +66,7 @@
         .expect("sign unrelated current roster");
         assert!(
             joining
-                .apply_verified_admin_signed_shared_roster(&roster_without_joiner)
+                .apply_verified_admin_signed_shared_roster(&roster_without_joiner, None)
                 .expect("apply configured admin roster")
         );
         assert_control_only(&joining);

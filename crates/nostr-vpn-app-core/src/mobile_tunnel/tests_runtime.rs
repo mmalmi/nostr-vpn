@@ -216,6 +216,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            shared_roster_artifact_hash: String::new(),
         }];
         admin_app.ensure_defaults();
         admin_app
@@ -312,6 +313,7 @@
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
             shared_roster_signed_by: String::new(),
+            shared_roster_artifact_hash: String::new(),
         }];
         app.exit_node = exit_pubkey.to_string();
         app.ensure_defaults();

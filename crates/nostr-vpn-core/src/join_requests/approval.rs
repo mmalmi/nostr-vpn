@@ -74,6 +74,7 @@ fn stage_approved_config(
             .retain(|pending| pending.requester != device_pubkey);
         network.shared_roster_updated_at = approved_at.max(previous_signed_at.saturating_add(1));
         network.shared_roster_signed_by = signer_pubkey;
+        network.shared_roster_artifact_hash.clear();
     }
     let shared = updated.shared_network_roster(network_entry_id)?;
     Ok((updated, shared))

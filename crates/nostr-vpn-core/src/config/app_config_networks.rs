@@ -76,6 +76,7 @@ impl AppConfig {
         network.inbound_join_requests.clear();
         network.shared_roster_updated_at = 0;
         network.shared_roster_signed_by.clear();
+        network.shared_roster_artifact_hash.clear();
         self.clear_pending_nostr_join_request();
         let _ = self.set_peer_alias(&admin, "admin");
         Ok(network_id)
