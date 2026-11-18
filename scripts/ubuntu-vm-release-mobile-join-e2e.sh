@@ -52,11 +52,15 @@ chmod 700 "$PRIVATE_DIR"
   exit 2
 }
 
-APP_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
-APP_GIT_TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+PRODUCT_ROOT="${NVPN_RELEASE_APP_REPO_PATH:-$ROOT}"
+APP_GIT_SHA="$(git -C "$PRODUCT_ROOT" rev-parse HEAD)"
+APP_GIT_TREE="$(git -C "$PRODUCT_ROOT" rev-parse 'HEAD^{tree}')"
+HARNESS_GIT_SHA="$(git -C "$ROOT" rev-parse HEAD)"
 assert_release_checkout_state \
-  "$ROOT" "$(git -C "$ROOT" rev-parse HEAD)" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
+  "$ROOT" "$HARNESS_GIT_SHA" "$(git -C "$ROOT" rev-parse 'HEAD^{tree}')" \
   "Linux desktop/mobile join" || exit 2
+assert_release_checkout_state \
+  "$PRODUCT_ROOT" "$APP_GIT_SHA" "$APP_GIT_TREE" "Linux Release product" || exit 2
 [[ "${NVPN_EXPECTED_APP_GIT_SHA:-}" =~ ^[0-9a-f]{40}$ \
   && "$APP_GIT_SHA" == "$NVPN_EXPECTED_APP_GIT_SHA" ]] || {
   echo "Set NVPN_EXPECTED_APP_GIT_SHA to the exact committed candidate" >&2
@@ -91,7 +95,7 @@ export RESULT_DIR PRIVATE_DIR RELEASE_JOIN_UI_WAIT_SECS
 export RELEASE_JOIN_DELIVERY_WAIT_SECS
 
 release_join_require_clean_fips
-release_join_assert_app_unchanged "$APP_GIT_SHA" "$APP_GIT_TREE"
+ROOT="$PRODUCT_ROOT" release_join_assert_app_unchanged "$APP_GIT_SHA" "$APP_GIT_TREE"
 
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib-ubuntu-vm-imported-release.sh"
@@ -162,7 +166,7 @@ trap cleanup EXIT
 
 case "${NVPN_UBUNTU_SKIP_GIT_SYNC:-0}" in
   1|true|TRUE|True|yes|YES|Yes|on|ON|On) ;;
-  *) NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT="$APP_GIT_SHA" \
+  *) NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT="$HARNESS_GIT_SHA" \
     "$ROOT/scripts/ubuntu-vm-git-sync.sh" "$SSH_HOST" ;;
 esac
 ubuntu_vm_import_release_bundle
@@ -185,13 +189,13 @@ IMPORTED_DESKTOP_APP_TREE="$(
 )"
 
 if release_join_reuse_artifacts; then
-  release_join_validate_android_reuse
+  ROOT="$PRODUCT_ROOT" release_join_validate_android_reuse
   RELEASE_JOIN_ARTIFACTS_VALIDATED=1
   export RELEASE_JOIN_ARTIFACTS_VALIDATED
 fi
 RELEASE_JOIN_DEVICE_MUTATION_ALLOWED=1
 export RELEASE_JOIN_DEVICE_MUTATION_ALLOWED
-release_join_prepare_android_release
+ROOT="$PRODUCT_ROOT" release_join_prepare_android_release
 
 python3 - "$RESULT_DIR/selected-physical-android.json" "$ANDROID_MODEL" <<'PY'
 import json
@@ -619,7 +623,7 @@ remote ReadMarker >"$RESULT_DIR/desktop-joiner-relaunch.json"
 
 release_join_assert_one_android_package
 release_join_assert_one_android_process
-release_join_assert_app_unchanged "$APP_GIT_SHA" "$APP_GIT_TREE"
+ROOT="$PRODUCT_ROOT" release_join_assert_app_unchanged "$APP_GIT_SHA" "$APP_GIT_TREE"
 release_join_assert_fips_unchanged
 
 python3 - \

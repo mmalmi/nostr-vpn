@@ -3,9 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${NVPN_LINUX_SERVICE_CLEANUP_TEST_IMAGE:-ubuntu:24.04}"
+# Python 3.11+ supports descriptor-relative cleanup, as on the release-test VM.
+IMAGE="${NVPN_LINUX_SERVICE_CLEANUP_TEST_IMAGE:-python:3.13-slim-bookworm@sha256:281d39ff02e3b389401586134ff9e6572954687822a58055ec07a60ded4e0b7f}"
 
-docker run --rm -i \
+docker run --rm -i --cpus 1 --memory 256m --memory-swap 256m --pids-limit 64 \
   -v "$ROOT:/workspace:ro" \
   "$IMAGE" bash -s <<'SH'
 set -euo pipefail
@@ -15,9 +16,9 @@ receipt=/tmp/nvpn-linux-vm-release.fixture/receipt.json
 package_receipt=/tmp/nvpn-linux-vm-release.fixture/debian-package-install.json
 service_binary=/usr/local/bin/nvpn
 service_unit=/etc/systemd/system/nvpn.service
-config=/root/.local/share/nostr-vpn/config.toml
-cashu_dir=/root/.local/share/nostr-vpn/cashu
-daemon_log=/root/.local/share/nostr-vpn/daemon.log
+config=/root/.config/nvpn/config.toml
+cashu_dir=/root/.config/nvpn/cashu
+daemon_log=/root/.config/nvpn/daemon.log
 mkdir -p "$artifact_root" "$(dirname "$config")" /usr/local/test-bin
 printf '#!/usr/bin/env bash\nexit 0\n' >/usr/bin/nostr-vpn
 printf '#!/usr/bin/env bash\nif [[ "$*" == *"service uninstall"* ]]; then\n  if [[ -e /tmp/nvpn-uninstall-fail-once ]]; then rm -f /tmp/nvpn-uninstall-fail-once; exit 1; fi\n  rm -f /etc/systemd/system/nvpn.service\nfi\n' >/usr/bin/nvpn
@@ -51,6 +52,14 @@ printf 'preserved diagnostic\n' >"$daemon_log"
 
 # A unit written before the binary copy completed is still exactly attributable
 # to this already-armed candidate attempt and must be removable.
+if run_cleanup; then
+  echo "candidate cleanup removed a profile without gate ownership" >&2
+  exit 1
+fi
+grep -Fxq profile "$config"
+rm -rf "${config%/config.toml}"
+python3 /workspace/scripts/linux_release_profile.py reset \
+  "${config%/config.toml}" "$artifact_root/canonical-profile.json"
 write_candidate_unit
 run_cleanup
 [[ ! -e "$service_unit" && ! -e "$service_binary" ]]
@@ -61,6 +70,10 @@ run_cleanup
 # The root daemon writes the release-test Cashu wallet below the dedicated
 # desktop profile. Cleanup must remove that root-owned state so the next
 # public-UI Reset starts from the same empty profile.
+# Both roles use the same artifact root: Cleanup must retire its old claim.
+[[ ! -e "$artifact_root/canonical-profile.json" ]]
+python3 /workspace/scripts/linux_release_profile.py reset \
+  "${config%/config.toml}" "$artifact_root/canonical-profile.json"
 mkdir -p "$cashu_dir"
 printf 'wallet\n' >"$cashu_dir/wallet.sqlite"
 run_cleanup
