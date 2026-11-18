@@ -246,6 +246,9 @@ fn route_choice(
         let app = app.clone();
         let choice = choice.clone();
         button.connect_clicked(move |_| {
+            if selected && !matches!(choice, ExitChoice::PaidManual) {
+                return;
+            }
             let patch = match choice.clone() {
                 ExitChoice::Direct => SettingsPatch {
                     internet_source: Some("direct".to_string()),

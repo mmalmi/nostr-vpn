@@ -26,6 +26,7 @@ public sealed class NativeAppState
     public string RuntimeStatusDetail { get; set; } = "";
     public string AppVersion { get; set; } = "";
     public string ConfigPath { get; set; } = "";
+    public List<NativeFileTransferState> FileTransfers { get; set; } = [];
     public string Error { get; set; } = "";
     public bool CliInstalled { get; set; }
     public bool ServiceSupported { get; set; }

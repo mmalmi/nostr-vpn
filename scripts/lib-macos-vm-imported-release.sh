@@ -37,10 +37,13 @@ macos_vm_prepare_or_verify_imported_release() {
 
 macos_vm_imported_release_package() {
   local guest_repo="$1"
-  if [[ "$guest_repo" == /* ]]; then
-    printf '%s/artifacts/macos-release-mobile-join/imported\n' "$guest_repo"
+  local artifact_dir="${NVPN_MACOS_RELEASE_JOIN_ARTIFACT_DIR:-artifacts/macos-release-mobile-join}"
+  if [[ "$artifact_dir" == /* ]]; then
+    printf '%s/imported\n' "$artifact_dir"
+  elif [[ "$guest_repo" == /* ]]; then
+    printf '%s/%s/imported\n' "$guest_repo" "$artifact_dir"
   else
     # Every caller changes into GUEST_REPO before invoking a gate.
-    printf 'artifacts/macos-release-mobile-join/imported\n'
+    printf '%s/imported\n' "$artifact_dir"
   fi
 }

@@ -13,7 +13,7 @@ TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-update-test.XXXXXX")"
 trap 'rm -rf "$TEST_DIR"' EXIT
 
 sources=()
-for source in macos/Sources/*.swift; do
+for source in macos/Sources/*.swift macos/Shared/*.swift ios/Shared/*.swift; do
   [[ "$source" == */NostrVpnMacApp.swift ]] || sources+=("$source")
 done
 xcrun swiftc -D DEBUG -parse-as-library \

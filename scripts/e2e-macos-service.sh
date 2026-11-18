@@ -195,6 +195,14 @@ ok = s.get("supported") and s.get("installed") and s.get("loaded") and s.get("ru
 print(p if ok else "")
 ')"
 daemon_binary="$(printf '%s' "$service_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("binary_path") or "")')"
+# The GUI and the authorized installer can see different default configs.
+# Both must address the same registered job, including its actual daemon PID.
+selected_pid="$(NVPN_CONFIG_PATH="$TEST_CONFIG" "$NVPN_BIN" service status --json --config "$TEST_CONFIG" |
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["pid"])')"
+if [[ "$selected_pid" != "$daemon_pid" ]]; then
+  echo "FAIL: changing the caller's default selected a different installed service" >&2
+  exit 1
+fi
 daemon_command="$(ps -ww -p "$daemon_pid" -o command= 2>/dev/null || true)"
 case "$daemon_command" in
   "$daemon_binary daemon --service --config $TEST_CONFIG_REAL"*) ;;

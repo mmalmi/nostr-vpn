@@ -80,16 +80,21 @@ fn spawn_posix_tun_reader(
     use tokio::io::Interest;
     use tokio::io::unix::AsyncFd;
 
-    struct BorrowedFd(RawFd);
-    impl AsRawFd for BorrowedFd {
+    struct RegisteredTun(Arc<TunSocket>);
+    impl AsRawFd for RegisteredTun {
         fn as_raw_fd(&self) -> RawFd {
-            self.0
+            self.0.as_raw_fd()
         }
     }
 
     tokio::spawn(async move {
-        let async_fd = match AsyncFd::with_interest(BorrowedFd(tun.as_raw_fd()), Interest::READABLE)
-        {
+        // SAFETY: TunSocket's descriptor is stable and closed only on drop.
+        // The registration owns an Arc, keeping it open until deregistration;
+        // the registered object is never replaced through get_mut().
+        let registration = unsafe {
+            AsyncFd::register_with_interest(RegisteredTun(tun.clone()), Interest::READABLE)
+        };
+        let async_fd = match registration {
             Ok(fd) => fd,
             Err(error) => {
                 tracing::warn!(?error, "wg-upstream: failed to register tun fd");

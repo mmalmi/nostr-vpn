@@ -119,6 +119,7 @@ impl CashuWalletService {
         allow_new: bool,
     ) -> Result<CashuCrossMintTransfer> {
         let _guard = self.lock_operation().await;
+        self.require_restored_review()?;
         let request = normalize_cross_mint_transfer_request(request)?;
         let source_mint = MintUrl::from_str(&request.source_mint_url)
             .context("Failed to parse normalized source mint URL")?;
@@ -127,6 +128,15 @@ impl CashuWalletService {
         let source_wallet = ensure_sat_wallet(self.repository(), &source_mint).await?;
         let destination_wallet = ensure_sat_wallet(self.repository(), &destination_mint).await?;
 
+        anyhow::ensure!(
+            self.recover_wallet_sagas(&source_wallet).await?.skipped == 0
+                && self
+                    .recover_wallet_sagas(&destination_wallet)
+                    .await?
+                    .skipped
+                    == 0,
+            "Finish the reviewed payment before transferring between mints"
+        );
         transfer_between_wallets_with_start(&source_wallet, &destination_wallet, request, allow_new)
             .await
     }
@@ -388,7 +398,7 @@ async fn transfer_between_wallets_with_start(
                     .prepare_melt(&source_quote_id, HashMap::new())
                     .await
                     .context("Failed to prepare source mint payment")?;
-                let wallet_fee_sat = prepared.total_fee_with_swap().to_u64();
+                let wallet_fee_sat = prepared.input_fee_without_swap().to_u64();
                 let preflight_fee_sat = source_quote
                     .fee_reserve
                     .to_u64()
@@ -407,7 +417,7 @@ async fn transfer_between_wallets_with_start(
                 saga.wallet_fee_sat = Some(wallet_fee_sat);
                 save_cross_mint_transfer_saga(source_wallet, &saga).await?;
                 let finalized = prepared
-                    .confirm()
+                    .confirm_with_options(cdk::wallet::MeltConfirmOptions::skip_swap())
                     .await
                     .context("Failed to execute source mint payment")?;
                 if finalized.state() != MeltQuoteState::Paid {

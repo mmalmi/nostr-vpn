@@ -316,6 +316,7 @@ fn first_public_ip_text(input: &str) -> Option<String> {
             candidate
                 .parse::<IpAddr>()
                 .ok()
+                .filter(|addr| crate::paid_route_accounting::is_public_exit_destination(*addr))
                 .map(|addr| addr.to_string())
         })
 }
@@ -413,6 +414,8 @@ mod tests {
 
     #[test]
     fn paid_route_probe_parses_public_ip_shapes() {
+        assert!(parse_paid_route_public_ip_response(r#"{"ip":"10.44.1.2"}"#).is_none());
+        assert!(parse_paid_route_public_ip_response("127.0.0.1").is_none());
         assert_eq!(
             parse_paid_route_public_ip_response(r#"{"ip":"198.51.100.42"}"#).as_deref(),
             Some("198.51.100.42")

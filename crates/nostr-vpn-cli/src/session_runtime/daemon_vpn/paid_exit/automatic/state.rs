@@ -8,6 +8,7 @@ const PAID_EXIT_AUTO_FAILOVER_SECS: u64 = 60;
 #[derive(Default)]
 pub(crate) struct PaidExitAutomaticBuyer {
     pub(super) generation: u64,
+    pub(super) reselection: Option<reselection::Reselection>,
     pub(super) candidate: Option<PaidExitAutomaticCandidate>,
     pub(super) rejected_offers: HashMap<String, u64>,
     pub(super) probe: Option<PaidExitAutomaticProbe>,
@@ -172,6 +173,7 @@ impl PaidExitAutomaticBuyer {
         if Self::enabled(app) {
             return;
         }
+        self.reselection.take();
         if let Some(probe) = self.probe.take() {
             probe.task.abort();
         }
@@ -192,6 +194,18 @@ impl PaidExitAutomaticBuyer {
     ) -> Result<nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection> {
         self.expire_rejected_offers(now_unix);
         let mut candidates = store.clone();
+        // An explicit in-memory rejection still takes precedence over saved
+        // credit. Ordinary restarts preserve the durable selection.
+        if self
+            .candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.failed)
+            || store
+                .funded_buyer_session_selection(&store.selected_buyer_session_id, now_unix)
+                .is_some_and(|selected| self.rejected_offers.contains_key(&selected.offer_key))
+        {
+            candidates.selected_buyer_session_id.clear();
+        }
         for offer in self.rejected_offers.keys() {
             candidates.offers.remove(offer);
         }
@@ -204,14 +218,7 @@ impl PaidExitAutomaticBuyer {
             selected
                 .offers
                 .retain(|key, _| *key == current.selection.offer_key);
-            if let Ok(selection) = selected.select_automatic_offer(now_unix)
-                && (selection.funded
-                    || (store.buyer_mint_failure_retry_at(&selection.mint_url) <= now_unix
-                        && !store.buyer_mint_needs_funds(
-                            &selection.mint_url,
-                            selection.channel_capacity_sat,
-                        )))
-            {
+            if let Ok(selection) = selected.select_automatic_offer(now_unix) {
                 return Ok(selection);
             }
         }

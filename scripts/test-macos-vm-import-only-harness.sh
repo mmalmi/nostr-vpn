@@ -34,6 +34,15 @@ source "$ROOT/scripts/lib-macos-vm-imported-release.sh"
 [[ "$(macos_vm_imported_release_package "/tmp/src/nostr-vpn")" \
   == "/tmp/src/nostr-vpn/artifacts/macos-release-mobile-join/imported" ]]
 
+(
+  export NVPN_MACOS_RELEASE_JOIN_ARTIFACT_DIR=/tmp/sealed-release
+  [[ "$(macos_vm_imported_release_package "src/nostr-vpn")" == "/tmp/sealed-release/imported" ]]
+  [[ "$(macos_vm_imported_release_package "/tmp/src/nostr-vpn")" == "/tmp/sealed-release/imported" ]]
+  export NVPN_MACOS_RELEASE_JOIN_ARTIFACT_DIR=artifacts/sealed-release
+  [[ "$(macos_vm_imported_release_package "src/nostr-vpn")" == "artifacts/sealed-release/imported" ]]
+  [[ "$(macos_vm_imported_release_package "/tmp/src/nostr-vpn")" == "/tmp/src/nostr-vpn/artifacts/sealed-release/imported" ]]
+)
+
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib-macos-owned-test-app.sh"
 ps() {

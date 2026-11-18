@@ -22,6 +22,7 @@ import {
   withExactGitArchive,
   validateWindowsCratesIoReceipts,
   validateWindowsRuntimeFipsVersion,
+  validateMacosRuntimeFipsVersion,
   validateWindowsPublicationFipsReceipts,
 } from './release-source-verification.mjs'
 import { readWorkspaceVersionTag } from './local-release-lib.mjs'
@@ -319,6 +320,7 @@ const fipsPackages = Object.fromEntries(
     'nvpn-webrtc',
     'nvpn-webrtc-ice',
     'nvpn-webrtc-util',
+    'nvpn-dtls',
   ].map((name) => [
     name,
     committedRegistryPackageVersion(name),
@@ -580,7 +582,7 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
     plan.verifierPath,
     join(realpathSync(root), 'scripts', 'verify-host-linux-vm-bundle.py'),
   )
-  assert.equal(plan.verifierArgs.length, 25)
+  assert.equal(plan.verifierArgs.length, 17 + fipsSpecs.length)
   assert.deepEqual(plan.verifierArgs.slice(0, 3), [
     realpathSync(bundlePath),
     realpathSync(bundleReceiptPath),
@@ -590,6 +592,19 @@ test('Linux publication derives verifier inputs and rejects self-consistent rece
   assert.equal(plan.verifierArgs[13], 'remote-native')
   assert.equal(plan.verifierArgs[14], '1.95.0')
   assert.deepEqual(plan.verifierArgs.slice(17), fipsSpecs)
+
+  for (const mutation of [
+    (packages) => { delete packages['nvpn-dtls'] },
+    (packages) => { packages['nvpn-dtls'] = '0.17.2' },
+    (packages) => { packages.unknown = packages['nvpn-dtls']; delete packages['nvpn-dtls'] },
+  ]) {
+    const packages = { ...fipsPackages }
+    mutation(packages)
+    assert.throws(
+      () => planFor({ gateReceipt: { ...exactGateReceipt, fipsPatchedLockPackages: packages } }),
+      /fipsPatchedLockPackages/,
+    )
+  }
 
   const dirtyPath = join(root, 'untracked-publication-input')
   writeFileSync(dirtyPath, 'dirty\n')
@@ -768,6 +783,31 @@ test('frozen FIPS publication identity comes from explicit proof and sealed Carg
   )
 })
 
+test('legacy 107 publication retains the eight-package receipt contract', (context) => {
+  const root = mkdtempSync(join(tmpdir(), 'nvpn-legacy-fips-proof-'))
+  context.after(() => rmSync(root, { recursive: true, force: true }))
+  mkdirSync(join(root, 'scripts'))
+  copyFixtureInput(process.cwd(), 'scripts/verify-cargo-path-patch-lock.py',
+    join(root, 'scripts/verify-cargo-path-patch-lock.py'))
+  const packages = {
+    ...fipsPackages,
+    'nvpn-fips-core': '0.4.107',
+    'nvpn-fips-endpoint': '0.4.107',
+    'nvpn-webrtc': '0.17.3',
+  }
+  delete packages['nvpn-dtls']
+  writeFileSync(join(root, 'Cargo.lock'), 'version = 4\n\n' + Object.entries(packages)
+    .map(([name, version]) => `[[package]]\nname = "${name}"\nversion = "${version}"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\nchecksum = "${'a'.repeat(64)}"\n`)
+    .join('\n'))
+  const candidate = exactFipsPublicationCandidate({ candidateRoot: root, env: {
+    NVPN_EXPECTED_FIPS_GIT_SHA: 'a'.repeat(40),
+    NVPN_EXPECTED_FIPS_GIT_TREE: 'b'.repeat(40),
+    NVPN_EXPECTED_FIPS_VERSION: '0.4.107',
+  } })
+  assert.deepEqual(candidate.fipsPatchedLockPackages, packages)
+  assert.equal(candidate.fipsSpecifications.length, 8)
+})
+
 test('Windows publication requires installer and artifact receipts to bind exact FIPS', () => {
   const expectedFips = {
     fipsGitSha: 'a'.repeat(40),
@@ -838,5 +878,40 @@ for (const [label, mutate] of [
   test(`registry runtime rejects ${label}`, () => {
     const fixture = runtimeFixture(); mutate(fixture)
     assert.throws(() => validateWindowsRuntimeFipsVersion(fixture))
+  })
+}
+
+function macosRuntimeFixture() {
+  const fixture = runtimeFixture()
+  fixture.artifactReceipt = {
+    receiptSchema: 1, artifactType: 'macOS company Developer ID Release gate package',
+    configuration: 'Release', companySigningVerified: true,
+    builtOnHost: true, builtOnTestVm: false,
+    fipsGitSha: fixture.expectedFipsGitSha, fipsGitTree: fixture.expectedFipsGitTree,
+    fipsCoreVersion: fixture.expectedFipsVersion, cliExecutableSha256: fixture.cliSha256,
+  }
+  return fixture
+}
+
+test('macOS registry runtime keeps exact signed payload and package provenance', () => {
+  const fixture = macosRuntimeFixture()
+  assert.equal(validateMacosRuntimeFipsVersion(fixture).revisionFromRegistry, true)
+  fixture.runtimeVersion = `fips_core_version: ${fixture.expectedFipsVersion} (rev ${fixture.expectedFipsGitSha.slice(0, 10)})`
+  assert.equal(validateMacosRuntimeFipsVersion(fixture).revisionFromRegistry, false)
+})
+for (const [label, mutate] of [
+  ['wrong binary', f => { f.cliSha256 = '0'.repeat(64) }],
+  ['wrong source', f => { f.artifactReceipt.fipsGitSha = '0'.repeat(40) }],
+  ['wrong registry VCS', f => { f.exactPackages['nvpn-fips-core'].packageVcsSha = '0'.repeat(40) }],
+  ['missing checksum', f => { delete f.exactPackages['nvpn-fips-endpoint'].cargoLockChecksum }],
+  ['path replacement', f => { f.exactPackages['nvpn-fips-core'].source = null }],
+  ['unsigned payload', f => { f.artifactReceipt.companySigningVerified = false }],
+  ['wrong runtime version', f => { f.runtimeVersion = 'fips_core_version: 0.4.1' }],
+  ['wrong runtime revision', f => { f.runtimeVersion = f.runtimeVersion.trimEnd() + ' (rev aaaaaaaaaa)' }],
+  ['duplicate runtime rows', f => { f.runtimeVersion += f.runtimeVersion }],
+]) {
+  test(`macOS registry runtime rejects ${label}`, () => {
+    const fixture = macosRuntimeFixture(); mutate(fixture)
+    assert.throws(() => validateMacosRuntimeFipsVersion(fixture))
   })
 }

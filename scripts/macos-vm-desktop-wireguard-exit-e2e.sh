@@ -51,6 +51,8 @@ REMOTE_DIR=""
 SECONDARY_IP=""
 FORWARDED_PROBE_IP=""
 PACKAGE=""
+VERIFIED_FIPS_RUNTIME_VERSION=""
+VERIFIED_CLI_SHA256=""
 ARTIFACT_DIR="${NVPN_MACOS_NETWORK_ARTIFACT_DIR:-${ARTIFACT_ROOT:-$ROOT/artifacts}/macos-release-network-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 PRIMARY_CONTROL_PATH="/tmp/nvpn-macos-network-primary-$PPID-$$"
 SECONDARY_CONTROL_PATH="/tmp/nvpn-macos-network-secondary-$PPID-$$"
@@ -165,7 +167,8 @@ remote_phase() {
     "NVPN_MACOS_UNDERLAY_ACTIVATION_DEADLINE_MS=$ACTIVATION_DEADLINE_MS"
     "NVPN_MACOS_FIPS_NETWORK_ID=$FIPS_NETWORK_ID"
     "NVPN_MACOS_FIPS_CLIENT_LISTEN_PORT=$FIPS_CLIENT_LISTEN_PORT"
-    "NVPN_MACOS_FIPS_EXPECTED_REV=${RELEASE_JOIN_FIPS_SHA:0:10}"
+    "NVPN_MACOS_FIPS_RUNTIME_VERSION=$VERIFIED_FIPS_RUNTIME_VERSION"
+    "NVPN_MACOS_NETWORK_CLI_SHA256=$VERIFIED_CLI_SHA256"
     "NVPN_MACOS_DNS_LABEL=${DNS_CASE_LABEL:-direct-baseline}"
     "NVPN_MACOS_DNS_MODE=${DNS_CASE_MODE:-automatic}"
     "NVPN_MACOS_DNS_PROVIDER=${DNS_CASE_PROVIDER:-cloudflare}"
@@ -429,6 +432,25 @@ release_join_assert_app_unchanged "$APP_GIT_SHA" "$APP_GIT_TREE"
 
 macos_vm_prepare_or_verify_imported_release "$ROOT" "$SSH_HOST"
 PACKAGE="$(macos_vm_imported_release_package "$GUEST_REPO")"
+
+# Import validation proves signatures/source and the exact payload. Bind the
+# runtime display version to that payload and the locked package VCS metadata.
+mkdir -p "$ARTIFACT_DIR"
+macos_artifact_receipt="${NVPN_RELEASE_JOIN_RESULT_DIR:-$ROOT/artifacts/mobile-release-join}/macos/artifact.json"
+printf -v macos_cli '%q' "$PACKAGE/Nostr VPN.app/Contents/Resources/nvpn"
+printf -v macos_repo '%q' "$GUEST_REPO"
+remote_shell primary "cd $macos_repo && $macos_cli version --verbose" \
+  >"$ARTIFACT_DIR/runtime-version.txt"
+VERIFIED_CLI_SHA256="$(remote_shell primary \
+  "cd $macos_repo && shasum -a 256 $macos_cli" | awk '{print $1}')"
+node "$ROOT/scripts/release-source-verification.mjs" macos-runtime-provenance \
+  "$macos_artifact_receipt" "$NVPN_FIPS_REPO_PATH" \
+  "$RELEASE_JOIN_FIPS_SHA" "$RELEASE_JOIN_FIPS_TREE" "$RELEASE_JOIN_FIPS_VERSION" \
+  "$ARTIFACT_DIR/runtime-version.txt" "$VERIFIED_CLI_SHA256" \
+  >"$ARTIFACT_DIR/runtime-provenance.json"
+VERIFIED_FIPS_RUNTIME_VERSION="$(jq -er \
+  '.runtimeFipsVersion | sub("^fips_core_version: "; "")' \
+  "$ARTIFACT_DIR/runtime-provenance.json")"
 
 if [[ -z "$FIXTURE_HOST" ]]; then
   FIXTURE_HOST="$(ipconfig getifaddr en0 2>/dev/null || true)"

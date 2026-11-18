@@ -90,6 +90,14 @@ pub(super) fn bind_paid_exit_probe_udp(
     interface: &str,
     ipv6: bool,
 ) -> Result<()> {
+    bind_paid_exit_probe_socket(&socket2::SockRef::from(socket), interface, ipv6)
+}
+
+pub(crate) fn bind_paid_exit_probe_socket(
+    socket: &socket2::SockRef<'_>,
+    interface: &str,
+    ipv6: bool,
+) -> Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let name =
@@ -97,13 +105,12 @@ pub(super) fn bind_paid_exit_probe_udp(
         let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
         let index = std::num::NonZeroU32::new(index)
             .ok_or_else(|| anyhow!("paid exit tunnel interface {interface} is unavailable"))?;
-        let socket = socket2::SockRef::from(socket);
         #[cfg(target_os = "linux")]
         {
             let _ = (index, ipv6);
             socket
                 .bind_device(Some(interface.as_bytes()))
-                .context("failed to bind STUN to the paid exit tunnel")?;
+                .context("failed to bind probe to the paid exit tunnel")?;
         }
         #[cfg(target_os = "macos")]
         {
@@ -112,15 +119,15 @@ pub(super) fn bind_paid_exit_probe_udp(
             } else {
                 socket.bind_device_by_index_v4(Some(index))
             }
-            .context("failed to bind STUN to the paid exit tunnel")?;
+            .context("failed to bind probe to the paid exit tunnel")?;
         }
         Ok(())
     }
     #[cfg(target_os = "windows")]
     {
         let expected = paid_exit_probe_windows::source_address(interface, ipv6)?;
-        if socket.local_addr()?.ip() != expected {
-            anyhow::bail!("STUN socket is not bound to the paid exit tunnel address");
+        if socket.local_addr()?.as_socket().map(|addr| addr.ip()) != Some(expected) {
+            anyhow::bail!("probe socket is not bound to the paid exit tunnel address");
         }
         Ok(())
     }

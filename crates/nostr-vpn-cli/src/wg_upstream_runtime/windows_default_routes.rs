@@ -276,6 +276,8 @@ struct WindowsManagedDefaultRoutes {
 
 #[cfg(any(test, target_os = "windows"))]
 impl WindowsManagedDefaultRoutes {
+    // The cold failure path retains the complete route ownership state for cleanup.
+    #[allow(clippy::result_large_err)]
     fn apply_with(
         runner: &mut impl WindowsRouteCommandRunner,
         wg_iface_index: u32,

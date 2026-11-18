@@ -332,6 +332,22 @@ load_appstoreconnect_defaults() {
   export NVPN_ASC_AUTH_KEY_ISSUER_ID="${NVPN_ASC_AUTH_KEY_ISSUER_ID:-}"
 }
 
+# Keep source-location strings in release executables independent of the build host.
+# Cargo's unit separator preserves paths containing spaces.
+release_encoded_rustflags() {
+  local root="$1" fips_root
+  shift
+  local IFS=$'\x1f'
+  local flags="${CARGO_ENCODED_RUSTFLAGS-$*}"
+  local remaps=("--remap-path-prefix=$HOME=/build/home"
+                "--remap-path-prefix=$root=/build/nvpn")
+  if [[ -n "${NVPN_FIPS_REPO_PATH:-}" && -n "${NVPN_EXPECTED_FIPS_GIT_SHA:-}" ]]; then
+    fips_root="$(cd "$NVPN_FIPS_REPO_PATH" && pwd -P)" || return 1
+    remaps+=("--remap-path-prefix=$fips_root=/build/fips-$NVPN_EXPECTED_FIPS_GIT_SHA")
+  fi
+  printf '%s' "${flags:+$flags$'\x1f'}${remaps[*]}"
+}
+
 resolve_shared_build_metadata() {
   local root="$1"
   local derived_version_code

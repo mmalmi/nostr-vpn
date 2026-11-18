@@ -67,6 +67,7 @@ run_ios_build() {
     echo "Skipping iOS build on non-Darwin host"
     return
   fi
+  "$ROOT/scripts/test-ios-file-share-storage.sh"
   "$ROOT/tools/run-ios" build
 }
 

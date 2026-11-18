@@ -143,6 +143,10 @@ private fun DeviceDetailDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(participant.detailStatusLabel(state), color = Muted)
+                if (!isSelf && dispatch != null) {
+                    if (!state.vpnActive) Text("Connect VPN to send files.", style = MaterialTheme.typography.bodySmall)
+                    SendFilesButton(participant.npub, state.vpnActive && network?.enabled == true && participant.reachable, dispatch)
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     if (isSelf) Pill("This device", Color(0xFFECFDF5), Ok)
                     if (participant.isAdmin) Pill("Admin", Color(0xFFF5F3FF), Accent)

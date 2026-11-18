@@ -1,7 +1,7 @@
 use super::*;
 
 const DAEMON_LOG_MAX_BYTES: u64 = 8 * 1024 * 1024;
-const DAEMON_LOG_RETAIN_BYTES: u64 = 2 * 1024 * 1024;
+const DAEMON_LOG_RETAIN_BYTES: u64 = DAEMON_LOG_MAX_BYTES;
 const DAEMON_LOG_COMPACT_CHECK_SECS: u64 = 60;
 
 include!("daemon_runtime/control_files.rs");

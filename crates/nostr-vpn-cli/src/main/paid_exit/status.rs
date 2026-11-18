@@ -1,4 +1,3 @@
-
 fn paid_exit_status_snapshot_json(
     app: &AppConfig,
     store_path: &Path,
@@ -17,6 +16,8 @@ fn paid_exit_status_snapshot_json(
                 "relays": record.relay_urls,
                 "first_seen_unix": record.first_seen_unix,
                 "last_seen_unix": record.last_seen_unix,
+                "personal_rating": store.personal_exit_rating(&record.offer.seller_npub),
+                "avoided": store.exit_provider_is_avoided(&record.offer.seller_npub),
             });
             if let Some(score) = record.rating_score {
                 value["rating_score"] = json!(score);
@@ -190,6 +191,7 @@ fn paid_exit_session_status_json(
 
     json!({
         "session_id": session.session_id,
+        "manual_auto_renew": store.manual_renewal_session_id == session.session_id,
         "lease_id": session.lease_id,
         "channel_id": session.payment.channel_id,
         "created_at_unix": record.created_at_unix,
@@ -376,14 +378,20 @@ fn print_paid_exit_status_snapshot(
                 .rating_score
                 .map(|score| format!(" rating_score={score:+}"))
                 .unwrap_or_default();
+            let personal_text = match store.personal_exit_rating(&offer.seller_npub) {
+                -1 => " your_rating=down avoided=true",
+                1 => " your_rating=up",
+                _ => "",
+            };
             println!(
-                "  {key} price={} country={} upstream={} live={} last_seen={}{}",
+                "  {key} price={} country={} upstream={} live={} last_seen={}{}{}",
                 paid_exit_price_text(offer.pricing.price_msat_per_gb),
                 display_or_none(&offer.location.country_code),
                 offer.access.upstream.as_str(),
                 record.signed_offer.is_live_at(now_unix),
                 record.last_seen_unix,
-                rating_text
+                rating_text,
+                personal_text
             );
         }
     }
@@ -448,8 +456,13 @@ fn print_paid_exit_status_snapshot(
                 },
             );
             let bytes = session.usage.total_bytes();
+            let renewal = if store.manual_renewal_session_id == session.session_id {
+                " manual_auto_renew=true"
+            } else {
+                ""
+            };
             println!(
-                "  {} shared_internet=\"{}\" state={} allow={} collection={} mode={} paid={} due={} unpaid={} usage={} exit_ip={} country={} claimed_country={} country_claim={} quality={}",
+                "  {} shared_internet=\"{}\" state={} allow={} collection={} mode={} paid={} due={} unpaid={} usage={} exit_ip={} country={} claimed_country={} country_claim={} quality={}{renewal}",
                 session.session_id,
                 shared_internet,
                 state,
@@ -749,7 +762,10 @@ fn paid_exit_mints_text(mints: &[String]) -> String {
     if mints.is_empty() {
         "none".to_string()
     } else {
-        mints.join(",")
+        mints.iter().map(|mint| match nostr_vpn_core::paid_routes::paid_exit_mint_notice(mint) {
+            Some(notice) => format!("{mint} ({notice})"),
+            None => mint.clone(),
+        }).collect::<Vec<_>>().join(",")
     }
 }
 

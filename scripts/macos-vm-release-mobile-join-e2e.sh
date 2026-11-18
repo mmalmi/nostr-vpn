@@ -91,6 +91,12 @@ MAC_HOST="${NVPN_MACOS_SSH_HOST:-${1:-}}"
 macos_vm_require_isolated_target "$MAC_HOST"
 GUEST_SRC_ROOT="${NVPN_MACOS_GUEST_SRC_ROOT:-src}"
 GUEST_REPO="$GUEST_SRC_ROOT/nostr-vpn"
+REMOTE_ARTIFACT_DIR="${NVPN_MACOS_RELEASE_JOIN_ARTIFACT_DIR:-artifacts/macos-release-mobile-join}"
+if [[ "$REMOTE_ARTIFACT_DIR" == /* ]]; then
+  REMOTE_TRANSFER_DIR="$REMOTE_ARTIFACT_DIR"
+else
+  REMOTE_TRANSFER_DIR="$GUEST_REPO/$REMOTE_ARTIFACT_DIR"
+fi
 REMOTE_HARNESS_FILES=(
   scripts/lib-macos-release-app-ownership.sh
   scripts/macos-release-mobile-join-remote.sh
@@ -228,7 +234,7 @@ remote() {
     'cd %q && env NVPN_APP_REPO_PATH=. NVPN_FIPS_REPO_PATH=%q NVPN_MACOS_RELEASE_JOIN_ARTIFACT_DIR=%q NVPN_EXTERNAL_HARNESS_DIGEST=%q NVPN_EXPECTED_APP_GIT_SHA=%q NVPN_EXPECTED_APP_GIT_TREE=%q NVPN_EXPECTED_HARNESS_GIT_SHA=%q NVPN_EXPECTED_HARNESS_GIT_TREE=%q NVPN_EXPECTED_FIPS_GIT_SHA=%q NVPN_EXPECTED_FIPS_GIT_TREE=%q NVPN_EXPECTED_FIPS_VERSION=%q NVPN_EXPECTED_MACOS_SIGNING_IDENTITY_SHA1=%q NVPN_EXPECTED_MACOS_SIGNING_TEAM_ID=%q NVPN_EXPECTED_MACOS_SIGNER_CERT_SHA256=%q NVPN_RELEASE_JOIN_IOS_SETUP_WAIT_SECS=%q "$HOME"/%q %q' \
     "$GUEST_REPO" \
     "../fips" \
-    "artifacts/macos-release-mobile-join" \
+    "$REMOTE_ARTIFACT_DIR" \
     "$REMOTE_HARNESS_DIGEST" \
     "$PRODUCT_GIT_SHA" \
     "$PRODUCT_GIT_TREE" \
@@ -491,8 +497,8 @@ select_run_only_artifact() {
   fi
 }
 
-verify_run_only_receipt_binding() {
-  [[ "$ARTIFACT_ACTION" == "run-only" ]] || return 0
+verify_selected_receipt_binding() {
+  [[ "$ARTIFACT_ACTION" == "run-only" || "$ARTIFACT_ACTION" == "verify-only" ]] || return 0
   local host_receipt_sha remote_receipt_sha
   host_receipt_sha="$(
     shasum -a 256 "$RESULT_DIR/macos/artifact.json" | awk '{print $1}'
@@ -505,7 +511,7 @@ print(json.load(open(sys.argv[1])).get("artifactReceiptSha256", ""))
   )"
   [[ "$remote_receipt_sha" =~ ^[0-9a-f]{64}$ \
     && "$host_receipt_sha" == "$remote_receipt_sha" ]] || {
-    echo "Remote macOS verification does not bind the selected run-only receipt" >&2
+    echo "Remote macOS verification does not bind the selected cached receipt" >&2
     return 1
   }
 }
@@ -791,9 +797,24 @@ install_remote_harness
 case "$ARTIFACT_ACTION" in
   verify-only)
     read_cached_identity "$RESULT_DIR/macos/artifact.json"
+    [[ "$CACHE_FIPS_SHA" == "$RELEASE_JOIN_FIPS_SHA" \
+      && "$CACHE_FIPS_TREE" == "$RELEASE_JOIN_FIPS_TREE" \
+      && "$CACHE_FIPS_VERSION" == "$RELEASE_JOIN_FIPS_VERSION" ]] || {
+      echo "Cached macOS artifact differs from the exact FIPS source" >&2
+      exit 1
+    }
+    # Keep the sealed package proof unchanged. Independently prove that its
+    # product inputs still match the current clean checkout, then validate
+    # the package using the source identities originally sealed inside it.
+    write_component_proof "$CACHE_PRODUCT_SHA" "$CACHE_PRODUCT_TREE" \
+      >"$RESULT_DIR/macos/current-component-proof.json"
     PRODUCT_GIT_SHA="$CACHE_PRODUCT_SHA"
     PRODUCT_GIT_TREE="$CACHE_PRODUCT_TREE"
-    remote verify-import | tee "$RESULT_DIR/macos/verify-import.log"
+    (
+      APP_GIT_SHA="$CACHE_HARNESS_SHA"
+      APP_GIT_TREE="$CACHE_HARNESS_TREE"
+      remote verify-import
+    ) | tee "$RESULT_DIR/macos/verify-import.log"
     ;;
   run-only)
     select_run_only_artifact
@@ -803,7 +824,7 @@ case "$ARTIFACT_ACTION" in
     prepare_host_artifact
     remote stage
     scp -q "$HOST_ARCHIVE" "$HOST_RECEIPT" \
-      "$MAC_HOST:$GUEST_REPO/artifacts/macos-release-mobile-join/"
+      "$MAC_HOST:$REMOTE_TRANSFER_DIR/"
     remote prepare | tee "$RESULT_DIR/macos/prepare.log"
     cp "$HOST_RECEIPT" "$RESULT_DIR/macos/artifact.json"
     rm -rf "$PUBLICATION_DIR"
@@ -813,9 +834,9 @@ case "$ARTIFACT_ACTION" in
     ;;
 esac
 scp -q \
-  "$MAC_HOST:$GUEST_REPO/artifacts/macos-release-mobile-join/verification.json" \
+  "$MAC_HOST:$REMOTE_TRANSFER_DIR/verification.json" \
   "$RESULT_DIR/macos/verification.json"
-verify_run_only_receipt_binding
+verify_selected_receipt_binding
 
 if [[ "$ARTIFACT_ACTION" != "full" && "$ARTIFACT_ACTION" != "run-only" ]]; then
   echo "MACOS_VM_IMPORTED_RELEASE_ARTIFACT_OK"

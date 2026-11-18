@@ -39,6 +39,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func configure(manager: AppManager) {
         self.manager = manager
+        manager.configureFileTransfers()
+        NSApp.servicesProvider = self
+        manager.publishFileSharePeers()
+        manager.consumeFileShareRequests()
         startsHidden = manager.launchedHidden && !Self.launchArgumentsContainDeepLink && pendingUrls.isEmpty
         observeWindows()
         if trayController == nil {
@@ -83,12 +87,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pendingUrls.append(contentsOf: urls)
             return
         }
-        for url in urls {
-            manager.handle(url: url)
+        let files = urls.filter(\.isFileURL)
+        if !files.isEmpty {
+            if activate { showMainWindow() }
+            manager.chooseFileRecipient(for: files)
+        }
+        for url in urls where !url.isFileURL {
+            if url.host == "file-share" {
+                manager.fileTransfersRequested = true
+                manager.consumeFileShareRequests()
+            }
+            else { manager.handle(url: url) }
         }
         if activate {
             showMainWindow()
         }
+    }
+
+    @objc func sendFiles(_ pasteboard: NSPasteboard, userData: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        guard let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty,
+              let manager else {
+            error.pointee = "Choose files to send with nvpn."
+            return
+        }
+        showMainWindow()
+        manager.chooseFileRecipient(for: urls)
     }
 
     private func observeWindows() {

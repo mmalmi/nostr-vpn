@@ -39,12 +39,15 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         Ok(())
     })?;
     store = load_paid_route_store(&store_path)?;
-    let reselect_from = store.automatic_reselect_from.clone();
-    if automatic.candidate.as_ref().is_some_and(|candidate| {
-        store.exit_provider_is_avoided(&candidate.seller_pubkey)
-            || normalize_nostr_pubkey(&reselect_from).ok().as_deref()
-                == Some(candidate.seller_pubkey.as_str())
-    }) {
+    if !store.automatic_reselect_from.is_empty() {
+        return reselection::stage(automatic, app, config_path, &store, now_unix);
+    }
+    automatic.reselection.take();
+    if automatic
+        .candidate
+        .as_ref()
+        .is_some_and(|candidate| store.exit_provider_is_avoided(&candidate.seller_pubkey))
+    {
         // Finish any wallet operation before replacing its candidate. The
         // routing gate already rejects the downvoted provider immediately.
         if automatic.funding.is_some() {
@@ -56,7 +59,11 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         Ok(selection) => selection,
         Err(_) => {
             if let Some(candidate) = automatic.candidate.as_mut() {
-                candidate.failed = true;
+                // A mint outage or fee shortfall must not turn a waiting
+                // session into a provider failure when no alternative can pay.
+                if store.buyer_session_funding_retry_at(&candidate.session_id) <= now_unix {
+                    candidate.failed = true;
+                }
             }
             return Ok(false);
         }
@@ -131,7 +138,6 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
                 .expect("recovered candidate")
                 .funding_attempted = true;
         }
-        finish_automatic_reselection(&store_path, &reselect_from)?;
         return Ok(replacing_unfunded || exhausted || route_changed);
     }
 
@@ -176,15 +182,15 @@ pub(crate) fn reconcile_automatic_paid_exit_selection(
         false,
         now_unix,
     );
-    finish_automatic_reselection(&store_path, &reselect_from)?;
     Ok(true)
 }
 
-fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()> {
+pub(super) fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()> {
     if !requested.is_empty() {
         update_paid_route_store(store_path, |store| {
             if store.automatic_reselect_from == requested {
                 store.automatic_reselect_from.clear();
+                store.automatic_reselect_session_id.clear();
             }
             Ok(())
         })?;
@@ -193,7 +199,7 @@ fn finish_automatic_reselection(store_path: &Path, requested: &str) -> Result<()
 }
 
 /// Keep configuration in sync even when Automatic already has a candidate.
-fn select_automatic_paid_exit_route(
+pub(super) fn select_automatic_paid_exit_route(
     app: &mut AppConfig,
     config_path: &Path,
     store: &PaidRouteStore,
@@ -218,13 +224,11 @@ fn select_automatic_paid_exit_route(
     Ok(changed)
 }
 
-fn recover_automatic_paid_exit_session(
+pub(super) fn recover_automatic_paid_exit_session(
     store: &PaidRouteStore,
     selection: &nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection,
     now_unix: u64,
 ) -> Option<(String, String, bool)> {
-    let offer = &store.offers.get(&selection.offer_key)?.offer;
-    let seller_pubkey = normalize_nostr_pubkey(&offer.seller_npub).ok()?;
     store
         .sessions
         .values()
@@ -232,8 +236,10 @@ fn recover_automatic_paid_exit_session(
             let channel = store.channels.get(&session.session.payment.channel_id)?;
             let lease = store.leases.get(&session.session.lease_id)?;
             (channel.role == PaidRouteChannelRole::Buyer
-                && channel.offer_id == offer.offer_id
-                && channel.counterparty_npub == offer.seller_npub
+                && nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+                    &channel.counterparty_npub,
+                    &channel.offer_id,
+                ) == selection.offer_key
                 && channel.mint_url == selection.mint_url
                 && channel.routing_expires_at_unix(lease.lease.expires_at_unix) > now_unix
                 && store
@@ -254,16 +260,98 @@ fn recover_automatic_paid_exit_session(
                         | PaidRouteLifecycleStatus::Paused
                 ))
             .then_some((
+                session.session.session_id == store.selected_buyer_session_id,
                 session.updated_at_unix,
+                normalize_nostr_pubkey(&channel.counterparty_npub).ok()?,
                 session.session.session_id.clone(),
-                session
-                    .session
-                    .payment
-                    .cashu_spilman_payment
-                    .as_ref()
-                    .is_some_and(CashuSpilmanPayment::has_funding),
+                store
+                    .funded_buyer_session_selection(&session.session.session_id, now_unix)
+                    .is_some(),
             ))
         })
-        .max_by_key(|candidate| candidate.0)
-        .map(|(_, session_id, funded)| (seller_pubkey, session_id, funded))
+        .filter(|candidate| !selection.funded || candidate.4)
+        .max_by_key(|candidate| (candidate.0, candidate.1))
+        .map(|(_, _, seller_pubkey, session_id, funded)| (seller_pubkey, session_id, funded))
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    #[test]
+    fn recovery_prefers_selected_credit_over_a_newer_pending_renewal_without_an_advert() {
+        let seller = Keys::generate();
+        let buyer = Keys::generate();
+        let mut config = PaidExitConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        config.channel.accepted_mints = vec!["https://mint.example".into()];
+        let mut store = PaidRouteStore::default();
+        store.upsert_wallet_mint("https://mint.example", "Mint", Some(100_000), 100);
+        store
+            .upsert_signed_offer(
+                nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config(
+                    "exit", &seller, &config, None, 100,
+                )
+                .unwrap(),
+                vec![],
+                100,
+            )
+            .unwrap();
+        let original = store
+            .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+                offer_selector: "exit".into(),
+                buyer_npub: buyer.public_key().to_bech32().unwrap(),
+                mint_url: None,
+                channel_capacity_sat: Some(10),
+                initial_paid_msat: 0,
+                now_unix: 100,
+            })
+            .unwrap();
+        store
+            .begin_buyer_session_open_attempt(&original.session_id, 100)
+            .unwrap();
+        let payment = CashuSpilmanPayment {
+            channel_id: original.channel_id.clone(),
+            balance: 1,
+            signature: "signed".into(),
+            params: Some(serde_json::json!({"unit": "sat"})),
+            funding_proofs: Some(serde_json::json!({"proofs": []})),
+        };
+        store
+            .sessions
+            .get_mut(&original.session_id)
+            .unwrap()
+            .session
+            .payment
+            .cashu_spilman_payment = Some(payment.clone());
+        store
+            .channels
+            .get_mut(&original.channel_id)
+            .unwrap()
+            .payment
+            .cashu_spilman_payment = Some(payment);
+        let next = store
+            .prepare_buyer_session_renewal(&original.session_id, 110)
+            .unwrap();
+        store.offers.clear();
+        let selection = store
+            .funded_buyer_session_selection(&original.session_id, 120)
+            .unwrap();
+        let (_, recovered, funded) =
+            recover_automatic_paid_exit_session(&store, &selection, 120).unwrap();
+        assert_eq!(recovered, original.session_id);
+        assert_ne!(recovered, next);
+        assert!(funded);
+        assert_eq!(store.sessions.len(), 2);
+
+        // Even without a durable selection, an existing purchase must not
+        // recover as the newer, unfunded renewal for the same seller/mint.
+        store.selected_buyer_session_id.clear();
+        let (_, recovered, funded) =
+            recover_automatic_paid_exit_session(&store, &selection, 120).unwrap();
+        assert_eq!(recovered, original.session_id);
+        assert!(funded);
+    }
 }

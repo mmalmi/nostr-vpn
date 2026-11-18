@@ -14,10 +14,16 @@ const harnessOnlyPaths = new Set([
   'Dockerfile.mobile-wireguard-exit-e2e.dockerignore',
   'scripts/android-release-foreground-idle-receipt.mjs',
   'scripts/native-lab.py',
+  // This audit command validates dependencies; it is never a native build input.
+  'scripts/security-audit-rust.sh',
   'scripts/docker-replace-nvpn-binary',
   // Included only by ffi.rs's cfg(test) module; the parent remains a product input.
   'crates/nostr-vpn-app-core/src/ffi/tests_network/exit_state.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_core.rs',
+  // Included only by mobile_tunnel.rs's cfg(test) module.
+  'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_paid_route.rs',
+  // Included only by payment_outbox.rs's cfg(test) module.
+  'crates/nostr-vpn-cli/src/main/paid_exit/payment_outbox_tests.rs',
   'crates/nostr-vpn-app-core/src/mobile_tunnel/tests_runtime/websocket_join.rs',
   'crates/nostr-vpn-core/examples/desktop_manual_join_e2e_fixture.rs',
   'scripts/appstore-draft',
@@ -55,6 +61,8 @@ const harnessOnlyPaths = new Set([
   'scripts/ios-artifact-source.mjs',
   'scripts/lib-desktop-underlay-host-peer.sh',
   'scripts/lib-ubuntu-vm-imported-release.sh',
+  // Selects and verifies existing signed VM packages; never builds the app.
+  'scripts/lib-macos-vm-imported-release.sh',
   'scripts/linux-vm-desktop-underlay-change-e2e.sh',
   'scripts/lib-mobile-android-release-gate.sh',
   'scripts/lib-mobile-android-underlay.sh',
@@ -107,6 +115,8 @@ const harnessOnlyPaths = new Set([
   'scripts/verify.sh',
   'scripts/verify-paid-exit-seller-ui-receipts.py',
   'scripts/verify-paid-exit-seller-ui-receipts.mjs',
+  // Samples the already-installed CLI; the Windows installer build remains a product input.
+  'scripts/windows-daemon-idle-cpu.ps1',
   'scripts/windows-release-publication-proof.ps1',
   'scripts/windows-release-mobile-join-remote.ps1',
   'scripts/windows-vm-desktop-underlay-change-e2e.sh',
@@ -121,7 +131,7 @@ const buildScripts = {
     /scripts\/ios-profiles$/,
     /scripts\/ios_profile_certificate\.py$/,
   ],
-  linux: [/build-host-linux-/, /build-nvpn-linux-musl$/, /host-linux-native-builder-/, /host_linux_package_content/, /lib-host-linux-/],
+  linux: [/build-host-linux-/, /build-nvpn-linux-musl$/, /host-linux-native-builder-/, /host_linux_package_content/, /lib-host-linux-/, /lib-linux-musl-image/],
   macos: [/build-.*macos/, /scripts\/macos-build$/, /lib-macos-release-app-ownership/, /verify-macos-release-publication-artifacts/],
   windows: [/windows-build\.ps1$/, /^scripts\/windows-vm-app-launch-smoke\.sh$/],
 }
@@ -145,6 +155,12 @@ function isProductInput(path, platform) {
   // not linked or copied into any of the five native platform artifacts whose
   // retained receipts this classifier governs.
   if (path.startsWith('web/control-panel/')) return false
+  // Runtime mounts belong to the separately rendered Umbrel deployment;
+  // this file is not compiled or copied into native platform binaries.
+  if (path === 'umbrel/docker-compose.yml') return false
+  // This recipe builds only the separately inspected container packages.
+  // Shared Rust sources and lockfiles remain native product inputs below.
+  if (['umbrel/Dockerfile', 's9pk.mk', 'Makefile'].includes(path)) return false
   if (
     path === 'crates/nostr-vpn-cli/src/wireguard_exit/linux_tests.rs'
     || path.startsWith('crates/nostr-vpn-cli/src/wireguard_exit/linux_tests/')

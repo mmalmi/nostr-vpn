@@ -318,11 +318,11 @@ extension RootView {
                 }
                 GridRow {
                     label("Fanout")
-                    TextField("4", text: $nostrPubsubFanout)
+                    TextField("8", text: $nostrPubsubFanout)
                 }
                 GridRow {
                     label("Hops")
-                    TextField("2", text: $nostrPubsubMaxHops)
+                    TextField("4", text: $nostrPubsubMaxHops)
                 }
                 GridRow {
                     label("Max event bytes")
