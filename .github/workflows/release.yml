@@ -136,8 +136,8 @@ jobs:
   # Rebuilding different bytes here cannot strengthen those package receipts.
   # Retain the older-SDK source check, which the current local SDK cannot cover.
   macos-sdk-compat:
-    name: macOS 14 SDK compatibility
-    runs-on: macos-14
+    name: macOS 15 SDK compatibility
+    runs-on: macos-15
     permissions:
       contents: read
     steps:
@@ -146,9 +146,9 @@ jobs:
         with:
           ref: ${{ github.event.inputs.locally_attested_commit }}
 
-      - name: Compile-check macOS 14 SDK compatibility
+      - name: Compile-check macOS 15 SDK compatibility
         env:
-          DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
+          DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
         run: ./scripts/check-macos-swift-sdk-compat.sh
 
       - name: Verify iOS release artifact orchestration without devices

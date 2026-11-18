@@ -473,9 +473,11 @@ impl FipsPrivateMeshRuntime {
             .lock()
             .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
         for run in &packets.runs {
-            let admitter = direct_run_admitter(mesh, run)?;
+            let key = direct_run_admitter(mesh, run)
+                .and_then(|admitter| admitter.source_pubkey_bytes().copied())
+                .unwrap_or_else(|| run.source_peer().pubkey().serialize());
             for packet in run.packet_slices() {
-                accounting.record_inbound(None, admitter.source_pubkey_bytes(), packet);
+                accounting.record_inbound(None, Some(&key), packet);
             }
         }
         Ok(())

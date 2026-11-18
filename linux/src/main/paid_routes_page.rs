@@ -172,7 +172,7 @@ fn build_paid_route_market_card(app: &AppRef, page: &gtk::Box, state: &NativeApp
 
     section_header(&buyer, "Your Paid Internet", "");
     if market.sessions.is_empty() {
-        empty_row(&buyer, "No seller selected");
+        empty_row(&buyer, "No sessions yet");
     } else {
         for session in &market.sessions {
             paid_route_session_row(
@@ -313,6 +313,16 @@ fn paid_route_offer_row(
     status.set_xalign(0.0);
     status.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
     text.append(&status);
+    for mint in &offer.accepted_mints {
+        if let Some(notice) = nostr_vpn_core::paid_routes::paid_exit_mint_notice(mint) {
+            let label = gtk::Label::new(Some(&format!("{mint} · {notice}")));
+            label.set_xalign(0.0);
+            label.set_wrap(true);
+            label.add_css_class("caption");
+            label.add_css_class("warning");
+            text.append(&label);
+        }
+    }
     let metrics = paid_route_metric_text(
         &non_empty_or(
             &offer.quality_text,
@@ -332,7 +342,7 @@ fn paid_route_offer_row(
     if offer.can_rate {
         paid_exit_rating_buttons(app, &row, &offer.seller_npub, offer.personal_rating);
     }
-    let active = state.internet_source == "paid_manual" && state.exit_node == offer.seller_npub;
+    let selected = state.internet_source == "paid_manual" && state.exit_node == offer.seller_npub;
     let compatible_mint = offer.price_msat_per_gb == 0
         || offer.accepted_mints.iter().any(|accepted| {
             state
@@ -343,15 +353,15 @@ fn paid_route_offer_row(
                 .any(|mint| mint.url == *accepted)
         });
     let connect = icon_text_button(
-        if active { "Active" } else { "Connect" },
-        if active {
+        if selected { "Selected" } else { "Connect" },
+        if selected {
             "emblem-ok-symbolic"
         } else {
             "go-next-symbolic"
         },
     );
     connect.set_sensitive(
-        !active && compatible_mint && !offer.key.is_empty() && offer.personal_rating >= 0,
+        !selected && compatible_mint && !offer.key.is_empty() && offer.personal_rating >= 0,
     );
     {
         let app = app.clone();
@@ -392,6 +402,9 @@ fn paid_route_offer_row(
             row.append(&label);
             let trust = gtk::Button::with_label("Trust mint");
             trust.set_tooltip_text(Some(&format!("Allow this wallet to hold funds at {mint}")));
+            // GtkButton links its child label by default, overriding a custom name.
+            trust.reset_relation(gtk::AccessibleRelation::LabelledBy);
+            trust.update_property(&[gtk::accessible::Property::Label(&format!("Trust mint {mint}"))]);
             {
                 let app = app.clone();
                 let url = mint.clone();

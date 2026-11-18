@@ -39,5 +39,27 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan Nostr VPN join request QR codes.</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Send files with nvpn</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>sendFiles</string>
+			<key>NSPortName</key>
+			<string>Nostr VPN</string>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.file-url</string>
+			</array>
+			<key>NSReturnTypes</key>
+			<array/>
+		</dict>
+	</array>
+	<key>NVPNShareAppGroup</key>
+	<string>$(NVPN_MACOS_SHARE_APP_GROUP)</string>
 </dict>
 </plist>

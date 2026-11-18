@@ -11,7 +11,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { githubRepositoryFromRemote } from './github-release-publication.mjs'
+import { githubRepositoryFromRemote, inspectReleaseTagRefs } from './github-release-publication.mjs'
 import { normalizeTag } from './local-release-lib.mjs'
 import { validateReleaseMutationGate } from './release-mutation-gate.mjs'
 
@@ -65,87 +65,14 @@ function exactJson(text, label) {
   return value
 }
 
-function exactRemoteRef(runCommand, remote, reference) {
-  const result = commandResult(
-    runCommand,
-    'git',
-    ['ls-remote', '--exit-code', remote, reference],
-    { cwd: repoRoot },
-  )
-  if (result.status === 2 && !result.stdout) {
-    return ''
-  }
-  if (result.status !== 0) {
-    fail(
-      result.stderr
-      || `could not inspect ${remote} ${reference}`,
-    )
-  }
-  const rows = result.stdout.split('\n').filter(Boolean)
-  if (rows.length !== 1) {
-    fail(`${remote} ${reference} did not resolve exactly once`)
-  }
-  const [sha, returnedReference, ...extra] = rows[0].split(/\s+/)
-  if (
-    extra.length
-    || returnedReference !== reference
-    || !/^[0-9a-f]{40}$/.test(sha)
-  ) {
-    fail(`${remote} ${reference} returned an invalid exact ref`)
-  }
-  return sha
-}
-
-function requireAncestor(runCommand, ancestor, commit, label) {
-  if (!ancestor || ancestor === commit) {
-    return
-  }
-  const result = commandResult(
-    runCommand,
-    'git',
-    ['merge-base', '--is-ancestor', ancestor, commit],
-    { cwd: repoRoot },
-  )
-  if (result.status === 1) {
-    fail(`${label} is not an ancestor of the staged commit`)
-  }
-  if (result.status !== 0) {
-    fail(
-      result.stderr
-      || `could not prove ${label} is an ancestor of the staged commit`,
-    )
-  }
-}
-
 function inspectRemoteRefs(runCommand, tag, commit) {
-  const githubMaster = exactRemoteRef(
-    runCommand,
-    'github',
-    'refs/heads/master',
-  )
-  const githubTag = exactRemoteRef(
-    runCommand,
-    'github',
-    `refs/tags/${tag}`,
-  )
-  const htreeMaster = exactRemoteRef(
-    runCommand,
-    'origin',
-    'refs/heads/master',
-  )
-  requireAncestor(runCommand, githubMaster, commit, 'GitHub master')
-  requireAncestor(runCommand, htreeMaster, commit, 'htree master')
-  if (githubTag && githubTag !== commit) {
-    fail(`GitHub tag ${tag} conflicts with the staged commit`)
-  }
-  return { githubMaster, githubTag, htreeMaster }
+  return inspectReleaseTagRefs({ repoRoot, tag, commit, runCommand })
 }
 
 function assertPublishedRefsExact(refs, commit) {
   if (
-    refs.githubMaster !== commit
-    || refs.githubTag !== commit
-    || refs.htreeMaster !== commit
+    refs.githubTag !== commit
+    || refs.htreeTag !== commit
   ) {
     fail('published release refs do not all resolve to the staged commit')
   }
@@ -504,7 +431,7 @@ export function publishReleaseRefs(options, dependencies = {}) {
     })
   }
 
-  if (refs.githubMaster !== commit || refs.githubTag !== commit) {
+  if (refs.githubTag !== commit) {
     replayGate()
     assertRemotePins(runCommand)
     inspectRemoteRefs(runCommand, tag, commit)
@@ -513,21 +440,19 @@ export function publishReleaseRefs(options, dependencies = {}) {
       'git',
       [
         'push',
-        '--atomic',
         '--no-follow-tags',
         'github',
-        `${commit}:refs/heads/master`,
         `${commit}:refs/tags/${tag}`,
       ],
       { cwd: repoRoot },
     )
   }
   refs = inspectRemoteRefs(runCommand, tag, commit)
-  if (refs.githubMaster !== commit || refs.githubTag !== commit) {
+  if (refs.githubTag !== commit) {
     fail('GitHub refs differ after exact publication')
   }
 
-  if (refs.htreeMaster !== commit) {
+  if (refs.htreeTag !== commit) {
     replayGate()
     assertRemotePins(runCommand)
     inspectRemoteRefs(runCommand, tag, commit)
@@ -538,7 +463,7 @@ export function publishReleaseRefs(options, dependencies = {}) {
         'push',
         '--no-follow-tags',
         'origin',
-        `${commit}:refs/heads/master`,
+        `${commit}:refs/tags/${tag}`,
       ],
       { cwd: repoRoot },
     )
@@ -558,9 +483,8 @@ export function publishReleaseRefs(options, dependencies = {}) {
     assertRemotePins(runCommand)
     refs = inspectRemoteRefs(runCommand, tag, commit)
     if (
-      refs.githubMaster !== commit
-      || refs.githubTag !== commit
-      || refs.htreeMaster !== commit
+      refs.githubTag !== commit
+      || refs.htreeTag !== commit
     ) {
       fail('release refs changed before workflow dispatch')
     }
@@ -671,8 +595,9 @@ function parseArgs(argv) {
       case '-h':
         console.log(`Usage: node scripts/publish-release-refs.mjs [options]
 
-Publishes the exact staged release refs without force, dispatches the
-exact immutable-draft workflow, and waits for that workflow to succeed.
+Publishes the exact staged release tag to GitHub and htree without changing
+branches or replacing tags, dispatches the exact immutable-draft workflow,
+and waits for that workflow to succeed.
 
 Options:
   --stage-dir DIR

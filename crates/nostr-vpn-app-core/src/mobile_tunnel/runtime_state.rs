@@ -368,6 +368,10 @@ fn mobile_runtime_state_with_tun_counters(
         local_endpoint: config.advertised_endpoint.clone(),
         advertised_endpoint: config.advertised_endpoint.clone(),
         listen_port: config.listen_port,
+        tunnel_exit_peer: mesh
+            .route_outbound_destination_peer(std::net::Ipv4Addr::UNSPECIFIED.into())
+            .filter(|route| route.via_default_route)
+            .map(|route| route.participant_pubkey.to_owned()),
         vpn_enabled: true,
         vpn_active: true,
         vpn_status: if expected_peer_count == 0 {
@@ -736,14 +740,11 @@ async fn refresh_mobile_endpoint_peers(
         .read()
         .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
         .clone();
-    let include_non_roster_transit = config.connect_to_non_roster_fips_peers
-        || config.join_requests_enabled
-        || mobile_join_request_pending(&config);
     let peers = fips_peer_configs_from_mesh(
         &config.peers,
         &config.peer_hints,
         &config.bootstrap_peers,
-        include_non_roster_transit,
+        mobile_includes_non_roster_transit(&config),
     );
     endpoint
         .update_peers(peers)

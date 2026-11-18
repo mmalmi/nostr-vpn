@@ -148,6 +148,7 @@ receipt_derived="$TMP_ROOT/receipt-derived"
 receipt_xctestrun="$receipt_derived/Build/Products/NostrVpnIos_fixture.xctestrun"
 mkdir -p \
   "$receipt_app/PlugIns/Nostr VPN Tunnel.appex" \
+  "$receipt_app/PlugIns/ShareFiles.appex" \
   "$receipt_derived/Build/Products"
 printf 'app profile\n' >"$receipt_app/embedded.mobileprovision"
 printf 'tunnel profile\n' \
@@ -155,6 +156,9 @@ printf 'tunnel profile\n' \
 printf 'app executable\n' >"$receipt_app/Nostr VPN"
 printf 'tunnel executable\n' \
   >"$receipt_app/PlugIns/Nostr VPN Tunnel.appex/Nostr VPN Tunnel"
+printf 'share profile\n' \
+  >"$receipt_app/PlugIns/ShareFiles.appex/embedded.mobileprovision"
+printf 'share executable\n' >"$receipt_app/PlugIns/ShareFiles.appex/ShareFiles"
 python3 - "$info" "$installed" "$device" "$receipt_xctestrun" "$app_head" <<'PY'
 import json
 import plistlib

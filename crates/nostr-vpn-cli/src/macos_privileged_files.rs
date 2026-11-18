@@ -43,7 +43,7 @@ pub(crate) fn validate_artifact(path: &Path) -> Result<()> {
     open_artifact(path).map(|_| ())
 }
 
-fn open_artifact(path: &Path) -> Result<File> {
+pub(crate) fn open_artifact(path: &Path) -> Result<File> {
     protected_directory(
         path.parent().context("system artifact has no parent")?,
         false,

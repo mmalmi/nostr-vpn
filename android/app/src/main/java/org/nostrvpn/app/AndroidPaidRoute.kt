@@ -235,7 +235,7 @@ internal fun PaidRouteMarketCard(
                 HorizontalDivider()
                 Text("Your Paid Internet", style = MaterialTheme.typography.titleSmall)
                 if (market.sessions.isEmpty()) {
-                    Text("No seller selected", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("No sessions yet", color = Muted, style = MaterialTheme.typography.bodySmall)
                 } else {
                     market.sessions.forEach { session ->
                         PaidRouteSessionRow(session, market.lastPaymentAction.envelopeJson, dispatch)
@@ -661,7 +661,7 @@ private fun PaidRouteOfferRow(
     offer: PaidRouteOfferState,
     dispatch: (JSONObject) -> Unit,
 ) {
-    val active = state.internetSource == "paid_manual" && state.exitNode == offer.sellerNpub
+    val selected = state.internetSource == "paid_manual" && state.exitNode == offer.sellerNpub
     val compatibleMint = offer.priceMsatPerGb == 0L || offer.acceptedMints.any { accepted ->
         state.paidRouteMarket.wallet.mints.any { it.url == accepted }
     }
@@ -693,10 +693,10 @@ private fun PaidRouteOfferRow(
             }
         }
             Button(
-                enabled = offer.key.isNotBlank() && compatibleMint && !active && offer.personalRating >= 0,
+                enabled = offer.key.isNotBlank() && compatibleMint && !selected && offer.personalRating >= 0,
                 onClick = { dispatch(NativeActions.buyPaidRouteOffer(offer.key)) },
             ) {
-                Text(if (active) "Active" else "Connect")
+                Text(if (selected) "Selected" else "Connect")
             }
         }
         if (offer.hasRating) { Text("Rating ${offer.ratingScore}", style = MaterialTheme.typography.bodySmall, color = Muted) }

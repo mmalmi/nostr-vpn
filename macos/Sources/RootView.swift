@@ -191,6 +191,12 @@ struct RootView: View {
                 manager.paidExitChooserRequested = false
             }
         }
+        .onChange(of: manager.fileTransfersRequested, initial: true) { _, requested in
+            if requested {
+                selectedSidebarItem = .devices
+                manager.fileTransfersRequested = false
+            }
+        }
         .onChange(of: manager.sellingSettingsRequested, initial: true) { _, requested in
             if requested {
                 selectedSidebarItem = .sharing

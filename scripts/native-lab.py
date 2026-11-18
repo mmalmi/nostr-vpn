@@ -463,6 +463,31 @@ def alive(pid):
         return False
 
 
+def existing_reservation(resource, stale_after):
+    """Inspect a reservation without taking ownership or reclaiming it."""
+    path = lock_path(resource)
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    owner_path = path / "owner.json"
+    try:
+        owner = json.loads(owner_path.read_text(encoding="utf-8"))
+        if not isinstance(owner, dict):
+            owner = {}
+    except (OSError, ValueError):
+        owner = {}
+    quarantine = read_quarantine(path)
+    local_dead = owner.get("host") == socket.gethostname() and not alive(owner.get("pid"))
+    return {
+        **owner,
+        "resource": resource,
+        "quarantined": quarantine is not None or owner.get("quarantined") is True,
+        "recovery_required": local_dead or not owner,
+        "stale": time.time() - metadata.st_mtime >= stale_after,
+    }
+
+
 def acquire(resource, stale_after, owner_context=None):
     path = lock_path(resource)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -470,20 +495,7 @@ def acquire(resource, stale_after, owner_context=None):
     try:
         path.mkdir()
     except FileExistsError:
-        try:
-            owner = json.loads(owner_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            owner = {}
-        quarantine = read_quarantine(path)
-        local_dead = owner.get("host") == socket.gethostname() and not alive(owner.get("pid"))
-        recovery_required = local_dead or not owner
-        return None, {
-            **owner,
-            "resource": resource,
-            "quarantined": quarantine is not None or owner.get("quarantined") is True,
-            "recovery_required": recovery_required,
-            "stale": time.time() - path.stat().st_mtime >= stale_after,
-        }
+        return None, existing_reservation(resource, stale_after) or {"resource": resource}
     context = owner_context or {}
     owner = {
         "schemaVersion": 1,
@@ -1240,7 +1252,10 @@ def run_managed(args):
                 )
                 return INFRASTRUCTURE_UNAVAILABLE
             locks.append((primary, args.resource))
-            checks = health_report(args.health)
+            reserving_checks = health_report(args.health)
+            check_specs = getattr(args, "check", [])
+            readiness_checks = health_report(check_specs) if check_specs else []
+            checks = reserving_checks + readiness_checks
             if deferred.received is not None:
                 outcome = cancelled_outcome(deferred)
             else:
@@ -1259,9 +1274,9 @@ def run_managed(args):
                 return INFRASTRUCTURE_UNAVAILABLE
             if outcome is None:
                 resources = sorted({
-                    item for check in checks
+                    item for check in reserving_checks
                     if (item := health_resource(check)) and item != args.resource
-                })
+                } | (set(getattr(args, "reserve", [])) - {args.resource}))
                 for resource in resources:
                     lock, owner = acquire(resource, args.stale_after, owner_context)
                     if deferred.received is not None:
@@ -1283,6 +1298,32 @@ def run_managed(args):
                         )
                         return INFRASTRUCTURE_UNAVAILABLE
                     locks.append((lock, resource))
+            if outcome is None:
+                # Migration barrier: a readiness-only job must not silently
+                # bypass an already-held legacy machine reservation. This is
+                # a preflight snapshot, not an ongoing shared host lease.
+                owned = {resource for _path, resource in locks}
+                for check in readiness_checks:
+                    resource = health_resource(check)
+                    if resource is None or resource in owned:
+                        continue
+                    owner = existing_reservation(resource, args.stale_after)
+                    if deferred.received is not None:
+                        outcome = cancelled_outcome(deferred)
+                        break
+                    if owner is not None:
+                        write_report(
+                            {
+                                "status": "infrastructure_unavailable",
+                                "category": "resource_busy",
+                                "resource": args.resource,
+                                "busy_resource": resource,
+                                "owner": owner,
+                                "exit_code": INFRASTRUCTURE_UNAVAILABLE,
+                            },
+                            args.result,
+                        )
+                        return INFRASTRUCTURE_UNAVAILABLE
             if outcome is None:
                 try:
                     environment = child_environment(checks, args.allocation_env)
@@ -1338,6 +1379,7 @@ def run_managed(args):
                 "reserved_resources": sorted(
                     resource for _path, resource in locks if resource != args.resource
                 ),
+                "readiness_checks": check_specs,
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "exit_code": code,
                 "child_exit_code": outcome["child_exit_code"],
@@ -1365,6 +1407,20 @@ def run_managed(args):
                     shutil.rmtree(lock, ignore_errors=True)
 
 
+def readiness_spec(value):
+    if value.partition(":")[0] not in {"local", "ssh", "command", "env", "docker"}:
+        raise argparse.ArgumentTypeError(
+            "--check accepts host/tool readiness only; use --health for reserved devices"
+        )
+    return value
+
+
+def reservation_name(value):
+    if not value.strip():
+        raise argparse.ArgumentTypeError("resource name must not be empty")
+    return value
+
+
 def parser():
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="subcommand", required=True)
@@ -1374,6 +1430,14 @@ def parser():
     run = commands.add_parser("run")
     run.add_argument("--resource", required=True)
     run.add_argument("--health", action="append", default=[])
+    run.add_argument(
+        "--check", action="append", default=[], type=readiness_spec,
+        help="check host/tool readiness without reserving the machine; respect existing host reservations",
+    )
+    run.add_argument(
+        "--reserve", action="append", default=[], type=reservation_name,
+        help="reserve an additional exact shared-resource key (repeatable)",
+    )
     run.add_argument("--allocation-env", action="append", default=[])
     run.add_argument("--result")
     run.add_argument("--timeout", type=int, default=0)

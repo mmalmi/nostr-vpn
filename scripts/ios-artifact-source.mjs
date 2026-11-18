@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { requireReceiptSource } from './release-artifact-provenance-lib.mjs'
 
 // Export and upload must validate against the same original artifact source.
@@ -52,4 +53,25 @@ export function withIosArtifactSource({ repoRoot, receipt, commit, tree, env }, 
     if (worktreeAdded) git(['worktree', 'remove', sourceRoot])
     rmSync(temporaryRoot, { recursive: true, force: true })
   }
+}
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  const env = process.env
+  const repoRoot = process.cwd()
+  if (process.argv[2] !== 'build-mobile-join' || env.NVPN_RELEASE_JOIN_BUILD_ONLY !== '1') {
+    throw new Error('Expected a build-only mobile join invocation.')
+  }
+  const receipt = JSON.parse(readFileSync(env.NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT, 'utf8'))
+  withIosArtifactSource({
+    repoRoot, receipt, commit: env.NVPN_EXPECTED_APP_GIT_SHA,
+    tree: env.NVPN_EXPECTED_APP_GIT_TREE, env,
+  }, ({ cwd, env: scoped }) => {
+    const result = spawnSync(join(repoRoot, 'scripts/mobile-release-join-e2e.sh'), ['--prepare-ios-variant'], {
+      cwd, stdio: 'inherit', env: {
+        ...scoped, NVPN_EXPECTED_APP_GIT_SHA: receipt.appGitSha,
+        NVPN_EXPECTED_APP_GIT_TREE: receipt.appGitTree,
+      },
+    })
+    if (result.status !== 0) throw new Error('Mobile join artifact preparation failed.')
+  })
 }

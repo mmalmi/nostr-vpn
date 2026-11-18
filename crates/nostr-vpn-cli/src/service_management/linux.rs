@@ -249,13 +249,7 @@ pub(crate) fn linux_service_executable_path_from_unit_contents(unit: &str) -> Op
 }
 
 #[cfg(any(target_os = "linux", test))]
-pub(crate) fn linux_service_config_path_from_unit_contents(unit: &str) -> Option<String> {
-    let command = unit
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("ExecStart="))?;
-    let value = command.split_once(" --config ")?.1.trim_start();
-    systemd_first_argument(value)
-}
+pub(crate) use nostr_vpn_core::platform_paths::linux_service_config_path_from_unit_contents;
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_service_unit_matches_config(unit: &str, config_path: &Path) -> bool {
@@ -264,27 +258,6 @@ pub(crate) fn linux_service_unit_matches_config(unit: &str, config_path: &Path) 
         .is_some_and(|installed| installed == identity.display().to_string())
 }
 
-#[cfg(any(target_os = "linux", test))]
-fn systemd_first_argument(value: &str) -> Option<String> {
-    let Some(quoted) = value.strip_prefix('"') else {
-        return value.split_whitespace().next().map(ToOwned::to_owned);
-    };
-    let mut parsed = String::new();
-    let mut escaped = false;
-    for character in quoted.chars() {
-        if escaped {
-            parsed.push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character == '"' {
-            return Some(parsed.replace("%%", "%").replace("$$", "$"));
-        } else {
-            parsed.push(character);
-        }
-    }
-    None
-}
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_service_unit_content(

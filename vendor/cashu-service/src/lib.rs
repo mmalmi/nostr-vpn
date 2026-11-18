@@ -46,4 +46,4 @@ pub mod spilman_receiver;
 pub use spilman_receiver::*;
 
 #[cfg(feature = "spilman-wallet-http")]
-pub use cdk_spilman::mint_http::{check_mint_response, send_mint_request, MintRetryAfter};
+pub use cdk_spilman::mint_http::{check_mint_response, send_mint_request, MintRequestRejected, MintRetryAfter};

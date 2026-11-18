@@ -72,7 +72,9 @@ impl PaidRouteStore {
             })
             .and_then(|record| self.channels.get(&record.session.payment.channel_id))
             .map_or(0, |channel| {
-                if self.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat) {
+                if channel.mint_url.is_empty()
+                    || self.buyer_mint_needs_funds(&channel.mint_url, channel.payment.capacity_sat)
+                {
                     u64::MAX
                 } else {
                     self.buyer_mint_failure_retry_at(&channel.mint_url)

@@ -43,10 +43,21 @@ fn mobile_path_refresh_apps() -> [AppConfig; 3] {
 
 fn mobile_path_refresh_config(app: &AppConfig) -> MobileTunnelConfig {
     let mut config = MobileTunnelConfig::from_app(app).expect("mobile config");
-    config.listen_port = available_udp_port();
+    config.listen_port = 0;
     config.share_local_candidates = false;
     config.peer_hints.clear();
     config
+}
+
+async fn mobile_path_listen_port(endpoint: &FipsEndpoint) -> u16 {
+    endpoint
+        .bound_udp_listen_addrs()
+        .await
+        .expect("bound UDP listeners")
+        .into_iter()
+        .find(std::net::SocketAddr::is_ipv4)
+        .expect("bound IPv4 listener")
+        .port()
 }
 
 async fn mobile_path_peer(endpoint: &FipsEndpoint, participant: &str) -> Option<FipsEndpointPeer> {
@@ -163,12 +174,25 @@ fn run_mobile_path_refresh_recovery(background_timer: bool) {
                 let [server_app, phone_app, healthy_app] = mobile_path_refresh_apps();
                 let server_key = server_app.own_nostr_pubkey_hex().expect("server key");
                 let healthy_key = healthy_app.own_nostr_pubkey_hex().expect("healthy key");
-                let server_config = mobile_path_refresh_config(&server_app);
+                let mut server_config = mobile_path_refresh_config(&server_app);
                 let mut phone_config = mobile_path_refresh_config(&phone_app);
                 let healthy_config = mobile_path_refresh_config(&healthy_app);
                 assert_ne!(phone_config.local_address, server_config.local_address);
                 assert_ne!(phone_config.local_address, healthy_config.local_address);
                 assert_ne!(server_config.local_address, healthy_config.local_address);
+                let mut server = Box::pin(MobileTunnel::start_async(
+                    server_config.clone(),
+                    server_app.clone(),
+                ))
+                .await
+                .expect("server");
+                let mut healthy = Box::pin(MobileTunnel::start_async(healthy_config, healthy_app))
+                    .await
+                    .expect("healthy peer");
+                // Use ports already owned by the live endpoints, so parallel
+                // tests cannot claim them between reservation and startup.
+                // Retain the server's actual port for its later restart.
+                server_config.listen_port = mobile_path_listen_port(&server.endpoint).await;
                 // Only the phone can dial. A restarted server cannot repair the
                 // test by initiating its own reverse connection to the phone.
                 add_direct_mobile_peer_hint(
@@ -179,17 +203,8 @@ fn run_mobile_path_refresh_recovery(background_timer: bool) {
                 add_direct_mobile_peer_hint(
                     &mut phone_config,
                     &healthy_key,
-                    healthy_config.listen_port,
+                    mobile_path_listen_port(&healthy.endpoint).await,
                 );
-                let mut server = Box::pin(MobileTunnel::start_async(
-                    server_config.clone(),
-                    server_app.clone(),
-                ))
-                .await
-                .expect("server");
-                let mut healthy = Box::pin(MobileTunnel::start_async(healthy_config, healthy_app))
-                    .await
-                    .expect("healthy peer");
                 let mut phone =
                     Box::pin(MobileTunnel::start_async(phone_config.clone(), phone_app))
                         .await
@@ -513,6 +528,102 @@ fn mobile_path_refresh_leaves_pending_attempt_untouched() {
                     pending.direct_probe_retry_count
                 );
                 shutdown_started_mobile_tunnel(phone).await;
+            }));
+    });
+}
+
+#[test]
+fn mobile_peer_refresh_preserves_transit_retry_ownership() {
+    run_desktop_mobile_join_test("mobile-transit-refresh", || {
+        RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+            .block_on(Box::pin(async {
+                for reason in [
+                    "bootstrap",
+                    "websocket",
+                    "device-approval",
+                    "local-confirmation",
+                    "join-request",
+                    "join-listener",
+                    "open-transit",
+                ] {
+                    let peer = Keys::generate().public_key().to_hex();
+                    // A missing carrier creates a real pending FIPS retry,
+                    // independent of handshake timing or external services.
+                    let hints = vec![FipsPeerAddressHint {
+                        addr: "tcp://127.0.0.1:1".to_string(),
+                        seen_at_ms: None,
+                        priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+                    }];
+                    let mut config = MobileTunnelConfig {
+                        identity_nsec: Keys::generate()
+                            .secret_key()
+                            .to_bech32()
+                            .expect("local identity"),
+                        ..empty_config()
+                    };
+                    if reason == "bootstrap" {
+                        config.bootstrap_peers.insert(peer.clone(), hints.clone());
+                    } else {
+                        config.peer_hints.insert(peer.clone(), hints.clone());
+                    }
+                    match reason {
+                        "bootstrap" => {}
+                        "websocket" => {
+                            config.websocket_seed_urls = vec!["ws://127.0.0.1:1".to_string()];
+                        }
+                        "device-approval" => config.device_approval_pending = true,
+                        "local-confirmation" => config.local_identity_confirmation_pending = true,
+                        "join-request" => {
+                            config.pending_join_request_recipient = peer.clone();
+                            config.pending_join_requested_at = unix_timestamp();
+                        }
+                        "join-listener" => config.join_requests_enabled = true,
+                        "open-transit" => config.connect_to_non_roster_fips_peers = true,
+                        _ => unreachable!(),
+                    }
+                    let endpoint = bind_local_mobile_endpoint("mobile-transit-refresh", &config).await;
+                    let state = Arc::new(RwLock::new(config));
+                    assert!(
+                        mobile_path_peer(&endpoint, &peer)
+                            .await
+                            .is_some_and(|peer| peer.direct_probe_pending),
+                        "startup must own the {reason} retry"
+                    );
+                    refresh_mobile_endpoint_peers(&endpoint, &state)
+                        .await
+                        .expect("refresh endpoint peers");
+                    assert!(
+                        mobile_path_peer(&endpoint, &peer)
+                            .await
+                            .is_some_and(|peer| peer.direct_probe_pending),
+                        "peer refresh must retain the {reason} retry"
+                    );
+                    {
+                        let mut config = state.write().expect("config");
+                        config.peer_hints.insert(peer.clone(), hints);
+                        config.bootstrap_peers.clear();
+                        config.websocket_seed_urls.clear();
+                        config.device_approval_pending = false;
+                        config.local_identity_confirmation_pending = false;
+                        config.pending_join_request_recipient.clear();
+                        config.pending_join_requested_at = 0;
+                        config.join_requests_enabled = false;
+                        config.connect_to_non_roster_fips_peers = false;
+                    }
+                    refresh_mobile_endpoint_peers(&endpoint, &state)
+                        .await
+                        .expect("apply transit opt-out");
+                    assert!(
+                        !mobile_path_peer(&endpoint, &peer)
+                            .await
+                            .is_some_and(|peer| peer.direct_probe_pending),
+                        "a retained hint must not override transit opt-out"
+                    );
+                    endpoint.shutdown().await.expect("endpoint shutdown");
+                }
             }));
     });
 }

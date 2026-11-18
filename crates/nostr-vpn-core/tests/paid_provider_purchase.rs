@@ -49,6 +49,8 @@ fn multi_mint_provider_link_uses_the_buyers_approved_default() {
         ..Default::default()
     };
     config.pricing.price_msat_per_gb = 100_000;
+    // Require payment before routing so this exercises the buyer's mint approval.
+    config.channel.free_probe_units = 0;
     config.channel.accepted_mints = vec![
         "https://a-mint.example".into(),
         "https://z-mint.example".into(),

@@ -216,6 +216,8 @@ COUNTRY = os.environ.get('NVPN_PROBE_COUNTRY', 'FI')
 ASN = int(os.environ.get('NVPN_PROBE_ASN', '64500'))
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+
     def log_message(self, fmt, *args):
         sys.stderr.write(fmt % args + '\n')
 
@@ -248,14 +250,12 @@ class Handler(BaseHTTPRequestHandler):
                 count = 1024
             self.send_body(b'0' * count, 'application/octet-stream')
             return
-        self.send_response(404)
-        self.end_headers()
+        self.send_error(404)
 
     def do_POST(self):
         parsed = urlparse(self.path)
         if parsed.path != '/up':
-            self.send_response(404)
-            self.end_headers()
+            self.send_error(404)
             return
         length = int(self.headers.get('Content-Length', '0') or '0')
         if length:

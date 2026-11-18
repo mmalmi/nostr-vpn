@@ -18,7 +18,7 @@ jobs:
     name: Release tooling contracts
     # Several harnesses compile tiny ownership fixtures with xcrun. Linux import
     # contracts run independently on their native platform below.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -155,13 +155,13 @@ jobs:
         run: npm ci && npm run check
 
   macos-sdk-compat:
-    name: Xcode 15 macOS compatibility
-    runs-on: macos-14
+    name: Xcode 16 macOS compatibility
+    runs-on: macos-15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Type-check scanner with Xcode 15.4
+      - name: Type-check scanner with Xcode 16.0
         env:
-          DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
+          DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
         run: ./scripts/check-macos-swift-sdk-compat.sh
