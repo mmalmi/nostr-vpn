@@ -983,5 +983,3 @@ fn import_wireguard_exit_config_file(app: &AppRef, button: &gtk::Button) {
         }
     });
 }
-
-/// The install step, its detail and actions, as the core words them.

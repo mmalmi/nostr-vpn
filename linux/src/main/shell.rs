@@ -225,7 +225,7 @@ fn build_update_stripe(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) 
     parent.append(&row);
 }
 
-/// A determinate bar while the size is known, otherwise a spinner.
+/// The install step, its detail and actions, as the core words them.
 fn update_progress_row(app: &AppRef, update: &updater::UpdateState) -> gtk::Box {
     let view = &update.view;
     let column = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -252,6 +252,7 @@ fn update_progress_row(app: &AppRef, update: &updater::UpdateState) -> gtk::Box 
     column
 }
 
+/// A determinate bar while the size is known, otherwise a spinner.
 fn update_progress_widget(view: &DesktopUpdateView) -> gtk::Widget {
     if let Some(progress) = view.progress {
         let bar = gtk::ProgressBar::new();
