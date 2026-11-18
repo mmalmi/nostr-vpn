@@ -5,6 +5,23 @@ pub enum DeepLink {
     Debug(DebugAction),
 }
 
+/// Deep links are untrusted (any webpage can fire the scheme): join
+/// requests must wait for confirmation, debug links apply directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeepLinkRoute {
+    ConfirmJoinRequest(String),
+    #[cfg(debug_assertions)]
+    Debug(DebugAction),
+}
+
+pub fn route(link: DeepLink) -> DeepLinkRoute {
+    match link {
+        DeepLink::JoinRequest(request) => DeepLinkRoute::ConfirmJoinRequest(request),
+        #[cfg(debug_assertions)]
+        DeepLink::Debug(action) => DeepLinkRoute::Debug(action),
+    }
+}
+
 #[cfg(debug_assertions)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebugAction {
@@ -124,6 +141,23 @@ mod tests {
             Some(DeepLink::JoinRequest(
                 "nvpn://join-request/payload".to_string()
             ))
+        );
+    }
+
+    #[test]
+    fn join_request_links_route_to_confirmation() {
+        assert_eq!(
+            route(parse("nvpn://join-request/payload").unwrap()),
+            DeepLinkRoute::ConfirmJoinRequest("nvpn://join-request/payload".to_string())
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn debug_links_route_directly_to_debug_actions() {
+        assert_eq!(
+            route(parse("nvpn://debug/tick").unwrap()),
+            DeepLinkRoute::Debug(DebugAction::Tick)
         );
     }
 

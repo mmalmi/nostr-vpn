@@ -34,15 +34,14 @@ extension AppManager {
 
     func handle(url: URL) {
         let raw = url.absoluteString
+        // Any webpage can fire these links, so stage them for confirmation.
         if url.scheme?.lowercased() == "nvpn", url.host?.lowercased() == "paid-exit" {
             paidExitChooserRequested = true
-            guard openingPaidExitLink != raw else { return }
-            pendingPaidExitLink = raw
-            openPendingPaidExitLink()
+            deepLinkPaidExit = raw
             return
         }
         if raw.lowercased().hasPrefix("nvpn://join-request") {
-            importJoinRequest(raw)
+            deepLinkJoinRequest = raw
             return
         }
 

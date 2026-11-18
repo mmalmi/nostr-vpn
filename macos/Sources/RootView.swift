@@ -203,6 +203,22 @@ struct RootView: View {
                 manager.sellingSettingsRequested = false
             }
         }
+        .onChange(of: manager.deepLinkPaidExit, initial: true) { _, link in
+            guard let link else { return }
+            manager.deepLinkPaidExit = nil
+            // Defer past the first syncDrafts so the staged link survives.
+            DispatchQueue.main.async {
+                manualPaidExitProvider = link
+            }
+        }
+        .onChange(of: manager.deepLinkJoinRequest, initial: true) { _, link in
+            guard let link else { return }
+            manager.deepLinkJoinRequest = nil
+            guard let network = shownNetwork, network.enabled else {
+                return
+            }
+            stageJoinRequest(link, network: network)
+        }
         .onChange(of: state.rev) { _, _ in
             syncDrafts()
             normalizeSidebarSelection()
@@ -229,19 +245,6 @@ struct RootView: View {
         .sheet(isPresented: $addDevicePresented) {
             if let network = shownNetwork, network.enabled {
                 addDeviceSheetContent(network)
-                    .alert("Add device?", isPresented: pendingJoinRequestPresented, presenting: pendingJoinRequest) { pending in
-                        Button("Cancel", role: .cancel) {
-                            pendingJoinRequest = nil
-                        }
-                        Button("Add") {
-                            manager.importJoinRequest(pending.request)
-                            joinRequestInput = ""
-                            pendingJoinRequest = nil
-                            addDevicePresented = false
-                        }
-                    } message: { pending in
-                        Text("Add the device from this join request to \(pending.networkName)?")
-                    }
             }
         }
         .alert("Action failed", isPresented: actionErrorPresented) {
@@ -250,6 +253,19 @@ struct RootView: View {
             }
         } message: {
             Text(manager.actionError)
+        }
+        .alert("Add device?", isPresented: pendingJoinRequestPresented, presenting: pendingJoinRequest) { pending in
+            Button("Cancel", role: .cancel) {
+                pendingJoinRequest = nil
+            }
+            Button("Add") {
+                manager.importJoinRequest(pending.request)
+                joinRequestInput = ""
+                pendingJoinRequest = nil
+                addDevicePresented = false
+            }
+        } message: { pending in
+            Text("Add the device from this join request to \(pending.networkName)?")
         }
     }
 
