@@ -6,7 +6,7 @@ import UserNotifications
 /// an old file inode, without increasing the app's expensive core refresh rate.
 final class FileTransferObservation: @unchecked Sendable {
     private let queue = DispatchQueue(label: "nvpn.files.observe", qos: .utility)
-    private var sources: [DispatchSourceFileSystemObject] = []
+    private var source: DispatchSourceFileSystemObject?
     private var work: DispatchWorkItem?
     private var root: URL?
     private var watchingTransfers = false
@@ -21,32 +21,76 @@ final class FileTransferObservation: @unchecked Sendable {
             guard let self, self.root != supportDir else { return }
             self.clear()
             self.root = supportDir
-            self.watch(supportDir)
-            self.read()
+            self.watchDirectory()
         }
     }
     func stop() { queue.async { [weak self] in self?.clear() } }
     private func clear() {
+        stopWatching()
+        root = nil
+    }
+    private func stopWatching() {
         generation += 1
         work?.cancel(); work = nil
-        sources.forEach { $0.cancel() }; sources.removeAll()
-        root = nil; watchingTransfers = false
+        source?.cancel(); source = nil
+        watchingTransfers = false
         lastIdentity = nil
     }
-    private func watch(_ directory: URL) {
-        let fd = open(directory.path, O_EVTONLY | O_CLOEXEC | O_NOFOLLOW)
+    private func watchDirectory() {
+        guard let root else { return }
+        let transfers = root.appendingPathComponent("file-transfers", isDirectory: true)
+        let flags = O_EVTONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+        var fd = open(transfers.path, flags)
+        let foundTransfers = fd >= 0
+        if !foundTransfers {
+            if source != nil, !watchingTransfers { return }
+            fd = open(root.path, flags)
+        }
         guard fd >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: queue)
-        source.setEventHandler { [weak self] in self?.scheduleRead() }
-        source.setCancelHandler { close(fd) }
-        sources.append(source)
-        source.resume()
+        stopWatching()
+        let watchedFD = fd
+        let expected = generation
+        let invalidated: DispatchSource.FileSystemEvent = [.rename, .delete, .revoke]
+        let watcher = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: watchedFD, eventMask: invalidated.union(.write), queue: queue
+        )
+        source = watcher
+        watchingTransfers = foundTransfers
+        watcher.setRegistrationHandler { [weak self] in
+            guard let self, self.generation == expected else { return }
+            // A replacement between open and registration may have sent its rename already.
+            var opened = stat(), current = stat()
+            let path = foundTransfers ? transfers.path : root.path
+            if fstat(watchedFD, &opened) != 0 || lstat(path, &current) != 0
+                || opened.st_dev != current.st_dev || opened.st_ino != current.st_ino {
+                self.stopWatching()
+                self.watchDirectory()
+            } else if foundTransfers {
+                self.read()
+            } else {
+                self.watchDirectory()
+            }
+        }
+        watcher.setEventHandler { [weak self] in
+            guard let self, self.generation == expected, let events = self.source?.data else { return }
+            if !events.intersection(invalidated).isEmpty {
+                self.stopWatching()
+                self.watchDirectory()
+            } else if foundTransfers {
+                self.scheduleRead()
+            } else {
+                self.watchDirectory()
+            }
+        }
+        watcher.setCancelHandler { close(watchedFD) }
+        watcher.resume()
     }
     private func scheduleRead() {
-        work?.cancel()
+        guard work == nil else { return }
         let expected = generation
         let next = DispatchWorkItem { [weak self] in
             guard let self, self.generation == expected else { return }
+            self.work = nil
             self.read()
         }
         work = next
@@ -55,10 +99,6 @@ final class FileTransferObservation: @unchecked Sendable {
     private func read() {
         guard let root else { return }
         let directory = root.appendingPathComponent("file-transfers", isDirectory: true)
-        if !watchingTransfers, FileManager.default.fileExists(atPath: directory.path) {
-            watch(directory)
-            watchingTransfers = true
-        }
         let fd = open(directory.appendingPathComponent("state.json").path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
         guard fd >= 0 else { return }
         let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
@@ -73,7 +113,7 @@ final class FileTransferObservation: @unchecked Sendable {
         lastIdentity = identity
         onChange(rows)
     }
-    deinit { sources.forEach { $0.cancel() }; work?.cancel() }
+    deinit { source?.cancel(); work?.cancel() }
 }
 
 /// The iOS tunnel is the only iOS notification producer, so alerts still work

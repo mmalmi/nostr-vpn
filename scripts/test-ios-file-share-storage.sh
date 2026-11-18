@@ -15,10 +15,56 @@ import UniformTypeIdentifiers
         precondition(condition, message)
     }
 
+    static func checkFileObservation(in root: URL) throws {
+        let manager = FileManager.default
+        let support = root.appendingPathComponent("observation")
+        let directory = support.appendingPathComponent("file-transfers")
+        try manager.createDirectory(at: support, withIntermediateDirectories: true)
+        let ready = DispatchSemaphore(value: 0)
+        let offer = DispatchSemaphore(value: 0)
+        let replacement = DispatchSemaphore(value: 0)
+        let received = DispatchSemaphore(value: 0)
+        let observer = FileTransferObservation { rows in
+            switch rows.first?.id {
+            case "ready": ready.signal()
+            case "offer": offer.signal()
+            case "replacement": replacement.signal()
+            case "received": received.signal()
+            default: break
+            }
+        }
+        func writeState(_ id: String) throws {
+            let row: [String: Any] = [
+                "id": id, "peerNpub": "peer", "peerName": "Device", "isSender": false,
+                "files": [], "status": "offered", "transferredBytes": 0, "totalBytes": 0,
+            ]
+            try JSONSerialization.data(withJSONObject: [row])
+                .write(to: directory.appendingPathComponent("state.json"), options: .atomic)
+        }
+        observer.start(in: support)
+        defer { observer.stop() }
+        try manager.createDirectory(at: directory, withIntermediateDirectories: false)
+        try writeState("ready")
+        require(ready.wait(timeout: .now() + 3) == .success, "The initial transfer state was missed")
+        try writeState("offer")
+        let deadline = DispatchTime.now() + 2
+        while offer.wait(timeout: .now() + .milliseconds(25)) != .success {
+            require(DispatchTime.now() < deadline, "Unrelated writes delayed the offer")
+            try Data([1]).write(to: support.appendingPathComponent("status"), options: .atomic)
+        }
+        try manager.moveItem(at: directory, to: support.appendingPathComponent("old"))
+        try manager.createDirectory(at: directory, withIntermediateDirectories: false)
+        try writeState("replacement")
+        require(replacement.wait(timeout: .now() + 3) == .success, "Replacement directory was missed")
+        try writeState("received")
+        require(received.wait(timeout: .now() + 3) == .success, "New directory was not observed")
+    }
+
     static func main() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        try checkFileObservation(in: root)
         let support = root.appendingPathComponent("shared")
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         var peers = [FileSharePeer(npub: "fixture-peer", name: "Phone", reachable: true)]
@@ -102,5 +148,7 @@ import UniformTypeIdentifiers
 }
 SWIFT
 
-xcrun swiftc -parse-as-library "$ROOT/ios/Shared/FileTransferStorage.swift" "$TEST_DIR/check.swift" -o "$TEST_DIR/check"
+xcrun swiftc -parse-as-library "$ROOT/ios/Shared/FileTransferStorage.swift" \
+  "$ROOT/ios/Shared/FileTransferPresentation.swift" "$ROOT/ios/Shared/FileTransferObservation.swift" \
+  "$TEST_DIR/check.swift" -o "$TEST_DIR/check"
 "$TEST_DIR/check"
