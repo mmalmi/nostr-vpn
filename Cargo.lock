@@ -4427,9 +4427,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-file-transfer"
-version = "0.1.7"
+version = "0.1.9-core123.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb2a357c1975069db052a763adfe6a0144deb507c42b76a2024247f19b3e37f2"
+checksum = "42448e815681ff1de488fcb4d8788b8053513fcbdc50c2a114346afd4a906356"
 dependencies = [
  "flume",
  "libc",

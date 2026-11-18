@@ -59,8 +59,8 @@ fi
 # for these two lockfiles. Both resolve libsqlite3-sys 0.39.1. Keep the SQLite
 # vulnerability in the audit so a change to the bundled library fails closed.
 if [[ "$(cat ios/app-store-build-number)" == 4001033 &&
-      "$(git hash-object Cargo.lock)" == 31371799b7ed9f542b906c570d89c23cc7f061fc &&
-      "$(git hash-object linux/Cargo.lock)" == 8c21ac6740559aa10945be09a0a894947dfd0a41 ]]; then
+      "$(git hash-object Cargo.lock)" == 61f3f80ccb8dfd87d1285e63b3ad8aede378099b &&
+      "$(git hash-object linux/Cargo.lock)" == ce0a8350cf44569af21daacce77cf799573d1feb ]]; then
   audit_args+=(--ignore RUSTSEC-2026-0543 --ignore RUSTSEC-2026-0441)
 fi
 
