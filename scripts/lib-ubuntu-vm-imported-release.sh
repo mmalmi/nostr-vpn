@@ -287,7 +287,9 @@ JS_SOURCE
     python3 "$release_root/scripts/verify-cargo-path-patch-lock.py" \
       --manifest-specs "$NVPN_FIPS_REPO_PATH"
   )
-  [[ "${#fips_patch_packages[@]}" == 8 ]] || {
+  # The frozen product may carry the legacy verifier CLI. Its committed-lock
+  # verification below validates every name/version after this shape check.
+  [[ "${#fips_patch_packages[@]}" == 8 || "${#fips_patch_packages[@]}" == 9 ]] || {
     ubuntu_vm_import_error "exact FIPS patch package set is incomplete"
     return 1
   }
@@ -408,7 +410,7 @@ GUEST
     "$harness_sha" "$harness_tree" <<'GUEST'
 set -euo pipefail
 trap 'printf "Ubuntu VM import verification failed at remote line %s\n" "$LINENO" >&2' ERR
-[[ "$#" == 38 ]]
+[[ "$#" == 38 || "$#" == 39 ]]
 remote_dir="$1"
 guest_repo="$2"
 app_sha="$3"
@@ -422,8 +424,11 @@ root_realized_lock_sha="${10}"
 linux_lock_sha="${11}"
 linux_realized_lock_sha="${12}"
 target="${13}"
-fips_patch_packages=("${@:14:8}")
-shift 21
+# Thirteen source fields precede the exact package set; seventeen artifact
+# fields follow it. Both the legacy eight and current nine are verified below.
+fips_package_count=$(($# - 30))
+fips_patch_packages=("${@:14:fips_package_count}")
+shift $((13 + fips_package_count))
 app_hash="$1"
 app_size="$2"
 cli_hash="$3"

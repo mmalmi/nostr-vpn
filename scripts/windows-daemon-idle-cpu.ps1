@@ -71,9 +71,12 @@ function Wait-NvpnSeconds([double]$Seconds) {
   }
 }
 
+$originalProgramData = $env:ProgramData
 try {
   if (!(Test-Path $Bin)) { throw "nvpn.exe not found: $Bin" }
   New-Item -ItemType Directory -Force -Path $ArtifactRoot, $Fixture | Out-Null
+  # Give this test daemon its own state and instance lock alongside the installed service.
+  $env:ProgramData = $Fixture
   Invoke-Nvpn @('init', '--config', $Config, '--force') | Out-Null
   Invoke-Nvpn @('init', '--config', $PeerConfig, '--force') | Out-Null
   $ownNpub = Get-Npub $Config
@@ -134,6 +137,7 @@ try {
   if ((Test-Path $Bin) -and (Test-Path $Config)) {
     & $Bin stop --config $Config --force 2>$null | Out-Null
   }
+  $env:ProgramData = $originalProgramData
   $daemonLog = Join-Path $Fixture 'daemon.log'
   if (Test-Path -LiteralPath $daemonLog -PathType Leaf) {
     Copy-Item -LiteralPath $daemonLog -Destination (Join-Path $ArtifactRoot 'daemon.log')

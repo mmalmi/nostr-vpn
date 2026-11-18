@@ -149,7 +149,7 @@ async fn split_dns_keeps_private_queries_on_the_selected_link_and_protects_tcp_r
     };
     let (policy, count) = protector(false);
     let addresses = snapshot
-        .resolve("mint.internal", 8443, policy)
+        .resolve("mint.internal", 8443, policy.clone())
         .await
         .unwrap();
     assert_eq!(
@@ -159,13 +159,22 @@ async fn split_dns_keeps_private_queries_on_the_selected_link_and_protects_tcp_r
             "[2001:db8::7]:8443".parse::<SocketAddr>().unwrap()
         ]
     );
+    assert_eq!(
+        snapshot
+            .resolve("mint.internal", 8443, policy)
+            .await
+            .unwrap(),
+        addresses,
+        "repeated lookups retain the selected link and protected socket policy"
+    );
     assert!(
-        count.load(Ordering::SeqCst) >= 3,
+        count.load(Ordering::SeqCst) >= 6,
         "both UDP queries and their TCP retry are protected"
     );
     assert_eq!(
         *private.seen.lock().unwrap(),
-        ["mint.internal.", "mint.internal."]
+        ["mint.internal."; 4],
+        "TLS setup reuse must not cache DNS answers"
     );
     assert!(
         public.seen.lock().unwrap().is_empty(),
@@ -382,6 +391,37 @@ async fn required_dns_tls_protects_its_socket_and_does_not_fall_back_after_a_bad
     assert!(
         count.load(Ordering::SeqCst) > verified,
         "TLS rejection still used a protected socket"
+    );
+    let plain = Server::start().await;
+    lookup_link(
+        plain.link(&[], true),
+        Name::from_ascii("mint.example.").unwrap(),
+        443,
+        false,
+        policy.clone(),
+    )
+    .await
+    .unwrap();
+    let link = DnsLink {
+        servers: vec![server],
+        interface: None,
+        domains: Vec::new(),
+        default_route: true,
+        options,
+        opportunistic: false,
+        insecure_domains: Vec::new(),
+    };
+    assert!(
+        lookup_link(
+            link,
+            Name::from_ascii("mint.example.").unwrap(),
+            443,
+            false,
+            policy
+        )
+        .await
+        .is_err(),
+        "the production TLS path must reject an untrusted certificate after plain DNS setup"
     );
     let mut bytes = [0; 512];
     assert!(

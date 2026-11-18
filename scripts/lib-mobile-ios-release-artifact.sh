@@ -122,7 +122,7 @@ PY
     echo "iOS Release archive lacks the supported packet-flow C ABI" >&2
     return 1
   fi
-  if ! grep -Fq "$fips_path/crates/fips-core/src/" "$archive_strings" \
+  if ! grep -Fq "/build/fips-${NVPN_EXPECTED_FIPS_GIT_SHA:?}/crates/fips-core/src/" "$archive_strings" \
     || ! grep -Fq 'fips_core::node' "$archive_strings" \
     || ! grep -Fq 'fips_core::transport' "$archive_strings" \
     || ! grep -Fq 'fips_core' "$archive_symbols"

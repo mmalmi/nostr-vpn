@@ -33,12 +33,12 @@ impl Drop for Export {
             OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
             Mode::empty(),
         );
-        if let (Ok(current), Ok(expected)) = (current, self.directory.metadata()) {
-            if File::from(current).metadata().is_ok_and(|actual| {
+        if let (Ok(current), Ok(expected)) = (current, self.directory.metadata())
+            && File::from(current).metadata().is_ok_and(|actual| {
                 actual.dev() == expected.dev() && actual.ino() == expected.ino()
-            }) {
-                let _ = unlinkat(&self.inbox, self.batch.as_str(), AtFlags::REMOVEDIR);
-            }
+            })
+        {
+            let _ = unlinkat(&self.inbox, self.batch.as_str(), AtFlags::REMOVEDIR);
         }
     }
 }

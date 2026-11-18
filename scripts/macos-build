@@ -71,6 +71,10 @@ load_env_file_defaults() {
 
 load_env_file_defaults "${NVPN_RELEASE_ENV_FILE:-$ROOT/release.env}"
 load_env_file_defaults "$ROOT/.env.release.local"
+# Rust 1.95's debug-info stripping can misalign Mach-O LINKEDIT entries,
+# preventing macOS 27 from loading proc macros and the UniFFI host library.
+# Keep the linker's output intact: https://github.com/rust-lang/rust/issues/157750
+export CARGO_PROFILE_RELEASE_STRIP=none
 if declare -F load_appstoreconnect_defaults >/dev/null 2>&1; then
   load_appstoreconnect_defaults
 fi
@@ -358,6 +362,15 @@ run_macos_rust() {
     target_rustflags="-C linker=$cc_bin -C link-arg=-target -C link-arg=$arch_target -C link-arg=-mmacosx-version-min=${min_version}"
 
     if [[ "$PROFILE" == "release" ]]; then
+      local encoded_flags
+      local flags=(-C "linker=$cc_bin" -C "link-arg=-target" -C "link-arg=$arch_target"
+                   -C "link-arg=-mmacosx-version-min=$min_version")
+      if [[ -n "${RUSTFLAGS:-}" ]]; then
+        read -r -a flags <<<"$RUSTFLAGS"
+      fi
+      encoded_flags="$(release_encoded_rustflags "$ROOT" "${flags[@]}")"
+      # Apple's linker otherwise retains private object paths in its debug map.
+      encoded_flags+=$'\x1f-C\x1flink-arg=-Wl,-S'
       env \
         SDKROOT="$sdkroot" \
         MACOSX_DEPLOYMENT_TARGET="$min_version" \
@@ -372,7 +385,7 @@ run_macos_rust() {
         CXXFLAGS_x86_64_apple_darwin="-target x86_64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
-        "$rustflags_env_var=$target_rustflags" \
+        CARGO_ENCODED_RUSTFLAGS="$encoded_flags" \
         "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$target"
 
       env \
@@ -389,7 +402,7 @@ run_macos_rust() {
         CXXFLAGS_x86_64_apple_darwin="-target x86_64-apple-macos${min_version} -mmacosx-version-min=${min_version}" \
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
-        "$rustflags_env_var=$target_rustflags" \
+        CARGO_ENCODED_RUSTFLAGS="$encoded_flags" \
         "${cargo_prefix[@]}" build -p nvpn "${cargo_nvpn_feature_args[@]+"${cargo_nvpn_feature_args[@]}"}" --release --bin nvpn --target "$target"
     else
       env \
@@ -816,6 +829,9 @@ run_macos_app() {
   run_macos_xcframework
   run_macos_xcodeproj
   sign_args+=(CODE_SIGNING_ALLOWED=NO)
+  if [[ "$XCODE_CONFIGURATION" == Release ]]; then
+    sign_args+=('OTHER_LDFLAGS=$(inherited) -Wl,-S')
+  fi
 
   SWIFTC_MAXIMUM_DETERMINISM="${NVPN_MACOS_SWIFTC_MAXIMUM_DETERMINISM:-1}" \
   xcodebuild \

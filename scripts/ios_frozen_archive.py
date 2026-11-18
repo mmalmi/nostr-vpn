@@ -603,7 +603,10 @@ def require_clean_checkout(root: pathlib.Path, label: str) -> None:
         )
 
 
-def validate_source_and_fips(args: argparse.Namespace) -> None:
+def validate_source_and_fips(
+    args: argparse.Namespace,
+    archive_receipt: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     require(
         args.rust_profile == "release",
         "frozen iOS archive requires the Release Rust profile",
@@ -618,17 +621,69 @@ def validate_source_and_fips(args: argparse.Namespace) -> None:
     require(fips_tree == args.fips_tree, "FIPS tree changed")
     require_clean_checkout(source_root, "application")
     require_clean_checkout(fips_root, "FIPS")
+    checkout_path_sha = path_sha256(fips_root)
+    relocation_path = getattr(args, "fips_source_relocation", None)
+    relocation_sha = getattr(args, "fips_source_relocation_sha256", None)
+    relocation = None
+    if relocation_path or relocation_sha:
+        require(archive_receipt is not None, "FIPS relocation cannot authorize a new archive")
+        require(
+            bool(relocation_path)
+            and re.fullmatch(r"[0-9a-f]{64}", relocation_sha or "") is not None,
+            "FIPS relocation requires an evidence file and its SHA256",
+        )
+        raw = pathlib.Path(relocation_path).read_bytes()
+        require(hashlib.sha256(raw).hexdigest() == relocation_sha, "FIPS relocation evidence changed")
+        proof = json.loads(raw)
+        build_path_sha = archive_receipt.get("fipsCheckoutPathSha256")
+        require(
+            isinstance(build_path_sha, str)
+            and re.fullmatch(r"[0-9a-f]{64}", build_path_sha) is not None,
+            "Frozen FIPS build path hash is invalid",
+        )
+        expected = {
+            "receiptSchema": 1,
+            "artifactType": "FIPS validation source relocation",
+            "archiveReceiptSha256": sha256_file(pathlib.Path(args.archive_receipt)),
+            "fipsCargoMetadataReceiptSha256": sha256_file(pathlib.Path(args.fips_metadata)),
+            "historicalCheckoutPathSha256": build_path_sha,
+            "validationCheckoutPathSha256": checkout_path_sha,
+            "fipsGitSha": args.fips_head,
+            "fipsGitTree": args.fips_tree,
+            "fipsCoreVersion": args.fips_version,
+        }
+        require(
+            isinstance(proof, dict)
+            and type(proof.get("receiptSchema")) is int
+            and proof == expected,
+            "FIPS relocation does not match the exact source and historical receipts",
+        )
+        checkout_path_sha = build_path_sha
+        relocation = {**expected, "relocationReceiptSha256": relocation_sha}
     validate_fips_metadata(
         pathlib.Path(args.fips_metadata),
-        path_sha256(fips_root),
+        checkout_path_sha,
         args.fips_head,
         args.fips_tree,
         args.fips_version,
     )
+    return relocation
 
 
 def archive_app(archive: pathlib.Path) -> pathlib.Path:
     return archive / "Products" / "Applications" / APP_NAME
+
+
+def verify_build_path_privacy(app: pathlib.Path, args: argparse.Namespace) -> None:
+    roots = (pathlib.Path.home(), pathlib.Path(args.source_root), pathlib.Path(args.fips_root))
+    prefixes = [os.fsencode(root.resolve()) + b"/" for root in roots]
+    paths = app_paths(app)
+    for name in ("appExecutable", "tunnelExecutable"):
+        executable = paths[name].read_bytes()
+        require(
+            all(prefix not in executable for prefix in prefixes),
+            f"{name} embeds a private build path",
+        )
 
 
 def freeze_archive(args: argparse.Namespace) -> None:
@@ -637,6 +692,7 @@ def freeze_archive(args: argparse.Namespace) -> None:
     require(archive.is_dir(), f"iOS archive is missing: {archive}")
     validate_source_and_fips(args)
     app = archive_app(archive)
+    verify_build_path_privacy(app, args)
     identity = bundle_identity(app)
     validate_identity(
         identity,
@@ -689,8 +745,9 @@ def validate_archive_receipt(
         and receipt.get("artifactType") == "iOS frozen App Store xcarchive",
         "frozen iOS archive receipt has the wrong schema or type",
     )
-    validate_source_and_fips(args)
+    relocation = validate_source_and_fips(args, receipt)
     app = archive_app(archive)
+    verify_build_path_privacy(app, args)
     fips_metadata = pathlib.Path(args.fips_metadata).resolve()
     expected_receipt = {
         "appGitSha": args.app_head,
@@ -700,8 +757,9 @@ def validate_archive_receipt(
         "archiveTreeSha256": tree_sha256(archive),
         "fipsCargoMetadataReceiptPathSha256": path_sha256(fips_metadata),
         "fipsCargoMetadataReceiptSha256": sha256_file(fips_metadata),
-        "fipsCheckoutPathSha256": path_sha256(
-            pathlib.Path(args.fips_root)
+        "fipsCheckoutPathSha256": (
+            relocation["historicalCheckoutPathSha256"] if relocation
+            else path_sha256(pathlib.Path(args.fips_root))
         ),
         "fipsCoreVersion": args.fips_version,
         "fipsGitSha": args.fips_head,
@@ -738,6 +796,14 @@ def validate_archive_receipt(
         device_udid="",
     )
     require(signing == receipt.get("signing"), "frozen archive signing changed")
+    if relocation:
+        require(
+            validate_source_and_fips(args, receipt) == relocation,
+            "FIPS relocation changed during archive validation",
+        )
+        # Keep the immutable archive/Cargo/export receipts byte-compatible.
+        # Record the explicit relocation separately in the validation log.
+        print(json.dumps({"frozenArchiveSourceValidated": True, "fipsSourceRelocation": relocation}))
     return receipt, app, identity
 
 
@@ -761,6 +827,8 @@ def validate_export(args: argparse.Namespace) -> None:
         app_group_id=args.app_group_id,
         device_udid=args.device_udid,
     )
+    if getattr(args, "fips_source_relocation", None):
+        validate_source_and_fips(args, receipt)
     export_receipt = {
         "receiptSchema": RECEIPT_SCHEMA,
         "artifactType": "iOS export from frozen xcarchive",
@@ -806,6 +874,11 @@ def add_revision_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(f"--{name.replace('_', '-')}", required=True)
 
 
+def add_relocation_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--fips-source-relocation")
+    parser.add_argument("--fips-source-relocation-sha256")
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subparsers = result.add_subparsers(dest="command", required=True)
@@ -830,6 +903,7 @@ def parser() -> argparse.ArgumentParser:
     validate_archive.add_argument("--archive", required=True)
     validate_archive.add_argument("--archive-receipt", required=True)
     add_revision_arguments(validate_archive)
+    add_relocation_arguments(validate_archive)
 
     export = subparsers.add_parser("validate-export")
     export.add_argument("--archive", required=True)
@@ -844,6 +918,7 @@ def parser() -> argparse.ArgumentParser:
     )
     export.add_argument("--device-udid", default="")
     add_revision_arguments(export)
+    add_relocation_arguments(export)
 
     seal = subparsers.add_parser("seal-gate")
     seal.add_argument("--archive-receipt", required=True)

@@ -33,6 +33,7 @@ import {
   deterministicBuildEnv,
   linuxReleaseTargetsForDockerPlatform,
   normalizeTag,
+  productReleaseNotes,
   parseEnvFile,
   readWorkspaceVersionTag,
   replaceWithExactFileCopy,
@@ -1968,6 +1969,42 @@ function stageRelease({
   return { assetPaths, stageDir, stagedAndroidApkPath }
 }
 
+function withFinalReleaseStage(stageDir, action) {
+  const finalStageParent = mkdtempSync(
+    join(os.tmpdir(), 'nvpn-final-release-stage-'),
+  )
+  const finalStageDir = join(finalStageParent, 'stage')
+  try {
+    cpSync(stageDir, finalStageDir, {
+      // Independent copies can share storage on filesystems with reflinks.
+      mode: constants.COPYFILE_FICLONE,
+      recursive: true,
+      errorOnExist: true,
+      force: false,
+    })
+    for (const name of ['release.json', 'manifest.json']) {
+      const path = join(finalStageDir, name)
+      const manifest = JSON.parse(readFileSync(path, 'utf8'))
+      manifest.draft = false
+      writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
+    }
+    return action(finalStageDir, readReleaseManifest(finalStageDir))
+  } finally {
+    rmSync(finalStageParent, { recursive: true, force: true })
+  }
+}
+
+function publishHapsSource({ stageDir, tag, draft, env, dryRun }) {
+  const publish = (directory) => run(
+    'haps',
+    ['import-release', directory, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag, '--publish-source'],
+    { env, dryRun },
+  )
+  // Haps requires final metadata even when publishing only the pinned source.
+  if (draft && !dryRun) return withFinalReleaseStage(stageDir, publish)
+  return publish(stageDir)
+}
+
 function publishRelease({
   stageDir,
   releaseTree,
@@ -1992,6 +2029,9 @@ function publishRelease({
     validatePromotableReleaseManifest(manifest)
   }
   const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
+  // Publish and cold-verify the pinned source before uploading release assets.
+  beforeMutation()
+  publishHapsSource({ stageDir, tag, draft, env, dryRun })
   // The validated stage is an exact allowlist; Git ignores must not omit assets.
   // Installed 4.1.20 readers require 32-byte keys throughout the release tree.
   const addOutput = run('htree', ['add', '--no-ignore', '--legacy-keys', stageDir], { capture: true, dryRun })
@@ -2051,41 +2091,19 @@ function promoteStagedDraft({
     stagedManifest.android_release_gate.apk_path,
   )
 
-  const finalStageParent = mkdtempSync(
-    join(os.tmpdir(), 'nvpn-final-release-stage-'),
-  )
-  const finalStageDir = join(finalStageParent, 'stage')
-  try {
-    cpSync(stageDir, finalStageDir, {
-      // Independent copies can share storage on filesystems with reflinks.
-      mode: constants.COPYFILE_FICLONE,
-      recursive: true,
-      errorOnExist: true,
-      force: false,
-    })
-    for (const name of ['release.json', 'manifest.json']) {
-      const path = join(finalStageDir, name)
-      const manifest = JSON.parse(readFileSync(path, 'utf8'))
-      manifest.draft = false
-      writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
-    }
-    const finalManifest = readReleaseManifest(finalStageDir)
-    return {
-      cid: publishRelease({
-        stageDir: finalStageDir,
-        releaseTree,
-        tag,
-        draft: false,
-        dryRun,
-        beforeMutation,
-        env,
-      }),
-      finalManifest,
-      stagedAndroidApkPath,
-    }
-  } finally {
-    rmSync(finalStageParent, { recursive: true, force: true })
-  }
+  return withFinalReleaseStage(stageDir, (finalStageDir, finalManifest) => ({
+    cid: publishRelease({
+      stageDir: finalStageDir,
+      releaseTree,
+      tag,
+      draft: false,
+      dryRun,
+      beforeMutation,
+      env,
+    }),
+    finalManifest,
+    stagedAndroidApkPath,
+  }))
 }
 
 function releaseMutationEnvironment({
@@ -2631,9 +2649,15 @@ function main() {
         stagedManifest,
       })
     }
-    // Validate the draft's exact package bytes and signer before any channel mutates.
-    run('haps', ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag, '--check'], {
-      env: mutationEnv, dryRun: options.dryRun,
+    // Validate packages and publish their pinned source before any artifact channel mutates.
+    replayCanonicalMutationGate({
+      stageDir,
+      tag,
+      env: mutationEnv,
+      requireTag: true,
+    })
+    publishHapsSource({
+      stageDir, tag, draft: stagedManifest.draft, env: mutationEnv, dryRun: options.dryRun,
     })
     const apple = publishExactIosDistribution({
       repoRoot,
@@ -2757,6 +2781,10 @@ function main() {
     return
   }
 
+  // Catch malformed notes before building or notarizing any release packages.
+  if (existsSync(changelogPath)) {
+    productReleaseNotes(readFileSync(changelogPath, 'utf8'), tag)
+  }
   if (!options.dryRun && shouldRunStep('linux', options)) {
     validateLinuxPublicationBuilder({ env })
   }

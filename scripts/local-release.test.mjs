@@ -878,14 +878,39 @@ test('iOS export and upload retain original source, paths and bytes across harne
   const ipa = join(repoRoot, 'dist', 'ios', 'release.ipa')
   writeFileSync(ipa, 'original archive bytes\n')
   writeFileSync(join(gateDir, 'receipt.json'), 'original gate bytes\n')
-  const env = { ...process.env, NVPN_RELEASE_TAG: tag, NVPN_RELEASE_STAGE_DIR: '/exact/stage' }
+  const env = {
+    ...process.env,
+    NVPN_RELEASE_TAG: tag,
+    NVPN_RELEASE_STAGE_DIR: '/exact/stage',
+    NVPN_FIPS_REPO_PATH: '/exact/relocated-fips',
+    NVPN_IOS_FIPS_SOURCE_RELOCATION: '/exact/relocation.json',
+    NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256: '7'.repeat(64),
+  }
   const original = { repoRoot, receipt, commit: receipt.appGitSha, tree: receipt.appGitTree, env }
   withIosArtifactSource(original, ({ cwd }) => assert.equal(cwd, repoRoot))
 
   writeFileSync(join(repoRoot, 'docs', 'release-resume.md'), 'new harness instructions\n')
-  git(['add', 'docs'])
+  mkdirSync(join(repoRoot, 'scripts'))
+  writeFileSync(join(repoRoot, 'scripts', 'mobile-release-join-e2e.sh'), [
+    '#!/bin/sh', 'set -eu', 'test "$1" = --prepare-ios-variant',
+    'test "$NVPN_EXPECTED_APP_GIT_SHA" = "$(git rev-parse HEAD)"',
+    'test "$NVPN_EXPECTED_APP_GIT_TREE" = "$(git rev-parse HEAD^{tree})"',
+    'test "$NVPN_BUILD_GIT_SHA" = "$NVPN_EXPECTED_APP_GIT_SHA"',
+    'git rev-parse HEAD > "$NVPN_RELEASE_JOIN_RESULT_DIR/variant-commit"',
+  ].join('\n') + '\n', { mode: 0o755 })
+  git(['add', 'docs', 'scripts'])
   git(['commit', '-qm', 'harness update'])
   const candidate = { ...original, commit: git(['rev-parse', 'HEAD']), tree: git(['rev-parse', 'HEAD^{tree}']) }
+  const productionReceipt = join(gateDir, 'production.json')
+  writeFileSync(productionReceipt, JSON.stringify(receipt))
+  const build = spawnSync(process.execPath, [join(process.cwd(), 'scripts/ios-artifact-source.mjs'), 'build-mobile-join'], {
+    cwd: repoRoot, encoding: 'utf8', env: {
+      ...env, NVPN_RELEASE_JOIN_BUILD_ONLY: '1', NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT: productionReceipt,
+      NVPN_EXPECTED_APP_GIT_SHA: candidate.commit, NVPN_EXPECTED_APP_GIT_TREE: candidate.tree,
+    },
+  })
+  assert.equal(build.status, 0, build.stderr)
+  assert.equal(readFileSync(join(joinDir, 'variant-commit'), 'utf8').trim(), receipt.appGitSha)
   for (const shouldFail of [false, true]) {
     let temporarySource
     const invoke = () => withIosArtifactSource(candidate, ({ cwd, env: scoped }) => {
@@ -896,6 +921,9 @@ test('iOS export and upload retain original source, paths and bytes across harne
       assert.equal(scoped.NVPN_BUILD_GIT_SHA, receipt.appGitSha)
       assert.equal(scoped.NVPN_IOS_RELEASE_SOURCE_ROOT, cwd)
       assert.equal(scoped.NVPN_RELEASE_STAGE_DIR, env.NVPN_RELEASE_STAGE_DIR)
+      assert.equal(scoped.NVPN_FIPS_REPO_PATH, env.NVPN_FIPS_REPO_PATH)
+      assert.equal(scoped.NVPN_IOS_FIPS_SOURCE_RELOCATION, env.NVPN_IOS_FIPS_SOURCE_RELOCATION)
+      assert.equal(scoped.NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256, env.NVPN_IOS_FIPS_SOURCE_RELOCATION_SHA256)
       assert.equal(scoped.NVPN_RELEASE_GATE_LOG_DIR, gateDir)
       assert.equal(scoped.NVPN_RELEASE_JOIN_RESULT_DIR, joinDir)
       assert.equal(realpathSync(join(cwd, 'dist', 'ios', 'release.ipa')), realpathSync(ipa))
@@ -1038,7 +1066,7 @@ test('accepted pending iOS upload waits or finalizes without duplicate upload', 
   )
   assert.match(
     publisher,
-    /!submittedStates\.has[\s\S]*?\) \{\s*beforeMutation\(\)\s*run\([\s\S]*?'appstore-draft'\), 'submit'/,
+    /!versionSubmitted\(preflight\.appStore\)\) \{\s*beforeMutation\(\)\s*run\([\s\S]*?'appstore-draft'\), 'submit'/,
   )
   assert.doesNotMatch(publisher, /removeIosPendingUploadReceipt|unlinkSync/)
 })
@@ -1185,6 +1213,10 @@ test('every publisher runs only after exact staged-source validation', () => {
   const promoteEnd = source.indexOf('\n  const steps = [', promoteStart)
   const promote = source.slice(promoteStart, promoteEnd)
   assert.ok(promoteStart >= 0 && promoteEnd > promoteStart)
+  const sourcePublication = promote.indexOf('publishHapsSource({')
+  assert.ok(sourcePublication >= 0)
+  assert.ok(promote.indexOf('replayCanonicalMutationGate({') < sourcePublication)
+  assert.ok(sourcePublication < promote.indexOf('publishExactIosDistribution({'))
   assert.match(
     promote,
     /promoteStagedDraft\(\{[\s\S]*?beforeMutation:\s*\(\)\s*=>\s*\{[\s\S]*?preflightHtreeRelease\(\{[\s\S]*?replayCanonicalMutationGate\(\{[\s\S]*?requireTag:\s*true/,
@@ -1211,13 +1243,13 @@ test('GitHub mutation uses the repository pinned by preflight', () => {
   assert.doesNotMatch(source, /arguments_\s*\[/)
   assert.match(
     source,
-    /beforeMutation\(\)[\s\S]*?const mutationRepository = exactGithubRepository\(\{[\s\S]*?const arguments_ = \[[\s\S]*?'create'[\s\S]*?'--repo',[\s\S]*?mutationRepository/,
+    /beforeMutation\(\)[\s\S]*?const mutationRepository = exactGithubReleaseSource\(\{[\s\S]*?const arguments_ = \[[\s\S]*?'create'[\s\S]*?'--repo',[\s\S]*?mutationRepository/,
   )
   for (const command of ['upload', 'edit']) {
     assert.match(
       source,
       new RegExp(
-        `beforeMutation\\(\\)[\\s\\S]*?const mutationRepository = exactGithubRepository\\(\\{[\\s\\S]*?'${command}',[\\s\\S]*?'--repo',[\\s\\S]*?mutationRepository`,
+        `beforeMutation\\(\\)[\\s\\S]*?const mutationRepository = exactGithubReleaseSource\\(\\{[\\s\\S]*?'${command}',[\\s\\S]*?'--repo',[\\s\\S]*?mutationRepository`,
       ),
       command,
     )
@@ -1462,6 +1494,24 @@ esac
 `,
   )
   chmodSync(htree, 0o755)
+  const haps = join(bin, 'haps')
+  writeFileSync(
+    haps,
+    `#!/bin/sh
+set -eu
+printf 'haps %s\\n' "$*" >> "$FAKE_HTREE_LOG"
+node -e 'if (JSON.parse(require("fs").readFileSync(process.argv[1])).draft !== false) process.exit(1)' "$2/release.json"
+if [ "\${FAKE_SOURCE_REJECT:-}" = 1 ]; then
+  echo 'source verification failed' >&2
+  exit 42
+fi
+if [ "\${FAKE_SOURCE_UNSUPPORTED:-}" = 1 ]; then
+  echo 'unexpected argument --publish-source' >&2
+  exit 2
+fi
+`,
+  )
+  chmodSync(haps, 0o755)
   writeFileSync(htreeLog, '')
   const startCli = join(bin, 'start-cli')
   writeFileSync(
@@ -1533,6 +1583,22 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
   assert.equal(readFileSync(htreeLog, 'utf8'), '')
   unlinkSync(unexpectedStagePath)
 
+  for (const failure of ['FAKE_SOURCE_REJECT', 'FAKE_SOURCE_UNSUPPORTED']) {
+    const sourceFailure = spawnSync(process.execPath, releaseArgs, {
+      ...releaseOptions,
+      env: { ...releaseOptions.env, [failure]: '1' },
+    })
+    assert.notEqual(sourceFailure.status, 0)
+    assert.match(sourceFailure.stderr, /source verification failed|unexpected argument --publish-source/)
+    const commands = readFileSync(htreeLog, 'utf8')
+    assert.match(commands, /haps import-release .* --publish-source/)
+    assert.doesNotMatch(commands, /^(add |push |release publish releases\/)/m)
+    for (const [path, before] of stagedBefore) {
+      assert.deepEqual(readFileSync(join(stage, path)), before)
+    }
+    writeFileSync(htreeLog, '')
+  }
+
   const result = spawnSync(
     process.execPath,
     releaseArgs,
@@ -1561,10 +1627,18 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
   }
 
   const htreeCommands = readFileSync(htreeLog, 'utf8').trim().split('\n')
+  const sourceStage = htreeCommands.find((command) => command.startsWith('haps import-release '))
+    ?.match(/^haps import-release (.+?) --config /)?.[1]
+  assert.match(sourceStage ?? '', /nvpn-final-release-stage-[^/]+\/stage$/)
+  assert.equal(existsSync(sourceStage), false)
   assert.deepEqual(htreeCommands, [
     'user',
     'status',
     'release publish --help',
+    'user',
+    'status',
+    'release publish --help',
+    `haps import-release ${sourceStage} --config ${join(realpathSync(repo), 'haps-release.json')} --tag v4.1.5 --publish-source`,
     `add --no-ignore --legacy-keys ${stage}`,
     'user',
     'status',
@@ -2360,10 +2434,15 @@ test('promotion preflights and publishes exact iOS to both TestFlight lanes and 
     promoteFunctionStart,
     promoteFunctionEnd,
   )
-  assert.match(promoteFunction, /cpSync\(stageDir,\s*finalStageDir/)
-  assert.match(promoteFunction, /join\(finalStageDir,\s*name\)/)
+  assert.match(promoteFunction, /withFinalReleaseStage\(stageDir,/)
+  const finalCopy = localRelease.slice(
+    localRelease.indexOf('function withFinalReleaseStage('),
+    localRelease.indexOf('function publishHapsSource('),
+  )
+  assert.match(finalCopy, /cpSync\(stageDir,\s*finalStageDir/)
+  assert.match(finalCopy, /join\(finalStageDir,\s*name\)/)
   assert.doesNotMatch(
-    promoteFunction,
+    finalCopy,
     /join\(stageDir,\s*(?:'release\.json'|'manifest\.json'|name)\)/,
   )
 })
@@ -2964,9 +3043,9 @@ test('corrected GitHub release is explicitly promoted as latest', () => {
 
   assert.match(publisher, /'--latest'/)
   assert.match(publisher, /'--verify-tag'/)
-  assert.match(publisher, /'refs\/heads\/master'/)
+  assert.doesNotMatch(publisher, /refs\/heads\/master/)
   assert.match(publisher, /`refs\/tags\/\$\{tag\}`/)
-  assert.match(publisher, /\['origin', 'refs\/heads\/master'/)
+  assert.match(publisher, /\['origin', 'htreeTag'\]/)
 })
 
 test('Windows corrected-release tags keep installer version at the marketing version', () => {

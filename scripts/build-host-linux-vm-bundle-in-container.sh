@@ -4,11 +4,13 @@
 # the source-bound environment validated by prepare-host-linux-vm-bundle.sh.
 set -euo pipefail
 
-[[ "$#" == 1 && ( "$1" == "realize" || "$1" == "build" ) ]] || {
-  echo "usage: $0 realize|build" >&2
+[[ ( "$#" == 1 || "$#" == 2 ) && ( "$1" == "realize" || "$1" == "build" ) ]] || {
+  echo "usage: $0 realize|build [full|daemon]" >&2
   exit 2
 }
 PHASE="$1"
+BUILD_SCOPE="${2:-full}"
+[[ "$BUILD_SCOPE" == full || "$BUILD_SCOPE" == daemon ]] || exit 2
 cd /workspace/app
 fips_config=(
   --config 'patch.crates-io.nvpn-fips-core.path="/workspace/fips/crates/fips-core"'
@@ -21,7 +23,7 @@ fips_packages=()
 while IFS= read -r package; do
   fips_packages+=("$package")
 done < <(python3 "$lock_verifier" --manifest-specs /workspace/fips)
-[[ "${#fips_packages[@]}" == 8 ]]
+python3 "$lock_verifier" --validate-specs "${fips_packages[@]}"
 
 export CARGO_TARGET_DIR=/target-root
 [[ "$CARGO_HOME" == /cargo-home && "$HOME" == /cargo-home ]]
@@ -81,43 +83,38 @@ python3 "$cargo_cache_verifier" audit \
   /workspace/app/Cargo.lock /workspace/app/linux/Cargo.lock
 export CARGO_NET_OFFLINE=true
 
-cd /workspace/app/linux
-CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
-  cargo "${fips_config[@]}" check --frozen
-# The check is complete; release builds own the bounded target volume next.
-cargo "${fips_config[@]}" clean --profile dev
+if [[ "$BUILD_SCOPE" == full ]]; then
+  cd /workspace/app/linux
+  CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
+    cargo "${fips_config[@]}" check --frozen
+  # Scratch builds discard dev outputs; retained validation reuses them.
+  if [[ "${NVPN_HOST_LINUX_VM_RETAIN_TARGET:-0}" != 1 ]]; then
+    cargo "${fips_config[@]}" clean --profile dev
+  fi
+fi
 
 cd /workspace/app
 cargo "${fips_config[@]}" build --frozen --release -p nvpn
 cargo "${fips_config[@]}" build --frozen --release \
   --target x86_64-unknown-linux-musl \
   -p nvpn
-cargo "${fips_config[@]}" build --frozen --release \
-  -p nostr-vpn-core --example desktop_manual_join_e2e_fixture
-
-cd /workspace/app/linux
-cargo "${fips_config[@]}" build --frozen --release
-
 install -m 0555 /target-root/release/nvpn /output/nvpn
-install -m 0555 \
-  /target-root/release/examples/desktop_manual_join_e2e_fixture \
-  /output/desktop_manual_join_e2e_fixture
-install -m 0555 /target-root/release/nostr-vpn /output/nostr-vpn
 install -m 0555 \
   /target-root/x86_64-unknown-linux-musl/release/nvpn \
   /output/nvpn-x86_64-unknown-linux-musl
-file \
-  /output/nvpn \
-  /output/desktop_manual_join_e2e_fixture \
-  /output/nostr-vpn \
-  /output/nvpn-x86_64-unknown-linux-musl \
-  > /output/file.txt
-for artifact in \
-  nvpn \
-  desktop_manual_join_e2e_fixture \
-  nostr-vpn \
-  nvpn-x86_64-unknown-linux-musl
-do
+artifacts=(nvpn nvpn-x86_64-unknown-linux-musl)
+if [[ "$BUILD_SCOPE" == full ]]; then
+  cargo "${fips_config[@]}" build --frozen --release \
+    -p nostr-vpn-core --example desktop_manual_join_e2e_fixture
+  cd /workspace/app/linux
+  cargo "${fips_config[@]}" build --frozen --release
+  install -m 0555 /target-root/release/examples/desktop_manual_join_e2e_fixture \
+    /output/desktop_manual_join_e2e_fixture
+  install -m 0555 /target-root/release/nostr-vpn /output/nostr-vpn
+  artifacts+=(desktop_manual_join_e2e_fixture nostr-vpn)
+fi
+file "${artifacts[@]/#//output/}" > /output/file.txt
+for artifact in "${artifacts[@]}"; do
   grep -F "$artifact" /output/file.txt | grep -Eq 'ELF 64-bit.*x86-64'
 done
 grep -F 'nvpn-x86_64-unknown-linux-musl' /output/file.txt \
@@ -128,6 +125,11 @@ grep -F 'nvpn-x86_64-unknown-linux-musl' /output/file.txt \
   > /output/musl-cli-short-version.txt
 /output/nvpn-x86_64-unknown-linux-musl version --verbose \
   > /output/musl-cli-verbose-version.txt
+rustc --version > /output/rustc-version.txt
+cargo --version > /output/cargo-version.txt
+# A daemon result contains only these binaries and provenance. It never emits
+# GUI/fixture/package artifacts or a claim that their release gates passed.
+[[ "$BUILD_SCOPE" == full ]] || exit 0
 
 # Package the already-built, exact glibc binaries. cargo-deb's default strip
 # step would create different payload bytes, so it is explicitly disabled.
@@ -217,5 +219,3 @@ gzip -n -f /output/nvpn-x86_64-unknown-linux-musl.tar
 tar -xOf /output/nvpn-x86_64-unknown-linux-musl.tar.gz nvpn/nvpn \
   | cmp -s - /output/nvpn-x86_64-unknown-linux-musl
 rm -rf "$archive_root" /output/deb-root
-rustc --version > /output/rustc-version.txt
-cargo --version > /output/cargo-version.txt

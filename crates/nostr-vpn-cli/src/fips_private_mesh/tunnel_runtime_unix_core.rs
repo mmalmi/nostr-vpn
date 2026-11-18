@@ -55,9 +55,9 @@ impl FipsPrivateTunnelRuntime {
         ensure_linux_tun_permissions(&config.iface)?;
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
-        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start_for_peers_with_advert_app(
+        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start_for_peers_with_endpoint_config(
             Arc::clone(mesh.endpoint()),
-            &mesh.nostr_advert_app,
+            &mesh.pubsub_endpoint_config,
             config.nostr_pubsub.clone(),
             config.nostr_relays.clone(),
             Some(config.control_pubsub_store_path.clone()),

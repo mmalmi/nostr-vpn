@@ -620,14 +620,7 @@ mod recovery_tests {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use std::fs;
 
-    #[test]
-    fn mobile_automatic_reuses_saved_credit_before_a_pending_renewal_without_an_advert() {
-        use nostr_vpn_core::paid_route_store::{
-            OpenPaidRouteBuyerSessionRequest, load_paid_route_store, paid_route_store_file_path,
-            update_paid_route_store,
-        };
-        use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
-
+    fn mobile_paid_runtime() -> (std::path::PathBuf, NativeAppRuntime) {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -643,6 +636,18 @@ mod recovery_tests {
         runtime.config.internet_source = InternetSource::PaidAutomatic;
         runtime.config.save(&runtime.config_path).unwrap();
 
+        (dir, runtime)
+    }
+
+    #[test]
+    fn mobile_automatic_reuses_saved_credit_before_a_pending_renewal_without_an_advert() {
+        use nostr_vpn_core::paid_route_store::{
+            OpenPaidRouteBuyerSessionRequest, load_paid_route_store, paid_route_store_file_path,
+            update_paid_route_store,
+        };
+        use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+
+        let (dir, mut runtime) = mobile_paid_runtime();
         let seller = Keys::generate();
         let buyer_npub = runtime
             .config

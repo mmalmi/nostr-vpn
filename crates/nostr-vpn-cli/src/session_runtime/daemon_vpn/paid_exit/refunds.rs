@@ -481,7 +481,10 @@ fn apply_paid_exit_buyer_refund_attempt(
                 // mint's availability. Keep retrying the refund without
                 // blocking unrelated foreground payments at the same mint.
                 error
-                    .filter(|error| !error.is::<RefundWorkDeferred>() && !error.is::<cashu_service::MintRequestRejected>())
+                    .filter(|error| {
+                        !error.is::<RefundWorkDeferred>()
+                            && !error.is::<cashu_service::MintRequestRejected>()
+                    })
                     .map(|error| format!("{error:#}"))
                     .as_deref(),
                 error

@@ -63,7 +63,8 @@ for required in (
     "--platform linux/arm64",
     "--pull never",
     "--entrypoint sh",
-    'SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-ubuntu:24.04}"',
+    'SMOKE_IMAGE="${NVPN_LINUX_ARM64_SMOKE_IMAGE:-ubuntu:24.04@sha256:19cad59657037cffa0ac9a48107019b768900ff1071140965827513ac866bd5e}"',
+    'linux_require_immutable_image "$SMOKE_IMAGE"',
     "nativeStatusSmokePassed",
     "nativeSmokeArchiveSha256",
 ):

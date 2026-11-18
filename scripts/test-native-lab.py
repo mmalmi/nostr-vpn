@@ -316,6 +316,176 @@ class NativeLabTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 75)
         self.assertEqual(report["busy_resource"], resource)
 
+    def local_check(self):
+        return "local:" + {"Darwin": "macos", "Windows": "windows", "Linux": "linux"}[platform.system()]
+
+    def test_scoped_jobs_overlap_but_shared_writable_resource_stays_exclusive(self) -> None:
+        ready = Path(self.temp.name) / "scoped-ready"
+        finish = Path(self.temp.name) / "scoped-finish"
+        result = Path(self.temp.name) / "scoped-result.json"
+        child = (
+            "from pathlib import Path; import sys,time; "
+            "Path(sys.argv[1]).touch(); "
+            "exec('while not Path(sys.argv[2]).exists(): time.sleep(0.01)')"
+        )
+        first = self.start_lab(
+            "run", "--resource", "scoped-first", "--check", self.local_check(),
+            "--reserve", "cargo-target:shared", "--reserve", "cargo-target:shared",
+            "--reserve", "scoped-first", "--result", str(result),
+            "--timeout", "10", "--signal-grace", "1", "--",
+            sys.executable, "-c", child, str(ready), str(finish),
+        )
+        try:
+            self.wait_for_path(ready)
+            host = f"host:local:{socket.gethostname()}"
+            self.assertFalse(self.resource_lock(host).exists())
+            self.assertTrue(self.resource_lock("cargo-target:shared").exists())
+            independent = self.run_lab(
+                "run", "--resource", "scoped-second", "--check", self.local_check(),
+                "--reserve", "cargo-target:independent", "--",
+                sys.executable, "-c", "raise SystemExit(0)",
+            )
+            self.assertEqual(independent.returncode, 0, independent.stderr + independent.stdout)
+            self.assertIsNone(first.poll(), "first job must still be running during second job")
+            conflicting = self.run_lab(
+                "run", "--resource", "scoped-third", "--check", self.local_check(),
+                "--reserve", "cargo-target:shared", "--",
+                sys.executable, "-c", "raise SystemExit(9)",
+            )
+            self.assertEqual(conflicting.returncode, 75, conflicting.stderr + conflicting.stdout)
+            self.assertEqual(json.loads(conflicting.stdout)["busy_resource"], "cargo-target:shared")
+            finish.touch()
+            stdout, stderr = first.communicate(timeout=5)
+            self.assertEqual(first.returncode, 0, stderr + stdout)
+            report = json.loads(result.read_text())
+            self.assertEqual(report["reserved_resources"], ["cargo-target:shared"])
+            self.assertEqual(report["readiness_checks"], [self.local_check()])
+            self.assertEqual(list((Path(self.state_dir) / "locks").iterdir()), [])
+        finally:
+            finish.touch(exist_ok=True)
+            self.stop_process(first)
+
+    def test_readiness_checks_respect_existing_legacy_host_reservation(self) -> None:
+        ready = Path(self.temp.name) / "legacy-ready"
+        marker = Path(self.temp.name) / "must-not-run"
+        legacy = self.start_lab(
+            "run", "--resource", "legacy-matrix", "--health", self.local_check(),
+            "--timeout", "10", "--signal-grace", "1", "--", sys.executable, "-c",
+            "from pathlib import Path; import sys,time; Path(sys.argv[1]).touch(); time.sleep(10)",
+            str(ready),
+        )
+        try:
+            self.wait_for_path(ready)
+            completed = self.run_lab(
+                "run", "--resource", "new-scoped-job", "--check", self.local_check(),
+                "--reserve", "cache:new-job", "--", sys.executable, "-c",
+                "from pathlib import Path; import sys; Path(sys.argv[1]).touch()", str(marker),
+            )
+            self.assertEqual(completed.returncode, 75, completed.stderr + completed.stdout)
+            self.assertEqual(json.loads(completed.stdout)["busy_resource"], f"host:local:{socket.gethostname()}")
+            self.assertFalse(marker.exists())
+            self.assertTrue(self.resource_lock("legacy-matrix").exists())
+            self.assertFalse(self.resource_lock("new-scoped-job").exists())
+            self.assertFalse(self.resource_lock("cache:new-job").exists())
+        finally:
+            self.stop_process(legacy)
+
+    def test_nonreserving_readiness_rejects_devices_and_unavailable_tools(self) -> None:
+        for kind in ("android", "ios-device", "ios-simulator"):
+            with self.subTest(kind=kind):
+                completed = self.run_lab(
+                    "run", "--resource", "invalid-check", "--check", f"{kind}:auto",
+                    "--", sys.executable, "-c", "raise SystemExit(9)",
+                )
+                self.assertEqual(completed.returncode, 2)
+                self.assertIn("--health", completed.stderr)
+        completed = self.run_lab(
+            "run", "--resource", "missing-tool", "--check", "command:missing-native-lab-scoped-tool",
+            "--", sys.executable, "-c", "raise SystemExit(9)",
+        )
+        self.assertEqual(completed.returncode, 75, completed.stderr + completed.stdout)
+        self.assertEqual(json.loads(completed.stdout)["category"], "preflight")
+        self.assertFalse(self.resource_lock("missing-tool").exists())
+
+    def test_readiness_preserves_dead_or_quarantined_legacy_host_lock(self) -> None:
+        resource = f"host:local:{socket.gethostname()}"
+        lock = self.resource_lock(resource)
+        lock.mkdir(parents=True)
+        owner = {"resource": resource, "pid": -1, "host": socket.gethostname()}
+        (lock / "owner.json").write_text(json.dumps(owner))
+        (lock / "quarantine.json").write_text(json.dumps({"reason": "unreaped group"}))
+        before = {p.name: p.read_bytes() for p in lock.iterdir()}
+        completed = self.run_lab(
+            "run", "--resource", "readiness-with-quarantine", "--check", self.local_check(),
+            "--", sys.executable, "-c", "raise SystemExit(9)",
+        )
+        self.assertEqual(completed.returncode, 75, completed.stderr + completed.stdout)
+        report = json.loads(completed.stdout)
+        self.assertTrue(report["owner"]["quarantined"])
+        self.assertTrue(report["owner"]["recovery_required"])
+        self.assertEqual({p.name: p.read_bytes() for p in lock.iterdir()}, before)
+
+    def test_signal_during_readiness_conflict_wins_over_busy_result(self) -> None:
+        args = NATIVE_LAB.parser().parse_args([
+            "run", "--resource", "readiness-signal", "--check", "ssh:example-builder",
+            "--reserve", "cache:signal", "--", sys.executable, "-c", "raise SystemExit(9)",
+        ])
+
+        def interrupt(_resource, _stale_after):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return {"pid": os.getpid()}
+
+        def checks(specs):
+            return [{"spec": spec, "available": True, "allocation": "example-builder"} for spec in specs]
+
+        with (
+            mock.patch.object(NATIVE_LAB, "health_report", side_effect=checks),
+            mock.patch.object(NATIVE_LAB, "existing_reservation", side_effect=interrupt),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            code = NATIVE_LAB.run_managed(args)
+        self.assertEqual(code, 128 + signal.SIGTERM)
+        self.assertEqual(json.loads(output.getvalue())["category"], "signal")
+        self.assertFalse(self.resource_lock("readiness-signal").exists())
+        self.assertFalse(self.resource_lock("cache:signal").exists())
+
+    def test_explicit_resource_stays_reserved_through_signal_cleanup(self) -> None:
+        ready = Path(self.temp.name) / "reserve-ready"
+        cleaning = Path(self.temp.name) / "reserve-cleaning"
+        finish = Path(self.temp.name) / "reserve-finish"
+        child = """from pathlib import Path
+import signal,sys,time
+ready,cleaning,finish=map(Path,sys.argv[1:])
+pending=[]
+signal.signal(signal.SIGTERM,lambda *_: pending.append(True))
+ready.touch()
+while not pending: time.sleep(0.01)
+cleaning.touch()
+while not finish.exists(): time.sleep(0.01)
+"""
+        lab = self.start_lab(
+            "run", "--resource", "scoped-cleanup", "--reserve", "cache:cleanup",
+            "--check", self.local_check(), "--signal-grace", "5", "--",
+            sys.executable, "-c", child, str(ready), str(cleaning), str(finish),
+        )
+        try:
+            self.wait_for_path(ready)
+            lab.send_signal(signal.SIGTERM)
+            self.wait_for_path(cleaning)
+            self.assertTrue(self.resource_lock("cache:cleanup").exists())
+            blocked = self.run_lab(
+                "run", "--resource", "cleanup-competitor", "--reserve", "cache:cleanup",
+                "--", sys.executable, "-c", "raise SystemExit(9)",
+            )
+            self.assertEqual(blocked.returncode, 75, blocked.stderr + blocked.stdout)
+            finish.touch()
+            stdout, stderr = lab.communicate(timeout=5)
+            self.assertEqual(lab.returncode, 128 + signal.SIGTERM, stderr + stdout)
+            self.assertFalse(self.resource_lock("cache:cleanup").exists())
+        finally:
+            finish.touch(exist_ok=True)
+            self.stop_process(lab)
+
     @unittest.skipIf(os.name != "posix", "POSIX process-group signal contract")
     def test_signal_keeps_lock_owned_until_child_cleanup_finishes(self) -> None:
         resource = "physical-ios-release"

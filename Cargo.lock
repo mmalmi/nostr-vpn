@@ -1387,9 +1387,9 @@ dependencies = [
 
 [[package]]
 name = "compression-codecs"
-version = "0.4.38"
+version = "0.4.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce2548391e9c1929c21bf6aa2680af86fe4c1b33e6cea9ac1cfeec0bd11218cf"
+checksum = "100590da849306918656ffbb22576bbdfc1382b50ad10d1d50ec177d3b205fb2"
 dependencies = [
  "brotli",
  "compression-core",
@@ -1401,9 +1401,9 @@ dependencies = [
 
 [[package]]
 name = "compression-core"
-version = "0.4.32"
+version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc14f565cf027a105f7a44ccf9e5b424348421a1d8952a8fc9d499d313107789"
+checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
 
 [[package]]
 name = "concurrent-queue"
@@ -2459,9 +2459,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.83"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35f2ec87a4d192bffac052446501578cc0187e051b01b089e0b08af1d6ccc900"
+checksum = "6bb687672773c5d9eb031b62abe7fd72776bcf6745e80ffefc10513461666db9"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2493,9 +2493,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.91"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76daf5b56bdf139dfa406c4c18eebd276b823d59e073bf1a81b1b0539f41fb4a"
+checksum = "0984dfd6c005bdd85b0ae249d3ee77680d18df3a778807e45b618b8f0814704f"
 dependencies = [
  "aes-gcm 0.11.1",
  "async-trait",
@@ -2514,9 +2514,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.86"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7d86c6cfd737a94475f33d082ce6f8401d58f88b866653076014a9225e960ae"
+checksum = "365c245edfd117d2d0bbfd4e84d0c9876930a6c970485a95b3083e0f5ce651e4"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2531,9 +2531,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.87"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8c0a192b9135976aa07e3b7be67ef0ab190e4b7decc0c2c9633fd36c49f11bf"
+checksum = "d74b436997bd5c98adeeef4d03177a9403f24eeb55c76ea0f3cb42a3a7c62e52"
 dependencies = [
  "async-trait",
  "flate2",
@@ -3993,7 +3993,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.1.19"
+version = "4.1.22"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4028,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.1.19"
+version = "4.1.22"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -4080,7 +4080,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-sim"
-version = "4.1.19"
+version = "4.1.22"
 dependencies = [
  "anyhow",
  "hex",
@@ -4106,7 +4106,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.1.19"
+version = "4.1.22"
 dependencies = [
  "anyhow",
  "axum",
@@ -4128,9 +4128,10 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.1.19"
+version = "4.1.22"
 dependencies = [
  "anyhow",
+ "sha2 0.10.9",
  "wintun",
 ]
 
@@ -4223,7 +4224,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.1.19"
+version = "4.1.22"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -5222,9 +5223,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.4"
+version = "0.13.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
 dependencies = [
  "bitflags 2.13.0",
  "memchr",
@@ -5283,9 +5284,9 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.18"
+version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a9746dbde176634f4f2f1faf2404e30a31b2bc1e9cafb5329c95d8177a18c9fc"
+checksum = "0e750cca55fe4f0439a15d0bb529da9651e79993e8e72c61a899a36d462befbe"
 dependencies = [
  "bytes",
  "getrandom 0.4.3",
@@ -5305,16 +5306,16 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.14"
+version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
+checksum = "af66907df18639dcf4db56ca65490cabc4b27a97dbadd96f2926cca73298f016"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2 0.6.4",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5825,9 +5826,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.4"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags 2.13.0",
  "errno",
@@ -6742,9 +6743,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.54.1"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",
@@ -8446,27 +8447,27 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zstd"
-version = "0.13.3"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a"
+checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
 dependencies = [
  "zstd-safe",
 ]
 
 [[package]]
 name = "zstd-safe"
-version = "7.2.4"
+version = "8.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f49c4d5f0abb602a93fb8736af2a4f4dd9512e36f7f570d66e65ff867ed3b9d"
+checksum = "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b"
 dependencies = [
  "zstd-sys",
 ]
 
 [[package]]
 name = "zstd-sys"
-version = "2.0.16+zstd.1.5.7"
+version = "2.1.2+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
 dependencies = [
  "cc",
  "pkg-config",

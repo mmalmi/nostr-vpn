@@ -21,6 +21,26 @@ just android-install
 `android-build` compiles the Rust core and packages a debug APK. `android-install`
 installs that APK on the selected adb target.
 
+Release builds use Rust 1.95.0, JDK 17, Android NDK 28.2.13676358,
+`cargo-ndk` 4.1.2 and Gradle 8.14.3 (compatible with the pinned Android Gradle
+plugin). The Rust build uses the committed Cargo lockfile. To install the exact
+Gradle distribution when it is not already available:
+
+```sh
+mkdir -p "$HOME/.cache/nostr-vpn/gradle"
+cd "$HOME/.cache/nostr-vpn/gradle"
+curl --fail --location --proto '=https' --proto-redir '=https' \
+  --output gradle-8.14.3-bin.zip \
+  https://services.gradle.org/distributions/gradle-8.14.3-bin.zip
+printf '%s  %s\n' \
+  bd71102213493060956ec229d946beee57158dbd89d0e62b91bca0fa2c5f3531 \
+  gradle-8.14.3-bin.zip | shasum -a 256 --check -
+unzip -q gradle-8.14.3-bin.zip
+export PATH="$HOME/.cache/nostr-vpn/gradle/gradle-8.14.3/bin:$PATH"
+```
+
+Return to the repository root before running the build commands.
+
 ## Smoke tests
 
 ```sh

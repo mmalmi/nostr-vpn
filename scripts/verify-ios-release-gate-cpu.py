@@ -25,9 +25,7 @@ def validate(args):
     base = args.receipt.parent
     accepted = json.loads(args.receipt.read_text())
     require(accepted.get("scope") == "signed-production-iphone-idle-cpu", "Wrong CPU evidence scope")
-    require(accepted.get("releaseAcceptanceProven") is True
-            and accepted.get("exitCode") == 0 and accepted.get("cleanupExitCode") == 0,
-            "CPU measurement or cleanup did not pass")
+    require(accepted.get("cleanupExitCode") == 0, "CPU measurement cleanup did not pass")
     names = ["qualification/inputs.json", "installed-production.json", "public-mesh.json",
              "trace/recording.json", "trace/cpu-measurement.json"]
     require(set(accepted.get("evidenceSha256", {})) == set(names), "Incomplete CPU evidence")
@@ -70,13 +68,13 @@ def validate(args):
         require(peers and int(peers[-1]) == counts[index] and observed_roles
                 and (observed_roles[-1] == "1") == roles[index]
                 and "NVPN_RELEASE_JOIN_CARRIER_PREFLIGHT_READY=1" in text, "Mesh logs disagree")
-    require(recording.get("wrapperComplete") is True and recording.get("exitCode") == 0
+    require(recording.get("wrapperComplete") is True
             and recording.get("sameTunnelPidBeforeAfter") is True
             and recording.get("recordSeconds") == 120, "Incomplete bounded CPU trace")
     steps = recording.get("commands", [])
     require([s.get("step") for s in steps]
             == ["processes-before", "record", "processes-after", "export-toc", "export-cpu", "analyze"]
-            and all(s.get("exitCode") == 0 for s in steps), "CPU recording command failed")
+            and all(s.get("exitCode") == 0 for s in steps[:-1]), "CPU recording command failed")
     require(type(mesh.get("pid")) is int and mesh["pid"] > 0
             and mesh["pid"] == recording.get("expectedPid") == measured.get("pid"), "Tunnel PID changed")
     device = inputs["traceDeviceSha256"]
@@ -92,12 +90,42 @@ def validate(args):
                                                 process_name="Nostr VPN Tunnel", device_sha256=device))
     require(all(measured.get(k) == v for k, v in recomputed.items())
             and recording.get("cpu") == measured, "CPU counters disagree with the recorded result")
-    require(recomputed["cpuThresholdMet"] is True and recomputed["maxPercent"] == 2
+    require(recomputed["measurementValid"] is True and recomputed["maxPercent"] == 2
             and math.isfinite(recomputed["cpuPercent"])
             and accepted.get("cpuPercent") == recomputed["cpuPercent"]
-            and accepted.get("sampleSeconds") == recomputed["elapsedSeconds"], "Production CPU exceeds 2%")
-    return {"passed": True, "cpuPercent": recomputed["cpuPercent"],
+            and accepted.get("sampleSeconds") == recomputed["elapsedSeconds"], "CPU measurement disagrees")
+    passed = recomputed["cpuThresholdMet"]
+    expected_exit = 0 if passed else 1
+    require(steps[-1].get("exitCode") == recording.get("exitCode")
+            == accepted.get("exitCode") == expected_exit
+            and accepted.get("releaseAcceptanceProven") is passed,
+            "CPU outcome disagrees with recomputed measurement")
+    result = {"passed": passed, "releaseAccepted": passed, "cpuPercent": recomputed["cpuPercent"],
             "sampleSeconds": recomputed["elapsedSeconds"], "deviceTouched": False}
+    exception_path = getattr(args, "release_exception", None)
+    if not passed:
+        require(exception_path is not None, "Production CPU exceeds 2%")
+        exception = json.loads(exception_path.read_text())
+        commit = getattr(args, "release_commit", None)
+        version = getattr(args, "release_version", None)
+        require(isinstance(commit, str) and re.fullmatch("[0-9a-f]{40}", commit)
+                and isinstance(version, str) and re.fullmatch(r"\d+\.\d+\.\d+", version),
+                "CPU exception requires an exact release commit and version")
+        expected = {
+            "scope": "ios-idle-cpu-release-exception", "decision": "accept-known-cpu-issue",
+            "releaseCommit": commit, "releaseVersion": version,
+            "measurementReceiptSha256": digest(args.receipt),
+            "artifactReceiptSha256": digest(args.artifact_receipt),
+            "appBundleTreeSha256": app_tree, "cpuPercent": recomputed["cpuPercent"],
+            "thresholdPercent": 2,
+        }
+        require(all(exception.get(k) == v for k, v in expected.items()),
+                "CPU exception does not match the release and measured artifact")
+        require(isinstance(exception.get("authorization"), str) and exception["authorization"].strip(),
+                "CPU exception lacks explicit authorization")
+        result.update(releaseAccepted=True, knownIssue="iPhone idle CPU exceeds 2%",
+                      releaseExceptionSha256=digest(exception_path))
+    return result
 
 
 def main():
@@ -107,6 +135,9 @@ def main():
     parser.add_argument("--app", type=Path, required=True)
     parser.add_argument("--app-git-sha", required=True)
     parser.add_argument("--fips-git-sha", required=True)
+    parser.add_argument("--release-exception", type=Path)
+    parser.add_argument("--release-commit")
+    parser.add_argument("--release-version")
     args = parser.parse_args()
     try:
         print(json.dumps(validate(args)))

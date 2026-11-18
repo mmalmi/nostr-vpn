@@ -19,6 +19,22 @@ FILES=(
 for file in "${FILES[@]}"; do
   bash -n "$file"
 done
+(
+  source "$ROOT/scripts/release_common.sh"
+  eval "$(sed -n '/^select_generated_ios_release_xctestrun_for_gate() {/,/^}/p' "$ROOT/scripts/release-gate.sh")"
+  directory="$(mktemp -d)"
+  trap 'rm -rf "$directory"' EXIT
+  mkdir "$directory/products"
+  generated="$directory/products/NostrVpnIos_release.xctestrun"
+  touch "$generated" "$directory/external.xctestrun"
+  NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$generated"
+  [[ "$(select_generated_ios_release_xctestrun_for_gate "$directory/products" fixture)" == "$generated" ]]
+  NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$directory/external.xctestrun"
+  if select_generated_ios_release_xctestrun_for_gate "$directory/products" fixture; then exit 1; fi
+  NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$generated"
+  touch "$directory/products/NostrVpnIos_other.xctestrun"
+  if select_generated_ios_release_xctestrun_for_gate "$directory/products" fixture; then exit 1; fi
+)
 python3 - "$ROOT/scripts/lib-mobile-release-join-artifacts.sh" <<'PY'
 import os, pathlib, subprocess, sys, tempfile
 with tempfile.TemporaryDirectory() as directory:

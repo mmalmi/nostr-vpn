@@ -27,7 +27,9 @@ impl PaidRouteStore {
             return Ok(false);
         }
         if channel.mint_url.is_empty() {
-            return Err(anyhow!("this session has no payment mint and cannot be funded"));
+            return Err(anyhow!(
+                "this session has no payment mint and cannot be funded"
+            ));
         }
         let session = self
             .sessions

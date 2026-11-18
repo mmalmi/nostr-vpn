@@ -404,10 +404,10 @@ run_release_gate_candidate_preflight() {
   ./scripts/check-source-file-lines.sh
   # Release harness defects are cheap to catch and catastrophically expensive
   # after an exact-candidate VM build or physical-device run has started.
-  ./scripts/test-release-gate-orchestration.sh
   if bool_is_true "${NVPN_RELEASE_GATE_REQUIRE_COMPLETE:-0}"; then
     verify_production_ios_idle_cpu
   fi
+  ./scripts/test-release-gate-orchestration.sh
   # StartOS package errors must fail before compiling or preparing native apps.
   npm ci
   npm run check
@@ -1104,7 +1104,7 @@ for (const [key, value] of Object.entries(expected)) {
 const lockTool = `${root}/scripts/verify-cargo-path-patch-lock.py`
 const python = (...args) => execFileSync('python3', args, { cwd: root, encoding: 'utf8' }).trim()
 const specs = python(lockTool, '--manifest-specs', process.env.NVPN_FIPS_REPO_PATH).split('\n')
-if (specs.length !== 8) throw new Error('Retained Linux bundle lacks eight exact FIPS source packages')
+python(lockTool, '--validate-specs', ...specs)
 const rustToolchain = process.env.NVPN_HOST_LINUX_VM_RUST_TOOLCHAIN || '1.95.0'
 execFileSync('python3', [`${root}/scripts/verify-host-linux-vm-bundle.py`, bundle, `${bundle}/receipt.json`,
   receipt.appGitSha, receipt.appGitTree, expected.appVersion,
@@ -1606,12 +1606,21 @@ raise SystemExit(
 }
 
 verify_production_ios_idle_cpu() {
-    local artifact_app_sha
+    local artifact_app_sha artifact_receipt
+    # The measured app may have been qualified with an earlier XCTest plan.
+    # Always verify the original measurement receipt against the app being released.
+    artifact_receipt="${NVPN_IOS_PRODUCTION_IDLE_CPU_ARTIFACT_RECEIPT:-${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}}"
+    local -a exception_args=()
+    if [[ -n "${NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION:-}" ]]; then
+      exception_args=(--release-exception "$NVPN_IOS_IDLE_CPU_RELEASE_EXCEPTION"
+        --release-commit "$NVPN_EXPECTED_APP_GIT_SHA"
+        --release-version "$(package_version "$ROOT_DIR")")
+    fi
     # A harness-only correction must not rebuild or relabel the signed app.
     # Prove its product inputs are unchanged, then validate CPU evidence
     # against the original artifact source and all original measurement bytes.
     artifact_app_sha="$(node --input-type=module - \
-      "$ROOT_DIR" "${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}" \
+      "$ROOT_DIR" "$artifact_receipt" \
       "$NVPN_EXPECTED_APP_GIT_SHA" <<'JS'
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -1626,10 +1635,11 @@ JS
     )" || return
     python3 "$ROOT_DIR/scripts/verify-ios-release-gate-cpu.py" \
       --receipt "${NVPN_IOS_PRODUCTION_IDLE_CPU_RECEIPT:?Missing signed production iOS CPU evidence}" \
-      --artifact-receipt "${NVPN_MOBILE_IOS_REUSE_RECEIPT:?Missing production artifact receipt}" \
+      --artifact-receipt "$artifact_receipt" \
       --app "${NVPN_MOBILE_IOS_RELEASE_APP_PATH:?Missing production app}" \
       --app-git-sha "$artifact_app_sha" \
-      --fips-git-sha "$NVPN_EXPECTED_FIPS_GIT_SHA"
+      --fips-git-sha "$NVPN_EXPECTED_FIPS_GIT_SHA" \
+      "${exception_args[@]}"
 }
 
 run_mobile_idle_cpu_gates() {
@@ -1679,6 +1689,17 @@ PY
   else
     echo "Skipping iOS packet tunnel idle CPU gate because no physical device is online."
   fi
+}
+
+# A retained plan must be the sole plan generated in these exact products.
+select_generated_ios_release_xctestrun_for_gate() {
+  local selected
+  selected="$(NVPN_MOBILE_IOS_RELEASE_XCTESTRUN= select_generated_ios_release_xctestrun "$@")" || return 1
+  if [[ -n "${NVPN_MOBILE_IOS_RELEASE_XCTESTRUN:-}" && "$NVPN_MOBILE_IOS_RELEASE_XCTESTRUN" != "$selected" ]]; then
+    echo "Retained XCTest plan differs from the generated plan" >&2
+    return 1
+  fi
+  printf '%s\n' "$selected"
 }
 
 run_mobile_wireguard_exit_gates() {
@@ -1749,7 +1770,7 @@ run_mobile_wireguard_exit_gates() {
       NVPN_MOBILE_WG_EXIT_SOURCE_IP_URL=https://api.ipify.org \
       NVPN_MOBILE_WG_EXIT_IMAGE_READY="$image_ready" \
       NVPN_MOBILE_WG_EXIT_IMAGE="$image" \
-      NVPN_MOBILE_WG_EXIT_REUSE_ANDROID_BUILD=0 \
+      NVPN_MOBILE_WG_EXIT_REUSE_ANDROID_BUILD="${NVPN_MOBILE_WG_EXIT_REUSE_ANDROID_BUILD:-0}" \
       NVPN_MOBILE_WG_EXIT_CONTAINER="nostr-vpn-mobile-wg-release-android-$$" \
       NVPN_MOBILE_WG_EXIT_HOST_PORT="$port_base" \
       NVPN_MOBILE_WG_EXIT_SERVER_IP=10.99.77.1 \
@@ -1924,11 +1945,11 @@ run_mobile_underlay_change_gates() {
       ./scripts/mobile-wireguard-exit-e2e.sh android
   MOBILE_ANDROID_APP_READY=1
 
-  local ios_prepared_dir ios_xctestrun ios_runner_tree
+  local ios_prepared_dir ios_derived_data ios_xctestrun ios_runner_tree
   ios_prepared_dir="$evidence_dir/ios-wireguard-dns-artifacts"
-  ios_xctestrun="$(select_generated_ios_release_xctestrun \
-    "$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData/Build/Products" \
-    "iOS underlay artifact reuse")" || return 1
+  ios_derived_data="${NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA:-$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData}"
+  ios_xctestrun="$(select_generated_ios_release_xctestrun_for_gate \
+    "$ios_derived_data/Build/Products" "iOS underlay artifact reuse")" || return 1
   ios_runner_tree="$(jq -er '.runnerBundleTreeSha256' \
     "$ios_prepared_dir/installed-runner-receipt.json")" || return 1
 
@@ -1959,7 +1980,7 @@ run_mobile_underlay_change_gates() {
       NVPN_MOBILE_WG_EXIT_THROUGH_DNS_IP=10.99.80.53 \
       NVPN_MOBILE_WG_EXIT_HTTP_PROBE_PORT="$((port_base + 1))" \
       NVPN_MOBILE_IOS_RELEASE_APP_PATH="$ROOT_DIR/dist/ios/frozen/release-testing-unpacked/Payload/Nostr VPN.app" \
-      NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA="$ROOT_DIR/ios/.build/ReleaseNetworkDerivedData" \
+      NVPN_MOBILE_IOS_RELEASE_DERIVED_DATA="$ios_derived_data" \
       NVPN_MOBILE_IOS_RELEASE_XCTESTRUN="$ios_xctestrun" \
       NVPN_MOBILE_IOS_REUSE_RECEIPT="$NVPN_MOBILE_IOS_RELEASE_RECEIPT" \
       NVPN_MOBILE_IOS_RELEASE_RUNNER_RECEIPT="$ios_prepared_dir/mobile-ios-release-runner-diagnostics.json" \
@@ -2085,10 +2106,10 @@ run_mobile_join_e2e_gate() {
     NVPN_RELEASE_JOIN_DESKTOP_MOBILE=0 \
     NVPN_RELEASE_JOIN_REUSE_ARTIFACTS=0 \
     NVPN_RELEASE_JOIN_IOS_PRODUCTION_RECEIPT="$ios_production_receipt" \
-    ./scripts/mobile-release-join-e2e.sh
+    node "$ROOT_DIR/scripts/ios-artifact-source.mjs" build-mobile-join
 
   ios_xctestrun="$(
-    select_generated_ios_release_xctestrun \
+    select_generated_ios_release_xctestrun_for_gate \
       "$ios_derived_data/Build/Products" \
       "Strict Release join reuse"
   )" || return 1
@@ -2406,7 +2427,6 @@ run_web_startos_manual_join_docker_gate() {
 
 run_umbrel_release_gate() {
   local image="${NVPN_RELEASE_GATE_UMBREL_IMAGE:-${NVPN_RELEASE_GATE_WEB_IMAGE:-nostr-vpn-release-gate-web}}"
-  pnpm --dir "$ROOT_DIR/web/control-panel" install --frozen-lockfile
   env \
     NOSTR_VPN_IMAGE="$image" \
     NVPN_UMBREL_WEB_E2E_SKIP_BUILD="${NVPN_UMBREL_WEB_E2E_SKIP_BUILD:-1}" \
@@ -2425,6 +2445,11 @@ run_umbrel_release_gate() {
 
 run_docker_isolated_functional_gates() {
   docker_release_gates_enabled || return 0
+
+  # Both browser lanes share these dependencies. Complete installation before
+  # starting either reader so a fresh runner cannot race the Umbrel setup.
+  pnpm --dir "$ROOT_DIR/web/control-panel" install --frozen-lockfile
+  pnpm --dir "$ROOT_DIR/web/control-panel" exec playwright install chromium
 
   local lanes=()
   release_gate_parallel_start "Docker NAT-safe MTU" \
