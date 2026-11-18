@@ -194,7 +194,7 @@ pub(crate) fn acquire_unix_daemon_instance_lock_at(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             return Err(anyhow!(
-                "daemon already running or protected instance lock {} is unavailable: {}",
+                "cannot access protected daemon instance lock {}: {}",
                 lock_path.display(),
                 error
             ));
@@ -209,7 +209,7 @@ pub(crate) fn acquire_unix_daemon_instance_lock_at(
     options.create(true).read(true).write(true).mode(0o600);
     let file = options.open(lock_path).map_err(|error| {
         anyhow!(
-            "daemon already running or protected instance lock {} is unavailable: {}",
+            "cannot access protected daemon instance lock {}: {}",
             lock_path.display(),
             error
         )
@@ -427,7 +427,7 @@ pub(crate) fn compact_log_file_if_needed(
     max_bytes: u64,
     retain_bytes: u64,
 ) -> Result<bool> {
-    if max_bytes == 0 || retain_bytes == 0 || retain_bytes >= max_bytes {
+    if max_bytes == 0 || retain_bytes == 0 || retain_bytes > max_bytes {
         return Ok(false);
     }
 
@@ -465,12 +465,15 @@ pub(crate) fn compact_log_file_if_needed(
         &mut retained,
     )
         .with_context(|| format!("failed to read {}", path.display()))?;
-    if let Some(newline) = retained.iter().position(|byte| *byte == b'\n') {
+    if retain_start > 0 && let Some(newline) = retained.iter().position(|byte| *byte == b'\n') {
         retained.drain(..=newline);
     }
 
+    // Retain history separately. Replaying it into the active descriptor makes
+    // tail -F consumers treat old route failures as new incidents.
+    write_private_runtime_file_atomically(&path.with_extension("log.1"), &retained)?;
     let header = format!(
-        "[nvpn] daemon log compacted at {}; retained {} bytes from {} bytes\n",
+        "[nvpn] daemon log compacted at {}; archived {} bytes from {} bytes in daemon.log.1\n",
         unix_timestamp(),
         retained.len(),
         original_len
@@ -483,8 +486,6 @@ pub(crate) fn compact_log_file_if_needed(
         .with_context(|| format!("failed to rewind {}", path.display()))?;
     std::io::Write::write_all(&mut file, header.as_bytes())
         .with_context(|| format!("failed to write compaction header to {}", path.display()))?;
-    std::io::Write::write_all(&mut file, &retained)
-        .with_context(|| format!("failed to write retained log tail to {}", path.display()))?;
     std::io::Write::flush(&mut file)
         .with_context(|| format!("failed to flush {}", path.display()))?;
     Ok(true)
@@ -762,13 +763,11 @@ pub(crate) fn wait_for_daemon_control_result(
     request: DaemonControlRequest,
     timeout: Duration,
 ) -> Result<()> {
-    let result_file = daemon_control_result_file_path(config_path);
     let started = Instant::now();
     while started.elapsed() < timeout {
         if let Some(result) = read_daemon_control_result(config_path)?
             && result.request == request.as_str()
         {
-            let _ = fs::remove_file(&result_file);
             return if result.ok {
                 Ok(())
             } else {

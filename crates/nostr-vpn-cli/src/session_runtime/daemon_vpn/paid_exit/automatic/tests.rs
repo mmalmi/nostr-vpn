@@ -203,6 +203,119 @@ fn automatic_selection_uses_signed_seller_endpoint_for_a_routable_probe_session(
         reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 3)
             .unwrap()
     );
+    let staged = load_paid_route_store(&store_path).unwrap();
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(seller_pubkey.clone())
+    );
+    assert_eq!(staged.selected_buyer_session_id, session.session.session_id);
+    assert_ne!(
+        staged.automatic_reselect_session_id,
+        staged.selected_buyer_session_id
+    );
+    let candidate_id = staged.automatic_reselect_session_id.clone();
+    assert!(
+        crate::load_pending_fips_control_recipients(&config_path)
+            .unwrap()
+            .peers
+            .iter()
+            .any(|(_, peer)| peer == &alternative.public_key().to_bech32().unwrap())
+    );
+    // Seller failure must preserve both the user's route and the original credit.
+    reselection::finish(
+        &mut recovered,
+        &mut app,
+        &config_path,
+        Err(anyhow!("candidate DNS failed")),
+        now + 4,
+    )
+    .unwrap();
+    let failed = load_paid_route_store(&store_path).unwrap();
+    assert!(failed.automatic_reselect_from.is_empty());
+    assert_eq!(failed.selected_buyer_session_id, session.session.session_id);
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(seller_pubkey.clone())
+    );
+    update_paid_route_store(&store_path, |s| s.request_exit_reselection(&app, now + 5)).unwrap();
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 5)
+            .unwrap()
+    );
+    let staged = load_paid_route_store(&store_path).unwrap();
+    assert_eq!(
+        staged.automatic_reselect_session_id, candidate_id,
+        "retries reuse the trial"
+    );
+    // The request and the original channel also survive a daemon restart.
+    recovered = PaidExitAutomaticBuyer::default();
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 5)
+            .unwrap()
+    );
+    assert_eq!(
+        load_paid_route_store(&store_path)
+            .unwrap()
+            .automatic_reselect_session_id,
+        candidate_id
+    );
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(seller_pubkey.clone())
+    );
+    // An ACK alone is insufficient. Concentrate authority in the authenticated
+    // probe completion, which must also re-read the user's current selection.
+    update_paid_route_store(&store_path, |s| {
+        s.acknowledge_buyer_session_open(
+            &alternative.public_key().to_hex(),
+            &staged.sessions[&candidate_id].session.lease_id,
+            now + 5,
+        )
+    })
+    .unwrap();
+    assert!(
+        !reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 6)
+            .unwrap()
+    );
+    assert_eq!(
+        app.public_paid_exit_node_pubkey_hex(),
+        Some(seller_pubkey.clone())
+    );
+    update_paid_route_store(&store_path, |s| {
+        let recorded = s
+            .record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
+                seller_pubkey: alternative.public_key().to_hex(),
+                usage_delta: PaidRouteUsage {
+                    tx_bytes: 800,
+                    rx_bytes: 400,
+                    billable_bytes: 1200,
+                    ..Default::default()
+                },
+                now_unix: now + 6,
+            })?
+            .expect("candidate usage");
+        assert_eq!(recorded.session_id, candidate_id);
+        assert_eq!(
+            s.sessions[&session.session.session_id].session.usage,
+            session.session.usage
+        );
+        Ok(())
+    })
+    .unwrap();
+    let mut direct = app.clone();
+    direct.set_internet_source(InternetSource::Direct);
+    direct.save(&config_path).unwrap();
+    assert!(!reselection::finish(&mut recovered, &mut app, &config_path, Ok(()), now + 6).unwrap());
+    assert_eq!(
+        AppConfig::load(&config_path).unwrap().internet_source,
+        InternetSource::Direct
+    );
+    app.save(&config_path).unwrap();
+    assert!(
+        reconcile_automatic_paid_exit_selection(&mut recovered, &mut app, &config_path, now + 7)
+            .unwrap()
+    );
+    assert!(reselection::finish(&mut recovered, &mut app, &config_path, Ok(()), now + 7).unwrap());
     assert_eq!(
         app.public_paid_exit_node_pubkey_hex(),
         Some(alternative.public_key().to_hex())

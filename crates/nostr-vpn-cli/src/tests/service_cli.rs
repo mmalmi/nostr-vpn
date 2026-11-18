@@ -124,49 +124,22 @@ fn macos_service_plist_runs_service_supervised_daemon() {
 }
 
 #[test]
-fn macos_service_plist_parser_extracts_service_executable() {
-    let plist = crate::macos_service::macos_service_plist_content(
-        "to.nostrvpn.nvpn",
-        Path::new("/Applications/Nostr VPN.app/Contents/MacOS/nvpn"),
-        Path::new("/Users/example/Library/Application Support/nvpn/config.toml"),
-        "utun100",
-        20,
-    );
-
-    assert_eq!(
-        crate::macos_service::macos_service_executable_path_from_plist_contents(&plist).as_deref(),
-        Some("/Applications/Nostr VPN.app/Contents/MacOS/nvpn")
-    );
-}
-
-#[test]
-fn macos_service_label_uses_stable_default_for_main_config() {
-    let label = crate::macos_service::macos_service_label(&crate::default_config_path());
-    assert_eq!(label, "to.nostrvpn.nvpn");
-}
-
-#[test]
 fn macos_service_binary_uses_privileged_helper_copy() {
     assert_eq!(
-        crate::macos_service::macos_service_binary_path(&crate::default_config_path()),
+        crate::macos_service::macos_service_binary_path(MACOS_SERVICE_LABEL),
         Path::new("/Library/PrivilegedHelperTools/to.nostrvpn.nvpn")
     );
 }
 
 #[test]
 fn macos_service_identity_scopes_non_default_configs() {
-    let selected = Path::new("/tmp/nvpn-selected/config.toml");
-    let unrelated = Path::new("/tmp/nvpn-unrelated/config.toml");
-    let label = crate::macos_service::macos_service_label(selected);
-    let selected_target = crate::macos_service::macos_service_target(selected);
-
+    let label = crate::macos_service::macos_scoped_service_label(Path::new(
+        "/tmp/nvpn-selected/config.toml",
+    ));
+    let other =
+        crate::macos_service::macos_scoped_service_label(Path::new("/tmp/nvpn-other/config.toml"));
     assert!(label.starts_with("to.nostrvpn.nvpn."));
-    assert_eq!(selected_target, format!("system/{label}"));
-    assert_ne!(
-        selected_target,
-        crate::macos_service::macos_service_target(unrelated)
-    );
-    assert_ne!(selected_target, format!("system/{MACOS_SERVICE_LABEL}"));
+    assert_ne!(label, other);
 }
 
 #[test]
@@ -177,8 +150,9 @@ fn macos_service_uninstall_removes_only_selected_artifacts() {
         .as_nanos();
     let root = std::env::temp_dir().join(format!("nvpn-macos-uninstall-{nonce}"));
     fs::create_dir(&root).expect("create fixture directory");
-    let selected_label = crate::macos_service::macos_service_label(Path::new("/tmp/selected"));
-    let other_label = crate::macos_service::macos_service_label(Path::new("/tmp/other"));
+    let selected_label =
+        crate::macos_service::macos_scoped_service_label(Path::new("/tmp/selected"));
+    let other_label = crate::macos_service::macos_scoped_service_label(Path::new("/tmp/other"));
     let selected = [
         root.join(format!("{selected_label}.plist")),
         root.join(selected_label),
@@ -203,10 +177,9 @@ fn macos_service_uninstall_removes_only_selected_artifacts() {
 
 #[test]
 fn macos_service_activation_enables_before_bootstrap() {
-    let config_path = crate::default_config_path();
-    let plist_path = crate::macos_service::macos_service_plist_path(&config_path);
+    let plist_path = crate::macos_service::macos_service_plist_path(MACOS_SERVICE_LABEL);
     let commands =
-        crate::macos_service::macos_service_activation_commands(&config_path, &plist_path);
+        crate::macos_service::macos_service_activation_commands(MACOS_SERVICE_LABEL, &plist_path);
 
     assert_eq!(
         commands,

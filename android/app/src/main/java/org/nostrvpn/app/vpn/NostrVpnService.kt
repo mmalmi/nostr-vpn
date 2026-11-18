@@ -19,6 +19,7 @@ import android.os.SystemClock
 import android.util.Log
 import org.json.JSONObject
 import org.nostrvpn.app.AndroidLegacyPackageMigration
+import org.nostrvpn.app.AndroidFileNotifications
 import org.nostrvpn.app.TunnelConfigRefreshPolicy
 import org.nostrvpn.app.appCoreDataDir
 import org.nostrvpn.app.core.NativeCore
@@ -28,6 +29,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 class NostrVpnService : VpnService() {
+    private var fileNotifications: AndroidFileNotifications? = null
+    override fun onCreate() {
+        super.onCreate()
+        fileNotifications = AndroidFileNotifications(this).also { it.start() }
+    }
     private val running = AtomicBoolean(false)
     private val tunnelStartGeneration = AtomicLong()
     private val tunnelStartExecutor = Executors.newSingleThreadExecutor { task ->
@@ -145,6 +151,8 @@ class NostrVpnService : VpnService() {
     }
 
     override fun onDestroy() {
+        fileNotifications?.stop()
+        fileNotifications = null
         tunnelOwnedInProcess.set(false)
         tunnelStartGeneration.incrementAndGet()
         tunnelStartExecutor.shutdownNow()

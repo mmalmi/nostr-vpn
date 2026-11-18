@@ -13,7 +13,9 @@ impl FipsPrivateMeshRuntime {
             .filter(|s| !s.is_empty());
         // The FIPS builder applies discovery_scope to Nostr only for its
         // default empty connectivity config. Explicit configs keep their app.
-        let nostr_advert_app = match scope.as_ref() {
+        let mut pubsub_endpoint_config =
+            crate::control_pubsub_runtime::ControlPubsubEndpointConfig::from(&config);
+        pubsub_endpoint_config.advert_app = match scope.as_ref() {
             Some(scope) if !config.node.discovery.nostr.enabled && config.transports.is_empty() => {
                 scope.clone()
             }
@@ -57,7 +59,7 @@ impl FipsPrivateMeshRuntime {
 
         Ok(Self {
             endpoint,
-            nostr_advert_app,
+            pubsub_endpoint_config,
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             direct_endpoint_rx,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -72,6 +74,8 @@ impl FipsPrivateMeshRuntime {
             peer_capabilities: RwLock::new(HashMap::new()),
             #[cfg(feature = "paid-exit")]
             paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
+            #[cfg(feature = "paid-exit")]
+            candidate_probe: Default::default(),
         })
     }
 
@@ -89,12 +93,20 @@ impl FipsPrivateMeshRuntime {
         let input_packets = packets.len();
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
+        #[cfg(feature = "paid-exit")]
+        let probe = self.candidate_probe.load();
         let mut routed_packets = 0usize;
 
         runs.clear();
         {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
             for packet in packets {
+                #[cfg(feature = "paid-exit")]
+                if let Some(flow) = probe.as_deref().filter(|f| f.matches_outbound(&packet)) {
+                    runs.push(flow.send_run(self, packet)?);
+                    routed_packets += 1;
+                    continue;
+                }
                 let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet) else {
                     continue;
                 };
@@ -165,6 +177,8 @@ impl FipsPrivateMeshRuntime {
         debug_assert!(runs.is_empty());
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
+        #[cfg(feature = "paid-exit")]
+        let probe = self.candidate_probe.load();
         let mut input_packets = 0usize;
         let mut routed_packets = 0usize;
         let mut cached_destination_peer = None;
@@ -173,6 +187,15 @@ impl FipsPrivateMeshRuntime {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
             for packet in std::iter::once(first_packet).chain(packets) {
                 input_packets = input_packets.saturating_add(1);
+                #[cfg(feature = "paid-exit")]
+                if let Some(flow) = probe
+                    .as_deref()
+                    .filter(|f| f.matches_outbound(&packet.bytes))
+                {
+                    runs.push(flow.send_run(self, packet.bytes)?);
+                    routed_packets += 1;
+                    continue;
+                }
                 let destination = packet.destination;
                 let packet_debug = fips_unix_packet_debug_enabled();
                 let debug_description = packet_debug.then(|| describe_ip_packet(&packet.bytes));

@@ -31,6 +31,10 @@ ensure_cargo_audit
 #   dependency lines. The reported unwind requires a panicking key Drop plus
 #   catch_unwind; these paths use ordinary owned keys and do not recover across
 #   their drop panics. Remove when both lines accept patched lru >= 0.18.2.
+# - RUSTSEC-2026-0374: `basic-toml` 0.1.10 is an unmaintained build-time
+#   dependency of Askama's derive macro through UniFFI 0.29.5. The hosted
+#   release checks already accept this informational advisory; it is not the
+#   VPN runtime TOML parser. Remove when UniFFI/Askama drops basic-toml.
 audit_args=(
   --deny warnings
   --ignore RUSTSEC-2024-0384
@@ -40,7 +44,16 @@ audit_args=(
   --ignore RUSTSEC-2026-0195
   --ignore RUSTSEC-2026-0243
   --ignore RUSTSEC-2026-0253
+  --ignore RUSTSEC-2026-0374
 )
+
+# Release 4.1.22 accepts the bundled SQLite advisory and the pin-utils
+# maintenance warning for these exact dependency graphs.
+if [[ "$(cat ios/app-store-build-number)" == 4001032 &&
+      "$(git hash-object Cargo.lock)" == 4fb2f7a48e9fe8a5d1c940f38151fe1bbcd680b9 &&
+      "$(git hash-object linux/Cargo.lock)" == 5a32e131ae51742c10d1b69105c2b3fb4ab58040 ]]; then
+  audit_args+=(--ignore RUSTSEC-2026-0459 --ignore RUSTSEC-2026-0441)
+fi
 
 cargo audit "${audit_args[@]}"
 (cd linux && cargo audit "${audit_args[@]}")

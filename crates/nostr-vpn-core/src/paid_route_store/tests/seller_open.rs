@@ -249,6 +249,98 @@ fn funded_reconnect_is_admitted_after_the_same_buyer_used_an_older_free_probe() 
 }
 
 #[test]
+fn funded_buyer_can_move_only_its_live_lease_to_an_unclaimed_tunnel_address() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let other = Keys::generate();
+    let config = sample_config();
+    let mut store = seller_store_with_open_channel(&seller, &buyer, &config);
+    let seller_npub = seller.public_key().to_bech32().unwrap();
+    let update = StreamingRouteBalanceUpdate {
+        paid_msat: 1_000,
+        delivered_units: 100,
+        amount_due_msat: 1_000,
+        payment: CashuSpilmanPayment {
+            params: None,
+            funding_proofs: None,
+            ..sample_spilman_payment("channel-1", 1)
+        },
+    };
+    store
+        .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
+            envelope: seller_payment_envelope(
+                "internet-exit",
+                "lease-1",
+                &buyer.public_key().to_bech32().unwrap(),
+                &seller_npub,
+                101,
+                StreamingRoutePaymentPayload::BalanceUpdate(update),
+            ),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 101,
+        })
+        .unwrap();
+    let movement = ApplyPaidRouteSellerSessionOpenRequest {
+        authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+        authenticated_source_ip: Some("203.0.113.9".parse().unwrap()),
+        open: PaidRouteSessionOpen {
+            version: PAID_ROUTE_OFFER_VERSION.into(),
+            service_id: "internet-exit".into(),
+            lease_id: "lease-1".into(),
+            channel_id: "channel-1".into(),
+            seller_npub: seller_npub.clone(),
+            buyer_tunnel_ip: "10.44.80.9/32".into(),
+            expires_at_unix: 900,
+        },
+        seller_npub,
+        config: config.clone(),
+        now_unix: 101,
+    };
+    let mut occupied = movement.clone();
+    occupied.authenticated_buyer_pubkey = other.public_key().to_hex();
+    occupied.authenticated_source_ip = Some("203.0.113.88".parse().unwrap());
+    occupied.open.lease_id = "other-lease".into();
+    occupied.open.channel_id = "other-channel".into();
+    occupied.open.buyer_tunnel_ip = "10.44.80.10/32".into();
+    store.apply_seller_session_open(occupied.clone()).unwrap();
+    let original = store.clone();
+
+    let mut collision = movement.clone();
+    collision.open.buyer_tunnel_ip = occupied.open.buyer_tunnel_ip.clone();
+    let mut wrong_buyer = movement.clone();
+    wrong_buyer.authenticated_buyer_pubkey = other.public_key().to_hex();
+    let mut wrong_channel = movement.clone();
+    wrong_channel.open.channel_id = "other-channel".into();
+    let mut expired = movement.clone();
+    expired.now_unix = 501;
+    let mut unfunded = occupied;
+    unfunded.open.buyer_tunnel_ip = movement.open.buyer_tunnel_ip.clone();
+    for rejected in [collision, wrong_buyer, wrong_channel, expired, unfunded] {
+        store
+            .apply_seller_session_open(rejected)
+            .expect_err("must not move lease");
+        assert_eq!(store, original);
+    }
+
+    let admitted = store.apply_seller_session_open(movement.clone()).unwrap();
+    assert!(admitted.changed && admitted.allow_routing);
+    let mut expected = original;
+    expected
+        .seller_session_tunnel_ips
+        .insert(admitted.session_id, movement.open.buyer_tunnel_ip.clone());
+    assert_eq!(
+        store, expected,
+        "preserve the channel, quote, balance, and usage"
+    );
+    let admission = store
+        .seller_admission_for_buyer(&config, 101, &buyer.public_key().to_hex())
+        .unwrap();
+    assert_eq!(admission.buyer_tunnel_ip, movement.open.buyer_tunnel_ip);
+    assert!(!store.apply_seller_session_open(movement).unwrap().changed);
+}
+
+#[test]
 fn selected_buyer_session_expires_or_fails_instead_of_retrying_forever() {
     let seller = Keys::generate();
     let buyer = Keys::generate();

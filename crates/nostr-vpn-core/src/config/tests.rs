@@ -805,6 +805,27 @@ mod tests {
     }
 
     #[test]
+    fn public_buyer_cannot_claim_seller_or_private_peer_address() {
+        let mut app = AppConfig::generated();
+        app.set_active_network_id("address-test").unwrap();
+        let buyer = normalize_nostr_pubkey(&generate_nostr_identity().1).unwrap();
+        let peer = normalize_nostr_pubkey(&generate_nostr_identity().1).unwrap();
+        app.networks[0].devices.push(peer.clone());
+        for key in [app.own_nostr_pubkey_hex().unwrap(), peer] {
+            let reserved = super::derive_mesh_tunnel_ip(&app.effective_network_id(), &key).unwrap();
+            assert!(
+                app.validate_paid_exit_seller_session(&buyer, &reserved)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            app.validate_paid_exit_seller_session(&buyer, "10.44.0.1/32")
+                .unwrap(),
+            buyer
+        );
+    }
+
+    #[test]
     fn paid_exit_seller_rejects_paid_upstream_chains() {
         let mut config = AppConfig::generated();
         config.set_internet_source(InternetSource::PaidAutomatic);
@@ -901,108 +922,7 @@ mod tests {
         assert!(error.contains("PrivateKey"), "{error}");
     }
 
-    #[test]
-    fn fips_peer_endpoints_normalize_and_exclude_self() {
-        let (_, own_public_key) = generate_nostr_identity();
-        let (_, peer_public_key) = generate_nostr_identity();
-        let peer_public_key_hex =
-            normalize_nostr_pubkey(&peer_public_key).expect("valid peer public key");
-        let mut config = AppConfig::default();
-        config.nostr.secret_key = "not-a-secret-key".to_string();
-        config.nostr.public_key = own_public_key.clone();
-        config.fips_peer_endpoints.insert(
-            peer_public_key_hex,
-            vec![
-                " 10.203.0.12:51820 ".to_string(),
-                "10.203.0.12:51820".to_string(),
-                "198.51.100.10:51820".to_string(),
-                format!("{peer_public_key}:51820"),
-                "fips".to_string(),
-            ],
-        );
-        config
-            .fips_peer_endpoints
-            .insert(own_public_key, vec!["10.203.0.10:51820".to_string()]);
-
-        config.ensure_defaults();
-
-        assert_eq!(
-            config.fips_static_peer_endpoints(),
-            vec![(
-                peer_public_key,
-                vec!["10.203.0.12:51820".to_string(), "fips:51820".to_string()]
-            )]
-        );
-        assert!(config.has_fips_static_peer_endpoints());
-    }
-
-    #[test]
-    fn set_fips_peer_endpoint_hints_replaces_and_removes_peer_hints() {
-        let (_, peer_public_key) = generate_nostr_identity();
-        let peer_public_key_hex =
-            normalize_nostr_pubkey(&peer_public_key).expect("valid peer public key");
-        let mut config = AppConfig::default();
-
-        config
-            .set_fips_peer_endpoint_hints(
-                &peer_public_key,
-                &[
-                    " peer.example.com ".to_string(),
-                    "192.168.1.23".to_string(),
-                    "peer.example.com:51820".to_string(),
-                    "[fd00::23]".to_string(),
-                ],
-            )
-            .expect("set hints");
-
-        assert_eq!(
-            config.fips_peer_endpoint_hints(&peer_public_key_hex),
-            vec![
-                "192.168.1.23:51820".to_string(),
-                "[fd00::23]:51820".to_string(),
-                "peer.example.com:51820".to_string()
-            ]
-        );
-
-        let error = config
-            .set_fips_peer_endpoint_hints(&peer_public_key, &["198.51.100.10:51820".to_string()])
-            .expect_err("documentation endpoint is rejected")
-            .to_string();
-        assert!(error.contains("host:port"), "{error}");
-        assert_eq!(
-            config.fips_peer_endpoint_hints(&peer_public_key),
-            vec![
-                "192.168.1.23:51820".to_string(),
-                "[fd00::23]:51820".to_string(),
-                "peer.example.com:51820".to_string()
-            ]
-        );
-
-        config
-            .set_fips_peer_endpoint_hints(&peer_public_key, &[])
-            .expect("clear hints");
-        assert!(config.fips_peer_endpoint_hints(&peer_public_key).is_empty());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn private_files_prefer_user_owned_parent_over_stale_root_owned_file() {
-        assert_eq!(
-            super::preferred_private_file_owner(Some((0, 0)), Some((501, 20))),
-            Some((501, 20))
-        );
-        assert_eq!(
-            super::preferred_private_file_owner(Some((502, 20)), Some((501, 20))),
-            Some((502, 20))
-        );
-        assert_eq!(
-            super::preferred_private_file_owner(None, Some((501, 20))),
-            Some((501, 20))
-        );
-        assert_eq!(
-            super::preferred_private_file_owner(None, Some((0, 0))),
-            None
-        );
-    }
+    include!("tests_fips_endpoints.rs");
+    include!("tests_file_ownership.rs");
 
 }

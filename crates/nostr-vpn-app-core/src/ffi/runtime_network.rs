@@ -66,7 +66,8 @@ impl NativeAppRuntime {
             // the selected seller has since disconnected.
             let selected_exit_active = vpn_active && selected_peer.is_some_and(|peer| {
                 peer.reachable && if paid_exit {
-                    active_paid_exit_ip.is_some()
+                    active_paid_exit_ip.is_some() && daemon_state
+                        .and_then(|state| state.tunnel_exit_peer.as_deref()) == Some(selected_exit_node)
                 } else {
                     peer_offers_exit_node(&peer.advertised_routes)
                 }

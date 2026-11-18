@@ -63,7 +63,7 @@ test('a late failure resumes without executing the validated earlier check again
   assert.ok(ledger.phases.some(p => p.label === 'late' && p.status === 'passed'))
 })
 
-test('candidate preflight packages Cargo archives even when source quality is reused', t => {
+test('candidate preflight checks StartOS once and packages Cargo even when source quality is reused', t => {
   const { root, git } = fixture(t)
   mkdirSync(join(root, 'scripts'))
   writeFileSync(join(root, 'scripts/sync-versions.mjs'), '')
@@ -73,8 +73,9 @@ test('candidate preflight packages Cargo archives even when source quality is re
   writeFileSync(join(root, 'scripts/publish.sh'), '#!/bin/sh\nprintf "packaged\\n" >> count\n', { mode: 0o755 })
   git('add', 'scripts')
   git('commit', '-qm', 'preflight fixture')
-  const preflight = readFileSync(resolve('scripts/release-gate.sh'), 'utf8')
-    .match(/^run_release_gate_candidate_preflight\(\) \{[\s\S]*?^\}/m)?.[0]
+  const gate = readFileSync(resolve('scripts/release-gate.sh'), 'utf8')
+  const preflight = gate.match(/^run_release_gate_candidate_preflight\(\) \{[\s\S]*?^\}/m)?.[0]
+  const staticPreflight = gate.match(/^run_release_gate_static_preflight\(\) \{[\s\S]*?^\}/m)?.[0]
   assert.ok(preflight, 'production candidate preflight exists')
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const result = spawnSync('/bin/bash', ['-c', `
@@ -83,15 +84,48 @@ test('candidate preflight packages Cargo archives even when source quality is re
       release_gate_state_init "$2"
       trap 's=$?; node "$RELEASE_GATE_STATE_TOOL" finish "$RELEASE_GATE_STATE_DIR" "$s"; exit "$s"' EXIT
       cd "$2"
+      bool_is_true() { [[ "$1" == 1 ]]; }
+      npm() { printf 'npm:%s\\n' "$*" >> count; }
+      uname() { echo Linux; }
       run_release_gate_source_quality() { :; }
       ${preflight}
+      ${staticPreflight}
       run_release_gate_candidate_preflight
+      run_release_gate_static_preflight
     `, '_', library, root], { encoding: 'utf8' })
     assert.equal(result.status, 0, result.stderr)
   }
-  assert.equal(readFileSync(join(root, 'count'), 'utf8'), 'packaged\npackaged\n')
+  assert.equal(readFileSync(join(root, 'count'), 'utf8'),
+    'npm:ci\nnpm:run check\nnpm:run build\npackaged\n'.repeat(2))
   assert.ok(status(root).phases.some(p => p.label === 'Source quality' && p.status === 'reused'))
 })
+
+for (const failedCommand of ['ci', 'run check', 'run build']) {
+  test(`StartOS ${failedCommand} failure stops before compilation and native preparation`, t => {
+    const { root } = fixture(t)
+    mkdirSync(join(root, 'scripts'))
+    writeFileSync(join(root, 'scripts/sync-versions.mjs'), '')
+    for (const name of ['check-source-file-lines.sh', 'test-release-gate-orchestration.sh', 'publish.sh']) {
+      writeFileSync(join(root, 'scripts', name), '#!/bin/sh\nexit 0\n', { mode: 0o755 })
+    }
+    const preflight = readFileSync(resolve('scripts/release-gate.sh'), 'utf8')
+      .match(/^run_release_gate_candidate_preflight\(\) \{[\s\S]*?^\}/m)?.[0]
+    const result = spawnSync('/bin/bash', ['-c', `
+      set -euo pipefail
+      cd "$1"
+      bool_is_true() { [[ "$1" == 1 ]]; }
+      npm() { echo "npm:$*"; [[ "$*" != "$failed" ]] || return 73; }
+      release_gate_checkpoint_run() { echo expensive-compilation; }
+      ${preflight}
+      failed="$2"
+      run_release_gate_candidate_preflight
+      echo native-preparation
+    `, '_', root, failedCommand], { encoding: 'utf8', timeout: 5000 })
+    assert.equal(result.status, 73, result.stdout + result.stderr)
+    assert.match(result.stdout, new RegExp(`npm:${failedCommand}`))
+    assert.doesNotMatch(result.stdout, /expensive-compilation|native-preparation/)
+  })
+}
 
 test('changed tracked content invalidates reuse even before a new commit', t => {
   const { root } = fixture(t)

@@ -22,8 +22,8 @@ grep -Fq 'isCinematicVideoCaptureEnabled = false' <<<"$guarded_source" \
 grep -Fq 'xcrun swiftc' "$CHECK" || fail "compatibility check does not invoke swiftc"
 grep -Fq -- '-typecheck' "$CHECK" || fail "compatibility check does not type-check"
 grep -Fq 'QRCodeScannerView.swift' "$CHECK" || fail "compatibility check omits scanner source"
-grep -Fq '/Applications/Xcode_15.4.app/Contents/Developer' "$WORKFLOW" \
-  || fail "release workflow does not pin the compatibility check to Xcode 15.4"
+grep -Fq '/Applications/Xcode_16.0.app/Contents/Developer' "$WORKFLOW" \
+  || fail "release workflow does not pin the compatibility check to Xcode 16.0"
 grep -Fq 'run: ./scripts/check-macos-swift-sdk-compat.sh' "$WORKFLOW" \
   || fail "release workflow does not run the compatibility check"
 

@@ -234,13 +234,7 @@ fn fips_endpoint_config_for_platform(
     config.node.limits.max_connections = MOBILE_MAX_FIPS_CONNECTIONS;
     config.node.limits.max_links = MOBILE_MAX_FIPS_LINKS;
     let join_request_pending = mobile_join_request_pending(mobile);
-    let include_non_roster_transit = mobile.connect_to_non_roster_fips_peers
-        || mobile.join_requests_enabled
-        || mobile.device_approval_pending
-        || mobile.local_identity_confirmation_pending
-        || join_request_pending
-        || !mobile.websocket_seed_urls.is_empty()
-        || !mobile.bootstrap_peers.is_empty();
+    let include_non_roster_transit = mobile_includes_non_roster_transit(mobile);
     let nostr_enabled = mobile_nostr_enabled(mobile);
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.peerfinding_source = fips_endpoint::NostrPeerfindingSource::External;
@@ -372,6 +366,16 @@ fn mobile_udp_transports(
 fn mobile_join_request_pending(mobile: &MobileTunnelConfig) -> bool {
     !mobile.pending_join_request_recipient.trim().is_empty()
         && mobile.pending_join_requested_at != 0
+}
+
+fn mobile_includes_non_roster_transit(mobile: &MobileTunnelConfig) -> bool {
+    mobile.connect_to_non_roster_fips_peers
+        || mobile.join_requests_enabled
+        || mobile.device_approval_pending
+        || mobile.local_identity_confirmation_pending
+        || mobile_join_request_pending(mobile)
+        || !mobile.websocket_seed_urls.is_empty()
+        || !mobile.bootstrap_peers.is_empty()
 }
 
 fn mobile_nostr_enabled(mobile: &MobileTunnelConfig) -> bool {

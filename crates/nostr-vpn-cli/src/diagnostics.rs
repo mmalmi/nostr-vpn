@@ -108,7 +108,9 @@ pub(crate) fn build_health_issues(
         ));
     }
 
-    if vpn_active && !app.exit_node.is_empty() {
+    // Private peers advertise default routes. Public sellers grant access using
+    // a paid session and can carry traffic without advertising a private route.
+    if vpn_active && !app.exit_node.is_empty() && app.public_paid_exit_node_pubkey_hex().is_none() {
         let selected_peer = peers
             .iter()
             .find(|peer| peer.participant_pubkey == app.exit_node);

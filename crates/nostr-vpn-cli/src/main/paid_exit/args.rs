@@ -18,7 +18,7 @@ const PAID_EXIT_OFFER_EVENT_CACHE_LIMIT: usize = 512;
 enum PaidExitCommand {
     /// Show paid-exit seller config, wallet, offers, channels, and sessions.
     Status(PaidExitStatusArgs),
-    /// Rate a previously used provider; down stops and avoids it. Ratings publish automatically.
+    /// Publish a public rating with --publish. A downvote also avoids the provider.
     Rate(PaidExitRateArgs),
     /// Ask Automatic mode to try another eligible provider without casting a vote.
     Reselect(PaidExitStatusArgs),
@@ -35,6 +35,8 @@ enum PaidExitCommand {
     Buy(PaidExitBuyArgs),
     /// Select an existing buyer session as the active public exit route.
     Use(PaidExitUseArgs),
+    /// Turn off future manual channel purchases, including while disconnected.
+    StopRenewal(PaidExitStatusArgs),
     /// Measure the realized public exit IP and quality for a paid-exit session.
     Probe(PaidExitProbeArgs),
     /// Record realized exit IP and quality measurements for a paid-exit session.
@@ -84,6 +86,9 @@ struct PaidExitRateArgs {
     provider: Option<String>,
     #[arg(value_enum)]
     opinion: PaidExitOpinion,
+    /// Confirm publication of this rating under your public identity.
+    #[arg(long)]
+    publish: bool,
     #[arg(long)]
     json: bool,
 }
@@ -221,6 +226,9 @@ struct PaidExitBuyArgs {
     /// Do not ask a running daemon to reload after selecting the paid exit.
     #[arg(long)]
     no_reload_daemon: bool,
+    /// Renew this session at the same seller, mint and price, up to its original channel capacity.
+    #[arg(long, conflicts_with = "no_select_exit_node")]
+    auto_renew: bool,
     #[arg(long)]
     json: bool,
 }
@@ -234,6 +242,9 @@ struct PaidExitUseArgs {
     /// Do not ask a running daemon to reload after selecting the paid exit.
     #[arg(long)]
     no_reload_daemon: bool,
+    /// Renew this session at the same seller, mint and price, up to its original channel capacity.
+    #[arg(long)]
+    auto_renew: bool,
     #[arg(long)]
     json: bool,
 }
@@ -549,7 +560,7 @@ struct PaidExitCollectDueArgs {
 
 #[derive(Debug, Args)]
 struct PaidExitWalletArgs {
-    #[arg(long)]
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
     #[arg(long)]
     json: bool,
