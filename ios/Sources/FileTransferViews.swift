@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 import UserNotifications
 import QuickLook
@@ -23,9 +24,6 @@ extension AppModel {
             self.processFileNotificationAction()
         }
         UNUserNotificationCenter.current().delegate = fileNotificationDelegate
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            Task { @MainActor in self?.fileNotificationsEnabled = settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional }
-        }
         fileObservation = FileTransferObservation { [weak self] rows in
             Task { @MainActor in self?.observedFileTransfers = rows }
         }
@@ -38,12 +36,26 @@ extension AppModel {
         if action == "accept" || action == "decline" { fileTransferAction(action, id: id) }
     }
 
-    func enableFileNotifications() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert]) { [weak self] granted, _ in
-            Task { @MainActor in
-                self?.fileNotificationsEnabled = granted
-                if !granted { self?.statusMessage = "Allow nvpn notifications in Settings to see file alerts." }
+    func refreshFileNotificationPermission() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        fileNotificationsEnabled = settings.authorizationStatus == .authorized
+            || settings.authorizationStatus == .provisional
+    }
+
+    func enableFileNotifications() async {
+        let center = UNUserNotificationCenter.current()
+        let settings = await center.notificationSettings()
+        if settings.authorizationStatus == .denied {
+            if let url = URL(string: UIApplication.openNotificationSettingsURLString) {
+                await UIApplication.shared.open(url)
             }
+            return
+        }
+        do {
+            _ = try await center.requestAuthorization(options: [.alert])
+            await refreshFileNotificationPermission()
+        } catch {
+            statusMessage = error.localizedDescription
         }
     }
 
@@ -147,8 +159,13 @@ struct FileTransfersCard: View {
                 Text("Files").font(.headline)
                 Spacer()
                 if !model.fileNotificationsEnabled {
-                    Button { model.enableFileNotifications() } label: { Image(systemName: "bell.badge.fill") }
-                        .accessibilityLabel("Notify me about files")
+                    Button {
+                        Task { await model.enableFileNotifications() }
+                    } label: {
+                        Label("Enable notifications", systemImage: "bell.badge.fill")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(.bordered)
                 }
             }
             if !model.filePreparationText.isEmpty {

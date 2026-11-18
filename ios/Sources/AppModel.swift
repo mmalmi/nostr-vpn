@@ -195,6 +195,7 @@ final class AppModel: ObservableObject {
             suspendNativeCore()
         case .active:
             sceneIsActive = true
+            Task { await refreshFileNotificationPermission() }
             resumeNativeCore()
             drainPendingOpenURLs()
         case .inactive:

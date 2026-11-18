@@ -14,6 +14,7 @@ All notable changes to this project are documented in this file.
 - An offline Linux device can start Nostr VPN and accept a pairing request
   before it has an upstream DNS server.
 - On iOS, incoming file offers now use the peer list from the running VPN tunnel.
+  Tap **Enable notifications** in Files to get alerts when an offer arrives.
 - Desktop apps show progress while installing an update.
 
 ## 4.1.22 - 2026-11-14
