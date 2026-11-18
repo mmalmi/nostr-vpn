@@ -20,10 +20,15 @@ paid-exit = [
   "dep:hyper-util",
   "dep:http-body-util",
   "nostr-vpn-core/paid-exit",
+  "nostr-vpn-core/peer-credit",
+  "dep:peer-payments",
+  "dep:fips-credit-link",
   "nostr-vpn-core/cashu-wallet",
 ]
 
 [dependencies]
+peer-payments = { workspace = true, optional = true }
+fips-credit-link = { path = "../../vendor/fips-credit-link", optional = true }
 anyhow.workspace = true
 arc-swap.workspace = true
 async-trait.workspace = true

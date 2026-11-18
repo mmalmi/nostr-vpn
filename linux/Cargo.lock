@@ -4691,6 +4691,7 @@ version = "0.1.0"
 dependencies = [
  "cashu-credit",
  "fs2",
+ "lightning-invoice",
  "nostr-social-graph",
  "rusqlite",
  "secp256k1 0.29.1",

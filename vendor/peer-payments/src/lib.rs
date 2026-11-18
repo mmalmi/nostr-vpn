@@ -12,17 +12,18 @@ mod book;
 mod buyer;
 mod controller;
 mod protocol;
+pub mod redemption;
 mod signature;
 mod store;
 
 pub use account::Account;
-pub use book::{Allowance, Book, Exposure, Grant, Limits};
+pub use book::{Allowance, Book, Exposure, Grant, Limits, TrialPolicy};
 pub use buyer::{Buyer, SpendingLimits};
 pub use controller::{ControlMessage, Controller, Opened, PurchaseIntent};
 pub use protocol::{Agreement, Netting, Receipt, Signed, Verifier, WireMessage, WIRE_VERSION};
 pub use secp256k1::Keypair;
 pub use signature::{sign_message, SchnorrVerifier};
-pub use store::{AccountStore, BuyerStore, DurableState, PaymentStore};
+pub use store::{AccountBalance, AccountStore, BuyerStore, DurableState, PaymentStore};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -38,6 +39,10 @@ pub enum Error {
     Expired,
     #[error("credit, spending or retained-history limit reached")]
     Limit,
+    #[error("wallet data or operation could not be verified")]
+    Wallet,
+    #[error("redemption outcome pending; recover the same invoice")]
+    Pending,
     #[error("unknown agreement")]
     Unknown,
     #[error("agreement is closed")]

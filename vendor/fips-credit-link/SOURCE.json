@@ -1,0 +1,10 @@
+{
+  "upstream": "fips/crates/fips-credit-link",
+  "sha256": {
+    "src/carrier.rs": "92831384aa64917e80c3ada67956cbef67944671cf538da90f9fdc85fba1e6b9",
+    "src/lib.rs": "4e4227d4ccfd38bc71a2e46664dc52a3b75b30daa3f1a941b85c405d087d7330",
+    "src/payments.rs": "209e8b158c6e660734f55c677adb0d9f8eb38721195bc145c73d522ca7c76326",
+    "src/wallet.rs": "743cd886ff095a95e07ca4e912adf194db11cb75756c4c4ed9ea6964ab7ba69d",
+    "src/wallet_policy.rs": "d420a011271676ab586a62cd41ba6aff66930464578895826888b750f6254c21"
+  }
+}

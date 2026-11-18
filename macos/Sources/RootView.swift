@@ -40,6 +40,7 @@ struct RootView: View {
     @State var paidRouteMintUrl = ""
     @State var paidRouteWalletFlow: PaidRouteWalletFlow?
     @State var paidRouteWalletSelectedMint = ""
+    @State var earnedCreditBalance: UInt64?
     @State var paidRouteWalletShowsResult = false
     @State var paidRouteWalletFlowError = ""
     @State var paidRouteWalletHistoryExpanded = false

@@ -4,6 +4,8 @@ use crate::{
     Agreement, Allowance, Book, Buyer, DurableState, Error, Grant, Netting, Receipt, Signed,
     Verifier, WireMessage,
 };
+mod redemptions;
+use crate::redemption::Record;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -15,6 +17,7 @@ pub struct Account {
     seller: Book,
     buyer: Buyer,
     nettings: BTreeMap<String, NettingRecord>,
+    redemptions: BTreeMap<String, Record>,
     revision: u64,
 }
 
@@ -32,6 +35,8 @@ struct Snapshot {
     seller: String,
     buyer: String,
     nettings: BTreeMap<String, NettingRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    redemptions: BTreeMap<String, Record>,
     revision: u64,
 }
 
@@ -44,6 +49,7 @@ impl Account {
             seller,
             buyer,
             nettings: BTreeMap::new(),
+            redemptions: BTreeMap::new(),
             revision: 0,
         })
     }
@@ -53,6 +59,10 @@ impl Account {
     }
     pub fn buyer(&self) -> &Buyer {
         &self.buyer
+    }
+
+    pub fn set_trial_policy(&mut self, policy: Option<crate::TrialPolicy>) -> Result<(), Error> {
+        self.update(|s| s.seller.set_trial_policy(policy))
     }
 
     /// Persist the opt-out in the same account shared by every service. Existing
@@ -138,7 +148,8 @@ impl Account {
         self.update(|s| s.buyer.acknowledge(receipt, verifier))
     }
 
-    /// Deterministically select the oldest IDs with reciprocal completed debt.
+    /// Clear the most debt possible in one bilateral exchange. Equal balances
+    /// use the first agreement ID in the respective book's stable order.
     /// Repeated calls return the same pending terms for automatic reconnect retry.
     pub fn prepare_reciprocal(&mut self, peer: &str) -> Result<Option<Netting>, Error> {
         if let Some(pending) = self
@@ -147,18 +158,20 @@ impl Account {
         {
             return Ok(Some(pending.clone()));
         }
-        let sale = self.seller.records().find_map(|(id, _)| {
-            self.seller
-                .settlement_terms(id)
-                .ok()
-                .filter(|(a, total, cleared)| a.payer == peer && total > cleared)
-        });
-        let purchase = self.buyer.records().find_map(|(id, _)| {
-            self.buyer
-                .settlement_terms(id)
-                .ok()
-                .filter(|(a, total, cleared)| a.provider == peer && total > cleared)
-        });
+        let sale = self
+            .seller
+            .records()
+            .filter(|(id, _)| !self.redemption_locks(id))
+            .filter_map(|(id, _)| self.seller.settlement_terms(id).ok())
+            .filter(|(a, total, cleared)| a.payer == peer && total > cleared)
+            .min_by_key(|(_, total, cleared)| std::cmp::Reverse(total - cleared));
+        let purchase = self
+            .buyer
+            .records()
+            .filter(|(id, _)| !self.redemption_locks(id))
+            .filter_map(|(id, _)| self.buyer.settlement_terms(id).ok())
+            .filter(|(a, total, cleared)| a.provider == peer && total > cleared)
+            .min_by_key(|(_, total, cleared)| std::cmp::Reverse(total - cleared));
         let (Some(sale), Some(purchase)) = (sale, purchase) else {
             return Ok(None);
         };
@@ -197,6 +210,12 @@ impl Account {
             } else {
                 Err(Error::Conflict)
             };
+        }
+        if self.redemption_locks(&terms.left_sale) || self.redemption_locks(&terms.right_sale) {
+            return Err(Error::Conflict);
+        }
+        if terms.id.starts_with("ln/") {
+            return Err(Error::Conflict);
         }
         self.validate_netting(terms, false)?;
         if self.nettings.len() >= 256 {
@@ -356,6 +375,7 @@ impl DurableState for Account {
             seller: self.seller.encode()?,
             buyer: self.buyer.encode()?,
             nettings: self.nettings.clone(),
+            redemptions: self.redemptions.clone(),
             revision: self.revision,
         })?;
         if json.len() > MAX_STATE_BYTES {
@@ -377,6 +397,7 @@ impl DurableState for Account {
         )?;
         account.revision = snapshot.revision;
         account.nettings = snapshot.nettings;
+        account.redemptions = snapshot.redemptions;
         let mut offsets: BTreeMap<String, Vec<(u64, u64)>> = BTreeMap::new();
         let mut locked = std::collections::BTreeSet::new();
         for (id, record) in &account.nettings {
@@ -399,6 +420,7 @@ impl DurableState for Account {
                 return Err(Error::Conflict);
             }
         }
+        account.validate_redemptions(&mut offsets, &mut locked)?;
         for (id, cleared) in account.seller.records().chain(account.buyer.records()) {
             if cleared > 0 && !offsets.contains_key(id) {
                 return Err(Error::Conflict);
