@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -66,8 +66,11 @@ fn linux_dns_coexistence_preserves_resolver_ownership() {
         );
         for tcp in [false, true] {
             assert_native_dns(tcp);
-            assert_a(&lookup("127.0.0.55", &name, RecordType::A, tcp), expected);
-            let response = lookup("127.0.0.55", &fips_name, RecordType::AAAA, tcp);
+            assert_a(
+                &lookup("127.0.0.55:53", &name, RecordType::A, tcp),
+                expected,
+            );
+            let response = lookup("127.0.0.55:53", &fips_name, RecordType::AAAA, tcp);
             assert_eq!(response.metadata.response_code, ResponseCode::NoError);
             assert!(
                 response
@@ -79,6 +82,50 @@ fn linux_dns_coexistence_preserves_resolver_ownership() {
         fixture.stop();
         assert_eq!(fs::read("/etc/resolv.conf").unwrap(), NATIVE);
         assert_native_dns(false);
+    }
+
+    // Split MagicDNS is UDP-only. Verify its actual listener address both
+    // with the preferred port available and with a forced random-port bind.
+    for fallback in [false, true] {
+        let _native = NativeDns::start(None);
+        let preferred: SocketAddr = "127.0.0.55:1053".parse().unwrap();
+        let _occupied = fallback.then(|| {
+            (
+                UdpSocket::bind(preferred).unwrap(),
+                TcpListener::bind(preferred).unwrap(),
+            )
+        });
+        let mut app = mesh_config();
+        app.fips_host_tunnel_enabled = false;
+        let label = if fallback {
+            "split-random"
+        } else {
+            "split-preferred"
+        };
+        let mut fixture = Fixture::start(&root, label, &app);
+        let before = fixture.resolver_before.clone();
+        let address = fixture.split_ready();
+        assert_eq!(address.ip(), preferred.ip());
+        if fallback {
+            assert_ne!(address.port(), preferred.port());
+            assert_ne!(address.port(), 0);
+            assert!(fixture.log().contains("preferred port 1053 unavailable"));
+        } else {
+            assert_eq!(address, preferred);
+        }
+        let name = app.self_magic_dns_name().unwrap();
+        let expected = nostr_vpn_core::magic_dns::build_magic_dns_records(&app)[&name];
+        assert_a(
+            &lookup(&address.to_string(), &name, RecordType::A, false),
+            expected,
+        );
+        assert_eq!(resolver_snapshot(), before);
+        assert!(fixture.journal()["secure_dns"].is_null());
+        assert_native_dns(false);
+        assert_native_dns(true);
+        fixture.stop();
+        assert_eq!(resolver_snapshot(), before);
+        drop(UdpSocket::bind(address).expect("split DNS listener was released"));
     }
 
     // Test both bind orderings: a TCP-only conflict must release the UDP
@@ -308,6 +355,38 @@ impl Fixture {
         );
     }
 
+    fn split_ready(&mut self) -> SocketAddr {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            assert!(
+                self.daemon.as_mut().unwrap().try_wait().unwrap().is_none(),
+                "split DNS startup failed: {}",
+                self.log()
+            );
+            let address = self.log().lines().rev().find_map(|line| {
+                line.strip_prefix("magicdns: active for local names and .fips via ")
+                    .and_then(|address| address.parse::<SocketAddr>().ok())
+            });
+            if self.dir.join("daemon.control.ready").exists()
+                && let Some(address) = address
+            {
+                assert!(self.control("reload").contains("daemon reloaded"));
+                assert!(self.daemon.as_mut().unwrap().try_wait().unwrap().is_none());
+                eprintln!(
+                    "{}: split DNS ready on {address}",
+                    self.dir.file_name().unwrap().to_string_lossy()
+                );
+                return address;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "split DNS startup timeout: {}",
+                self.log()
+            );
+            sleep(Duration::from_millis(50));
+        }
+    }
+
     fn control(&self, action: &str) -> String {
         let out = fs::File::create(self.dir.join(format!("{action}.log"))).unwrap();
         let mut child = Command::new(&self.bin)
@@ -471,16 +550,13 @@ fn encode(message: &Message) -> Vec<u8> {
     bytes
 }
 
-fn lookup(ip: &str, name: &str, kind: RecordType, tcp: bool) -> Message {
+fn lookup(address: &str, name: &str, kind: RecordType, tcp: bool) -> Message {
     let mut query = Message::new(42, MessageType::Query, OpCode::Query);
     query.add_query(Query::query(Name::from_ascii(name).unwrap(), kind));
     let request = encode(&query);
     let response = if tcp {
-        let mut socket = TcpStream::connect_timeout(
-            &format!("{ip}:53").parse().unwrap(),
-            Duration::from_secs(2),
-        )
-        .unwrap();
+        let mut socket =
+            TcpStream::connect_timeout(&address.parse().unwrap(), Duration::from_secs(2)).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -498,7 +574,7 @@ fn lookup(ip: &str, name: &str, kind: RecordType, tcp: bool) -> Message {
         packet
     } else {
         let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
-        socket.connect(format!("{ip}:53")).unwrap();
+        socket.connect(address).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -525,7 +601,7 @@ fn assert_a(response: &Message, expected: Ipv4Addr) {
 
 fn assert_native_dns(tcp: bool) {
     assert_a(
-        &lookup("127.0.0.1", "native.fixture.test", RecordType::A, tcp),
+        &lookup("127.0.0.1:53", "native.fixture.test", RecordType::A, tcp),
         ANSWER,
     );
 }
