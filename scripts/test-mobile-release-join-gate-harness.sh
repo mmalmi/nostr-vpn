@@ -35,6 +35,14 @@ done
   touch "$directory/products/NostrVpnIos_other.xctestrun"
   if select_generated_ios_release_xctestrun_for_gate "$directory/products" fixture; then exit 1; fi
 )
+(
+  popup="$(mktemp)"
+  trap 'rm -f "$popup"' EXIT
+  cat >"$popup" <<'XML'
+<hierarchy><node resource-id="android:id/content" bounds="[40,160][500,2100]"><node scrollable="true" bounds="[40,180][500,2020]"/></node></hierarchy>
+XML
+  [[ "$("$ROOT/scripts/mobile-release-join-ui-query.py" "$popup" resource android:id/content forward-swipe)" == '270 1790 270 410' ]]
+)
 python3 - "$ROOT/scripts/lib-mobile-release-join-artifacts.sh" <<'PY'
 import os, pathlib, subprocess, sys, tempfile
 with tempfile.TemporaryDirectory() as directory:
@@ -272,7 +280,7 @@ PY
   release_join_android_wait_query() { trace "wait:$1:$2"; }
   release_join_android_tap_center() { trace "tap:$1:$2"; }
   release_join_android_tap_visible() { trace "tap:$1:$2"; }
-  release_join_android_scroll_to() { trace "scroll:$1:$2${4:+:$4}"; }
+  release_join_android_scroll_to() { trace "scroll:$1:$2${4:+:$4}${5:+:$5}"; }
   release_join_android_normalize_carrier() { trace normalize-carrier; }
   release_join_android_query() {
     [[ "$1:$2" == 'text:This device' && "$scenario" == saved-direct ]]
@@ -301,7 +309,7 @@ PY
         forbidden+='|Internet source This device'
       fi
       grep -Fxq 'tap:network-picker:Turn VPN ' "$tmp/calls"
-      grep -Fxq 'scroll:text:Add network' "$tmp/calls"
+      grep -Fxq 'scroll:text:Add network:forward:popup' "$tmp/calls"
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
       grep -Fxq 'wait:description:Create Network' "$tmp/calls"
     else

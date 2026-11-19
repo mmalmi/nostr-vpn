@@ -30,6 +30,7 @@ def parser() -> argparse.ArgumentParser:
             "center",
             "safe-center",
             "visible-center",
+            "forward-swipe",
             "description",
             "text",
             "count",
@@ -148,6 +149,14 @@ def main() -> int:
     if not found:
         return 1
     node = found[0]
+    if args.output == "forward-swipe":
+        scrollable = [child for child in node.iter("node") if child.get("scrollable") == "true"]
+        if len(scrollable) != 1:
+            return 1
+        left, top, right, bottom = bounds(scrollable[0])
+        x = (left + right) // 2
+        print(x, top + (bottom - top) * 7 // 8, x, top + (bottom - top) // 8)
+        return 0
     if args.output in ("center", "safe-center", "visible-center"):
         if args.output in ("safe-center", "visible-center"):
             try:
