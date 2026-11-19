@@ -310,6 +310,8 @@ PY
     rm -f "$STOP_PATH"
     if [[ "${1:-0}" != 0 ]]; then
       cleanup_candidate_service
+    fi
+    if [[ "${1:-0}" != 0 || -f "$ARTIFACT_ROOT/canonical-profile.json" ]]; then
       cleanup_release_test_profile
     fi
     ;;

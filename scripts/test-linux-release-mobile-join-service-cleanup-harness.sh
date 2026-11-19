@@ -67,6 +67,15 @@ run_cleanup
 # Cleanup is idempotent when an interrupted install left nothing behind.
 run_cleanup
 
+# A failed UI bootstrap can leave a profile before service installation starts.
+python3 /workspace/scripts/linux_release_profile.py reset \
+  "${config%/config.toml}" "$artifact_root/canonical-profile.json"
+printf 'test profile\n' >"$config"
+/workspace/scripts/linux-release-mobile-join-remote.sh Cleanup \
+  "$artifact_root" /usr/bin/nostr-vpn /usr/bin/nvpn \
+  "$receipt" "$package_receipt" 0
+[[ ! -e "${config%/config.toml}" && ! -e "$artifact_root/canonical-profile.json" ]]
+
 # The root daemon writes the release-test Cashu wallet below the dedicated
 # desktop profile. Cleanup must remove that root-owned state so the next
 # public-UI Reset starts from the same empty profile.
