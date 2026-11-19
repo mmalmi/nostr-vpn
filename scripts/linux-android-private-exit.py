@@ -42,9 +42,14 @@ def serve():
     cfg = Path.home() / ".config/nvpn/config.toml"
     config = tomllib.loads(cfg.read_text())
     network, = config["networks"]
-    require(config["nostr"]["public_key"] == opts["provider"] and network["network_id"] == opts["network"]
-            and set(network["devices"]) == {opts["provider"], opts["android"]}
-            and not config.get("paid_exit", {}).get("enabled", False), "Expected the exclusive free test network")
+    own = config["nostr"]["public_key"]
+    require(own == opts["provider"], "Unexpected provider identity")
+    require(network["network_id"] == opts["network"], "Unexpected mesh network")
+    # The stored roster may omit the local identity, as in shared_network_roster().
+    permitted = {own, *network["devices"], *network.get("admins", [])}
+    require(permitted == {own, opts["android"]}, "Additional or missing peer in the test network")
+    require(not network.get("local_identity_confirmation_pending", False), "Test peer is pending approval")
+    require(not config.get("paid_exit", {}).get("enabled", False), "Expected a free provider")
     originally_advertised = bool(config["node"].get("advertise_exit_node", False))
     addr_arg = str(addr) + "/32"
     routes = json.loads(command(["ip", "-j", "-4", "route", "show", "table", "all"]))
