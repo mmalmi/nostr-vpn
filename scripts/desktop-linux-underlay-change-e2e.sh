@@ -439,7 +439,7 @@ assert_same_daemon_ready() {
 
 assert_secure_dns() {
   gate_command resolvectl dns "$TUN_IFACE" \
-    | grep -Eq '(^|[[:space:]])127\.0\.0\.1([[:space:]]|$)'
+    | grep -Eq '(^|[[:space:]])127\.0\.0\.55([[:space:]]|$)'
   gate_command resolvectl domain "$TUN_IFACE" | grep -Fq '~.'
 }
 
@@ -1239,7 +1239,7 @@ run_gate() {
     sleep 0.25
   done
   ((SECONDS < deadline)) || fail "native Direct route, DNS, and HTTPS did not restore"
-  if resolvectl dns "$TUN_IFACE" 2>/dev/null | grep -Fq 127.0.0.1; then
+  if resolvectl dns "$TUN_IFACE" 2>/dev/null | grep -Eq '127\.0\.0\.(1|55)([[:space:]]|$)'; then
     fail "secure exit DNS remained installed after selecting Direct"
   fi
   if ip -4 route show table 51888 >"$STATE_DIR/direct-policy-table.txt" 2>&1 \
@@ -1467,7 +1467,7 @@ crash_repair_gate() {
       && ! ip -4 rule show | grep -Eq '^10888:.*from .* lookup 51888$' \
       && [[ -z "$(ip -4 route show exact "$(endpoint_host)/32")" ]] \
       && { [[ -z "$policy_table" ]] || grep -Fq 'FIB table does not exist' <<<"$policy_table"; } \
-      && ! resolvectl dns "$TUN_IFACE" 2>/dev/null | grep -Fq 127.0.0.1 \
+      && ! resolvectl dns "$TUN_IFACE" 2>/dev/null | grep -Eq '127\.0\.0\.(1|55)([[:space:]]|$)' \
       && resolve_name "$(probe_host)" \
       && test_https
     then

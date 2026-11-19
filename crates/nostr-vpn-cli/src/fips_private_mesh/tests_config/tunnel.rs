@@ -441,6 +441,7 @@
                 config.secure_dns_required(),
                 "{source:?} must keep roster DNS active"
             );
+            assert!(!config.native_dns_can_handle_listener_conflict());
         }
     }
 
@@ -697,6 +698,7 @@
 
         if let Some(fips_host) = config.fips_host.as_ref() {
             assert!(config.secure_dns_required());
+            assert!(config.native_dns_can_handle_listener_conflict());
             assert!(
                 config
                     .interface_addresses()
@@ -709,6 +711,18 @@
             );
             assert!(!config.route_targets.contains(&"fd00::/8".to_string()));
             assert_eq!(config.interface_mtu(), 1280);
+
+            let mut required = config.clone();
+            required.secure_dns_requested = true;
+            assert!(!required.native_dns_can_handle_listener_conflict());
+            let mut required = config.clone();
+            required.exit_node_leak_protection = true;
+            assert!(!required.native_dns_can_handle_listener_conflict());
+            for route in ["0.0.0.0/0", "::/0"] {
+                let mut required = config.clone();
+                required.route_targets.push(route.to_string());
+                assert!(!required.native_dns_can_handle_listener_conflict());
+            }
         }
     }
 

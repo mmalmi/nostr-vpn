@@ -974,7 +974,7 @@ trap cleanup_state EXIT
   || { echo "Linux guest cleanup audit failed: nvpn process remains" >&2; exit 1; }
 ! ip link show dev "$tun" >/dev/null 2>&1 \
   || { echo "Linux guest cleanup audit failed: nvpn tunnel remains" >&2; exit 1; }
-! resolvectl dns "$tun" 2>/dev/null | grep -Fq 127.0.0.1 \
+! resolvectl dns "$tun" 2>/dev/null | grep -Eq '127\.0\.0\.(1|55)([[:space:]]|$)' \
   || { echo "Linux guest cleanup audit failed: nvpn DNS remains" >&2; exit 1; }
 if [[ -n "$profile_uuid" ]]; then
   ! nmcli -t -f UUID connection show | grep -Fxq "$profile_uuid" \
