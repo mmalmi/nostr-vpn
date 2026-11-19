@@ -1,11 +1,11 @@
 #[cfg(target_os = "macos")]
-use super::macos::{
-    MACOS_SECURE_DNS_STORE_KEY, macos_magic_dns_resolver_config, macos_resolver_configs,
-};
+use super::macos::{MACOS_SECURE_DNS_STORE_KEY, macos_resolver_configs};
 use super::*;
 use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
 use hickory_proto::rr::{Name, RData, RecordType};
 use hickory_proto::serialize::binary::BinEncoder;
+#[cfg(target_os = "macos")]
+use nostr_vpn_core::magic_dns::macos_secure_dns_resolver_config;
 use nostr_vpn_core::secure_dns::SecureDnsResolver;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -126,7 +126,7 @@ fn macos_secure_dns_uses_system_configuration_default_routing() {
             .any(|(path, _)| path == std::path::Path::new("/etc/resolver/fips"))
     );
 
-    let magic_dns_resolver = macos_magic_dns_resolver_config();
+    let magic_dns_resolver = macos_secure_dns_resolver_config();
     assert!(magic_dns_resolver.contains("nameserver 127.0.0.1\n"));
     assert!(magic_dns_resolver.contains("port 1053\n"));
     assert!(!magic_dns_resolver.contains("domain .\n"));
