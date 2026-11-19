@@ -35,7 +35,10 @@ On Android, run the joined Linux/Pixel release check with
 directions pass, the guest offers its connection to the paired phone. The
 Android test opens the production Internet picker, records the provider before
 selection, verifies a fresh request on both devices and restores the original
-settings. The network must contain only these two test devices.
+settings. If join results already exist for the same product, run the same
+check with `NVPN_TEST_ANDROID_PRIVATE_EXIT=only` and a fresh results directory.
+This exercises the picker without repeating both join directions. The network
+must contain only these two test devices.
 
 Run simulator UI checks without physical devices. Before physical UI automation,
 require a bounded fresh unlocked-state check.

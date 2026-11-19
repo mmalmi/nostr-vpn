@@ -54,21 +54,37 @@ probe() {
   # The shell UID is outside the VPN app. Use the production OS routes and a
   # fresh GET, with a deadline on the complete response as well as connect.
   python3 - "${ADB[0]}" "${ADB[2]}" "$host" "$port" "$challenge" "$1" <<'PYPROBE'
-import subprocess, sys
+import os
+import subprocess
+import sys
+
 adb, serial, host, port, challenge, condition = sys.argv[1:]
+device = [adb, "-s", serial]
 request = f"GET /{challenge} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n".encode()
-try:
-    answer = subprocess.run([adb, "-s", serial, "shell", "-T", "toybox", "nc", "-w", "3", host, port],
-                            input=request, capture_output=True, timeout=6)
-except subprocess.TimeoutExpired:
-    sys.exit(0 if condition == "unavailable" else 1)
-headers, _, body = answer.stdout.partition(b"\r\n\r\n")
+# An immediate stdin EOF can make Android's netcat exit before sending the GET.
+# Keep the writer open until the server closes the response or the deadline passes.
+read_fd, write_fd = os.pipe()
+with os.fdopen(read_fd, "rb") as reader, os.fdopen(write_fd, "wb") as writer:
+    writer.write(request)
+    writer.flush()
+    try:
+        answer = subprocess.run(device + ["shell", "-T", "toybox", "nc", "-w", "3", host, port],
+                                stdin=reader, capture_output=True, timeout=6)
+    except subprocess.TimeoutExpired:
+        answer = None
+
 if condition == "unavailable":
-    assert subprocess.check_output([adb, "-s", serial, "get-state"], timeout=4).strip() == b"device"
-    assert not headers.startswith(b"HTTP/") and not body
-    assert not any(word in answer.stderr.lower() for word in (b"offline", b"not found", b"unknown option"))
+    assert subprocess.check_output(device + ["get-state"], timeout=4).strip() == b"device"
+    if answer is not None:
+        assert answer.returncode != 0 and not answer.stdout
+        assert any(message in answer.stderr.lower() for message in
+                   (b"timeout", b"timed out", b"refused", b"unreachable", b"no route"))
 else:
-    assert answer.returncode == 0 and b" 200 " in headers.splitlines()[0] and body.strip() == challenge.encode()
+    assert answer is not None and answer.returncode == 0
+    headers, separator, body = answer.stdout.partition(b"\r\n\r\n")
+    status = headers.partition(b"\r\n")[0].split()
+    assert separator and len(status) >= 2 and status[0].startswith(b"HTTP/") and status[1] == b"200"
+    assert body.strip() == challenge.encode()
 PYPROBE
 }
 release_join_android_wait_query text 'This device' 15

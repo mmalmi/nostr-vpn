@@ -2250,3 +2250,34 @@ XML
   ! "$query" "$xml" text peer visible-center
   [[ "$("$query" "$xml" clickable-row-text peer visible-center)" == '540 843' ]]
 )
+
+# ADB must keep netcat's input open while the device returns the response.
+(
+  eval "$(sed -n '/^probe() {$/,/^}$/p' "$ROOT/scripts/test-android-private-exit.sh")"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  cat >"$tmp/adb" <<'PY'
+#!/usr/bin/env python3
+import os
+import select
+import sys
+
+if sys.argv[-1] == "get-state":
+    print(os.environ.get("DEVICE_STATE", "device"))
+    sys.exit(0)
+request = os.read(0, 4096)
+if select.select([0], [], [], 0)[0]:
+    sys.exit(0)
+if os.environ.get("UNREACHABLE"):
+    sys.exit("nc: Timeout")
+nonce = request.split(b" ", 2)[1].removeprefix(b"/")
+sys.stdout.buffer.write(b"HTTP/1.0 200 OK\r\n\r\n" + nonce)
+PY
+  chmod 700 "$tmp/adb"
+  ADB=("$tmp/adb" -s fixture)
+  host=198.18.0.1 port=80 challenge=00000000000000000000000000000001
+  probe available
+  if probe unavailable 2>/dev/null; then exit 1; fi
+  UNREACHABLE=1 probe unavailable
+  if UNREACHABLE=1 DEVICE_STATE=offline probe unavailable 2>/dev/null; then exit 1; fi
+)
