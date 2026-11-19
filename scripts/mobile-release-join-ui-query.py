@@ -18,6 +18,7 @@ def parser() -> argparse.ArgumentParser:
             "description",
             "text",
             "checkbox-label",
+            "clickable-row-text",
             "network-picker",
             "resource-prefix",
             "description-prefix",
@@ -127,6 +128,14 @@ def main() -> int:
                     )
                 ):
                     found.append(title)
+        if len(found) != 1:
+            return 1
+    elif args.kind == "clickable-row-text":
+        found = [
+            row for row in root.iter("node")
+            if row.get("clickable") == "true" and row.get("enabled") == "true"
+            and any(matches(child, "text", args.expected) for child in row.iter("node"))
+        ]
         if len(found) != 1:
             return 1
     elif args.kind == "checkbox-label":

@@ -124,7 +124,13 @@ PYROW
 provider_mark '○'
 "${ADB[@]}" exec-out screencap -p >"$out/before-selection.png"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_VISIBLE=1'
-release_join_android_tap_visible text "$provider"
+# Tap the whole row. The single-line device ID is shorter than the minimum
+# height for a safe tap, even when the clickable row is completely visible.
+deadline=$((SECONDS + 30))
+until release_join_android_tap_visible clickable-row-text "$provider"; do
+  ((SECONDS < deadline)) || { echo 'The paired provider row did not become tappable' >&2; exit 1; }
+  sleep 0.5
+done
 deadline=$((SECONDS + 50))
 until probe available 2>/dev/null; do
   ((SECONDS < deadline)) || { echo 'Private exit did not deliver its fresh challenge' >&2; exit 1; }

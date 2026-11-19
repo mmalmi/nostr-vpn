@@ -2238,3 +2238,15 @@ PY
   release_join_android_scroll_to resource internet-source-picker safe-center backward
   [[ "$(cat "$scroll_tmp/offset")" == 0 ]]
 )
+
+# The provider identity may be a short text line inside a full-height button.
+(
+  xml="$(mktemp "${TMPDIR:-/tmp}/nvpn-provider-row.XXXXXX")"
+  trap 'rm -f "$xml"' EXIT
+  cat >"$xml" <<'XML'
+<hierarchy><node bounds="[0,0][1080,2410]"><node clickable="true" enabled="true" bounds="[89,780][991,907]"><node text="peer" bounds="[149,849][991,891]"/></node></node></hierarchy>
+XML
+  query="$ROOT/scripts/mobile-release-join-ui-query.py"
+  ! "$query" "$xml" text peer visible-center
+  [[ "$("$query" "$xml" clickable-row-text peer visible-center)" == '540 843' ]]
+)
