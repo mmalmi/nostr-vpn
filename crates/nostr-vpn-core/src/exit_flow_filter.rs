@@ -5,11 +5,19 @@ const MAX_TRACKED_EXIT_FLOWS: usize = 16_384;
 const EXIT_TCP_IDLE: Duration = Duration::from_secs(5 * 24 * 60 * 60);
 const EXIT_UDP_IDLE: Duration = Duration::from_secs(3 * 60);
 const EXIT_ICMP_IDLE: Duration = Duration::from_secs(30);
+const EXIT_FLOW_REFRESH_GROUPS: usize = 3;
 
+// The map owns membership; each timeout group's queue keeps one stamped entry
+// per note in refresh order, so a group front is its least recently refreshed
+// flow. An entry is current while its stamp matches the flow's stamp in the
+// map; entries superseded by a refresh or orphaned by a removal are popped
+// lazily from the front and reclaimed in bulk once they outnumber the live
+// flows.
 #[derive(Debug, Default)]
 pub struct ExitFlowFilter {
-    flows: HashMap<ExitFlowKey, Instant>,
-    order: VecDeque<ExitFlowKey>,
+    flows: HashMap<ExitFlowKey, (Instant, u64)>,
+    refresh_order: [VecDeque<(ExitFlowKey, u64)>; EXIT_FLOW_REFRESH_GROUPS],
+    next_stamp: u64,
 }
 
 impl ExitFlowFilter {
@@ -17,19 +25,7 @@ impl ExitFlowFilter {
         let Some(key) = outbound_exit_flow_key(peer, packet, false) else {
             return;
         };
-        let now = Instant::now();
-        if let Some(seen) = self.flows.get_mut(&key) {
-            *seen = now;
-            return;
-        }
-        while self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            self.flows.remove(&oldest);
-        }
-        self.flows.insert(key, now);
-        self.order.push_back(key);
+        self.stamp_flow(key, Instant::now());
     }
 
     pub fn admits_inbound(&mut self, peer: [u8; 16], packet: &[u8]) -> bool {
@@ -44,16 +40,101 @@ impl ExitFlowFilter {
         };
         let timeout = exit_flow_timeout(key.protocol);
         let now = Instant::now();
-        let Some(seen) = self.flows.get_mut(&key) else {
+        let Some(&(seen, _)) = self.flows.get(&key) else {
             return false;
         };
-        if now.saturating_duration_since(*seen) > timeout {
+        if now.saturating_duration_since(seen) > timeout {
+            // Its queue entry goes stale and is reclaimed lazily.
             self.flows.remove(&key);
-            self.order.retain(|candidate| candidate != &key);
             return false;
         }
-        *seen = now;
+        self.stamp_flow(key, now);
         true
+    }
+
+    // Move the flow to the newer end of its timeout group's queue: the map
+    // keeps the idle deadline, the queue entry carrying the fresh stamp marks
+    // the refresh position. A new flow first evicts one flow when the table
+    // is full.
+    fn stamp_flow(&mut self, key: ExitFlowKey, now: Instant) {
+        let stamp = self.next_stamp;
+        self.next_stamp += 1;
+        match self.flows.get_mut(&key) {
+            Some((seen, current)) => {
+                *seen = now;
+                *current = stamp;
+            }
+            None => {
+                if self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
+                    self.evict_one_flow(now);
+                }
+                self.flows.insert(key, (now, stamp));
+            }
+        }
+        let group = exit_flow_group(key.protocol);
+        self.refresh_order[group].push_back((key, stamp));
+        self.compact_refresh_order();
+    }
+
+    // Evict one flow with bounded work: stale queue fronts are popped, then a
+    // flow past its idle timeout wins (the most idle group front first),
+    // otherwise the least recently refreshed flow overall. The fronts are the
+    // only candidates the idle-before-active policy can prefer, so no scan of
+    // the tracked table is ever needed.
+    fn evict_one_flow(&mut self, now: Instant) {
+        let mut idle: Option<(ExitFlowKey, Instant)> = None;
+        let mut least_recent: Option<(ExitFlowKey, Instant)> = None;
+        for queue in &mut self.refresh_order {
+            while let Some(&(key, stamp)) = queue.front() {
+                match self.flows.get(&key) {
+                    Some(&(seen, current)) if current == stamp => {
+                        if least_recent.is_none_or(|(_, recent)| seen < recent) {
+                            least_recent = Some((key, seen));
+                        }
+                        let timeout = exit_flow_timeout(key.protocol);
+                        if now.saturating_duration_since(seen) > timeout
+                            && idle.is_none_or(|(_, idle_since)| seen < idle_since)
+                        {
+                            idle = Some((key, seen));
+                        }
+                        break;
+                    }
+                    _ => {
+                        queue.pop_front();
+                    }
+                }
+            }
+        }
+        if let Some((key, _)) = idle.or(least_recent) {
+            self.flows.remove(&key);
+        }
+    }
+
+    // Refreshes and expired removals leave superseded queue entries behind;
+    // reclaim them once they outnumber the live flows so the queues cannot
+    // grow without bound. A reclaim walks every entry, but only after that
+    // much new queueing, so stamping stays amortized O(1).
+    fn compact_refresh_order(&mut self) {
+        if self.refresh_order.iter().map(VecDeque::len).sum::<usize>() <= 2 * self.flows.len() {
+            return;
+        }
+        for queue in &mut self.refresh_order {
+            queue.retain(|&(key, stamp)| {
+                self.flows
+                    .get(&key)
+                    .is_some_and(|&(_, current)| current == stamp)
+            });
+        }
+    }
+}
+
+// Match the grouping of exit_flow_timeout: TCP, UDP, and the shared ICMP
+// idle timeout.
+fn exit_flow_group(protocol: u8) -> usize {
+    match protocol {
+        IPPROTO_TCP => 0,
+        IPPROTO_UDP => 1,
+        _ => 2,
     }
 }
 
