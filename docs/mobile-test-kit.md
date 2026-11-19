@@ -30,6 +30,13 @@ starts from “This device”, opens the private picker, finds the expected peer
 before selection, verifies the returned challenge, and restores the source and
 VPN switch. The app receives no test configuration.
 
+On Android, run the joined Linux/Pixel release check with
+`NVPN_TEST_ANDROID_PRIVATE_EXIT=1` on its isolated guest. After both join
+directions pass, the guest offers its connection to the paired phone. The
+Android test opens the production Internet picker, records the provider before
+selection, verifies a fresh request on both devices and restores the original
+settings. The network must contain only these two test devices.
+
 Run simulator UI checks without physical devices. Before physical UI automation,
 require a bounded fresh unlocked-state check.
 

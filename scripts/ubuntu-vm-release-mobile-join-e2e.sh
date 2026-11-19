@@ -709,3 +709,11 @@ python3 "$ROOT/scripts/desktop_mobile_manual_join_receipt.py" validate \
   "${receipt_binding_args[@]}"
 
 echo "SIGNED_RELEASE_PUBLIC_UI_LINUX_PIXEL_MANUAL_JOIN_E2E_OK $SUMMARY"
+
+# Keep the two completed join receipts even when the independent exit check fails.
+if [[ "${NVPN_TEST_ANDROID_PRIVATE_EXIT:-0}" == 1 ]]; then
+  python3 "$ROOT/scripts/linux-android-private-exit.py" \
+    --host "$SSH_HOST" --provider "$DESKTOP_JOINER_NPUB" --android "$RELEASE_JOIN_ANDROID_ADMIN_ID" \
+    --network "$RELEASE_JOIN_ANDROID_NETWORK_ID" --receipt "$RESULT_DIR/import/host-bundle-receipt.json" \
+    --output "$RESULT_DIR/private-exit"
+fi
