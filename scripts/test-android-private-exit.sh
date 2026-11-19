@@ -136,6 +136,26 @@ wait_provider_point() {
 # Discovery can redraw the list between two separate UIAutomator queries.
 point="$(wait_provider_point '○' 90)"
 cp "$PRIVATE_DIR/android-ui.xml" "$out/before-selection.xml"
+provider_title="$(python3 - "$out/before-selection.xml" "$provider" <<'PYTITLE'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+root = ET.parse(Path(sys.argv[1])).getroot()
+row, = [n for n in root.iter("node") if n.get("clickable") == "true"
+        and any(child.get("text") == sys.argv[2] for child in n.iter("node"))]
+title, = [child.get("text") for child in row.iter("node") if child.get("text") not in (None, "", "○", sys.argv[2])]
+print(title)
+PYTITLE
+)"
+named_selection_in_dump() {
+  python3 - "$PRIVATE_DIR/android-ui.xml" "$provider_title" <<'PYSELECTED'
+import sys
+import xml.etree.ElementTree as ET
+prefix = "Private exit · " + sys.argv[2] + " · "
+sys.exit(0 if any(node.get("text", "").startswith(prefix)
+                  for node in ET.parse(sys.argv[1]).getroot().iter("node")) else 1)
+PYSELECTED
+}
 "${ADB[@]}" exec-out screencap -p >"$out/before-selection.png"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_VISIBLE=1'
 # shellcheck disable=SC2086
@@ -144,7 +164,7 @@ last_tap=$SECONDS
 deadline=$((SECONDS + 45))
 while true; do
   if release_join_android_dump_ui; then
-    if provider_point_in_dump '●' >/dev/null; then
+    if provider_point_in_dump '●' >/dev/null || named_selection_in_dump; then
       cp "$PRIVATE_DIR/android-ui.xml" "$out/selected-provider.xml"
       echo 'Android confirmed the paired provider was selected'
       break
@@ -166,6 +186,7 @@ until probe available 2>/dev/null; do
   sleep 0.5
 done
 release_join_android_os_vpn_connected
-wait_provider_point '●' 25 >/dev/null
+release_join_android_dump_ui
+provider_point_in_dump '●' >/dev/null || named_selection_in_dump
 cp "$PRIVATE_DIR/android-ui.xml" "$out/after-traffic.xml"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_TRAFFIC_VERIFIED=1'
