@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Drive the installed Android app using a peer already admitted to its test network.
 set -euo pipefail
+trap 'echo "Android private exit verifier stopped at line $LINENO" >&2' ERR
 umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
@@ -24,8 +25,12 @@ grep -Eq 'netcat|nc ' "$out/nc-help.log"
 "${ADB[@]}" shell am start -W -n fi.siriusbusiness.nvpn/org.nostrvpn.app.MainActivity >/dev/null
 # Waiting for an explicitly paired fixture to be usable is independent of the
 # release join-delivery timing check. No join timing is recorded here.
-release_join_android_open_devices >/dev/null
+# Devices and Internet are fixed bottom tabs. The scrolling-content viewport
+# intentionally excludes them, including when the current account is a joiner.
+release_join_android_wait_query description 'Devices tab'
+release_join_android_tap_center description 'Devices tab'
 release_join_android_wait_query resource "roster-participant-accepted-$provider" 80
+echo 'Android confirmed the paired provider in the roster'
 release_join_android_wait_query description 'Internet tab'
 release_join_android_tap_center description 'Internet tab'
 release_join_android_scroll_to resource internet-source-picker safe-center backward
@@ -90,6 +95,7 @@ if (( ! was_on )); then
   release_join_android_wait_vpn_connected
 fi
 restore_source=1
+echo 'Android opened the Internet source picker flow'
 select_source private_vpn || { echo 'Could not select the private VPN source' >&2; exit 1; }
 release_join_android_wait_query text "$provider" 90 || { echo "The paired provider was absent from the private VPN picker" >&2; exit 1; }
 provider_mark() {
