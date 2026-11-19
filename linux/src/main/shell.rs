@@ -334,6 +334,9 @@ fn update_stripe_text(version: &str, current: &str) -> String {
 }
 
 fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page: Page) {
+    // Navigation buttons expand within this column, not into the content's
+    // share of the window. Override their inherited expansion at the boundary.
+    sidebar.set_hexpand(false);
     let has_incoming_join_requests = incoming_join_request_count(state) > 0;
     let mut pages = vec![
         (Page::Devices, "Devices".to_string(), ""),
@@ -379,6 +382,7 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
         name.add_css_class("caption-heading");
         name.set_xalign(0.0);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        name.set_max_width_chars(24);
         summary.append(&name);
 
         let count = gtk::Label::new(Some(&format!(
@@ -406,5 +410,6 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
     status.add_css_class("dim-label");
     status.set_xalign(0.0);
     status.set_wrap(true);
+    status.set_max_width_chars(24);
     sidebar.append(&status);
 }

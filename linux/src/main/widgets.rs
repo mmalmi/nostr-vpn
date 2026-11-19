@@ -53,6 +53,7 @@ fn row_label(parent: &gtk::Box, title: &str, body: &str, icon_name: &str) {
     body.add_css_class("dim-label");
     body.set_xalign(0.0);
     body.set_wrap(true);
+    body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     body.set_selectable(true);
     text.append(&body);
     row.append(&text);
@@ -218,6 +219,8 @@ fn section_header(parent: &gtk::Box, title: &str, icon_name: &str) {
 
 fn empty_row(parent: &gtk::Box, text: &str) {
     let label = gtk::Label::new(Some(text));
+    label.set_wrap(true);
+    label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     label.add_css_class("dim-label");
     label.set_xalign(0.0);
     label.set_margin_top(4);
@@ -250,6 +253,9 @@ fn nav_button(title: &str, icon_name: &str, active: bool, attention: bool) -> gt
     let label = gtk::Label::new(Some(title));
     label.set_xalign(0.0);
     label.set_hexpand(true);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_max_width_chars(24);
+    button.set_tooltip_text(Some(title));
     row.append(&label);
     if attention {
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);

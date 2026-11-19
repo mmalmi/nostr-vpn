@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::{gio, glib};
+use nostr_vpn_app_core::desktop_update::{
+    desktop_update, desktop_update_restore_download, DesktopUpdateView, UpdateRequest,
+    ACTION_INSTALL, ACTION_VIEW,
+};
 use nostr_vpn_app_core::native_state::{
     NativePaidExitSellerState, NativePaidRouteOfferState, NativePaidRouteSessionState,
     NativePaidRouteWalletMintState,
-};
-use nostr_vpn_app_core::desktop_update::{
-    ACTION_INSTALL, ACTION_VIEW, DesktopUpdateView, UpdateRequest, desktop_update,
-    desktop_update_restore_download,
 };
 use nostr_vpn_app_core::{
     FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
@@ -183,6 +183,7 @@ struct AppModel {
     header_status_dot: gtk::Box,
     header_vpn_switch: gtk::Switch,
     selected_device_pubkey: Option<String>,
+    device_pane_position: i32,
     focused_transfer_id: Option<String>,
     drafts: Drafts,
     notice: String,
@@ -253,6 +254,7 @@ impl AppModel {
             header_status_dot,
             header_vpn_switch,
             selected_device_pubkey: None,
+            device_pane_position: 440,
             focused_transfer_id: None,
             drafts,
             notice: String::new(),

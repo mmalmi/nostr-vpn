@@ -259,6 +259,7 @@ fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         )));
         title.set_xalign(0.0);
         title.set_wrap(true);
+        title.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         row.append(&title);
         let detail = gtk::Label::new(Some(&format!(
             "{} {} · {}",
@@ -267,6 +268,8 @@ fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             file_transfer_status(&transfer.status, transfer.is_sender)
         )));
         detail.set_xalign(0.0);
+        detail.set_wrap(true);
+        detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         detail.add_css_class("dim-label");
         row.append(&detail);
         let progress = gtk::ProgressBar::new();
@@ -367,11 +370,9 @@ fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         row.append(&buttons);
         transfers.append(&row);
     }
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_max_content_height(320);
-    scroll.set_propagate_natural_height(true);
-    scroll.set_child(Some(&transfers));
-    page.append(&scroll);
+    // The page already scrolls. A nested scroller can negotiate a height
+    // smaller than even the Received files button and hide transfer actions.
+    page.append(&transfers);
 }
 
 fn file_transfer_status(status: &str, sender: bool) -> &'static str {
