@@ -24,7 +24,8 @@ env:
 jobs:
   verify:
     name: Verify release inputs
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04, where Playwright 1.60 cannot install Chromium.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
