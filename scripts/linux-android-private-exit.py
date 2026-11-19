@@ -45,6 +45,13 @@ def serve():
     own = config["nostr"]["public_key"]
     require(own == opts["provider"], "Unexpected provider identity")
     require(network["network_id"] == opts["network"], "Unexpected mesh network")
+    # A separate picker run starts with a new, single-device test network. Use
+    # the same signed roster delivery the CLI uses for its add-device command.
+    if opts.get("enroll"):
+        require(set(network.get("admins", [])) == {own}
+                and {own, *network.get("devices", [])} == {own}, "Expected a new single-admin test network")
+        command([str(cli), "add-device", "--config", str(cfg), "--device", opts["android"], "--json"])
+        network, = tomllib.loads(cfg.read_text())["networks"]
     # The stored roster may omit the local identity, as in shared_network_roster().
     permitted = {own, *network["devices"], *network.get("admins", [])}
     require(permitted == {own, opts["android"]}, "Additional or missing peer in the test network")
@@ -105,7 +112,7 @@ def serve():
 
 def test(args):
     cli = json.loads(args.receipt.read_bytes())["artifacts"]["cli"]["sha256"]
-    opts = dict(provider=args.provider, android=args.android, network=args.network, cliSha256=cli,
+    opts = dict(enroll=args.enroll_test_phone, provider=args.provider, android=args.android, network=args.network, cliSha256=cli,
                 address="198.18.245.6", port=17853, challenge=secrets.token_hex(16))
     args.output.mkdir(mode=0o700)
     remote_code = Path(__file__).read_text()
@@ -161,6 +168,7 @@ if __name__ == "__main__":
         serve()
     else:
         parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--enroll-test-phone", action="store_true")
         for option in ("host", "provider", "android", "network"):
             parser.add_argument("--" + option, required=True)
         for option in ("receipt", "output"):

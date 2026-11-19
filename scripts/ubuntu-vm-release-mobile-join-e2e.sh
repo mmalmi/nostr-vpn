@@ -449,6 +449,16 @@ release_join_android_manual_submit "$DESKTOP_ADMIN_NPUB" "$DESKTOP_NETWORK_ID" \
   >"$RESULT_DIR/pixel-manual-submit.log" 2>&1
 release_join_android_wait_vpn_connected
 
+# An exit-only run uses this newly admitted pair strictly as its provider fixture.
+# Give it its own output directory so prior join evidence remains intact.
+if [[ "${NVPN_TEST_ANDROID_PRIVATE_EXIT:-0}" == only ]]; then
+  python3 "$ROOT/scripts/linux-android-private-exit.py" \
+    --enroll-test-phone --host "$SSH_HOST" --provider "$DESKTOP_ADMIN_NPUB" --android "$RELEASE_JOIN_ANDROID_JOINER_ID" \
+    --network "$DESKTOP_NETWORK_ID" --receipt "$RESULT_DIR/import/host-bundle-receipt.json" \
+    --output "$RESULT_DIR/private-exit"
+  exit 0
+fi
+
 desktop_add_log="$RESULT_DIR/desktop-admin-add-pixel.log"
 remote AdminAdd "$RELEASE_JOIN_ANDROID_JOINER_ID" "Release Pixel" \
   >"$desktop_add_log" 2>&1 &
@@ -516,16 +526,6 @@ remote ReadMarker >"$RESULT_DIR/desktop-admin-relaunch.json"
 [[ "$(
   marker_value "$RESULT_DIR/desktop-admin-relaunch.json" relaunchAccepted
 )" == true ]]
-
-# An exit-only run uses this newly admitted pair strictly as its provider fixture.
-# Give it its own output directory so prior join evidence remains intact.
-if [[ "${NVPN_TEST_ANDROID_PRIVATE_EXIT:-0}" == only ]]; then
-  python3 "$ROOT/scripts/linux-android-private-exit.py" \
-    --host "$SSH_HOST" --provider "$DESKTOP_ADMIN_NPUB" --android "$RELEASE_JOIN_ANDROID_JOINER_ID" \
-    --network "$DESKTOP_NETWORK_ID" --receipt "$RESULT_DIR/import/host-bundle-receipt.json" \
-    --output "$RESULT_DIR/private-exit"
-  exit 0
-fi
 
 # Physical Pixel admin -> imported Linux desktop joiner.
 release_join_android_open_network_setup

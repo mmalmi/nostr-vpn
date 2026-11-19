@@ -22,6 +22,10 @@ RELEASE_JOIN_UI_WAIT_SECS=25
 "${ADB[@]}" shell toybox nc --help >"$out/nc-help.log" 2>&1
 grep -Eq 'netcat|nc ' "$out/nc-help.log"
 "${ADB[@]}" shell am start -W -n fi.siriusbusiness.nvpn/org.nostrvpn.app.MainActivity >/dev/null
+# Waiting for an explicitly paired fixture to be usable is independent of the
+# release join-delivery timing check. No join timing is recorded here.
+release_join_android_open_devices >/dev/null
+release_join_android_wait_query resource "roster-participant-accepted-$provider" 80
 release_join_android_wait_query description 'Internet tab'
 release_join_android_tap description 'Internet tab'
 picker() { release_join_android_tap_visible resource internet-source-picker; }
