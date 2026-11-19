@@ -108,34 +108,45 @@ fi
 restore_source=1
 echo 'Android verified the direct source before opening the picker'
 select_source private_vpn || { echo 'Could not select the private VPN source' >&2; exit 1; }
-release_join_android_wait_query text "$provider" 90 || { echo "The paired provider was absent from the private VPN picker" >&2; exit 1; }
-provider_mark() {
-  release_join_android_dump_ui && python3 - "$RELEASE_JOIN_ANDROID_UI_XML" "$provider" "$1" <<'PYROW'
+provider_point() {
+  release_join_android_dump_ui || return 1
+  python3 - "$RELEASE_JOIN_ANDROID_UI_XML" "$provider" "$1" <<'PYROW' || return 1
 import sys
 import xml.etree.ElementTree as ET
 path, peer, mark = sys.argv[1:]
-root = ET.parse(path).getroot()
-rows = [row for row in root.iter("node") if row.get("clickable") == "true"
+rows = [row for row in ET.parse(path).getroot().iter("node")
+        if row.get("clickable") == "true" and row.get("enabled") == "true"
         and any(child.get("text") == peer for child in row.iter("node"))]
-assert len(rows) == 1
-assert any(child.get("text") == mark for child in rows[0].iter("node"))
+sys.exit(0 if len(rows) == 1 and any(child.get("text") == mark for child in rows[0].iter("node")) else 1)
 PYROW
+  release_join_android_query_dumped clickable-row-text "$provider" visible-center
 }
-provider_mark '○'
+wait_provider_point() {
+  local mark="$1" deadline=$((SECONDS + $2)) point
+  while ((SECONDS < deadline)); do
+    if point="$(provider_point "$mark")"; then
+      printf '%s\n' "$point"
+      return 0
+    fi
+    sleep 0.25
+  done
+  echo "Paired provider row did not reach selection state $mark within ${2}s" >&2
+  return 1
+}
+# Resolve the selection mark and tap bounds from the same accessibility tree.
+# Discovery can redraw the list between two separate UIAutomator queries.
+point="$(wait_provider_point '○' 90)"
+cp "$PRIVATE_DIR/android-ui.xml" "$out/before-selection.xml"
 "${ADB[@]}" exec-out screencap -p >"$out/before-selection.png"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_VISIBLE=1'
-# Tap the whole row. The single-line device ID is shorter than the minimum
-# height for a safe tap, even when the clickable row is completely visible.
-deadline=$((SECONDS + 30))
-until release_join_android_tap_visible clickable-row-text "$provider"; do
-  ((SECONDS < deadline)) || { echo 'The paired provider row did not become tappable' >&2; exit 1; }
-  sleep 0.5
-done
+# shellcheck disable=SC2086
+"${ADB[@]}" shell input tap $point
 deadline=$((SECONDS + 50))
 until probe available 2>/dev/null; do
   ((SECONDS < deadline)) || { echo 'Private exit did not deliver its fresh challenge' >&2; exit 1; }
   sleep 0.5
 done
 release_join_android_os_vpn_connected
-provider_mark '●'
+wait_provider_point '●' 25 >/dev/null
+cp "$PRIVATE_DIR/android-ui.xml" "$out/selected-provider.xml"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_TRAFFIC_VERIFIED=1'
