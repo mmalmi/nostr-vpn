@@ -520,6 +520,14 @@ final class NostrVpnReleaseNetworkUITests: XCTestCase {
     private func turnVPNOffIfNeeded() throws {
         let toggle = try vpnToggle()
         if vpnIsOn(toggle) {
+            let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let banner = springboard.descendants(matching: .any)
+                .matching(identifier: "NotificationShortLookView").firstMatch
+            if banner.exists, banner.frame.intersects(toggle.frame) {
+                guard banner.waitForNonExistence(timeout: 15) else {
+                    throw gateError("A notification banner still covers the VPN switch")
+                }
+            }
             toggle.tap()
         }
         guard waitForVPNState(on: false, timeout: 15) else {
