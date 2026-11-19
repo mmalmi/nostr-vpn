@@ -499,6 +499,8 @@ struct LinuxNetworkCleanupState {
     exit_node_runtime: LinuxExitNodeRuntime,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     secure_dns: Option<crate::secure_dns_runtime::LinuxSecureDnsCleanupState>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    mesh_fd00_main_rule: bool,
 }
 
 #[cfg(target_os = "linux")]
