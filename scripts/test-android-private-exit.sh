@@ -108,8 +108,7 @@ fi
 restore_source=1
 echo 'Android verified the direct source before opening the picker'
 select_source private_vpn || { echo 'Could not select the private VPN source' >&2; exit 1; }
-provider_point() {
-  release_join_android_dump_ui || return 1
+provider_point_in_dump() {
   python3 - "$RELEASE_JOIN_ANDROID_UI_XML" "$provider" "$1" <<'PYROW' || return 1
 import sys
 import xml.etree.ElementTree as ET
@@ -124,7 +123,7 @@ PYROW
 wait_provider_point() {
   local mark="$1" deadline=$((SECONDS + $2)) point
   while ((SECONDS < deadline)); do
-    if point="$(provider_point "$mark")"; then
+    if release_join_android_dump_ui && point="$(provider_point_in_dump "$mark")"; then
       printf '%s\n' "$point"
       return 0
     fi
@@ -141,6 +140,26 @@ cp "$PRIVATE_DIR/android-ui.xml" "$out/before-selection.xml"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_VISIBLE=1'
 # shellcheck disable=SC2086
 "${ADB[@]}" shell input tap $point
+last_tap=$SECONDS
+deadline=$((SECONDS + 45))
+while true; do
+  if release_join_android_dump_ui; then
+    if provider_point_in_dump '●' >/dev/null; then
+      cp "$PRIVATE_DIR/android-ui.xml" "$out/selected-provider.xml"
+      echo 'Android confirmed the paired provider was selected'
+      break
+    fi
+    # A discovery redraw can remove the button just before the tap arrives.
+    # Retry only when this exact provider is visibly still unselected.
+    if ((SECONDS - last_tap >= 5)) && point="$(provider_point_in_dump '○')"; then
+      # shellcheck disable=SC2086
+      "${ADB[@]}" shell input tap $point
+      last_tap=$SECONDS
+    fi
+  fi
+  ((SECONDS < deadline)) || { echo 'Android did not confirm the provider selection' >&2; exit 1; }
+  sleep 0.25
+done
 deadline=$((SECONDS + 50))
 until probe available 2>/dev/null; do
   ((SECONDS < deadline)) || { echo 'Private exit did not deliver its fresh challenge' >&2; exit 1; }
@@ -148,5 +167,5 @@ until probe available 2>/dev/null; do
 done
 release_join_android_os_vpn_connected
 wait_provider_point '●' 25 >/dev/null
-cp "$PRIVATE_DIR/android-ui.xml" "$out/selected-provider.xml"
+cp "$PRIVATE_DIR/android-ui.xml" "$out/after-traffic.xml"
 echo 'NVPN_ANDROID_PRIVATE_EXIT_TRAFFIC_VERIFIED=1'

@@ -91,7 +91,7 @@ def serve():
                 if not originally_advertised:
                     advertise(True)
                 print("READY", flush=True)
-                until = time.monotonic() + 285
+                until = time.monotonic() + 450
                 while time.monotonic() < until:
                     readable, _, _ = select.select([sys.stdin, server], [], [], 1)
                     if sys.stdin in readable:
@@ -135,7 +135,7 @@ def test(args):
                        args.provider, opts["challenge"], opts["address"], str(opts["port"]), str(args.output / "phone")]
                 phone = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
                 try:
-                    require(phone.wait(timeout=200) == 0, "Android private exit test failed")
+                    require(phone.wait(timeout=360) == 0, "Android private exit test failed")
                 finally:
                     if phone.poll() is None:
                         os.killpg(phone.pid, signal.SIGTERM)
