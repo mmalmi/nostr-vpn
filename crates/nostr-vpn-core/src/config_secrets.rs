@@ -457,6 +457,12 @@ fn stable_account_name(kind: ConfigSecret) -> String {
     kind.account_suffix().to_string()
 }
 
+/// Shared keychain access group for iOS builds; blank values mean default group.
+#[cfg(any(target_os = "ios", test))]
+fn normalize_keychain_access_group(value: Option<&'static str>) -> Option<&'static str> {
+    value.map(str::trim).filter(|group| !group.is_empty())
+}
+
 #[cfg(any(target_os = "ios", target_os = "android"))]
 fn config_scope(path: &Path) -> String {
     let canonical = canonical_config_path(path);
