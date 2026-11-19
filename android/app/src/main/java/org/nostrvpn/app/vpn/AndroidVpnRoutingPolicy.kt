@@ -61,8 +61,26 @@ internal object AndroidVpnRoutingPolicy {
             supportsAlwaysOn(routeTargets(JSONObject(configJson)))
         }.getOrDefault(false)
 
+    /**
+     * The routes that decide where packets go. A route inside another route
+     * of the list changes nothing, so a member address under the default
+     * route of a selected exit is left out.
+     */
+    fun effectiveRoutes(routeTargets: List<String>): Set<String> {
+        val prefixes = routeTargets.distinct().associateWith(::parsePrefix)
+        return prefixes.filterTo(linkedMapOf()) { (route, prefix) ->
+            prefix == null ||
+                prefixes.none { (other, wider) ->
+                    other != route && wider != null && covers(wider, prefix)
+                }
+        }.keys
+    }
+
     @TargetApi(Build.VERSION_CODES.TIRAMISU)
-    fun parseIpPrefix(value: String): IpPrefix? {
+    fun parseIpPrefix(value: String): IpPrefix? =
+        parsePrefix(value)?.let { (address, length) -> IpPrefix(address, length) }
+
+    private fun parsePrefix(value: String): Pair<InetAddress, Int>? {
         val parts = value.trim().split("/", limit = 2)
         val address = parts.firstOrNull()?.takeIf(String::isNotBlank) ?: return null
         val resolved = runCatching { InetAddress.getByName(address) }.getOrNull() ?: return null
@@ -71,7 +89,19 @@ internal object AndroidVpnRoutingPolicy {
         if (prefix !in 0..maximumPrefix) {
             return null
         }
-        return IpPrefix(resolved, prefix)
+        return resolved to prefix
+    }
+
+    private fun covers(wider: Pair<InetAddress, Int>, route: Pair<InetAddress, Int>): Boolean {
+        val widerBytes = wider.first.address
+        val routeBytes = route.first.address
+        if (widerBytes.size != routeBytes.size || wider.second >= route.second) {
+            return false
+        }
+        return (0 until wider.second).all { bit ->
+            val mask = 0x80 shr (bit % 8)
+            (widerBytes[bit / 8].toInt() and mask) == (routeBytes[bit / 8].toInt() and mask)
+        }
     }
 
     fun preferredWireGuardUnderlay(candidates: List<UnderlayNetworkCandidate>): Long? {

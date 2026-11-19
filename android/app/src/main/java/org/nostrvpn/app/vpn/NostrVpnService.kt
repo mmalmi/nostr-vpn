@@ -60,6 +60,26 @@ class NostrVpnService : VpnService() {
     private val drainQueuedApprovalBeforeRestartRunnable = Runnable {
         continueTunnelRestartAfterQueuedApprovalDrain()
     }
+    private val interfaceHandover by lazy {
+        AndroidVpnInterfaceHandover(
+            underlyingNetworkHandler,
+            appCoreDataDir(this).resolve("config.toml"),
+            object : AndroidVpnInterfaceHandover.Tunnel {
+                override fun interfaceSettingsJson(): String? =
+                    tunnelHandle.takeIf { running.get() && it != 0L }
+                        ?.let(NativeCore::mobileTunnelInterfaceSettingsJson)
+
+                override fun establishInterface(config: JSONObject) = buildVpnInterface(config)
+
+                override fun replaceInterface(fd: Int) =
+                    NativeCore.mobileTunnelReplaceTunFd(tunnelHandle, fd)
+
+                override fun restart() {
+                    startTunnelAsync(persistedTunnelConfigJson(), foregroundStarted = false)
+                }
+            },
+        )
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val foregroundRequired =
@@ -213,7 +233,7 @@ class NostrVpnService : VpnService() {
         }
 
         cancelQueuedApprovalRestart()
-        stopTunnel()
+        stopNativeTunnel()
         val generation = tunnelStartGeneration.incrementAndGet()
         return runCatching {
             tunnelStartExecutor.execute {
@@ -348,7 +368,7 @@ class NostrVpnService : VpnService() {
                 "VpnService.protect(wgSocketFd=$wgSocketFd) returned $protected_",
             )
             if (!protected_) {
-                descriptor.close()
+                interfaceHandover.holdOrCloseRejectedInterface(descriptor)
                 NativeCore.mobileTunnelFree(handle)
                 releaseMulticastLock()
                 failStart(
@@ -359,8 +379,11 @@ class NostrVpnService : VpnService() {
             }
         }
 
-        val tunFd = descriptor.detachFd()
-        if (!NativeCore.mobileTunnelAttachTunFd(handle, tunFd)) {
+        val attached = interfaceHandover.handToNative(descriptor) { fd ->
+            NativeCore.mobileTunnelAttachTunFd(handle, fd)
+        }
+        if (!attached) {
+            interfaceHandover.holdOrCloseRejectedInterface(descriptor)
             NativeCore.mobileTunnelFree(handle)
             releaseMulticastLock()
             failStart(foregroundStarted, "Native mobile tunnel rejected Android TUN fd")
@@ -370,6 +393,7 @@ class NostrVpnService : VpnService() {
         tunnelHandle = handle
         running.set(true)
         registerUnderlyingNetworkUpdates()
+        interfaceHandover.watch(config)
     }
 
     private fun Boolean.stickyResult(): Int =
@@ -384,6 +408,11 @@ class NostrVpnService : VpnService() {
             Log.w("NostrVpnService", message)
         } else {
             Log.w("NostrVpnService", message, error)
+        }
+        if (interfaceHandover.recovering) {
+            // Recovery failed: stay up behind the blocking interface and retry.
+            interfaceHandover.retryRecovery()
+            return false
         }
         if (!running.get()) {
             tunnelOwnedInProcess.set(false)
@@ -877,8 +906,16 @@ class NostrVpnService : VpnService() {
     }
 
     private fun stopTunnel() {
+        stopNativeTunnel()
+        interfaceHandover.releaseBlockingInterface()
+    }
+
+    // A restart stops only the native tunnel: a blocking interface stays
+    // until the restarted tunnel has an interface of its own.
+    private fun stopNativeTunnel() {
         cancelQueuedApprovalRestart()
         unregisterUnderlyingNetworkUpdates()
+        interfaceHandover.stopWatching()
         running.set(false)
         releaseMulticastLock()
         val handle = tunnelHandle

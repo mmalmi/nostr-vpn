@@ -676,12 +676,41 @@ impl MobileTunnel {
         };
         self.native_tun = Some(NativeTunRuntime::start(
             fd,
+            self.runtime.handle().clone(),
             self.outbound_tx.clone(),
             inbound_rx,
             native_tun_packet_capacity(mtu),
             Arc::clone(&self.tun_counters),
         )?);
         Ok(())
+    }
+
+    /// Moves the running tunnel onto a replacement Android VPN interface that
+    /// the host established with updated routes. On error the replacement fd
+    /// is closed and the host has to restart the tunnel.
+    #[cfg(target_os = "android")]
+    pub(crate) fn replace_tun_fd(&mut self, fd: c_int) -> Result<()> {
+        if fd < 0 {
+            return Err(anyhow!("invalid native tun fd"));
+        }
+        let Some(native_tun) = self.native_tun.as_mut() else {
+            reject_unattached_mobile_tun_fd(fd);
+            return Err(anyhow!("native tun fd not attached"));
+        };
+        native_tun.replace_fd(fd)
+    }
+
+    /// Routes and resolvers the running tunnel applies, for the host to
+    /// install on the OS interface.
+    #[cfg(target_os = "android")]
+    pub(crate) fn interface_settings_json(&self) -> Result<String> {
+        let config = self
+            .config
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
+        Ok(serde_json::to_string(&MobileTunnelInterfaceSettings::from(
+            &*config,
+        ))?)
     }
 
     #[cfg(target_os = "ios")]

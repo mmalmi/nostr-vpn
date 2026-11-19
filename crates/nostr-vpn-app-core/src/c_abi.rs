@@ -39,6 +39,8 @@ pub struct NvpnMobileTunnelHandle {
 
 include!("c_abi/mobile_network.rs");
 include!("c_abi/lan_discovery.rs");
+#[cfg(target_os = "android")]
+include!("c_abi/android_interface.rs");
 #[cfg(target_os = "ios")]
 include!("c_abi/ios_packet_flow.rs");
 

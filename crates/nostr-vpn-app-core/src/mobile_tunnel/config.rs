@@ -202,6 +202,52 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) error: String,
 }
 
+/// How a host puts the mesh on its interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MobileMeshRoutes {
+    /// A route per member and one for the DNS stub. Android follows the roster
+    /// while the tunnel runs, so a local network numbered inside the mesh
+    /// range keeps its gateway and DNS.
+    Members,
+    /// The whole mesh range. The iOS provider installs its routes once, at
+    /// start, so the range is what reaches a member added later.
+    Range,
+}
+
+impl MobileMeshRoutes {
+    const HOST: Self = if cfg!(target_os = "ios") {
+        Self::Range
+    } else {
+        Self::Members
+    };
+}
+
+/// The part of a running tunnel's config that Android installs on the VPN
+/// interface: its routes and resolvers. A roster update can change it while
+/// the tunnel runs, so the service re-reads it and re-establishes the
+/// interface without a restart.
+#[cfg(any(test, target_os = "android"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct MobileTunnelInterfaceSettings {
+    route_targets: Vec<String>,
+    dns_servers: Vec<String>,
+    magic_dns_server: String,
+    dns_match_domains: Vec<String>,
+}
+
+#[cfg(any(test, target_os = "android"))]
+impl From<&MobileTunnelConfig> for MobileTunnelInterfaceSettings {
+    fn from(config: &MobileTunnelConfig) -> Self {
+        Self {
+            route_targets: config.route_targets.clone(),
+            dns_servers: config.dns_servers.clone(),
+            magic_dns_server: config.magic_dns_server.clone(),
+            dns_match_domains: config.dns_match_domains.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct MobileTunnelLaunchConfig {
     #[serde(flatten)]
@@ -379,8 +425,16 @@ impl MobileTunnelConfig {
         Self::from_app_with_config_path(app, Path::new(""))
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn from_app_with_config_path(app: &AppConfig, config_path: &Path) -> Result<Self> {
+        Self::from_app_with_mesh_routes(app, config_path, MobileMeshRoutes::HOST)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn from_app_with_mesh_routes(
+        app: &AppConfig,
+        config_path: &Path,
+        mesh_routes: MobileMeshRoutes,
+    ) -> Result<Self> {
         let own_pubkey = app.own_nostr_pubkey_hex()?;
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
@@ -459,7 +513,8 @@ impl MobileTunnelConfig {
             )?);
         }
 
-        if !network_id.trim().is_empty()
+        if mesh_routes == MobileMeshRoutes::Range
+            && !network_id.trim().is_empty()
             && !route_targets
                 .iter()
                 .any(|route| route == MESH_TUNNEL_IPV4_CIDR)
@@ -525,6 +580,14 @@ impl MobileTunnelConfig {
         } else {
             (Vec::new(), String::new())
         };
+        // Members already have their own /32 routes. Route the MagicDNS stub
+        // the same way instead of the whole mesh range, which would also
+        // capture a local network numbered inside it, with its gateway and DNS.
+        if mesh_routes == MobileMeshRoutes::Members && !magic_dns_server.is_empty() {
+            route_targets.push(format!("{magic_dns_server}/32"));
+            route_targets.sort();
+            route_targets.dedup();
+        }
         let dns_match_domains = if wireguard_exit.is_some() || selected_peer_exit {
             vec![String::new()]
         } else if local_dns_required {

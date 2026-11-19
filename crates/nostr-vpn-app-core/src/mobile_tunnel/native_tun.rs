@@ -2,78 +2,217 @@ const NATIVE_TUN_PACKET_HEADROOM: usize = 128;
 const NATIVE_TUN_PACKET_MAX: usize = 65_535;
 const NATIVE_TUN_POLL_TIMEOUT_MS: i32 = 100;
 
+/// Moves packets between the Android VPN interface fd and the mesh runtime.
+///
+/// The interface can be replaced while the tunnel runs: Android keeps routing
+/// through the old interface until a replacement is established, then sends
+/// new outgoing packets to the replacement. `replace_fd` starts reading the
+/// replacement, moves inbound writes to it and retires the old reader, which
+/// closes the old fd.
 struct NativeTunRuntime {
-    fd: c_int,
+    /// Fd that inbound packets are written to. The write thread holds the
+    /// read lock while it writes, so a replaced fd is closed only after the
+    /// writer has moved off it.
+    fd: Arc<RwLock<c_int>>,
     stop: Arc<AtomicBool>,
-    read_thread: Option<std::thread::JoinHandle<()>>,
+    reader: NativeTunReader,
     write_thread: Option<std::thread::JoinHandle<()>>,
+    runtime: tokio::runtime::Handle,
+    outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
+    counters: Arc<MobileTunAtomicCounters>,
+    packet_capacity: usize,
+}
+
+struct NativeTunReader {
+    control: Arc<NativeTunReaderControl>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+struct NativeTunReaderControl {
+    stop: AtomicBool,
+    /// Wakes a reader that waits for room in the outbound queue.
+    stopped: tokio::sync::Notify,
+    end: Mutex<NativeTunReaderEnd>,
+}
+
+/// Who closes the fd of a reader. A retired reader closes it when it exits,
+/// so replacing the interface never waits for the reader thread.
+enum NativeTunReaderEnd {
+    Reading,
+    Retired,
+    Exited,
+}
+
+impl NativeTunReader {
+    fn start(
+        fd: c_int,
+        runtime: tokio::runtime::Handle,
+        outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
+        counters: Arc<MobileTunAtomicCounters>,
+        packet_capacity: usize,
+    ) -> Result<Self> {
+        let control = Arc::new(NativeTunReaderControl {
+            stop: AtomicBool::new(false),
+            stopped: tokio::sync::Notify::new(),
+            end: Mutex::new(NativeTunReaderEnd::Reading),
+        });
+        let read_control = Arc::clone(&control);
+        let thread = std::thread::Builder::new()
+            .name("nvpn-tun-read".to_string())
+            .spawn(move || {
+                native_tun_read_loop(
+                    fd,
+                    &runtime,
+                    &outbound_tx,
+                    &read_control,
+                    &counters,
+                    packet_capacity,
+                );
+                let mut end = read_control
+                    .end
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if matches!(*end, NativeTunReaderEnd::Retired) {
+                    close_mobile_tun_fd(fd);
+                } else {
+                    *end = NativeTunReaderEnd::Exited;
+                }
+            })
+            .map_err(|error| anyhow!("failed to spawn native tun read thread: {error}"))?;
+        Ok(Self {
+            control,
+            thread: Some(thread),
+        })
+    }
+
+    fn stop(&self) {
+        self.control.stop.store(true, Ordering::Relaxed);
+        self.control.stopped.notify_one();
+    }
+
+    /// Stops a reader whose interface was replaced and leaves closing `fd`
+    /// to it. The reader may be waiting for room in the outbound queue, so
+    /// this does not wait for the thread.
+    fn retire(self, fd: c_int) {
+        self.stop();
+        let mut end = self
+            .control
+            .end
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if matches!(*end, NativeTunReaderEnd::Exited) {
+            close_mobile_tun_fd(fd);
+        } else {
+            *end = NativeTunReaderEnd::Retired;
+        }
+    }
+
+    fn join(&mut self) {
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl NativeTunRuntime {
     fn start(
         fd: c_int,
+        runtime: tokio::runtime::Handle,
         outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
         inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
         packet_capacity: usize,
         counters: Arc<MobileTunAtomicCounters>,
     ) -> Result<Self> {
         let fd = prepare_mobile_tun_fd(fd)?;
-
-        let stop = Arc::new(AtomicBool::new(false));
-        let read_stop = Arc::clone(&stop);
-        let read_counters = Arc::clone(&counters);
-        let read_thread = match std::thread::Builder::new()
-            .name("nvpn-tun-read".to_string())
-            .spawn(move || {
-                native_tun_read_loop(fd, outbound_tx, read_stop, read_counters, packet_capacity)
-            })
-        {
-            Ok(thread) => thread,
+        let reader = match NativeTunReader::start(
+            fd,
+            runtime.clone(),
+            outbound_tx.clone(),
+            Arc::clone(&counters),
+            packet_capacity,
+        ) {
+            Ok(reader) => reader,
             Err(error) => {
                 close_mobile_tun_fd(fd);
-                return Err(anyhow!("failed to spawn native tun read thread: {error}"));
+                return Err(error);
             }
         };
 
-        let write_stop = Arc::clone(&stop);
-        let write_counters = Arc::clone(&counters);
-        let write_thread = match std::thread::Builder::new()
+        let stop = Arc::new(AtomicBool::new(false));
+        let write_fd = Arc::new(RwLock::new(fd));
+        let mut runtime = Self {
+            fd: Arc::clone(&write_fd),
+            stop: Arc::clone(&stop),
+            reader,
+            write_thread: None,
+            runtime,
+            outbound_tx,
+            counters: Arc::clone(&counters),
+            packet_capacity,
+        };
+        match std::thread::Builder::new()
             .name("nvpn-tun-write".to_string())
-            .spawn(move || native_tun_write_loop(fd, inbound_rx, write_stop, write_counters))
+            .spawn(move || native_tun_write_loop(&write_fd, inbound_rx, &stop, &counters))
         {
-            Ok(thread) => thread,
+            Ok(thread) => {
+                runtime.write_thread = Some(thread);
+                Ok(runtime)
+            }
             Err(error) => {
-                let mut runtime = Self {
-                    fd,
-                    stop,
-                    read_thread: Some(read_thread),
-                    write_thread: None,
-                };
                 runtime.shutdown();
-                return Err(anyhow!("failed to spawn native tun write thread: {error}"));
+                Err(anyhow!("failed to spawn native tun write thread: {error}"))
+            }
+        }
+    }
+
+    /// Switches the tunnel to a newly established interface fd. On error the
+    /// replacement fd is closed and the tunnel stays on the interface it had,
+    /// which Android has taken down: the host has to restart the tunnel.
+    fn replace_fd(&mut self, fd: c_int) -> Result<()> {
+        let fd = prepare_mobile_tun_fd(fd)?;
+        if self.stop.load(Ordering::Relaxed) {
+            close_mobile_tun_fd(fd);
+            return Err(anyhow!("native tun stopped"));
+        }
+        let reader = match NativeTunReader::start(
+            fd,
+            self.runtime.clone(),
+            self.outbound_tx.clone(),
+            Arc::clone(&self.counters),
+            self.packet_capacity,
+        ) {
+            Ok(reader) => reader,
+            Err(error) => {
+                close_mobile_tun_fd(fd);
+                return Err(error);
             }
         };
-
-        Ok(Self {
-            fd,
-            stop,
-            read_thread: Some(read_thread),
-            write_thread: Some(write_thread),
-        })
+        let previous_fd = {
+            let mut current = self
+                .fd
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::replace(&mut *current, fd)
+        };
+        std::mem::replace(&mut self.reader, reader).retire(previous_fd);
+        Ok(())
     }
 
     fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if self.fd >= 0 {
-            close_mobile_tun_fd(self.fd);
-            self.fd = -1;
+        self.reader.stop();
+        let mut current = self
+            .fd
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *current >= 0 {
+            close_mobile_tun_fd(*current);
+            *current = -1;
         }
     }
 
     fn join(&mut self) {
-        if let Some(thread) = self.read_thread.take() {
-            let _ = thread.join();
-        }
+        self.reader.join();
         if let Some(thread) = self.write_thread.take() {
             let _ = thread.join();
         }
@@ -99,11 +238,13 @@ fn native_tun_packet_capacity(mtu: u16) -> usize {
 
 fn native_tun_read_loop(
     fd: c_int,
-    outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    stop: Arc<AtomicBool>,
-    counters: Arc<MobileTunAtomicCounters>,
+    runtime: &tokio::runtime::Handle,
+    outbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
+    control: &NativeTunReaderControl,
+    counters: &MobileTunAtomicCounters,
     packet_capacity: usize,
 ) {
+    let stop = &control.stop;
     let mut packets = Vec::with_capacity(MOBILE_FIPS_SEND_BATCH);
     let mut read_packet = Vec::<u8>::with_capacity(packet_capacity);
     'read: loop {
@@ -118,10 +259,9 @@ fn native_tun_read_loop(
                     if !packets.is_empty() {
                         break;
                     }
-                    if !wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
+                    if !wait_mobile_tun_fd(fd, libc::POLLIN, stop) {
                         break 'read;
                     }
-                    continue;
                 }
                 NativeTunRead::Stopped => {
                     stop.store(true, Ordering::Relaxed);
@@ -132,7 +272,7 @@ fn native_tun_read_loop(
         if !packets.is_empty() {
             let batch = std::mem::replace(&mut packets, Vec::with_capacity(MOBILE_FIPS_SEND_BATCH));
             let batch_len = batch.len();
-            if stop.load(Ordering::Relaxed) || outbound_tx.blocking_send(batch).is_err() {
+            if !send_native_tun_outbound_batch(runtime, outbound_tx, control, batch) {
                 for _ in 0..batch_len {
                     counters.note_drop();
                 }
@@ -144,22 +284,46 @@ fn native_tun_read_loop(
     stop.store(true, Ordering::Relaxed);
 }
 
+/// Queues a batch for the mesh and waits for room when the queue is full.
+/// Returns false when the reader is stopped first or the mesh side is gone.
+fn send_native_tun_outbound_batch(
+    runtime: &tokio::runtime::Handle,
+    outbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
+    control: &NativeTunReaderControl,
+    batch: Vec<Vec<u8>>,
+) -> bool {
+    if control.stop.load(Ordering::Relaxed) {
+        return false;
+    }
+    match outbound_tx.try_send(batch) {
+        Ok(()) => true,
+        Err(tokio_mpsc::error::TrySendError::Closed(_)) => false,
+        Err(tokio_mpsc::error::TrySendError::Full(batch)) => runtime.block_on(async {
+            tokio::select! {
+                biased;
+                () = control.stopped.notified() => false,
+                sent = outbound_tx.send(batch) => sent.is_ok(),
+            }
+        }),
+    }
+}
+
 fn native_tun_write_loop(
-    fd: c_int,
+    fd: &RwLock<c_int>,
     mut inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
-    stop: Arc<AtomicBool>,
-    counters: Arc<MobileTunAtomicCounters>,
+    stop: &AtomicBool,
+    counters: &MobileTunAtomicCounters,
 ) {
     while !stop.load(Ordering::Relaxed) {
-        let packets = match inbound_rx.blocking_recv() {
-            Some(packets) => packets,
-            None => break,
+        let Some(packets) = inbound_rx.blocking_recv() else {
+            break;
         };
+        let fd = fd.read().unwrap_or_else(std::sync::PoisonError::into_inner);
         for packet in packets {
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            if !write_native_tun_inbound_packet(fd, &packet, &stop, &counters) {
+            if !write_native_tun_inbound_packet(*fd, &packet, stop, counters) {
                 stop.store(true, Ordering::Relaxed);
                 return;
             }
@@ -204,11 +368,8 @@ fn read_mobile_tun_packet(fd: c_int, packet: &mut Vec<u8>) -> NativeTunRead {
         let read = read_mobile_tun_payload(fd, packet);
         if read > 0 {
             let len = usize::try_from(read).unwrap_or(0);
-            let Some(packet_len) = mobile_tun_payload_len(len) else {
-                return NativeTunRead::Stopped;
-            };
             unsafe {
-                packet.set_len(packet_len);
+                packet.set_len(len);
             }
             let mut next_packet = Vec::with_capacity(packet.capacity());
             std::mem::swap(packet, &mut next_packet);
@@ -238,10 +399,6 @@ fn read_mobile_tun_payload(fd: c_int, packet: &mut Vec<u8>) -> isize {
     }
 }
 
-fn mobile_tun_payload_len(read_len: usize) -> Option<usize> {
-    Some(read_len)
-}
-
 fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> NativeTunWrite {
     if packet.is_empty() {
         return NativeTunWrite::Dropped;
@@ -264,6 +421,12 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> Nativ
         {
             continue;
         }
+        // Android takes the old interface down when it establishes a
+        // replacement. A packet written before the tunnel has moved to the
+        // replacement is lost; the tunnel itself keeps running.
+        if error.raw_os_error() == Some(libc::EIO) {
+            return NativeTunWrite::Dropped;
+        }
         return NativeTunWrite::Stopped;
     }
     NativeTunWrite::Stopped
@@ -276,7 +439,7 @@ fn wait_mobile_tun_fd(fd: c_int, events: i16, stop: &AtomicBool) -> bool {
             events,
             revents: 0,
         };
-        let ready = unsafe { libc::poll(&mut poll_fd, 1, NATIVE_TUN_POLL_TIMEOUT_MS) };
+        let ready = unsafe { libc::poll(&raw mut poll_fd, 1, NATIVE_TUN_POLL_TIMEOUT_MS) };
         if ready > 0 {
             if poll_fd.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
                 return false;
@@ -296,15 +459,10 @@ fn wait_mobile_tun_fd(fd: c_int, events: i16, stop: &AtomicBool) -> bool {
 }
 
 fn prepare_mobile_tun_fd(fd: c_int) -> Result<c_int> {
-    let fd = native_tun_owned_fd(fd)?;
     if let Err(error) = set_mobile_tun_nonblocking(fd) {
         close_mobile_tun_fd(fd);
         return Err(error);
     }
-    Ok(fd)
-}
-
-fn native_tun_owned_fd(fd: c_int) -> Result<c_int> {
     Ok(fd)
 }
 
@@ -333,6 +491,7 @@ fn close_mobile_tun_fd(fd: c_int) {
     }
 }
 
+#[cfg(target_os = "android")]
 fn reject_unattached_mobile_tun_fd(fd: c_int) {
     close_mobile_tun_fd(fd);
 }
