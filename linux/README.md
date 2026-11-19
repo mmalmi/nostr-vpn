@@ -12,6 +12,12 @@ Traffic counters, latency, timestamps, and diagnostic updates do not rebuild
 the page or replace open expanders and form controls. Navigation, configuration,
 permissions, and roster changes still rebuild the page when necessary.
 
+Navigation stays compact as the window grows. On Devices, drag the divider
+between the device list and device details to adjust their widths. The app keeps
+the divider position across selection changes, navigation and refreshes for the
+current session. Files uses the page's scrollbar so transfer actions remain
+accessible without a second, clipped scroll area.
+
 Docker is required. From the repository root:
 
 ```sh

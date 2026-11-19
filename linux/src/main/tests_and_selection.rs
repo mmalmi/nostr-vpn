@@ -79,6 +79,21 @@ mod tests {
         model.core_results = receiver;
         model.core_ready = true;
         model.state = NativeAppState {
+            file_transfers: vec![nostr_vpn_app_core::native_state::NativeFileTransferState {
+                id: "layout-transfer".to_string(),
+                peer_name: "long-peer-name".repeat(30),
+                status: "offered".to_string(),
+                files: vec![nostr_vpn_app_core::native_state::NativeTransferFileState {
+                    name: "long-filename".repeat(30),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }, nostr_vpn_app_core::native_state::NativeFileTransferState {
+                id: "failed-layout-transfer".to_string(),
+                status: "failed".to_string(),
+                error: Some("long-error-detail".repeat(30)),
+                ..Default::default()
+            }],
             networks: vec![NativeNetworkState {
                 id: "test-network".to_string(),
                 enabled: true,
@@ -94,6 +109,28 @@ mod tests {
         };
         let app = Rc::new(RefCell::new(model));
         render(&app);
+        // Files must participate in the page's scroll flow rather than being
+        // clipped by a second scroller with its own height negotiation.
+        let scroll = content.first_child().unwrap().downcast::<gtk::ScrolledWindow>().unwrap();
+        let page = scroll.child().unwrap().downcast::<gtk::Viewport>().unwrap().child().unwrap();
+        let files = page.first_child().unwrap().next_sibling().unwrap();
+        assert!(files.is::<gtk::Box>(), "Files must not use a nested scroller");
+        assert!(contains_label(&files, "Files"));
+
+        let split = files.next_sibling().unwrap().downcast::<gtk::Paned>()
+            .expect("Devices and details need a native adjustable divider");
+        assert!(split.is_wide_handle());
+        split.set_position(480);
+        // Selection and configuration changes rebuild the page. They must not
+        // throw away the user's divider adjustment.
+        render(&app);
+        let scroll = content.first_child().unwrap().downcast::<gtk::ScrolledWindow>().unwrap();
+        let page = scroll.child().unwrap().downcast::<gtk::Viewport>().unwrap().child().unwrap();
+        let split = page.first_child().unwrap().next_sibling().unwrap()
+            .next_sibling().unwrap().downcast::<gtk::Paned>().unwrap();
+        assert_eq!(split.position(), 480);
+        assert!(!app.borrow().sidebar.compute_expand(gtk::Orientation::Horizontal),
+            "Navigation must not share spare width with content");
         let expander = find_expander(content.upcast_ref()).unwrap();
         assert!(!expander.is_expanded());
         expander.set_expanded(true);
@@ -130,8 +167,12 @@ mod tests {
         }
 
         let window = app.borrow().window.clone();
-        window.set_default_size(900, 600);
-        window.set_content(Some(&content));
+        window.set_default_size(1600, 900);
+        let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let sidebar = app.borrow().sidebar.clone();
+        shell.append(&sidebar);
+        shell.append(&content);
+        window.set_content(Some(&shell));
         window.present();
         let context = glib::MainContext::default();
         {
@@ -153,12 +194,76 @@ mod tests {
                 context.iteration(false);
                 std::thread::sleep(Duration::from_millis(5));
             }
+            assert!(sidebar.width() <= 260, "Navigation expanded to {}px", sidebar.width());
+            let scroll = content.first_child().unwrap().downcast::<gtk::ScrolledWindow>().unwrap();
+            let page = scroll.child().unwrap().downcast::<gtk::Viewport>().unwrap().child().unwrap();
+            let files = page.first_child().unwrap().next_sibling().unwrap();
+            let received = files.first_child().unwrap().next_sibling().unwrap();
+            let bounds = received.compute_bounds(&files).unwrap();
+            assert!(bounds.y() + bounds.height() <= files.height() as f32,
+                "Received files button was clipped");
+            assert!(contains_label(&files, "Accept"));
+            let mut row = received.next_sibling();
+            let actions = loop {
+                let widget = row.expect("Offered transfer row must be present");
+                if contains_label(&widget, "Accept") {
+                    break widget.last_child().unwrap();
+                }
+                row = widget.next_sibling();
+            };
+            let bounds = actions.compute_bounds(&files).unwrap();
+            assert!(bounds.y() + bounds.height() <= files.height() as f32,
+                "Transfer actions were clipped");
+            assert!(files.measure(gtk::Orientation::Horizontal, -1).0 < content.width(),
+                "Long transfer text forced the page wider");
             let window_id = std::process::Command::new("xdotool")
                 .args(["search", "--onlyvisible", "--pid", &std::process::id().to_string()])
                 .output().expect("xdotool is required for the GTK mouse regression test");
             assert!(window_id.status.success());
             let window_id = String::from_utf8(window_id.stdout).unwrap();
             let window_id = window_id.lines().next().unwrap();
+            let split = files.next_sibling().unwrap().downcast::<gtk::Paned>().unwrap();
+            let left = split.start_child().unwrap();
+            let right = split.end_child().unwrap();
+            let left_bounds = left.compute_bounds(&window).unwrap();
+            let right_bounds = right.compute_bounds(&window).unwrap();
+            // Account for the native window's client-side decoration offset
+            // when targeting the thin handle with xdotool.
+            let (surface_x, surface_y) = window.surface_transform();
+            let x = (left_bounds.x() + left_bounds.width() + right_bounds.x()) / 2.0
+                + surface_x as f32;
+            let y = left_bounds.y() + 30.0 + surface_y as f32;
+            let previous_width = left.width();
+            assert!(y >= 0.0 && y < window.height() as f32, "Divider is outside the viewport at {y}");
+            // Process GTK events while the button is held, just as a real drag
+            // does. Blocking on xdotool would queue press, move and release
+            // before GTK can start its gesture and claim the pointer.
+            let mut drag = std::process::Command::new("xdotool")
+                .args(["mousemove", "--window", window_id, &x.to_string(), &y.to_string(),
+                    "mousedown", "1", "sleep", "0.1", "mousemove", "--window", window_id,
+                    &(x + 64.0).to_string(), &y.to_string(), "sleep", "0.1", "mouseup", "1"])
+                .spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                context.iteration(false);
+                if let Some(status) = drag.try_wait().unwrap() {
+                    assert!(status.success());
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    drag.kill().unwrap();
+                    drag.wait().unwrap();
+                    panic!("Divider drag did not finish");
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let deadline = Instant::now() + Duration::from_millis(300);
+            while Instant::now() < deadline {
+                context.iteration(false);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(left.width() > previous_width + 30,
+                "Dragging at ({x}, {y}) did not resize device panes: {previous_width} -> {}px", left.width());
             for _ in 0..3 {
                 let row = find_row(content.upcast_ref()).unwrap();
                 let bounds = row.compute_bounds(&window).unwrap();

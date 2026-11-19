@@ -198,14 +198,33 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         devices.append(&expander);
     }
 
-    let split = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    let split = gtk::Paned::new(gtk::Orientation::Horizontal);
+    split.set_widget_name("nvpn-device-panes");
     split.set_hexpand(true);
     split.set_valign(gtk::Align::Start);
-    split.append(&devices);
+    split.set_wide_handle(true);
+    split.set_focusable(true);
+    split.update_property(&[gtk::accessible::Property::Label("Device list and details")]);
+    split.set_resize_start_child(false);
+    split.set_resize_end_child(true);
+    split.set_shrink_start_child(false);
+    split.set_shrink_end_child(false);
+    devices.set_margin_end(8);
+    split.set_start_child(Some(&devices));
 
     let detail = device_detail_card(app, &network, state, selected_key.as_deref());
     detail.set_hexpand(true);
-    split.append(&detail);
+    detail.set_margin_start(8);
+    split.set_end_child(Some(&detail));
+    split.set_position(app.borrow().device_pane_position);
+    // Selection and configuration changes recreate this page. Keep the user's
+    // divider position for this app session without retaining the old widgets.
+    let weak_app = Rc::downgrade(app);
+    split.connect_position_notify(move |split| {
+        if let Some(app) = weak_app.upgrade() {
+            app.borrow_mut().device_pane_position = split.position();
+        }
+    });
     page.append(&split);
 
     append_join_requests(app, page, &network);
