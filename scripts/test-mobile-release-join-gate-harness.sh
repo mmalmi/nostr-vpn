@@ -2247,7 +2247,10 @@ PY
 <hierarchy><node bounds="[0,0][1080,2410]"><node clickable="true" enabled="true" bounds="[89,780][991,907]"><node text="peer" bounds="[149,849][991,891]"/></node></node></hierarchy>
 XML
   query="$ROOT/scripts/mobile-release-join-ui-query.py"
-  ! "$query" "$xml" text peer visible-center
+  if "$query" "$xml" text peer visible-center; then
+    echo 'Unexpected tap target on the provider subtitle' >&2
+    exit 1
+  fi
   [[ "$("$query" "$xml" clickable-row-text peer visible-center)" == '540 843' ]]
 )
 
