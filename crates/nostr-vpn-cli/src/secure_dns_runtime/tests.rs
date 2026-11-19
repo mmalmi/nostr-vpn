@@ -10,6 +10,7 @@ use nostr_vpn_core::secure_dns::SecureDnsResolver;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
+#[path = "tests/linux_resolver.rs"]
 mod linux_resolver;
 
 struct FixtureResolver {
