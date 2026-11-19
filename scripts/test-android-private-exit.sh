@@ -34,10 +34,21 @@ echo 'Android confirmed the paired provider in the roster'
 release_join_android_wait_query description 'Internet tab'
 release_join_android_tap_center description 'Internet tab'
 release_join_android_scroll_to resource internet-source-picker safe-center backward
-picker() { release_join_android_tap_visible resource internet-source-picker; }
 select_source() {
-  picker && release_join_android_wait_query resource "internet-source-$1" 10 &&
-    release_join_android_tap_center resource "internet-source-$1"
+  local label
+  case "$1" in
+    private_vpn) label='Internet source Private VPN device' ;;
+    direct) label='Internet source This device' ;;
+    *) return 2 ;;
+  esac
+  # Android exposes the menu items' accessibility labels in the separate
+  # popup window, even when Compose omits their resource IDs there.
+  if ! release_join_android_query description "$label" center >/dev/null 2>&1; then
+    release_join_android_scroll_to resource internet-source-picker safe-center backward || return 1
+    release_join_android_tap_visible resource internet-source-picker || return 1
+  fi
+  release_join_android_wait_query description "$label" 10 &&
+    release_join_android_tap_center description "$label"
 }
 probe() {
   # The shell UID is outside the VPN app. Use the production OS routes and a
@@ -95,7 +106,7 @@ if (( ! was_on )); then
   release_join_android_wait_vpn_connected
 fi
 restore_source=1
-echo 'Android opened the Internet source picker flow'
+echo 'Android verified the direct source before opening the picker'
 select_source private_vpn || { echo 'Could not select the private VPN source' >&2; exit 1; }
 release_join_android_wait_query text "$provider" 90 || { echo "The paired provider was absent from the private VPN picker" >&2; exit 1; }
 provider_mark() {
