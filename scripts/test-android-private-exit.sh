@@ -27,11 +27,12 @@ grep -Eq 'netcat|nc ' "$out/nc-help.log"
 release_join_android_open_devices >/dev/null
 release_join_android_wait_query resource "roster-participant-accepted-$provider" 80
 release_join_android_wait_query description 'Internet tab'
-release_join_android_tap description 'Internet tab'
+release_join_android_tap_center description 'Internet tab'
+release_join_android_scroll_to resource internet-source-picker safe-center backward
 picker() { release_join_android_tap_visible resource internet-source-picker; }
 select_source() {
   picker && release_join_android_wait_query resource "internet-source-$1" 10 &&
-    release_join_android_tap_visible resource "internet-source-$1"
+    release_join_android_tap_center resource "internet-source-$1"
 }
 probe() {
   # The shell UID is outside the VPN app. Use the production OS routes and a
@@ -70,7 +71,7 @@ restore() {
   fi
   if ((restore_vpn)); then
     if release_join_android_query description 'Turn VPN off' center >/dev/null; then
-      release_join_android_tap_visible description 'Turn VPN off' || rc=1
+      release_join_android_tap_center description 'Turn VPN off' || rc=1
     fi
     release_join_android_wait_query description 'Turn VPN on' 15 || rc=1
     if release_join_android_os_vpn_connected; then rc=1; fi
@@ -85,12 +86,12 @@ probe unavailable
 if (( ! was_on )); then
   release_join_android_wait_query description 'Turn VPN on'
   restore_vpn=1
-  release_join_android_tap_visible description 'Turn VPN on'
+  release_join_android_tap_center description 'Turn VPN on'
   release_join_android_wait_vpn_connected
 fi
 restore_source=1
-select_source private_vpn
-release_join_android_wait_query text "$provider" 90
+select_source private_vpn || { echo 'Could not select the private VPN source' >&2; exit 1; }
+release_join_android_wait_query text "$provider" 90 || { echo "The paired provider was absent from the private VPN picker" >&2; exit 1; }
 provider_mark() {
   release_join_android_dump_ui && python3 - "$RELEASE_JOIN_ANDROID_UI_XML" "$provider" "$1" <<'PYROW'
 import sys
