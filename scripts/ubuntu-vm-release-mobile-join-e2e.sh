@@ -431,8 +431,12 @@ calibrate_remote_clock
 # Imported Linux desktop admin -> physical Pixel joiner.
 release_join_android_open_network_setup
 remote Reset >"$RESULT_DIR/desktop-admin-reset.log"
-remote Bootstrap >"$RESULT_DIR/desktop-admin-bootstrap.log"
-remote ReadMarker >"$RESULT_DIR/desktop-admin-bootstrap.json"
+# The exit-only fixture is the admin. Its joiner onboarding screen is used
+# only by the separate desktop join gate.
+if [[ "${NVPN_TEST_ANDROID_PRIVATE_EXIT:-0}" != only ]]; then
+  remote Bootstrap >"$RESULT_DIR/desktop-admin-bootstrap.log"
+  remote ReadMarker >"$RESULT_DIR/desktop-admin-bootstrap.json"
+fi
 remote CreateAdmin "Release Linux admin" >"$RESULT_DIR/desktop-create-admin.log"
 remote ReadMarker >"$RESULT_DIR/desktop-create-admin.json"
 DESKTOP_ADMIN_NPUB="$(
