@@ -844,6 +844,99 @@
     }
 
     #[test]
+    fn mobile_dns_answers_fips_queries_locally_before_upstream() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let app = Arc::new(RwLock::new(app));
+        let source = Ipv4Addr::new(10, 44, 206, 222);
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("magic dns server");
+        let identity = fips_core::Identity::generate();
+        let npub_query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53000,
+            53,
+            &dns_query(&format!("{}.fips", identity.npub()), 28),
+        );
+        let unknown_query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53001,
+            53,
+            &dns_query("invalid.fips", 28),
+        );
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        let response = runtime
+            .block_on(mobile_magic_dns_response_packet(
+                &npub_query,
+                &app,
+                Some(&FixtureSecureDns),
+                dns_server,
+            ))
+            .expect("local npub.fips response packet");
+        let dns = Message::from_vec(&response[28..]).expect("npub.fips DNS response");
+        let expected = identity.address().to_ipv6();
+        assert!(
+            dns.answers.iter().any(|answer| matches!(
+                &answer.data,
+                hickory_proto::rr::RData::AAAA(address) if address.0 == expected
+            )),
+            "npub.fips must be answered by the local FIPS resolver instead of DoH"
+        );
+
+        let response = runtime
+            .block_on(mobile_magic_dns_response_packet(
+                &unknown_query,
+                &app,
+                Some(&FixtureSecureDns),
+                dns_server,
+            ))
+            .expect("local invalid .fips response packet");
+        let dns = Message::from_vec(&response[28..]).expect("invalid .fips DNS response");
+        assert_eq!(
+            dns.metadata.response_code,
+            hickory_proto::op::ResponseCode::NXDomain,
+            "invalid .fips names must fail locally instead of reaching DoH"
+        );
+    }
+
+    #[test]
+    fn mobile_dns_answers_fips_queries_before_wireguard_exit_forward() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let app = Arc::new(RwLock::new(app));
+        let source = Ipv4Addr::new(10, 44, 206, 222);
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("magic dns server");
+        let identity = fips_core::Identity::generate();
+        let query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53000,
+            53,
+            &dns_query(&format!("{}.fips", identity.npub()), 28),
+        );
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        let action = runtime
+            .block_on(mobile_dns_packet_action(&query, &app, None, dns_server, true))
+            .expect("packet action");
+
+        assert!(
+            matches!(action, MobileDnsPacketAction::Respond(_)),
+            "a .fips query must be answered locally instead of NAT-forwarded through the exit"
+        );
+    }
+
+    #[test]
     fn mobile_config_includes_static_peer_hints_from_app() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();

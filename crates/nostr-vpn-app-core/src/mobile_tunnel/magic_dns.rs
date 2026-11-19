@@ -92,12 +92,15 @@ async fn mobile_dns_packet_action(
     forward_public_via_wireguard: bool,
 ) -> Option<MobileDnsPacketAction> {
     let query = parse_mobile_magic_dns_query(packet, magic_dns_server)?;
-    let response = {
-        let app = app_config.read().ok()?;
-        let records = build_magic_dns_records(&app);
-        build_magic_dns_response_if_handled(query.payload, &records)
-    };
-    let response = match response {
+    // Same order as the desktop resolver: FIPS, then MagicDNS records,
+    // then any upstream (DoH or WG exit).
+    let response = match resolve_fips_dns_if_handled(query.payload)
+        .map(|(response, _)| response)
+        .or_else(|| {
+            let app = app_config.read().ok()?;
+            let records = build_magic_dns_records(&app);
+            build_magic_dns_response_if_handled(query.payload, &records)
+        }) {
         Some(response) => response,
         None if forward_public_via_wireguard => {
             return Some(MobileDnsPacketAction::ForwardViaExit);
