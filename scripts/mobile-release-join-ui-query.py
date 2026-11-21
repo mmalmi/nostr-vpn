@@ -18,6 +18,7 @@ def parser() -> argparse.ArgumentParser:
             "description",
             "text",
             "checkbox-label",
+            "clickable-row-text",
             "network-picker",
             "resource-prefix",
             "description-prefix",
@@ -30,6 +31,7 @@ def parser() -> argparse.ArgumentParser:
             "center",
             "safe-center",
             "visible-center",
+            "forward-swipe",
             "description",
             "text",
             "count",
@@ -128,6 +130,14 @@ def main() -> int:
                     found.append(title)
         if len(found) != 1:
             return 1
+    elif args.kind == "clickable-row-text":
+        found = [
+            row for row in root.iter("node")
+            if row.get("clickable") == "true" and row.get("enabled") == "true"
+            and any(matches(child, "text", args.expected) for child in row.iter("node"))
+        ]
+        if len(found) != 1:
+            return 1
     elif args.kind == "checkbox-label":
         # Compose exposes each checkbox immediately before its label, with
         # multiple settings flattened into the same parent accessibility node.
@@ -148,6 +158,14 @@ def main() -> int:
     if not found:
         return 1
     node = found[0]
+    if args.output == "forward-swipe":
+        scrollable = [child for child in node.iter("node") if child.get("scrollable") == "true"]
+        if len(scrollable) != 1:
+            return 1
+        left, top, right, bottom = bounds(scrollable[0])
+        x = (left + right) // 2
+        print(x, top + (bottom - top) * 7 // 8, x, top + (bottom - top) // 8)
+        return 0
     if args.output in ("center", "safe-center", "visible-center"):
         if args.output in ("safe-center", "visible-center"):
             try:

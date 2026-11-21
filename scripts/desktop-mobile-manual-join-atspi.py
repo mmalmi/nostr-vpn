@@ -19,6 +19,7 @@ import time
 from typing import Any
 
 import pyatspi
+from linux_release_profile import manage_profile
 
 
 NPUB = re.compile(r"npub1[023456789acdefghjklmnpqrstuvwxyz]{58}")
@@ -529,12 +530,13 @@ def screenshot(root: pathlib.Path, label: str) -> None:
 
 
 def canonical_data_dir() -> pathlib.Path:
-    override = os.environ.get("XDG_DATA_HOME", "").strip()
-    if override:
-        base = pathlib.Path(override).expanduser().resolve()
-    else:
-        base = pathlib.Path.home().resolve() / ".local" / "share"
-    return base / "nostr-vpn"
+    home = pathlib.Path.home().absolute()
+    for name, suffix in (("XDG_CONFIG_HOME", ".config"),
+                         ("XDG_DATA_HOME", ".local/share")):
+        override = os.environ.get(name, "")
+        if override and override != str(home / suffix):
+            raise RuntimeError("public-UI gate requires the default XDG roots")
+    return home / ".config" / "nvpn"
 
 
 def exact_app_pids(app: pathlib.Path) -> list[int]:
@@ -593,19 +595,15 @@ class Driver:
     def reset(self) -> None:
         if os.environ.get("NVPN_APP_DATA_DIR") or os.environ.get("NVPN_CLI_PATH"):
             raise RuntimeError("public-UI gate refuses app data or CLI overrides")
-        stop_exact_app_instances(self.app)
         data_dir = canonical_data_dir()
-        expected_parent = (
-            pathlib.Path(os.environ.get("XDG_DATA_HOME", "")).expanduser().resolve()
-            if os.environ.get("XDG_DATA_HOME", "").strip()
-            else pathlib.Path.home().resolve() / ".local" / "share"
-        )
-        if data_dir.parent != expected_parent or data_dir.name != "nostr-vpn":
-            raise RuntimeError("refusing unsafe canonical Linux app-data reset")
+        legacy_parent = pathlib.Path.home().absolute() / ".local" / "share"
+        legacy = legacy_parent / "nostr-vpn"
+        if legacy.exists() or legacy.is_symlink():
+            raise RuntimeError("preserve the existing legacy desktop profile before this gate")
         if data_dir.is_symlink():
             raise RuntimeError("refusing symlinked canonical Linux app-data reset")
-        if data_dir.exists():
-            shutil.rmtree(data_dir)
+        stop_exact_app_instances(self.app)
+        manage_profile(data_dir, self.artifact_root / "canonical-profile.json")
         self.evidence["resetComplete"] = True
         self.evidence["canonicalProfile"] = True
         self.write_evidence()
