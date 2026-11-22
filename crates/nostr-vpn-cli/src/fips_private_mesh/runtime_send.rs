@@ -66,6 +66,10 @@ impl FipsPrivateMeshRuntime {
             local_tunnel_ips,
             mesh: ArcSwap::from_pointee(mesh),
             mesh_generation: AtomicU64::new(0),
+            #[cfg(feature = "paid-exit")]
+            credit: Default::default(),
+            #[cfg(feature = "paid-exit")]
+            credit_policy: Default::default(),
             peer_activity: ArcSwap::from_pointee(peer_activity),
             peer_identities: ArcSwap::from_pointee(peer_identities),
             presence: RwLock::new(HashMap::new()),

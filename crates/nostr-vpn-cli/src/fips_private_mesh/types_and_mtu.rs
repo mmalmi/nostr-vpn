@@ -94,6 +94,7 @@ impl DirectTunWriteBatch {
 #[cfg(feature = "paid-exit")]
 #[derive(Default)]
 struct FipsPaidRouteAccounting {
+    credit_uploads: HashMap<ParticipantPubkeyBytes, credit::BuyerMeter>,
     peers: HashMap<ParticipantPubkeyBytes, FipsPaidRoutePeerAccounting>,
 }
 
@@ -159,6 +160,14 @@ impl FipsPaidRouteAccounting {
         participant_key: Option<&ParticipantPubkeyBytes>,
         packet: &[u8],
     ) {
+        if !self.credit_uploads.is_empty()
+            && let Some(key) = participant_key
+                .copied()
+                .or_else(|| participant.and_then(participant_pubkey_bytes))
+            && let Some(meter) = self.credit_uploads.get_mut(&key)
+        {
+            meter.observe(packet)
+        }
         let Some(peer) = self.peer_mut(participant, participant_key) else {
             return;
         };

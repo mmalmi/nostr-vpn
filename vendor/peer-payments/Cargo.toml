@@ -10,6 +10,7 @@ description = "Durable, bounded peer credit shared by paid services without a mi
 social-graph = ["dep:nostr-social-graph"]
 
 [dependencies]
+lightning-invoice = { version = "0.34", default-features = false }
 nostr-social-graph = { version = "0.2.1", optional = true }
 cashu-credit = { path = "../cashu-credit", version = "0.3.1" }
 serde = { version = "1.0", features = ["derive"] }

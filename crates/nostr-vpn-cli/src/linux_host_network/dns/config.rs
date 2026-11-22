@@ -1,6 +1,9 @@
 use super::*;
 
 pub(super) fn direct(bytes: &[u8]) -> io::Result<Snapshot> {
+    if managed_resolv_conf(bytes) {
+        return Err(invalid("native DNS configuration is owned by nVPN"));
+    }
     let (config, errors) = resolv_conf::Config::parse_with_errors(bytes);
     let mut options = ResolverOpts::default();
     options.ndots = config.ndots as usize;
@@ -68,8 +71,7 @@ pub(super) fn direct(bytes: &[u8]) -> io::Result<Snapshot> {
 }
 
 fn recursive_server(ip: IpAddr) -> bool {
-    ip == IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
-        || ip == IpAddr::V6(std::net::Ipv6Addr::LOCALHOST)
+    ip == IpAddr::V4(crate::secure_dns_runtime::LINUX_DNS_IP)
         || ip == IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 53))
         || ip == IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 54))
 }

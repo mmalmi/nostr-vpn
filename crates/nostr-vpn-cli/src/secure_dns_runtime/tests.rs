@@ -10,6 +10,9 @@ use nostr_vpn_core::secure_dns::SecureDnsResolver;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 
+#[path = "tests/linux_resolver.rs"]
+mod linux_resolver;
+
 struct FixtureResolver {
     fail: bool,
     answer: Option<Ipv4Addr>,
@@ -161,34 +164,6 @@ fn windows_policy_forces_all_dns_to_local_authenticated_stub() {
     assert!(crash_repair.contains("Remove-DnsClientNrptRule"));
     assert!(!crash_repair.contains("Set-DnsClientServerAddress"));
     assert!(!crash_repair.contains("-InterfaceIndex"));
-}
-
-#[test]
-fn direct_resolv_conf_crash_repair_only_restores_owned_content() {
-    let previous = b"nameserver 192.0.2.53\n";
-    assert!(!linux_direct_resolv_conf_needs_restore(previous, previous));
-    assert!(linux_direct_resolv_conf_needs_restore(
-        LINUX_DIRECT_RESOLV_CONF,
-        previous
-    ));
-    assert!(linux_direct_resolv_conf_needs_restore(
-        &LINUX_DIRECT_RESOLV_CONF[..12],
-        previous
-    ));
-    assert!(!linux_direct_resolv_conf_needs_restore(
-        &previous[..10],
-        previous
-    ));
-    assert!(!linux_direct_resolv_conf_needs_restore(
-        b"nameserver 203.0.113.53\n",
-        previous
-    ));
-}
-
-#[test]
-fn direct_resolv_conf_waits_for_through_exit_upstream_failover() {
-    let contents = std::str::from_utf8(LINUX_DIRECT_RESOLV_CONF).expect("UTF-8 resolv.conf");
-    assert!(contents.contains("options timeout:7 attempts:1"));
 }
 
 #[cfg(unix)]

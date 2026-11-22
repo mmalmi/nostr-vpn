@@ -96,7 +96,7 @@ jobs:
           node-version: 24
 
       - name: Install Linux native dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config iproute2 iptables
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
@@ -137,6 +137,19 @@ jobs:
           sha256sum "$nvpn_test_binary"
           sudo -n "$nvpn_test_binary" --exact daemon_runtime::linux_cleanup_journal_files::root_cleanup_journal_rejects_unprivileged_ownership --ignored --nocapture | tee "$RUNNER_TEMP/nvpn-root-cleanup-test.log"
           grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/nvpn-root-cleanup-test.log"
+
+      - name: Check Linux DNS coexistence in an isolated network
+        run: |
+          set -o pipefail
+          cargo build --locked -p nvpn --bin nvpn
+          target_dir="$(cargo metadata --locked --format-version 1 --no-deps | jq -r .target_directory)"
+          dns_test="$(jq -rs '
+            [.[] | select(.reason == "compiler-artifact" and .target.name == "linux_dns_coexistence" and .profile.test) | .executable] | unique | .[]
+          ' "$RUNNER_TEMP/nvpn-test-artifacts.jsonl")"
+          test -x "$dns_test"
+          scripts/test-linux-egress-lifecycle "$dns_test" "$target_dir/debug/nvpn" \
+            linux_dns_coexistence_preserves_resolver_ownership | tee "$RUNNER_TEMP/nvpn-dns-test.log"
+          grep -F 'test result: ok. 1 passed;' "$RUNNER_TEMP/nvpn-dns-test.log"
 
   web:
     name: Web typecheck

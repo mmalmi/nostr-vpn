@@ -241,6 +241,10 @@ pub(crate) struct FipsPrivateMeshRuntime {
     local_tunnel_ips: HashSet<IpAddr>,
     mesh: ArcSwap<FipsMeshRuntime>,
     mesh_generation: AtomicU64,
+    #[cfg(feature = "paid-exit")]
+    credit: std::sync::OnceLock<Arc<credit::Node>>,
+    #[cfg(feature = "paid-exit")]
+    credit_policy: Mutex<Option<credit::ExitPolicy>>,
     peer_activity: ArcSwap<FipsPeerActivityMap>,
     peer_identities: ArcSwap<FipsPeerIdentityMap>,
     presence: RwLock<HashMap<String, FipsPeerPresence>>,
@@ -274,6 +278,9 @@ include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/mesh_bind.rs");
+#[cfg(feature = "paid-exit")]
+#[path = "fips_private_mesh/credit.rs"]
+pub(crate) mod credit;
 include!("fips_private_mesh/macos_bypass_reconcile.rs");
 include!("fips_private_mesh/macos_wg_runtime.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");

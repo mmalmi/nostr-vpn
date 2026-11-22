@@ -15,6 +15,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 
 pub(super) const LINUX_DIRECT_RESOLV_CONF: &[u8] = b"# Managed by nvpn secure DNS\n\
+nameserver 127.0.0.55\n\
+options timeout:7 attempts:1\n";
+// Cleanup journals from older releases still own these resolver contents.
+const LEGACY_LINUX_DIRECT_RESOLV_CONF: &[u8] = b"# Managed by nvpn secure DNS\n\
 nameserver 127.0.0.1\n\
 options timeout:7 attempts:1\n";
 #[cfg(unix)]
@@ -82,7 +86,11 @@ pub(super) fn install(state: &LinuxSecureDnsCleanupState) -> Result<()> {
             resolv_conf,
             ..
         } => {
-            run_checked(Command::new("resolvectl").args(["dns", interface, "127.0.0.1"]))?;
+            run_checked(Command::new("resolvectl").args([
+                "dns",
+                interface,
+                &super::LINUX_DNS_IP.to_string(),
+            ]))?;
             run_checked(Command::new("resolvectl").args(["domain", interface, "~."]))?;
             if let Some(cleanup) = resolv_conf {
                 install_linux_resolved_resolv_conf(Path::new("/etc/resolv.conf"), cleanup)?;
@@ -154,7 +162,8 @@ pub(super) fn restore_linux_resolved_components(
 pub(super) fn linux_direct_resolv_conf_needs_restore(current: &[u8], previous: &[u8]) -> bool {
     // Restore only our own written content; a foreign prefix of `previous` belongs to another manager.
     current != previous
-        && (current == LINUX_DIRECT_RESOLV_CONF || LINUX_DIRECT_RESOLV_CONF.starts_with(current))
+        && (LINUX_DIRECT_RESOLV_CONF.starts_with(current)
+            || LEGACY_LINUX_DIRECT_RESOLV_CONF.starts_with(current))
 }
 
 pub(super) fn linux_direct_resolv_conf_allowed(container: bool, openrc: bool) -> bool {
@@ -736,7 +745,7 @@ fn linux_resolved_link_is_owned(interface: &str, expected_index: Option<u32>) ->
     }
     Ok(String::from_utf8_lossy(&output.stdout)
         .split_ascii_whitespace()
-        .any(|token| token == "127.0.0.1"))
+        .any(|token| token == "127.0.0.55" || token == "127.0.0.1"))
 }
 
 #[cfg(target_os = "linux")]

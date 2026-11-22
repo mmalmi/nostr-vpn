@@ -61,6 +61,14 @@ use macos::{
 const SECURE_DNS_PORT: u16 = 1053;
 #[cfg(not(target_os = "macos"))]
 const SECURE_DNS_PORT: u16 = 53;
+// All Linux nVPN DNS listeners share this address so native localhost
+// resolvers remain usable and carrier DNS can exclude our own listeners.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) const LINUX_DNS_IP: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 55);
+#[cfg(target_os = "linux")]
+const SECURE_DNS_BIND: SocketAddr =
+    SocketAddr::V4(SocketAddrV4::new(LINUX_DNS_IP, SECURE_DNS_PORT));
+#[cfg(not(target_os = "linux"))]
 const SECURE_DNS_BIND: SocketAddr =
     SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, SECURE_DNS_PORT));
 const SECURE_DNS_MAX_IN_FLIGHT: usize = 64;
@@ -156,7 +164,6 @@ impl SecureDnsRuntime {
         fips_endpoint: FipsDnsEndpoint,
         persist_cleanup_intent: impl FnOnce(&SystemDnsCleanupIntent) -> Result<()>,
     ) -> Result<()> {
-        let cleanup_intent = system_dns_cleanup_intent(interface, interface_index)?;
         let udp = Arc::new(
             tokio::net::UdpSocket::bind(SECURE_DNS_BIND)
                 .await
@@ -165,6 +172,7 @@ impl SecureDnsRuntime {
         let tcp = tokio::net::TcpListener::bind(SECURE_DNS_BIND)
             .await
             .map_err(|error| secure_dns_bind_error("TCP", error))?;
+        let cleanup_intent = system_dns_cleanup_intent(interface, interface_index)?;
         let resolver = Arc::new(RwLock::new(dns_resolver(&resolver_config)?));
         let records = Arc::new(RwLock::new(records));
         let udp_task = tokio::spawn(run_udp(
