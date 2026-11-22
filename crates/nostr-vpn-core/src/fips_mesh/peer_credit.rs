@@ -33,9 +33,8 @@ impl FipsMeshRuntime {
         let payer = parse_nostr_pubkey_bytes(&a.payer).context("invalid credit payer")?;
         let session = format!("{CREDIT_SESSION_PREFIX}{}", a.commitment()?);
         anyhow::ensure!(
-            !self
-                .select_local_route_for_ip(tunnel_ip)
-                .is_some_and(|r| !r.is_default_route()),
+            self.select_local_route_for_ip(tunnel_ip)
+                .is_none_or(|route| route.is_default_route()),
             "tunnel address belongs to local route"
         );
         for (owner, admission) in &self.paid_route_admissions {
