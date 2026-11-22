@@ -278,8 +278,8 @@ include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/mesh_bind.rs");
-#[cfg(feature="paid-exit")]
-#[path="fips_private_mesh/credit.rs"]
+#[cfg(feature = "paid-exit")]
+#[path = "fips_private_mesh/credit.rs"]
 pub(crate) mod credit;
 include!("fips_private_mesh/macos_bypass_reconcile.rs");
 include!("fips_private_mesh/macos_wg_runtime.rs");
