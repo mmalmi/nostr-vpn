@@ -620,7 +620,7 @@ assert_secure_exit_dns() {
   "${COMPOSE[@]}" exec -T node-b sh -lc \
     "rm -f /tmp/nvpn-secure-dns-no53.pcap /tmp/nvpn-secure-dns-doh.pcap"
   "${COMPOSE[@]}" exec -T node-b sh -lc \
-    "timeout 6 tcpdump -ni any -U -w /tmp/nvpn-secure-dns-no53.pcap 'port 53 and not host 127.0.0.1' >/tmp/nvpn-secure-dns-no53.log 2>&1" &
+    "timeout 6 tcpdump -ni any -U -w /tmp/nvpn-secure-dns-no53.pcap 'port 53 and not host 127.0.0.55' >/tmp/nvpn-secure-dns-no53.log 2>&1" &
   no53_pid=$!
   "${COMPOSE[@]}" exec -T node-b sh -lc \
     "timeout 6 tcpdump -ni any -U -c 1 -w /tmp/nvpn-secure-dns-doh.pcap 'tcp port 443 and (host 1.1.1.1 or host 1.0.0.1)' >/tmp/nvpn-secure-dns-doh.log 2>&1" &
@@ -651,7 +651,7 @@ assert_secure_exit_dns() {
     echo "exit-node docker e2e failed: HTTPS through the selected exit returned $https_status" >&2
     exit 1
   fi
-  if [[ "$resolver_nameservers" != "127.0.0.1" ]]; then
+  if [[ "$resolver_nameservers" != "127.0.0.55" ]]; then
     echo "exit-node docker e2e failed: buyer resolver was not pinned exclusively to localhost" >&2
     printf '%s\n' "$resolver_nameservers" >&2
     exit 1

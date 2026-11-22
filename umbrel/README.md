@@ -36,19 +36,23 @@ Mesh packet-path behavior is covered by the backend Docker end-to-end tests.
 
 ## Running alongside AdGuard Home
 
-With the default Direct internet source, simply sharing the Umbrel as an exit
-node leaves port 53 available to AdGuard. Selecting an upstream VPN or enabling
-the FIPS host tunnel can start Nostr VPN's secure DNS listener on `127.0.0.1:53`.
+Nostr VPN's Linux DNS listeners use `127.0.0.55`, leaving `127.0.0.1` and the
+Umbrel's LAN addresses available to AdGuard. Native DNS can continue using an
+existing resolver on `127.0.0.1` or `::1`.
 
-To use secure DNS alongside AdGuard Home, select the Umbrel's LAN interface
-for the DNS server in AdGuard's setup wizard and keep DNS on port 53. Keep the
-AdGuard web interface on port 8095. Clients can continue using the Umbrel's
-LAN address for DNS.
+An AdGuard listener bound to all interfaces still occupies `127.0.0.55:53`.
+For mesh-only use with the Direct internet source and no connection protection,
+Nostr VPN can continue with native DNS. Private names still require working
+split-DNS support on the host. When an active exit or connection protection
+requires secure DNS, Nostr VPN refuses to continue without that listener.
+
+To use secure DNS alongside AdGuard Home, select specific LAN or localhost
+addresses for AdGuard's DNS server and keep DNS on port 53. Keep the AdGuard
+web interface on port 8095. Clients can continue using those addresses for DNS.
 
 For an existing installation, stop AdGuard Home, set `dns.bind_hosts` in
-`AdGuardHome.yaml` to the specific LAN addresses your clients use, then restart
-AdGuard Home. If a client on the Umbrel uses loopback to reach AdGuard, point
-that client at the LAN address as well.
+`AdGuardHome.yaml` to the specific addresses your clients use, then restart
+AdGuard Home. Leave `127.0.0.55` available for Nostr VPN.
 
 ## Release bundle
 

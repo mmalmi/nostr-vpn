@@ -408,7 +408,7 @@ impl FipsPrivateTunnelRuntime {
             self.pending_paid_exit_dns.take();
         }
         if self.manages_secure_dns && config.secure_dns_required() && self.secure_dns.is_none() {
-            crate::secure_dns_runtime::SecureDnsRuntime::start_into(
+            let started = crate::secure_dns_runtime::SecureDnsRuntime::start_into(
                 &mut self.secure_dns,
                 &self.iface,
                 None,
@@ -425,7 +425,24 @@ impl FipsPrivateTunnelRuntime {
                     )
                 },
             )
-            .await?;
+            .await;
+            if let Err(error) = started {
+                #[cfg(target_os = "linux")]
+                if self.secure_dns.is_none()
+                    && config.native_dns_can_handle_listener_conflict()
+                    && error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::AddrInUse)
+                {
+                    tracing::warn!(
+                        %error,
+                        "keeping native DNS for a mesh-only connection because \
+                         another resolver owns port 53"
+                    );
+                    return Ok(());
+                }
+                return Err(error);
+            }
         }
         if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_config(
