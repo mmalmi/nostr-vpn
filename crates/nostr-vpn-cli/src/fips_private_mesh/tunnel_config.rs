@@ -683,15 +683,16 @@ impl FipsPrivateTunnelConfig {
 
     #[cfg(any(target_os = "linux", test))]
     fn native_dns_can_handle_listener_conflict(&self) -> bool {
-        self.client_dataplane_enabled
-            && self.fips_host_enabled()
-            && !self.secure_dns_requested
-            && !self.exit_node_leak_protection
-            && !(self.wireguard_exit.enabled && self.wireguard_exit.configured())
-            && !self
+        if !self.client_dataplane_enabled || !self.fips_host_enabled() {
+            return false;
+        }
+        !(self.secure_dns_requested
+            || self.exit_node_leak_protection
+            || (self.wireguard_exit.enabled && self.wireguard_exit.configured())
+            || self
                 .route_targets
                 .iter()
-                .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0"))
+                .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0")))
     }
 
     fn public_paid_exit_selected(&self) -> bool {
