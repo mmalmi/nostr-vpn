@@ -40,7 +40,10 @@ holder = subprocess.Popen(
     stdout=sys.stdout,
     stderr=sys.stderr,
 )
-pathlib.Path(sys.argv[1]).write_text(str(holder.pid), encoding="utf-8")
+pid_path = pathlib.Path(sys.argv[1])
+pending_pid = pid_path.with_suffix(".tmp")
+pending_pid.write_text(str(holder.pid), encoding="utf-8")
+pending_pid.replace(pid_path)
 print("fixture ready", flush=True)
 """
 observer = subprocess.Popen(
