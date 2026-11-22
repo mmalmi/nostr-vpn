@@ -35,6 +35,14 @@ done
   touch "$directory/products/NostrVpnIos_other.xctestrun"
   if select_generated_ios_release_xctestrun_for_gate "$directory/products" fixture; then exit 1; fi
 )
+(
+  popup="$(mktemp)"
+  trap 'rm -f "$popup"' EXIT
+  cat >"$popup" <<'XML'
+<hierarchy><node resource-id="android:id/content" bounds="[40,160][500,2100]"><node scrollable="true" bounds="[40,180][500,2020]"/></node></hierarchy>
+XML
+  [[ "$("$ROOT/scripts/mobile-release-join-ui-query.py" "$popup" resource android:id/content forward-swipe)" == '270 1790 270 410' ]]
+)
 python3 - "$ROOT/scripts/lib-mobile-release-join-artifacts.sh" <<'PY'
 import os, pathlib, subprocess, sys, tempfile
 with tempfile.TemporaryDirectory() as directory:
@@ -272,7 +280,7 @@ PY
   release_join_android_wait_query() { trace "wait:$1:$2"; }
   release_join_android_tap_center() { trace "tap:$1:$2"; }
   release_join_android_tap_visible() { trace "tap:$1:$2"; }
-  release_join_android_scroll_to() { trace "scroll:$1:$2${4:+:$4}"; }
+  release_join_android_scroll_to() { trace "scroll:$1:$2${4:+:$4}${5:+:$5}"; }
   release_join_android_normalize_carrier() { trace normalize-carrier; }
   release_join_android_query() {
     [[ "$1:$2" == 'text:This device' && "$scenario" == saved-direct ]]
@@ -301,7 +309,7 @@ PY
         forbidden+='|Internet source This device'
       fi
       grep -Fxq 'tap:network-picker:Turn VPN ' "$tmp/calls"
-      grep -Fxq 'scroll:text:Add network' "$tmp/calls"
+      grep -Fxq 'scroll:text:Add network:forward:popup' "$tmp/calls"
       grep -Fxq 'tap:text:Add network' "$tmp/calls"
       grep -Fxq 'wait:description:Create Network' "$tmp/calls"
     else
@@ -2229,4 +2237,50 @@ PY
   sleep() { :; }
   release_join_android_scroll_to resource internet-source-picker safe-center backward
   [[ "$(cat "$scroll_tmp/offset")" == 0 ]]
+)
+
+# The provider identity may be a short text line inside a full-height button.
+(
+  xml="$(mktemp "${TMPDIR:-/tmp}/nvpn-provider-row.XXXXXX")"
+  trap 'rm -f "$xml"' EXIT
+  cat >"$xml" <<'XML'
+<hierarchy><node bounds="[0,0][1080,2410]"><node clickable="true" enabled="true" bounds="[89,780][991,907]"><node text="peer" bounds="[149,849][991,891]"/></node></node></hierarchy>
+XML
+  query="$ROOT/scripts/mobile-release-join-ui-query.py"
+  if "$query" "$xml" text peer visible-center; then
+    echo 'Unexpected tap target on the provider subtitle' >&2
+    exit 1
+  fi
+  [[ "$("$query" "$xml" clickable-row-text peer visible-center)" == '540 843' ]]
+)
+
+# ADB must keep netcat's input open while the device returns the response.
+(
+  eval "$(sed -n '/^probe() {$/,/^}$/p' "$ROOT/scripts/test-android-private-exit.sh")"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  cat >"$tmp/adb" <<'PY'
+#!/usr/bin/env python3
+import os
+import select
+import sys
+
+if sys.argv[-1] == "get-state":
+    print(os.environ.get("DEVICE_STATE", "device"))
+    sys.exit(0)
+request = os.read(0, 4096)
+if select.select([0], [], [], 0)[0]:
+    sys.exit(0)
+if os.environ.get("UNREACHABLE"):
+    sys.exit("nc: Timeout")
+nonce = request.split(b" ", 2)[1].removeprefix(b"/")
+sys.stdout.buffer.write(b"HTTP/1.0 200 OK\r\n\r\n" + nonce)
+PY
+  chmod 700 "$tmp/adb"
+  ADB=("$tmp/adb" -s fixture)
+  host=198.18.0.1 port=80 challenge=00000000000000000000000000000001
+  probe available
+  if probe unavailable 2>/dev/null; then exit 1; fi
+  UNREACHABLE=1 probe unavailable
+  if UNREACHABLE=1 DEVICE_STATE=offline probe unavailable 2>/dev/null; then exit 1; fi
 )

@@ -371,26 +371,47 @@ import subprocess
 import sys
 
 root, temporary = map(pathlib.Path, sys.argv[1:])
-fixture = temporary / "join-source"
-fixture.mkdir()
-for name, value in {"Cargo.toml": "[workspace]\n", "Cargo.lock": "version = 4\n", "source.rs": "fn main() {}\n"}.items():
-    (fixture / name).write_text(value)
-def git(*args):
-    subprocess.run(["git", "-C", str(fixture), *args], check=True, capture_output=True)
-git("init", "-q")
-git("add", ".")
-git("-c", "user.name=Harness", "-c", "user.email=harness.invalid", "commit", "-qm", "fixture")
-def digest(name):
-    return hashlib.sha256((fixture / name).read_bytes()).hexdigest()
-for entrypoint in ["mobile-release-join-e2e.sh", "windows-vm-release-mobile-join-e2e.sh", "ubuntu-vm-release-mobile-join-e2e.sh"]:
-    source = (root / "scripts" / entrypoint).read_text()
-    match = re.search(r"^assert_release_checkout_state \\\n.*?\|\| exit 2$", source, re.M | re.S)
-    assert match, f"{entrypoint} does not use the canonical source guard"
-    guard = match.group(0)
-    env = os.environ.copy()
-    def check(expected):
-        result = subprocess.run(["bash", "-c", 'source "$1/scripts/release_common.sh"; ROOT="$2"; eval "$3"', "join-source-check", str(root), str(fixture), guard], env=env, capture_output=True, text=True)
-        assert (result.returncode == 0) == expected, (entrypoint, result.stderr)
+harness = temporary / "join-harness"
+product = temporary / "join-product"
+
+def git(checkout, *args):
+    return subprocess.check_output(["git", "-C", str(checkout), *args], text=True).strip()
+
+for checkout in (harness, product):
+    checkout.mkdir()
+    (checkout / "Cargo.toml").write_text("[workspace]\n")
+    (checkout / "Cargo.lock").write_text("version = 4\n")
+    (checkout / "source.rs").write_text(f"// {checkout.name}\nfn main() {{}}\n")
+    git(checkout, "init", "-q")
+    git(checkout, "add", ".")
+    git(checkout, "-c", "user.name=Harness", "-c", "user.email=harness.invalid", "commit", "-qm", "fixture")
+
+pins = {
+    "ROOT": str(harness), "HARNESS_GIT_SHA": git(harness, "rev-parse", "HEAD"),
+    "HARNESS_GIT_TREE": git(harness, "rev-parse", "HEAD^{tree}"),
+    "PRODUCT_ROOT": str(product), "APP_GIT_SHA": git(product, "rev-parse", "HEAD"),
+    "APP_GIT_TREE": git(product, "rev-parse", "HEAD^{tree}"),
+}
+assert pins["HARNESS_GIT_SHA"] != pins["APP_GIT_SHA"] and pins["HARNESS_GIT_TREE"] != pins["APP_GIT_TREE"]
+
+def exercise_guard(entrypoint, guard, fixture):
+    env = {**os.environ, **pins}
+
+    def digest(name):
+        return hashlib.sha256((fixture / name).read_bytes()).hexdigest()
+
+    def check(expected, **overrides):
+        command = 'source "$1/scripts/release_common.sh"\n' + guard
+        result = subprocess.run(["bash", "-eu", "-c", command, "join-source-check", str(root)],
+                                env={**env, **overrides}, capture_output=True, text=True)
+        assert result.returncode == (0 if expected else 2), (entrypoint, fixture.name, result.stderr)
+
+    if entrypoint == "ubuntu-vm-release-mobile-join-e2e.sh":
+        if fixture == harness:
+            check(False, HARNESS_GIT_SHA=pins["APP_GIT_SHA"])
+        else:
+            check(False, APP_GIT_SHA=pins["HARNESS_GIT_SHA"])
+            check(False, APP_GIT_TREE=pins["HARNESS_GIT_TREE"])
     check(True)
     with (fixture / "Cargo.lock").open("a") as file:
         file.write("# temporary release graph\n")
@@ -403,30 +424,41 @@ for entrypoint in ["mobile-release-join-e2e.sh", "windows-vm-release-mobile-join
     env["NVPN_LOCAL_FIPS_SESSION_CARGO_LOCK_SHA256"] = digest("Cargo.lock")
     (fixture / "source.rs").write_text("fn changed() {}\n")
     check(False)
-    git("restore", "source.rs")
+    git(fixture, "restore", "source.rs")
     (fixture / "untracked.rs").write_text("unexpected\n")
     check(False)
     (fixture / "untracked.rs").unlink()
-    git("restore", "Cargo.lock")
+    git(fixture, "restore", "Cargo.lock")
 
-# Exercise the Linux join runner's actual sync dispatch with a managed lock.
-# The VM must receive the committed candidate, not a temporary working tree.
+# These are the preflight guards, each of which stops the runner with status 2.
+for entrypoint, checkouts in {
+    "mobile-release-join-e2e.sh": (harness,),
+    "windows-vm-release-mobile-join-e2e.sh": (harness,),
+    "ubuntu-vm-release-mobile-join-e2e.sh": (harness, product),
+}.items():
+    source = (root / "scripts" / entrypoint).read_text()
+    commands = source.replace('\\\n', " ").splitlines()
+    guards = [line for line in commands if line.startswith("assert_release_checkout_state ") and line.endswith("|| exit 2")]
+    assert len(guards) == len(checkouts), f"{entrypoint} has unexpected checkout guards"
+    for guard, checkout in zip(guards, checkouts):
+        exercise_guard(entrypoint, guard, checkout)
+
+# The VM syncs the committed verifier. The imported app has a separate source pin.
 source = (root / "scripts/ubuntu-vm-release-mobile-join-e2e.sh").read_text()
 sync = re.search(r'^case "\$\{NVPN_UBUNTU_SKIP_GIT_SYNC:-0\}" in\n.*?^esac$', source, re.M | re.S)
 assert sync, "Linux join sync dispatch is missing"
-(fixture / "scripts").mkdir()
-recorder = fixture / "scripts/ubuntu-vm-git-sync.sh"
+(harness / "scripts").mkdir()
+recorder = harness / "scripts/ubuntu-vm-git-sync.sh"
 recorder.write_text('#!/usr/bin/env bash\nset -eu\nprintf "%s\\n" "${NVPN_UBUNTU_GIT_SYNC_EXACT_COMMIT:-}" >"$SYNC_CAPTURE"\n')
 recorder.chmod(0o700)
 capture = temporary / "linux-join-sync-commit"
-head = subprocess.check_output(["git", "-C", str(fixture), "rev-parse", "HEAD"], text=True).strip()
-with (fixture / "Cargo.lock").open("a") as file:
+with (harness / "Cargo.lock").open("a") as file:
     file.write("# managed release graph\n")
-sync_env = {**os.environ, "ROOT": str(fixture), "APP_GIT_SHA": head,
+sync_env = {**os.environ, **pins,
             "SSH_HOST": "unused", "SYNC_CAPTURE": str(capture),
             "NVPN_UBUNTU_SKIP_GIT_SYNC": "0"}
 subprocess.run(["bash", "-eu", "-c", sync.group(0)], env=sync_env, check=True)
-assert capture.read_text().strip() == head, "Linux join sync did not pin the committed candidate"
+assert capture.read_text().strip() == pins["HARNESS_GIT_SHA"], "Linux join sync did not pin the verifier commit"
 capture.unlink()
 sync_env["NVPN_UBUNTU_SKIP_GIT_SYNC"] = "1"
 subprocess.run(["bash", "-eu", "-c", sync.group(0)], env=sync_env, check=True)
