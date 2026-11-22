@@ -40,7 +40,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         mut fips_join_request_sends,
         mut pending_fips_roster_recipients,
         mut fips_roster_sync_state,
-        mut last_fips_stale_participant_restart_at,
+        mut fips_recovery_cooldowns,
         mut fips_pending_roster_restart_state,
         iface,
         ethernet_underlay,

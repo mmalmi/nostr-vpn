@@ -13,7 +13,7 @@ pub(super) struct FipsHeartbeatContext<'a> {
     pub(super) ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     pub(super) expected_peers: usize,
     pub(super) last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
-    pub(super) last_stale_participant_restart_at: &'a mut Option<u64>,
+    pub(super) recovery_cooldowns: &'a mut FipsRecoveryCooldowns,
     pub(super) pending_roster_restart_state: &'a mut FipsPendingRosterRestartState,
     pub(super) roster_sync_state: &'a mut FipsRosterSyncState,
     pub(super) pending_roster_recipients: &'a mut HashSet<String>,
@@ -34,7 +34,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) -
         ethernet_underlay,
         expected_peers,
         last_endpoint_peer_signature,
-        last_stale_participant_restart_at,
+        recovery_cooldowns,
         pending_roster_restart_state,
         roster_sync_state,
         pending_roster_recipients,
@@ -60,7 +60,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) -
         if let Err(error) = current.refresh_link_statuses().await {
             eprintln!("fips: peer link snapshot failed: {error:#}");
             if fips_endpoint_control_requires_runtime_replacement(&error) {
-                if fips_stale_participant_restart_due(last_stale_participant_restart_at, now) {
+                if recovery_cooldowns.begin_endpoint_rebuild(now) {
                     eprintln!(
                         "daemon: replacing unresponsive FIPS endpoint after local control timeout"
                     );
@@ -113,7 +113,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) -
             client_dataplane_enabled,
             last_endpoint_peer_signature,
         },
-        last_stale_participant_restart_at,
+        recovery_cooldowns,
         now,
     )
     .await

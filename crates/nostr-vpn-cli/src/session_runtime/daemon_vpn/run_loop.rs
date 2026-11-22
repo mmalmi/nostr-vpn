@@ -120,8 +120,7 @@ loop {
                     ethernet_underlay: ethernet_underlay.as_ref(),
                     expected_peers,
                     last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
-                    last_stale_participant_restart_at:
-                        &mut last_fips_stale_participant_restart_at,
+                    recovery_cooldowns: &mut fips_recovery_cooldowns,
                     pending_roster_restart_state: &mut fips_pending_roster_restart_state,
                     roster_sync_state: &mut fips_roster_sync_state,
                     pending_roster_recipients: &mut pending_fips_roster_recipients,

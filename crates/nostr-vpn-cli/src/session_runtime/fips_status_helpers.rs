@@ -116,7 +116,7 @@ macro_rules! current_fips_relay_statuses {
         fips_relay_statuses_from_runtime($runtime)
     };
 }
-pub(crate) const FIPS_STALE_PARTICIPANT_RESTART_COOLDOWN_SECS: u64 = 60;
+pub(crate) const FIPS_RECOVERY_COOLDOWN_SECS: u64 = 60;
 pub(crate) const FIPS_PENDING_ROSTER_RESTART_GRACE_SECS: u64 = 45;
 macro_rules! current_fips_advertised_routes {
     ($runtime:expr, $app:expr) => {
@@ -274,14 +274,36 @@ pub(crate) fn fips_link_event_refresh(
     }
 }
 
-pub(crate) fn fips_stale_participant_restart_due(
+#[derive(Debug, Default)]
+pub(crate) struct FipsRecoveryCooldowns {
+    last_path_refresh_at: Option<u64>,
+    last_endpoint_rebuild_at: Option<u64>,
+}
+
+impl FipsRecoveryCooldowns {
+    pub(crate) fn begin_path_refresh(&mut self, now: u64) -> bool {
+        begin_fips_recovery(&mut self.last_path_refresh_at, now)
+    }
+
+    pub(crate) fn begin_endpoint_rebuild(&mut self, now: u64) -> bool {
+        if !begin_fips_recovery(&mut self.last_endpoint_rebuild_at, now) {
+            return false;
+        }
+        // Rebuilding refreshes all paths. Refreshing individual peers cannot
+        // recover an unresponsive local endpoint.
+        self.last_path_refresh_at = Some(now);
+        true
+    }
+}
+
+pub(crate) fn begin_fips_recovery(
     last_restart_at: &mut Option<u64>,
     now: u64,
 ) -> bool {
     let due = last_restart_at.is_none_or(|last_restart_at| {
         now < last_restart_at
             || now.saturating_sub(last_restart_at)
-                >= FIPS_STALE_PARTICIPANT_RESTART_COOLDOWN_SECS
+                >= FIPS_RECOVERY_COOLDOWN_SECS
     });
     if due {
         *last_restart_at = Some(now);
@@ -363,7 +385,7 @@ pub(crate) fn fips_pending_roster_restart_due(
     if now.saturating_sub(pending_since) < FIPS_PENDING_ROSTER_RESTART_GRACE_SECS {
         return false;
     }
-    if !fips_stale_participant_restart_due(&mut state.last_restart_at, now) {
+    if !begin_fips_recovery(&mut state.last_restart_at, now) {
         return false;
     }
     state.pending_since = None;

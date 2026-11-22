@@ -11,7 +11,7 @@ pub(crate) fn fips_stale_participant_carrier_rebind_required(
 async fn restart_fips_tunnel_runtime_after_stale_participants(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
-    last_restart_at: &mut Option<u64>,
+    cooldowns: &mut FipsRecoveryCooldowns,
     now: u64,
 ) -> Result<bool> {
     let (stale_participants, carrier_rebind_required) = runtime
@@ -28,7 +28,7 @@ async fn restart_fips_tunnel_runtime_after_stale_participants(
     if stale_participants.is_empty() {
         return Ok(false);
     }
-    if !fips_stale_participant_restart_due(last_restart_at, now) {
+    if !cooldowns.begin_path_refresh(now) {
         return Ok(false);
     }
     eprintln!(
@@ -68,10 +68,11 @@ async fn restart_fips_tunnel_runtime_after_stale_participants(
     .await;
     match refresh_result {
         Ok(restarted) => Ok(restarted),
-        Err(error) if fips_endpoint_control_requires_runtime_replacement(&error) => {
-            eprintln!(
-                "daemon: replacing FIPS endpoint after stale path refresh failed: {error:#}"
-            );
+        Err(error)
+            if fips_endpoint_control_requires_runtime_replacement(&error)
+                && cooldowns.begin_endpoint_rebuild(now) =>
+        {
+            eprintln!("daemon: replacing FIPS endpoint after stale path refresh failed: {error:#}");
             rebuild_fips_tunnel_runtime_after_control_failure(
                 runtime,
                 context,

@@ -16,7 +16,7 @@ pub(super) struct DaemonVpnStartup {
     pub(super) fips_join_request_sends: HashMap<String, u64>,
     pub(super) pending_fips_roster_recipients: HashSet<String>,
     pub(super) fips_roster_sync_state: FipsRosterSyncState,
-    pub(super) last_fips_stale_participant_restart_at: Option<u64>,
+    pub(super) fips_recovery_cooldowns: FipsRecoveryCooldowns,
     pub(super) fips_pending_roster_restart_state: FipsPendingRosterRestartState,
     pub(super) iface: String,
     pub(super) ethernet_underlay: Option<crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
@@ -173,7 +173,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     let fips_join_request_sends = HashMap::new();
     let pending_fips_roster_recipients = HashSet::new();
     let fips_roster_sync_state = FipsRosterSyncState::default();
-    let last_fips_stale_participant_restart_at = None;
+    let fips_recovery_cooldowns = FipsRecoveryCooldowns::default();
     let fips_pending_roster_restart_state = FipsPendingRosterRestartState::default();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
@@ -309,7 +309,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
         fips_join_request_sends,
         pending_fips_roster_recipients,
         fips_roster_sync_state,
-        last_fips_stale_participant_restart_at,
+        fips_recovery_cooldowns,
         fips_pending_roster_restart_state,
         iface,
         ethernet_underlay,

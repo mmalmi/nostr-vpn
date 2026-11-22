@@ -4,23 +4,31 @@ use super::*;
 fn cooldown_is_enforced() {
     let mut last_restart_at = None;
 
-    assert!(fips_stale_participant_restart_due(
-        &mut last_restart_at,
-        1_000
-    ));
+    assert!(begin_fips_recovery(&mut last_restart_at, 1_000));
     assert_eq!(last_restart_at, Some(1_000));
-    assert!(!fips_stale_participant_restart_due(
+    assert!(!begin_fips_recovery(
         &mut last_restart_at,
-        1_000 + FIPS_STALE_PARTICIPANT_RESTART_COOLDOWN_SECS - 1
+        1_000 + FIPS_RECOVERY_COOLDOWN_SECS - 1
     ));
-    assert!(fips_stale_participant_restart_due(
+    assert!(begin_fips_recovery(
         &mut last_restart_at,
-        1_000 + FIPS_STALE_PARTICIPANT_RESTART_COOLDOWN_SECS
+        1_000 + FIPS_RECOVERY_COOLDOWN_SECS
     ));
-    assert!(fips_stale_participant_restart_due(
-        &mut last_restart_at,
-        900
-    ));
+    assert!(begin_fips_recovery(&mut last_restart_at, 900));
+}
+
+#[test]
+fn peer_path_refresh_does_not_delay_local_endpoint_recovery() {
+    let mut cooldowns = FipsRecoveryCooldowns::default();
+    assert!(cooldowns.begin_path_refresh(1_000));
+    assert!(!cooldowns.begin_path_refresh(1_045));
+    assert!(cooldowns.begin_endpoint_rebuild(1_045));
+
+    // The old peer refresh cooldown expires before the rebuild cooldown.
+    assert!(!cooldowns.begin_path_refresh(1_060));
+    assert!(!cooldowns.begin_endpoint_rebuild(1_060));
+    assert!(cooldowns.begin_path_refresh(1_045 + FIPS_RECOVERY_COOLDOWN_SECS));
+    assert!(cooldowns.begin_endpoint_rebuild(1_045 + FIPS_RECOVERY_COOLDOWN_SECS));
 }
 
 #[test]
