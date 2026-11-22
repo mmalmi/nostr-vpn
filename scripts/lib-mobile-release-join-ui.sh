@@ -223,6 +223,15 @@ release_join_android_tap_visible() {
 
 release_join_android_scroll() {
   local size width height start target duration=220 direction="${2:-forward}"
+  if [[ "${1:-}" == popup ]]; then
+    # Compose anchors the network menu to the header. Fling within its own
+    # scroll view so long lists advance even on a narrow or offset popup.
+    local x1 y1 x2 y2 gesture
+    gesture="$(release_join_android_query_dumped resource android:id/content forward-swipe)" || return 1
+    read -r x1 y1 x2 y2 <<<"$gesture"
+    "${ADB[@]}" shell input swipe "$x1" "$y1" "$x2" "$y2" 85
+    return
+  fi
   size="$("${ADB[@]}" shell wm size | tr -d '\r' | sed -n 's/^Physical size: //p')"
   width="${size%x*}"
   height="${size#*x}"
@@ -259,7 +268,7 @@ release_join_android_scroll_to() {
     then
       return 0
     fi
-    release_join_android_scroll "$kind" "$direction" >/dev/null
+    release_join_android_scroll "${5:-$kind}" "$direction" >/dev/null || return 1
     sleep 0.2
   done
   return 1
@@ -337,7 +346,10 @@ release_join_android_open_network_setup() {
         release_join_android_wait_query text 'This device' || return 1
       fi
       release_join_android_tap_center network-picker 'Turn VPN ' || return 1
-      release_join_android_scroll_to text 'Add network' visible-center || return 1
+      release_join_android_scroll_to text 'Add network' visible-center forward popup || {
+        echo 'Could not reach Add network in the Android network picker' >&2
+        return 1
+      }
       release_join_android_tap_visible text 'Add network' || return 1
       release_join_android_wait_query description 'Create Network'
       return $?
