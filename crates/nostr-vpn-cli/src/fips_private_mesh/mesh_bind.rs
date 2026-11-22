@@ -44,7 +44,7 @@ async fn bind_fips_private_mesh(
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     let local_tunnel_ips = Vec::new();
 
-    Ok(Arc::new(
+    let runtime = Arc::new(
         FipsPrivateMeshRuntime::bind_with_config_scoped(
             config.identity_nsec.clone(),
             scope,
@@ -58,5 +58,17 @@ async fn bind_fips_private_mesh(
             ),
         )
         .await?,
-    ))
+    );
+    #[cfg(feature = "paid-exit")]
+    if let Err(error) = credit::bind(
+        &runtime,
+        &config.paid_route_wallet_data_dir,
+        &config.identity_nsec,
+        &config.network_id,
+    )
+    .await
+    {
+        tracing::warn!("peer credit unavailable for this tunnel: {error}");
+    }
+    Ok(runtime)
 }

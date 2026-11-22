@@ -120,6 +120,8 @@ pub enum WireMessage {
     Agreement(Agreement),
     Receipt(Receipt),
     Netting(Netting),
+    Redemption(crate::redemption::Redemption),
+    RedemptionPaid(crate::redemption::RedemptionProof),
 }
 
 impl WireMessage {

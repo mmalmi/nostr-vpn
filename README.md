@@ -133,6 +133,20 @@ Automatic mode renews channels before their credit or service time runs out. Man
 
 DNS is encrypted by default, but exits still see destination IPs and unencrypted traffic. Use HTTPS for sensitive data. See [payment and privacy details](docs/protocol.md#paid-exits).
 
+### Private peer credit
+
+Peer credit uses FIPS service port **44748** inside the encrypted mesh. Your existing FIPS peer settings handle connectivity, including configured peers, LAN discovery and optional Nostr-assisted discovery. No extra firewall rule is needed for the credit service. Once you have earned credit, your node can ask the connected peer that owes you for a quote. That peer can forward the request along its own credit relationships. Payout peers can also send private offers directly to their creditors.
+
+A desktop or server node can buy upload bytes from a connected VPN exit using signed credit. Enable an account with `nvpn paid-exit wallet enable-credit --trust <peer>` and restart the tunnel. The optional `--trial-peer-sat` and `--trial-pool-sat` flags allow small automatic trials for unfamiliar peers within a shared exposure limit. Trusted peers still share the account-wide ceiling. Both flags default to disabled.
+
+Select the connected peer as the VPN exit using the usual internet-source settings. The seller must enable paid exit service and have working egress. Open a capped window with `nvpn paid-exit wallet buy-credit-exit <peer> --bytes <bytes> --price-msat-per-gb <price> --max-amount-sat <cap>`. The seller checks its own tariff and both endpoints meter public uploads. A window closes automatically at its cap or expiry while the tunnel is running. To close earlier, use `nvpn paid-exit wallet settle-credit-exit <agreement-id>`. A lost live meter before the final receipt leaves its reservation outstanding.
+
+In the macOS wallet choose **Send → Earned credit**, scan or paste an invoice, review the cost and confirm. In the CLI, `nvpn paid-exit wallet withdraw <invoice> --credit` returns a quote. Confirm its exact JSON object with `--confirm-credit '<quote>'`. Check an uncertain payment using `nvpn paid-exit wallet payment-status <payment-hash>`. A payable path requires sufficient earned credit and a connected peer with a funded Lightning wallet willing to pay. Neighbours exchange requests privately, and the terminal receives the invoice when payment is confirmed.
+
+To receive earnings automatically, open **Wallet → Earned credit → Connect my Lightning node** or run `nvpn paid-exit wallet connect-lightning`. This checks local Core Lightning without moving funds. Choose minimum, maximum, fee limit and interval, then enable automatic cash-out. In the CLI, use `nvpn paid-exit wallet auto-cashout --min-sat <min> --max-sat <max> --max-fee-sat <fee> --interval-secs <seconds>`. To stop, use `stop-auto-cashout`. A fixed `receiving_rpc_socket` in the private policy can select a particular wallet.
+
+To operate a payout or forwarding node, place a private `peer-credit-policy.json` alongside the account with the same owner as the journal, and restart the tunnel. Set `forward_existing_credit` to allow forwarding against existing debts. The optional `lightning` object requires `rpc_socket`, `max_amount_sat`, `max_fee_msat`, `max_lifetime_payout_sat` and `max_lifetime_fees_msat`. The terminal pays Lightning routing fees. Optional `market.forward_fee_sat`, `market.payout_fee_sat` and `market.max_invoice_fee_sat` set the credit fees charged and the maximum total fee accepted for an invoice. The default is zero. It can privately signal availability with `nvpn paid-exit wallet offer-payout <creditor>`. For an invoice issued by your own Core Lightning wallet, configure `receiving_rpc_socket` and pass `--own-wallet` on confirmation and status checks to verify repayment at the receiver. Back up the account journal and its owner file as part of your node's state.
+
 ## Build and Verify
 
 ```bash

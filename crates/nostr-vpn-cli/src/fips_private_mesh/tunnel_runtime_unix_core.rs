@@ -212,10 +212,13 @@ impl FipsPrivateTunnelRuntime {
         config: &FipsPrivateTunnelConfig,
         egress_ready: bool,
     ) -> Result<()> {
-        self.mesh.replace_peers(
+        self.mesh.replace_peers_with_policy(
             config.peers.clone(),
             config.local_allowed_ips(),
             paid_route_admissions_for_egress(config, egress_ready),
+            #[cfg(feature = "paid-exit")]
+            (egress_ready && config.paid_exit.enabled)
+                .then(|| credit::ExitPolicy::from_config(config)),
         )?;
         self.local_exit_seller_egress_ready = egress_ready;
         Ok(())

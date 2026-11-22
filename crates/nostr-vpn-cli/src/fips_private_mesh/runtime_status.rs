@@ -284,12 +284,34 @@ impl FipsPrivateMeshRuntime {
         Ok(hosts)
     }
 
+    #[cfg(any(test, target_os = "windows"))]
     pub(crate) fn replace_peers(
         &self,
         peers: Vec<FipsMeshPeerConfig>,
         local_allowed_ips: Vec<String>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<()> {
+        self.replace_peers_with_policy(
+            peers,
+            local_allowed_ips,
+            paid_route_admissions,
+            #[cfg(feature = "paid-exit")]
+            None,
+        )
+    }
+
+    fn replace_peers_with_policy(
+        &self,
+        peers: Vec<FipsMeshPeerConfig>,
+        local_allowed_ips: Vec<String>,
+        paid_route_admissions: Vec<FipsPaidRouteAdmission>,
+        #[cfg(feature = "paid-exit")] policy: Option<credit::ExitPolicy>,
+    ) -> Result<()> {
+        #[cfg(feature = "paid-exit")]
+        let mut live_policy = self
+            .credit_policy
+            .lock()
+            .map_err(|_| anyhow!("credit policy unavailable"))?;
         let peer_identities = peer_identity_map(&peers);
         let previous_mesh = self.mesh.load_full();
         let mut mesh = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
@@ -298,9 +320,44 @@ impl FipsPrivateMeshRuntime {
             paid_route_admissions,
         );
         mesh.inherit_exit_flows(&previous_mesh);
+        #[cfg(feature = "paid-exit")]
+        {
+            if let Some(node) = self.credit.get() {
+                mesh.reconcile_credit_exits(
+                    &node.owner,
+                    policy.is_some(),
+                    policy.as_ref().and_then(|p| p.upstream_peer.as_deref()),
+                    unix_timestamp(),
+                );
+            }
+            *live_policy = policy;
+        }
         let configured = mesh.peer_pubkeys();
         let previous_activity = self.peer_activity.load();
         let peer_activity = peer_activity_map(&configured, Some(&**previous_activity));
+        self.publish_mesh(mesh);
+        self.peer_activity.store(Arc::new(peer_activity));
+        self.peer_identities.store(Arc::new(peer_identities));
+        self.presence
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        self.link_status
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        self.other_link_status
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))?
+            .clear();
+        self.peer_capabilities
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        Ok(())
+    }
+
+    fn publish_mesh(&self, mesh: FipsMeshRuntime) {
         let mesh = Arc::new(mesh);
         let next_generation = loop {
             let generation = self.mesh_generation.load(Ordering::Acquire);
@@ -322,25 +379,6 @@ impl FipsPrivateMeshRuntime {
         self.mesh.store(mesh);
         self.mesh_generation
             .store(next_generation, Ordering::Release);
-        self.peer_activity.store(Arc::new(peer_activity));
-        self.peer_identities.store(Arc::new(peer_identities));
-        self.presence
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?
-            .retain(|participant, _| configured.iter().any(|value| value == participant));
-        self.link_status
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?
-            .retain(|participant, _| configured.iter().any(|value| value == participant));
-        self.other_link_status
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))?
-            .clear();
-        self.peer_capabilities
-            .write()
-            .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?
-            .retain(|participant, _| configured.iter().any(|value| value == participant));
-        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

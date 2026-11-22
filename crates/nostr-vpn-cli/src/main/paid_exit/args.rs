@@ -570,6 +570,60 @@ struct PaidExitWalletArgs {
 
 #[derive(Debug, Subcommand)]
 enum PaidExitWalletCommand {
+    /// Check your local receiving Lightning node and saved automatic cash-out limits.
+    ConnectLightning,
+    /// Automatically issue invoices on your own node and pay them from earned credit.
+    AutoCashout {
+        #[arg(long)]
+        min_sat: u64,
+        #[arg(long)]
+        max_sat: u64,
+        #[arg(long)]
+        max_fee_sat: u64,
+        #[arg(long)]
+        interval_secs: u64,
+    },
+    /// Stop issuing automatic cash-out invoices.
+    StopAutoCashout,
+    /// Create a new local credit account. Restart the tunnel once after enabling.
+    EnableCredit {
+        /// Peers whose signed exit debts this node accepts, up to the limits below.
+        #[arg(long = "trust")]
+        peers: Vec<String>,
+        #[arg(long, default_value_t = 100)]
+        per_peer_sat: u64,
+        #[arg(long, default_value_t = 1000)]
+        total_sat: u64,
+        /// Optional initial exposure to a new peer. Requires a shared stranger pool.
+        #[arg(long, requires = "trial_pool_sat")]
+        trial_peer_sat: Option<u64>,
+        #[arg(long, requires = "trial_peer_sat")]
+        trial_pool_sat: Option<u64>,
+    },
+    /// Show earned, unreserved credit separately from wallet bitcoin.
+    CreditBalance,
+    /// Offer a private, short-lived Lightning payout to an existing creditor.
+    OfferPayout { peer: String },
+    /// Recover the result of a previously confirmed invoice.
+    PaymentStatus {
+        payment_hash: String,
+        #[arg(long)]
+        own_wallet: bool,
+    },
+    /// Buy a capped upload window from a directly connected VPN exit.
+    BuyCreditExit {
+        provider: String,
+        #[arg(long)]
+        bytes: u64,
+        #[arg(long)]
+        price_msat_per_gb: u64,
+        #[arg(long)]
+        max_amount_sat: u64,
+        #[arg(long, default_value_t = 300)]
+        duration_secs: u64,
+    },
+    /// Seal both meters and settle the measured upload for an existing purchase.
+    SettleCreditExit { agreement_id: String },
     /// Show configured wallet mints and local Cashu wallet balances.
     Show(PaidExitWalletShowArgs),
     /// Create a Lightning invoice to top up the Cashu wallet.
@@ -631,6 +685,15 @@ struct PaidExitWalletSendArgs {
 
 #[derive(Debug, Args)]
 struct PaidExitWalletWithdrawArgs {
+    /// Review a private quote to pay this invoice with earned credit.
+    #[arg(long, conflicts_with = "mint")]
+    credit: bool,
+    /// Confirm the exact quote object returned by the review.
+    #[arg(long, value_name = "QUOTE_JSON", conflicts_with = "mint")]
+    confirm_credit: Option<String>,
+    /// Verify this invoice at the configured receiving wallet for repayment history.
+    #[arg(long, requires = "confirm_credit")]
+    own_wallet: bool,
     /// BOLT11 invoice to pay.
     invoice: String,
     /// Cashu mint URL. Defaults to the configured wallet default mint.

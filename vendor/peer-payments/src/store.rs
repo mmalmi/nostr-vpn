@@ -56,6 +56,57 @@ pub type PaymentStore = Journal<Book>;
 pub type BuyerStore = Journal<Buyer>;
 pub type AccountStore = Journal<crate::Account>;
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct AccountBalance {
+    pub revision: u64,
+    pub available_claims_sat: u64,
+    pub available_debts_sat: u64,
+    pub earnings: crate::redemption::ConversionEarnings,
+}
+
+impl Journal<crate::Account> {
+    /// Inspect one committed local snapshot while its exclusive writer is live.
+    /// Only numeric balances leave this read-only connection.
+    pub fn read_balance(path: impl AsRef<Path>, owner: &str) -> Result<AccountBalance, Error> {
+        let path = path.as_ref();
+        private_database(path)?;
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NOFOLLOW,
+        )?;
+        conn.pragma_update(None, "query_only", true)?;
+        let a = load::<crate::Account>(&conn)?;
+        if a.owner() != owner {
+            return Err(Error::StoreConflict);
+        }
+        let total =
+            |sum: u64, (_, sat): (&crate::Agreement, u64)| sum.checked_add(sat).ok_or(Error::Limit);
+        let available_claims_sat = a.available_claims().try_fold(0, total)?;
+        let available_debts_sat = a.available_debts().try_fold(0, total)?;
+        Ok(AccountBalance {
+            revision: a.revision(),
+            available_claims_sat,
+            available_debts_sat,
+            earnings: a.conversion_earnings()?,
+        })
+    }
+}
+
+fn private_database(path: &Path) -> Result<(), Error> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if !metadata.is_file() {
+        return Err(Error::Invalid("database file"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 || metadata.mode() & 0o077 != 0 {
+            return Err(Error::Invalid("database permissions"));
+        }
+    }
+    Ok(())
+}
+
 pub struct Journal<S: DurableState> {
     connection: Connection,
     book: S,
@@ -108,17 +159,7 @@ impl<S: DurableState> Journal<S> {
 
     /// Missing or corrupt state is an error; reopening never creates an account.
     pub fn open(path: impl AsRef<Path>, provider: &str) -> Result<Self, Error> {
-        let metadata = std::fs::symlink_metadata(path.as_ref())?;
-        if !metadata.is_file() {
-            return Err(Error::Invalid("database file"));
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt;
-            if metadata.nlink() != 1 || metadata.mode() & 0o077 != 0 {
-                return Err(Error::Invalid("database permissions"));
-            }
-        }
+        private_database(path.as_ref())?;
         let owner = owner_lock(path.as_ref(), false)?;
         let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
         configure(&connection)?;

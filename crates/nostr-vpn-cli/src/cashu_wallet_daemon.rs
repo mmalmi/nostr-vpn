@@ -59,6 +59,9 @@ pub(crate) struct DaemonCashuTopupQuote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub(crate) enum DaemonCashuWalletCommand {
+    PeerCredit {
+        command: crate::fips_private_mesh::credit::Command,
+    },
     Overview {
         refresh_quotes: bool,
     },
@@ -177,7 +180,10 @@ impl DaemonCashuWallet {
         Ok(wallet)
     }
 
-    pub(crate) async fn handle_pending_requests(&self, config_path: &Path) -> Result<usize> {
+    async fn handle_pending_requests(
+        wallet: &mut Option<Self>,
+        config_path: &Path,
+    ) -> Result<usize> {
         let request_dir = cashu_wallet_request_dir(config_path);
         let mut requests = fs::read_dir(&request_dir)
             .with_context(|| format!("failed to read {}", request_dir.display()))?
@@ -220,7 +226,28 @@ impl DaemonCashuWallet {
                 let _ = fs::remove_file(&request_path);
                 continue;
             }
-            let response = match self.execute_and_sync(config_path, request.command).await {
+            let result = match request.command {
+                DaemonCashuWalletCommand::PeerCredit { command } => {
+                    crate::fips_private_mesh::credit::execute(
+                        &paid_exit_wallet_data_dir(config_path),
+                        command,
+                    )
+                    .await
+                }
+                command => {
+                    let open = match wallet {
+                        Some(open) => Ok(open),
+                        None => Self::open(config_path)
+                            .await
+                            .map(|open| wallet.insert(open)),
+                    };
+                    match open {
+                        Ok(open) => open.execute_and_sync(config_path, command).await,
+                        Err(e) => Err(e.context("local Cashu wallet unavailable")),
+                    }
+                }
+            };
+            let response = match result {
                 Ok(result) => DaemonCashuWalletResponse {
                     id: request.id.clone(),
                     result: Some(result),
@@ -261,6 +288,9 @@ impl DaemonCashuWallet {
         // for a timeout before reconnecting through the current route.
         self.service.refresh_network_connections().await?;
         let value = match command {
+            DaemonCashuWalletCommand::PeerCredit { .. } => {
+                return Err(anyhow!("credit requires the live daemon account"));
+            }
             DaemonCashuWalletCommand::Overview { refresh_quotes } => {
                 let overview = self.service.load_wallet_overview(refresh_quotes).await?;
                 serde_json::to_value(DaemonCashuWalletOverview {
@@ -640,8 +670,24 @@ impl DaemonCashuWalletWorker {
                     }
                 };
                 runtime.block_on(async move {
-                    let wallet = match DaemonCashuWallet::open(&config_path).await {
-                        Ok(wallet) => wallet,
+                    let mut wallet = match DaemonCashuWallet::open(&config_path).await {
+                        Ok(wallet) => Some(wallet),
+                        Err(error)
+                            if paid_exit_wallet_data_dir(&config_path)
+                                .join(crate::fips_private_mesh::credit::JOURNAL)
+                                .is_file() =>
+                        {
+                            // A locked CDK database or mint outage must not
+                            // block an independently configured credit account.
+                            if let Err(ipc) = prepare_ipc_directories(&config_path) {
+                                let _ = startup_sender.send(Err(ipc));
+                                return;
+                            }
+                            tracing::warn!(
+                                "Cashu wallet unavailable, credit wallet online: {error}"
+                            );
+                            None
+                        }
                         Err(error) => {
                             let _ = startup_sender.send(Err(error));
                             return;
@@ -661,7 +707,10 @@ impl DaemonCashuWalletWorker {
                         if !daemon_cashu_wallet_requests_pending(&config_path) {
                             continue;
                         }
-                        if let Err(error) = wallet.handle_pending_requests(&config_path).await {
+                        if let Err(error) =
+                            DaemonCashuWallet::handle_pending_requests(&mut wallet, &config_path)
+                                .await
+                        {
                             eprintln!("cashu-wallet: request handling failed: {error:#}");
                         }
                     }
