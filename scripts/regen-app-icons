@@ -4,7 +4,8 @@
 The app icon comes from the root icon.svg. Desktop targets keep transparent
 rounded corners because those platforms display the bitmap directly; iOS keeps a
 full square bitmap because the OS applies its own mask. The macOS menu-bar
-template icon comes from assets/tray-icon.svg.
+template icon and the Linux tray icon come from assets/tray-icon.svg; Linux
+tray hosts show pixmaps as-is, so its glyph is white for the usual dark panel.
 
 Requires the Rust resvg CLI and Pillow:
   cargo install resvg
@@ -77,6 +78,9 @@ LINUX_OUTPUTS = {
     "nostr-vpn-256.png": 256,
     "nostr-vpn-512.png": 512,
 }
+
+# Side of the centered square, in tray-icon.svg units, shown in the Linux tray.
+LINUX_TRAY_FRAME = 720
 
 LINUX_TRAY_OUTPUTS = {
     "nostr-vpn-tray-24.png": 24,
@@ -174,7 +178,14 @@ def write_png_outputs(
 
 def write_linux_tray() -> None:
     for filename, size in LINUX_TRAY_OUTPUTS.items():
-        save_png(LINUX_DIR / filename, rounded_corners(render_svg(APP_SVG, size)))
+        # Crop to the glyph so it fills the slot like other tray icons.
+        scaled = round(size * 1024 / LINUX_TRAY_FRAME)
+        offset = (scaled - size) // 2
+        glyph = render_svg(TRAY_SVG, scaled).convert("RGBA")
+        glyph = glyph.crop((offset, offset, offset + size, offset + size))
+        white = Image.new("RGBA", glyph.size, (255, 255, 255, 255))
+        white.putalpha(glyph.getchannel("A"))
+        save_png(LINUX_DIR / filename, white)
 
 
 def write_mac_tray() -> None:

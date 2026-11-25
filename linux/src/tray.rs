@@ -1031,21 +1031,26 @@ fn tray_icon_pixmap(bytes: &[u8], indicator: Indicator) -> glib::Variant {
     ])
 }
 
-/// Status dot in the bottom-right corner. A transparent ring separates it
-/// from the logo so the color reads on light and dark panels.
+/// The status dot replaces the N's bottom-right node: (724, 740) in
+/// assets/tray-icon.svg, inside the 720-unit frame from regen-app-icons.
+/// A transparent ring separates the colour from the glyph.
 fn draw_badge(image: &mut RgbaImage, color: Rgba<u8>) {
     let size = image.width().min(image.height()) as f32;
-    let radius = size * 0.2;
-    let gap = (size / 16.0).max(1.5);
-    paint_dot(image, size - radius - 0.5, radius, gap, color);
+    paint_dot(
+        image,
+        (size * 0.794, size * 0.817),
+        size * 0.15,
+        size * 0.05,
+        color,
+    );
 }
 
-/// Antialiased dot at (center, center), clearing `gap` pixels around it.
-fn paint_dot(image: &mut RgbaImage, center: f32, radius: f32, gap: f32, color: Rgba<u8>) {
+/// Antialiased dot at `center`, clearing `gap` pixels around it.
+fn paint_dot(image: &mut RgbaImage, center: (f32, f32), radius: f32, gap: f32, color: Rgba<u8>) {
     for y in 0..image.height() {
         for x in 0..image.width() {
-            let dx = x as f32 + 0.5 - center;
-            let dy = y as f32 + 0.5 - center;
+            let dx = x as f32 + 0.5 - center.0;
+            let dy = y as f32 + 0.5 - center.1;
             let distance = (dx * dx + dy * dy).sqrt();
             let pixel = image.get_pixel_mut(x, y);
             let keep = (distance - radius - gap + 0.5).clamp(0.0, 1.0);
@@ -1070,7 +1075,7 @@ fn paint_dot(image: &mut RgbaImage, center: f32, radius: f32, gap: f32, color: R
 fn dot_png(indicator: Indicator) -> Option<Vec<u8>> {
     let color = indicator.color()?;
     let mut image = RgbaImage::new(12, 12);
-    paint_dot(&mut image, 6.0, 4.0, 0.0, color);
+    paint_dot(&mut image, (6.0, 6.0), 4.0, 0.0, color);
     let mut bytes = Vec::new();
     image
         .write_to(
