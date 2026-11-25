@@ -4,8 +4,9 @@
 The app icon comes from the root icon.svg. Desktop targets keep transparent
 rounded corners because those platforms display the bitmap directly; iOS keeps a
 full square bitmap because the OS applies its own mask. The macOS menu-bar
-template icon and the Linux tray icon come from assets/tray-icon.svg; Linux
-tray hosts show pixmaps as-is, so its glyph is white for the usual dark panel.
+template icon and the Linux and Windows tray icons come from
+assets/tray-icon.svg. Linux tray hosts show pixmaps as-is, so its glyph is
+white for the usual dark panel; Windows tints its white glyph to the taskbar.
 
 Requires the Rust resvg CLI and Pillow:
   cargo install resvg
@@ -79,8 +80,10 @@ LINUX_OUTPUTS = {
     "nostr-vpn-512.png": 512,
 }
 
-# Side of the centered square, in tray-icon.svg units, shown in the Linux tray.
-LINUX_TRAY_FRAME = 720
+# Side of the centered square, in tray-icon.svg units, shown in the Linux and
+# Windows trays. Their status dots replace the N's bottom-right node, so the
+# apps' dot positions depend on this frame.
+TRAY_FRAME = 720
 
 LINUX_TRAY_OUTPUTS = {
     "nostr-vpn-tray-24.png": 24,
@@ -176,16 +179,27 @@ def write_png_outputs(
         save_png(out_dir / filename, image, rgb=rgb)
 
 
+def tray_glyph(size: int) -> Image.Image:
+    """White tray glyph, cropped so it fills the slot like other tray icons."""
+    scaled = round(size * 1024 / TRAY_FRAME)
+    offset = (scaled - size) // 2
+    glyph = render_svg(TRAY_SVG, scaled).convert("RGBA")
+    glyph = glyph.crop((offset, offset, offset + size, offset + size))
+    white = Image.new("RGBA", glyph.size, (255, 255, 255, 255))
+    white.putalpha(glyph.getchannel("A"))
+    return white
+
+
 def write_linux_tray() -> None:
     for filename, size in LINUX_TRAY_OUTPUTS.items():
-        # Crop to the glyph so it fills the slot like other tray icons.
-        scaled = round(size * 1024 / LINUX_TRAY_FRAME)
-        offset = (scaled - size) // 2
-        glyph = render_svg(TRAY_SVG, scaled).convert("RGBA")
-        glyph = glyph.crop((offset, offset, offset + size, offset + size))
-        white = Image.new("RGBA", glyph.size, (255, 255, 255, 255))
-        white.putalpha(glyph.getchannel("A"))
-        save_png(LINUX_DIR / filename, white)
+        save_png(LINUX_DIR / filename, tray_glyph(size))
+
+
+def write_windows_tray() -> None:
+    images = [tray_glyph(size) for size in ICO_SIZES]
+    path = WINDOWS_DIR / "nostr-vpn-tray.ico"
+    images[-1].save(path, format="ICO", sizes=[image.size for image in images], append_images=images[:-1])
+    print(f"  {path.relative_to(REPO)}")
 
 
 def write_mac_tray() -> None:
@@ -234,7 +248,7 @@ def main() -> None:
 
     print("windows icons:")
     write_ico(WINDOWS_DIR / "nostr-vpn.ico", APP_SVG, rounded=True)
-    write_ico(WINDOWS_DIR / "nostr-vpn-tray.ico", APP_SVG, rounded=True)
+    write_windows_tray()
 
 
 if __name__ == "__main__":

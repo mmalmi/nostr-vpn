@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Microsoft.Win32;
 using NostrVpn.Windows.Core;
 using NostrVpn.Windows.ViewModels;
 
@@ -10,10 +11,7 @@ namespace NostrVpn.Windows.Services;
 public sealed class TrayService : IDisposable
 {
     private readonly NotifyIcon _notifyIcon;
-    private readonly Icon _normalIcon;
-    private readonly Icon _connectingIcon;
-    private readonly Icon _connectedIcon;
-    private readonly Icon _attentionIcon;
+    private Dictionary<Indicator, Icon> _icons;
     private AppViewModel? _viewModel;
     private Action? _showWindow;
     private Action? _quit;
@@ -23,18 +21,33 @@ public sealed class TrayService : IDisposable
 
     public TrayService()
     {
-        _normalIcon = LoadIcon();
-        _connectingIcon = CreateBadgeIcon(_normalIcon, ConnectingColor);
-        _connectedIcon = CreateBadgeIcon(_normalIcon, ConnectedColor);
-        _attentionIcon = CreateBadgeIcon(_normalIcon, AttentionColor);
+        _icons = BuildIcons();
         _notifyIcon = new NotifyIcon
         {
-            Icon = _normalIcon,
+            Icon = _icons[Indicator.Hidden],
             Text = "Nostr VPN",
             Visible = true,
         };
         _notifyIcon.DoubleClick += (_, _) => _showWindow?.Invoke();
         _notifyIcon.BalloonTipClicked += (_, _) => ShowTransfer(_notificationTransferId);
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+    }
+
+    // The glyph follows the taskbar theme, which can change while running.
+    private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
+    {
+        if (e.Category != UserPreferenceCategory.General)
+        {
+            return;
+        }
+        System.Windows.Application.Current?.Dispatcher.InvokeAsync(() =>
+        {
+            var previous = _icons;
+            _icons = BuildIcons();
+            _notifyIcon.Icon = _icons[Indicator.Hidden];
+            Update();
+            foreach (var icon in previous.Values) icon.Dispose();
+        });
     }
 
     public void Attach(AppViewModel viewModel, Action showWindow, Action quit)
@@ -54,13 +67,7 @@ public sealed class TrayService : IDisposable
         }
 
         _notifyIcon.Text = TruncateTrayText(TrayText(_viewModel));
-        _notifyIcon.Icon = TrayIndicator(_viewModel.State) switch
-        {
-            Indicator.Attention => _attentionIcon,
-            Indicator.Connected => _connectedIcon,
-            Indicator.Connecting => _connectingIcon,
-            _ => _normalIcon,
-        };
+        _notifyIcon.Icon = _icons[TrayIndicator(_viewModel.State)];
         _notifyIcon.ContextMenuStrip?.Dispose();
         _notifyIcon.ContextMenuStrip = BuildMenu(_viewModel);
         UpdateFileNotifications(_viewModel.State.FileTransfers);
@@ -93,12 +100,10 @@ public sealed class TrayService : IDisposable
 
     public void Dispose()
     {
+        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
-        _normalIcon.Dispose();
-        _connectingIcon.Dispose();
-        _connectedIcon.Dispose();
-        _attentionIcon.Dispose();
+        foreach (var icon in _icons.Values) icon.Dispose();
     }
 
     private ContextMenuStrip BuildMenu(AppViewModel viewModel)
@@ -240,18 +245,88 @@ public sealed class TrayService : IDisposable
         return item;
     }
 
-    private static Icon LoadIcon()
+    /// One icon per status: the single-colour glyph tinted for the taskbar,
+    /// with the status dot in place of the N's bottom-right node.
+    private static Dictionary<Indicator, Icon> BuildIcons()
     {
-        foreach (var filename in new[] { "nostr-vpn-tray.ico", "nostr-vpn.ico" })
+        using var glyph = LoadGlyph();
+        var icons = new Dictionary<Indicator, Icon>();
+        foreach (var indicator in Enum.GetValues<Indicator>())
         {
-            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", filename);
-            if (File.Exists(iconPath))
+            using var bitmap = new Bitmap(glyph);
+            if (IndicatorColor(indicator) is { } color)
             {
-                return new Icon(iconPath);
+                DrawStatusDot(bitmap, color);
+            }
+            var handle = bitmap.GetHicon();
+            try
+            {
+                icons[indicator] = (Icon)Icon.FromHandle(handle).Clone();
+            }
+            finally
+            {
+                DestroyIcon(handle);
             }
         }
+        return icons;
+    }
 
-        return (Icon)SystemIcons.Application.Clone();
+    private static Bitmap LoadGlyph()
+    {
+        var size = SystemInformation.SmallIconSize;
+        var path = Path.Combine(AppContext.BaseDirectory, "Assets", "nostr-vpn-tray.ico");
+        using var icon = File.Exists(path) ? new Icon(path, size) : (Icon)SystemIcons.Application.Clone();
+        using var source = icon.ToBitmap();
+        var glyph = new Bitmap(source, size);
+        var tint = TaskbarIsLight() ? Color.Black : Color.White;
+        for (var y = 0; y < glyph.Height; y++)
+        {
+            for (var x = 0; x < glyph.Width; x++)
+            {
+                glyph.SetPixel(x, y, Color.FromArgb(glyph.GetPixel(x, y).A, tint));
+            }
+        }
+        return glyph;
+    }
+
+    private static bool TaskbarIsLight()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        return key?.GetValue("SystemUsesLightTheme") is int value && value != 0;
+    }
+
+    /// Matches the Linux tray: (724, 740) in assets/tray-icon.svg inside the
+    /// 720-unit TRAY_FRAME from scripts/regen-app-icons. A transparent ring
+    /// separates the colour from the glyph.
+    private static void DrawStatusDot(Bitmap bitmap, Color color)
+    {
+        float size = Math.Min(bitmap.Width, bitmap.Height);
+        float centerX = size * 0.794f, centerY = size * 0.817f;
+        float radius = size * 0.15f, gap = size * 0.05f;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var dx = x + 0.5f - centerX;
+                var dy = y + 0.5f - centerY;
+                var distance = MathF.Sqrt(dx * dx + dy * dy);
+                var pixel = bitmap.GetPixel(x, y);
+                var alpha = pixel.A / 255f * Math.Clamp(distance - radius - gap + 0.5f, 0f, 1f);
+                var fill = Math.Clamp(radius + 0.5f - distance, 0f, 1f);
+                var outAlpha = fill + alpha * (1 - fill);
+                if (outAlpha <= 0)
+                {
+                    bitmap.SetPixel(x, y, Color.Transparent);
+                    continue;
+                }
+                int Blend(int dot, int glyph) => (int)Math.Round((dot * fill + glyph * alpha * (1 - fill)) / outAlpha);
+                bitmap.SetPixel(x, y, Color.FromArgb(
+                    (int)Math.Round(outAlpha * 255),
+                    Blend(color.R, pixel.R),
+                    Blend(color.G, pixel.G),
+                    Blend(color.B, pixel.B)));
+            }
+        }
     }
 
     private enum Indicator { Hidden, Connecting, Connected, Attention }
@@ -329,37 +404,6 @@ public sealed class TrayService : IDisposable
         using var brush = new SolidBrush(color);
         graphics.FillEllipse(brush, 2, 2, 8, 8);
         return bitmap;
-    }
-
-    // Status dot in the bottom-right corner, with a transparent ring that
-    // separates it from the logo on light and dark taskbars.
-    private static Icon CreateBadgeIcon(Icon baseIcon, Color color)
-    {
-        using var bitmap = baseIcon.ToBitmap();
-        using var graphics = Graphics.FromImage(bitmap);
-        graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        var size = Math.Min(bitmap.Width, bitmap.Height);
-        var diameter = Math.Max(6, (int)Math.Round(size * 0.4));
-        var gap = Math.Max(1, size / 16);
-        var x = bitmap.Width - diameter;
-        var y = bitmap.Height - diameter;
-        graphics.CompositingMode = CompositingMode.SourceCopy;
-        using (var clear = new SolidBrush(Color.Transparent))
-        {
-            graphics.FillEllipse(clear, x - gap, y - gap, diameter + gap * 2, diameter + gap * 2);
-        }
-        graphics.CompositingMode = CompositingMode.SourceOver;
-        using var brush = new SolidBrush(color);
-        graphics.FillEllipse(brush, x, y, diameter, diameter);
-        var handle = bitmap.GetHicon();
-        try
-        {
-            return (Icon)Icon.FromHandle(handle).Clone();
-        }
-        finally
-        {
-            DestroyIcon(handle);
-        }
     }
 
     private static string TrayText(AppViewModel viewModel)
