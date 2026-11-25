@@ -177,8 +177,10 @@ fn stage_transfer_files(app: &AppRef, npub: String, sources: Vec<PathBuf>) {
 fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     let transfers = card();
     section_header(&transfers, "Files", "folder-download-symbolic");
-    let received = gtk::Button::with_label("Received files");
-    received.set_halign(gtk::Align::Start);
+    let header = transfers.last_child().and_downcast::<gtk::Box>().unwrap();
+    let received = icon_text_button("Received files", "folder-open-symbolic");
+    received.set_halign(gtk::Align::End);
+    received.set_hexpand(true);
     let received_app = app.clone();
     received.connect_clicked(move |_| {
         let config = PathBuf::from(&received_app.borrow().state.config_path);
@@ -217,7 +219,10 @@ fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             );
         }
     });
-    transfers.append(&received);
+    header.append(&received);
+    if state.file_transfers.is_empty() {
+        empty_row(&transfers, "No transfers yet");
+    }
     if !state.vpn_active && !state.file_transfers.is_empty() {
         empty_row(&transfers, "Connect VPN to continue transfers");
     }
@@ -367,11 +372,8 @@ fn build_file_transfers(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         row.append(&buttons);
         transfers.append(&row);
     }
-    let scroll = gtk::ScrolledWindow::new();
-    scroll.set_max_content_height(320);
-    scroll.set_propagate_natural_height(true);
-    scroll.set_child(Some(&transfers));
-    page.append(&scroll);
+    // The page already scrolls; a nested scroller clips the list to a strip.
+    page.append(&transfers);
 }
 
 fn file_transfer_status(status: &str, sender: bool) -> &'static str {

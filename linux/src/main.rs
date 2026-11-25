@@ -49,6 +49,7 @@ struct AppRuntime {
 enum Page {
     Devices,
     Share,
+    AddNetwork,
     ExitNodes,
     PaidRoutes,
     SellInternet,
@@ -66,6 +67,7 @@ enum NetworkSetupMode {
 struct PageScrollOffsets {
     devices: f64,
     share: f64,
+    add_network: f64,
     exit_nodes: f64,
     paid_routes: f64,
     sell_internet: f64,
@@ -78,6 +80,7 @@ impl PageScrollOffsets {
         match page {
             Page::Devices => self.devices,
             Page::Share => self.share,
+            Page::AddNetwork => self.add_network,
             Page::ExitNodes => self.exit_nodes,
             Page::PaidRoutes => self.paid_routes,
             Page::SellInternet => self.sell_internet,
@@ -90,6 +93,7 @@ impl PageScrollOffsets {
         match page {
             Page::Devices => self.devices = offset,
             Page::Share => self.share = offset,
+            Page::AddNetwork => self.add_network = offset,
             Page::ExitNodes => self.exit_nodes = offset,
             Page::PaidRoutes => self.paid_routes = offset,
             Page::SellInternet => self.sell_internet = offset,
@@ -117,6 +121,7 @@ struct Drafts {
     fips_host_inbound_tcp_ports: String,
     advertised_routes: String,
     exit_search: String,
+    device_search: String,
     wireguard_exit_config: String,
     exit_dns_mode: String,
     exit_dns_doh_provider: String,
@@ -200,6 +205,7 @@ struct AppModel {
     render_pending: bool,
     live_updates: Vec<LiveUpdate>,
     manual_join_expanded: bool,
+    wireguard_setup_expanded: bool,
     diagnostics_expanded: bool,
 }
 
@@ -270,6 +276,7 @@ impl AppModel {
             render_pending: false,
             live_updates: Vec::new(),
             manual_join_expanded: false,
+            wireguard_setup_expanded: false,
             diagnostics_expanded,
         }
     }

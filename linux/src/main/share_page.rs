@@ -7,7 +7,7 @@ fn build_network_setup(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         }
         Some(NetworkSetupMode::Join) => {
             append_setup_back(app, page);
-            append_join_network_card(app, page, state, None);
+            append_join_network_card(app, page, state, active_network(state));
         }
     }
 }
@@ -82,7 +82,13 @@ fn append_create_network_card(app: &AppRef, page: &gtk::Box) {
                 model.drafts.new_network_name.clear();
                 name
             };
-            create_network(&app, name);
+            let name = non_empty_or(&name, "Private network");
+            dispatch_with_completion(&app, NativeAppAction::AddNetwork { name }, |app, state| {
+                if state.error.trim().is_empty() {
+                    app.borrow_mut().network_setup_mode = None;
+                    set_page(app, Page::Devices);
+                }
+            });
         });
     }
     create_row.append(&name);
@@ -113,9 +119,15 @@ fn append_join_network_card(
 
     let join_card = card();
     section_header(&join_card, "Join Network", "go-down-symbolic");
-    if !join_request.is_empty() {
+    if join_request.is_empty() {
+        append_join_request_unavailable(app, &join_card, state);
+    } else {
+        let help = gtk::Label::new(Some("Show this QR to a network admin."));
+        help.add_css_class("dim-label");
+        join_card.append(&help);
         join_card.append(&qr::build(join_request, 220));
-        let copy = icon_text_button("Copy request", "edit-copy-symbolic");
+        let copy = icon_text_button("Copy Request", "edit-copy-symbolic");
+        copy.set_halign(gtk::Align::Center);
         {
             let request = join_request.to_string();
             copy.connect_clicked(move |_| copy_text(&request));
@@ -170,6 +182,8 @@ fn append_join_network_card(
         });
     }
     manual_body.append(&admin);
+    let admin_error = invalid_device_id_label();
+    manual_body.append(&admin_error);
     let mesh = entry("Network ID", &app.borrow().drafts.manual_mesh_id);
     mesh.update_property(&[gtk::accessible::Property::Label(
         "nvpn-manual-join-network-id",
@@ -217,11 +231,64 @@ fn append_join_network_card(
         });
     }
     manual_body.append(&add_manual);
+    {
+        let validate = {
+            let (admin, mesh, add) = (admin.clone(), mesh.clone(), add_manual.clone());
+            move || {
+                let id = admin.text().trim().to_string();
+                admin_error.set_visible(!id.is_empty() && !is_valid_device_id(&id));
+                add.set_sensitive(
+                    is_valid_device_id(&id)
+                        && !normalize_network_id_input(mesh.text().as_str()).is_empty(),
+                );
+            }
+        };
+        validate();
+        let validate = Rc::new(validate);
+        for input in [&admin, &mesh] {
+            let validate = validate.clone();
+            input.connect_changed(move |_| validate());
+        }
+    }
     manual.set_child(Some(&manual_body));
     join_card.append(&manual);
 
-    append_notice(app, &join_card, "Join");
     page.append(&join_card);
+}
+
+/// The desktop join request lives in the background service, so the QR
+/// appears only while it runs. Say so and offer the one step that starts it.
+fn append_join_request_unavailable(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
+    let install = ("Install Service", NativeAppAction::InstallSystemService);
+    let enable = ("Enable Service", NativeAppAction::EnableSystemService);
+    let (text, action) = if state.daemon_running {
+        ("Preparing your join QR…", None)
+    } else if state.service_supported && !state.service_installed {
+        (
+            "Install the background service to show your join QR.",
+            Some(install),
+        )
+    } else if state.service_installed && state.service_disabled {
+        (
+            "Enable the background service to show your join QR.",
+            Some(enable),
+        )
+    } else {
+        ("Waiting for the background service…", None)
+    };
+    let label = gtk::Label::new(Some(text));
+    label.set_wrap(true);
+    label.set_xalign(0.0);
+    label.add_css_class("dim-label");
+    parent.append(&label);
+    if let Some((title, action)) = action {
+        let button = icon_text_button(title, "system-run-symbolic");
+        button.set_halign(gtk::Align::Start);
+        button.add_css_class("suggested-action");
+        let app = app.clone();
+        button.connect_clicked(move |_| dispatch(&app, action.clone()));
+        parent.append(&button);
+    }
 }
 
 fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
@@ -241,11 +308,42 @@ fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
 }
 
 fn append_link_device_card(app: &AppRef, page: &gtk::Box, network: &NativeNetworkState) {
-    let link = card();
-    section_header(&link, "Link Device", "contact-new-symbolic");
+    let request_card = card();
+    section_header(&request_card, "Add Join Request", "camera-photo-symbolic");
+    let help = gtk::Label::new(Some(
+        "Scan the joining device's request QR, or paste its join request. Valid links open confirmation automatically.",
+    ));
+    help.set_wrap(true);
+    help.set_xalign(0.0);
+    help.add_css_class("caption");
+    help.add_css_class("dim-label");
+    request_card.append(&help);
+    let request_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let scan = icon_text_button("Scan QR", "camera-photo-symbolic");
+    {
+        let app = app.clone();
+        scan.connect_clicked(move |button| scan_join_request_qr(&app, button));
+    }
+    request_row.append(&scan);
+    let request = entry("nvpn://join-request/…", &app.borrow().drafts.join_request);
+    {
+        let app = app.clone();
+        request.connect_changed(move |entry| {
+            let text = entry.text().to_string();
+            app.borrow_mut().drafts.join_request = text.clone();
+            if looks_like_join_request(&text) {
+                confirm_join_request(&app, text.trim().to_string());
+            }
+        });
+    }
+    request_row.append(&request);
+    request_card.append(&request_row);
+    page.append(&request_card);
 
+    let link = card();
+    section_header(&link, "For Manual Join", "contact-new-symbolic");
     let manual_help = gtk::Label::new(Some(
-        "For manual join, share this admin Device ID and Network ID, then add the joining Device ID below.",
+        "Share your Device ID and Network ID, then add the joining Device ID below.",
     ));
     manual_help.set_wrap(true);
     manual_help.set_xalign(0.0);
@@ -273,57 +371,16 @@ fn append_link_device_card(app: &AppRef, page: &gtk::Box, network: &NativeNetwor
         value.set_xalign(0.0);
         value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         row.append(&value);
-        let copy = icon_text_button("Copy", "edit-copy-symbolic");
+        let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+        copy.add_css_class("flat");
+        copy.set_tooltip_text(Some(&format!("Copy {label}")));
         copy.connect_clicked(move |_| copy_text(&raw));
         row.append(&copy);
         link.append(&row);
     }
 
-    let request_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let request = entry(
-        "Approval request or Device ID",
-        &app.borrow().drafts.join_request,
-    );
-    {
-        let app = app.clone();
-        request.connect_changed(move |entry| {
-            app.borrow_mut().drafts.join_request = entry.text().to_string();
-        });
-    }
-    let import = icon_text_button("Import request", "document-open-symbolic");
-    {
-        let app = app.clone();
-        let network_id = network.id.clone();
-        import.connect_clicked(move |_| import_join_request_or_add_device(&app, network_id.clone()));
-    }
-    request_row.append(&request);
-    request_row.append(&import);
-    link.append(&request_row);
-
-    let scan = icon_text_button("Scan approval request", "camera-photo-symbolic");
-    {
-        let app = app.clone();
-        scan.connect_clicked(move |button| scan_join_request_qr(&app, button));
-    }
-    link.append(&scan);
-
-    switch_row_enabled(
-        app,
-        &link,
-        "Allow join requests",
-        network.join_requests_enabled,
-        network.local_is_admin,
-        {
-            let network_id = network.id.clone();
-            move |enabled| NativeAppAction::SetNetworkJoinRequestsEnabled {
-                network_id: network_id.clone(),
-                enabled,
-            }
-        },
-    );
-
     let manual = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let npub = entry("Joiner's Device ID", &app.borrow().drafts.participant_npub);
+    let npub = entry("Joining Device ID", &app.borrow().drafts.participant_npub);
     npub.update_property(&[gtk::accessible::Property::Label(
         "nvpn-manual-join-admin-device-id",
     )]);
@@ -344,7 +401,7 @@ fn append_link_device_card(app: &AppRef, page: &gtk::Box, network: &NativeNetwor
             app.borrow_mut().drafts.participant_alias = entry.text().to_string();
         });
     }
-    let add = icon_text_button("Add", "list-add-symbolic");
+    let add = icon_text_button("Add by Device ID", "list-add-symbolic");
     add.update_property(&[gtk::accessible::Property::Label(
         "nvpn-manual-join-admin-submit",
     )]);
@@ -366,31 +423,68 @@ fn append_link_device_card(app: &AppRef, page: &gtk::Box, network: &NativeNetwor
     manual.append(&alias);
     manual.append(&add);
     link.append(&manual);
+    let npub_error = invalid_device_id_label();
+    link.append(&npub_error);
+    let validate = move |npub: &gtk::Entry| {
+        let id = npub.text().trim().to_string();
+        npub_error.set_visible(!id.is_empty() && !is_valid_device_id(&id));
+        add.set_sensitive(is_valid_device_id(&id));
+    };
+    validate(&npub);
+    npub.connect_changed(validate);
 
     page.append(&link);
 }
 
-fn append_notice(app: &AppRef, parent: &gtk::Box, title: &str) {
-    let notice = app.borrow().notice.clone();
-    if !notice.trim().is_empty() {
-        row_label(parent, title, &notice, "dialog-warning-symbolic");
-    }
+fn invalid_device_id_label() -> gtk::Label {
+    let label = gtk::Label::new(Some("Not a valid device ID"));
+    label.add_css_class("caption");
+    label.add_css_class("error");
+    label.set_xalign(0.0);
+    label.set_visible(false);
+    label
 }
 
-fn import_join_request_or_add_device(app: &AppRef, network_id: String) {
-    let request = app.borrow().drafts.join_request.trim().to_string();
-    if request.is_empty() {
+fn looks_like_join_request(value: &str) -> bool {
+    value.trim().starts_with("nvpn://join-request/")
+}
+
+/// Ask before adding a device from a pasted, scanned or opened request.
+fn confirm_join_request(app: &AppRef, request: String) {
+    let network_name = active_network(&app.borrow().state)
+        .filter(|network| network.local_is_admin)
+        .map(display_network_name);
+    let Some(network_name) = network_name else {
+        // The core explains why a non-admin or networkless device cannot add it.
+        import_join_request(app, NativeAppAction::ImportJoinRequest { request });
         return;
-    }
-    let action = if is_valid_device_id(&request) {
-        NativeAppAction::AddParticipant {
-            network_id,
-            npub: request,
-            alias: None,
-        }
-    } else {
-        NativeAppAction::ImportJoinRequest { request }
     };
+    let dialog = adw::AlertDialog::new(
+        Some("Add device?"),
+        Some(&format!(
+            "Add the device from this join request to {network_name}?"
+        )),
+    );
+    dialog.add_responses(&[("cancel", "Cancel"), ("add", "Add")]);
+    dialog.set_close_response("cancel");
+    dialog.set_default_response(Some("add"));
+    dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
+    {
+        let app = app.clone();
+        dialog.connect_response(Some("add"), move |_, _| {
+            import_join_request(
+                &app,
+                NativeAppAction::ImportJoinRequest {
+                    request: request.clone(),
+                },
+            );
+        });
+    }
+    let window = app.borrow().window.clone();
+    dialog.present(Some(&window));
+}
+
+fn import_join_request(app: &AppRef, action: NativeAppAction) {
     dispatch_with_completion(app, action, |app, state| {
         if state.error.trim().is_empty() {
             {

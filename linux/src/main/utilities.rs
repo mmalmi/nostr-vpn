@@ -2,6 +2,24 @@ fn clean_ip(value: &str) -> String {
     value.split('/').next().unwrap_or(value).trim().to_string()
 }
 
+fn device_availability_text(network: &NativeNetworkState) -> String {
+    match network.expected_count {
+        0 => "No devices".to_string(),
+        1 => format!("{} online · 1 device", network.online_count),
+        count => format!("{} online · {count} devices", network.online_count),
+    }
+}
+
+fn format_duration_ms(ms: u64) -> String {
+    match ms {
+        0 => "-".to_string(),
+        1..1_000 => format!("{ms} ms"),
+        1_000..60_000 => format!("{}s", ms / 1_000),
+        60_000..3_600_000 => format!("{}m", ms / 60_000),
+        _ => format!("{}h", ms / 3_600_000),
+    }
+}
+
 fn format_bytes(bytes: u64) -> String {
     let units = ["B", "KB", "MB", "GB", "TB"];
     let mut value = bytes as f64;

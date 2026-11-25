@@ -218,6 +218,9 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
     let shell = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     shell.set_hexpand(true);
     shell.set_vexpand(true);
+    // Children that expand would otherwise make the sidebar share the page's
+    // spare width, so its width changed from page to page.
+    sidebar.set_hexpand(false);
     shell.append(&sidebar);
     shell.append(&content);
 

@@ -46,6 +46,9 @@ stubs. `just mobile-test-kit-device` exercises physical TUN traffic, and
 - Windows has QR image import but no live camera scanner.
 - Linux live camera scanning depends on `zbarcam` and an available camera;
   image import remains available without either.
+- Desktop join QRs come from the running background service. Linux installs
+  that service on request, so its Join card offers to install or enable it
+  when no QR is available.
 - Production iOS image import is disabled; the file-import path is built only
   for the release join test variant.
 - Android currently packages only `arm64-v8a`.

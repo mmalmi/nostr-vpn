@@ -2,7 +2,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     page_title(page, "Internet", "");
 
     let exit = card();
-    section_header(&exit, "Internet Source", "");
+    section_header(&exit, "Connect through", "network-workgroup-symbolic");
     let status_style = if state.exit_node_blocked {
         "bad"
     } else if state.exit_node_active {
@@ -24,24 +24,11 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         return;
     };
 
-    let all_exit_candidates = exit_node_candidates(&network, state);
-    let show_search = all_exit_candidates.len() > SEARCH_VISIBILITY_THRESHOLD;
-    if show_search {
-        let search = entry("Search devices", &app.borrow().drafts.exit_search);
-        {
-            let app = app.clone();
-            search.connect_changed(move |entry| {
-                app.borrow_mut().drafts.exit_search = entry.text().to_string();
-            });
-        }
-        exit.append(&search);
-    }
-
     route_choice(
         app,
         &exit,
-        "Direct",
-        "Use normal internet routing",
+        "This device",
+        "Use my normal connection",
         state.internet_source == "direct",
         true,
         ExitChoice::Direct,
@@ -57,58 +44,36 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     route_choice(
         app,
         &exit,
-        "WireGuard upstream",
+        "WireGuard VPN",
         &wg_subtitle,
         state.internet_source == "wireguard",
         state.wireguard_exit_configured,
         ExitChoice::WireGuard,
     );
-
-    let query = if show_search {
-        app.borrow().drafts.exit_search.trim().to_ascii_lowercase()
-    } else {
-        String::new()
-    };
-    let exit_candidates = all_exit_candidates
-        .into_iter()
-        .filter(|participant| {
-            query.is_empty()
-                || device_name(participant)
-                    .to_ascii_lowercase()
-                    .contains(&query)
-                || participant.npub.to_ascii_lowercase().contains(&query)
-        })
-        .collect::<Vec<_>>();
-    if exit_candidates.is_empty() {
-        empty_row(
-            &exit,
-            if query.is_empty() {
-                "No exit nodes offered"
-            } else {
-                "No exit nodes found"
-            },
-        );
-    } else {
-        for participant in exit_candidates {
-            let peer_selected =
-                state.internet_source == "private_vpn" && state.exit_node == participant.npub;
-            route_choice(
-                app,
-                &exit,
-                &device_name(&participant),
-                non_empty_or(&participant.status_text, "Exit node").as_str(),
-                peer_selected,
-                true,
-                ExitChoice::Peer(participant.npub.clone()),
-            );
+    if !state.wireguard_exit_configured && state.internet_source != "wireguard" {
+        // The WireGuard choice stays disabled until a config is saved, so the
+        // editor must be reachable right here.
+        let setup = gtk::Expander::new(Some("Set up WireGuard upstream"));
+        setup.set_expanded(app.borrow().wireguard_setup_expanded);
+        {
+            let app = app.clone();
+            setup.connect_expanded_notify(move |setup| {
+                app.borrow_mut().wireguard_setup_expanded = setup.is_expanded();
+            });
         }
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        body.set_margin_top(10);
+        build_wireguard_settings_card(app, &body, state);
+        setup.set_child(Some(&body));
+        exit.append(&setup);
     }
+
     if state.paid_route_market.supported {
         route_choice(
             app,
             &exit,
-            "Paid · Automatic · Experimental",
-            "Experimental · choose a working, reasonably priced provider",
+            "Paid Internet · Automatic",
+            "Automatically choose a verified provider · Experimental",
             state.internet_source == "paid_automatic",
             true,
             ExitChoice::PaidAutomatic,
@@ -142,14 +107,15 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         route_choice(
             app,
             &exit,
-            "Paid · Choose manually",
-            "Experimental · browse internet sellers",
+            "Paid Internet · Manual",
+            "Browse and choose a provider · Experimental",
             state.internet_source == "paid_manual",
             true,
             ExitChoice::PaidManual,
         );
     }
     page.append(&exit);
+    build_trusted_exit_card(app, page, &network, state);
 
     let offer = card();
     switch_row(
@@ -193,6 +159,70 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         build_wireguard_settings_card(app, page, state);
     }
     build_exit_dns_settings_card(app, page);
+}
+
+fn build_trusted_exit_card(
+    app: &AppRef,
+    page: &gtk::Box,
+    network: &NativeNetworkState,
+    state: &NativeAppState,
+) {
+    let trusted = card();
+    section_header(&trusted, "Trusted devices", "security-high-symbolic");
+    let candidates = exit_node_candidates(network, state);
+    if candidates.is_empty() {
+        empty_row(&trusted, "No trusted devices sharing internet");
+        page.append(&trusted);
+        return;
+    }
+    let search = (candidates.len() > SEARCH_VISIBILITY_THRESHOLD).then(|| {
+        let search = gtk::SearchEntry::new();
+        search.set_placeholder_text(Some("Search devices"));
+        search.set_widget_name("nvpn-exit-search");
+        trusted.append(&search);
+        search
+    });
+    let mut rows = Vec::new();
+    for participant in candidates {
+        route_choice(
+            app,
+            &trusted,
+            &device_name(&participant),
+            non_empty_or(&participant.status_text, "Trusted device").as_str(),
+            state.internet_source == "private_vpn" && state.exit_node == participant.npub,
+            true,
+            ExitChoice::Peer(participant.npub.clone()),
+        );
+        let haystack = format!("{} {}", device_name(&participant), participant.npub).to_lowercase();
+        rows.push((trusted.last_child().unwrap(), haystack));
+    }
+    let none_found = gtk::Label::new(Some("No trusted devices found"));
+    none_found.add_css_class("dim-label");
+    none_found.set_visible(false);
+    trusted.append(&none_found);
+    if let Some(search) = search {
+        // Filter in place so typing keeps focus.
+        let filter = move |query: &str| {
+            let query = query.trim().to_lowercase();
+            let mut shown = 0;
+            for (row, haystack) in &rows {
+                let visible = query.is_empty() || haystack.contains(&query);
+                row.set_visible(visible);
+                shown += usize::from(visible);
+            }
+            none_found.set_visible(shown == 0);
+        };
+        let query = app.borrow().drafts.exit_search.clone();
+        search.set_text(&query);
+        filter(&query);
+        let app = app.clone();
+        search.connect_search_changed(move |search| {
+            let query = search.text().to_string();
+            filter(&query);
+            app.borrow_mut().drafts.exit_search = query;
+        });
+    }
+    page.append(&trusted);
 }
 
 #[derive(Clone)]

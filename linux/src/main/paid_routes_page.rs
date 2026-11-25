@@ -97,7 +97,7 @@ fn build_paid_route_market_card(app: &AppRef, page: &gtk::Box, state: &NativeApp
     detail_row(&buyer, "Status", &market.status_text);
     let provider_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let provider = entry(
-        "Provider npub or paid exit link",
+        "Provider Device ID or paid exit link",
         &app.borrow().drafts.manual_paid_exit_provider,
     );
     provider.set_hexpand(true);

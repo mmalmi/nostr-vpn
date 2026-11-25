@@ -82,6 +82,23 @@ fn detail_row(parent: &gtk::Box, title: &str, value: &str) {
     parent.append(&row);
 }
 
+fn copy_detail_row(parent: &gtk::Box, title: &str, value: &str) {
+    detail_row(parent, title, value);
+    let Some(row) = parent.last_child().and_downcast::<gtk::Box>() else {
+        return;
+    };
+    if value.trim().is_empty() {
+        return;
+    }
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.add_css_class("flat");
+    copy.set_valign(gtk::Align::Center);
+    copy.set_tooltip_text(Some(&format!("Copy {title}")));
+    let value = value.to_string();
+    copy.connect_clicked(move |_| copy_text(&value));
+    row.append(&copy);
+}
+
 fn public_fips_address(own_npub: &str) -> String {
     let trimmed = own_npub.trim();
     if trimmed.is_empty() {

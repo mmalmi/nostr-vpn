@@ -37,7 +37,7 @@ require windows/NostrVpn.Windows/MainWindow.xaml 'Add by Device ID' 'Windows adm
 
 require linux/src/main/share_page.rs 'NativeAppAction::ManualAddNetwork' 'Linux joiner action'
 require linux/src/main/share_page.rs 'Admin Device ID' 'Linux joiner fields'
-require linux/src/main/share_page.rs "Joiner's Device ID" 'Linux admin action'
+require linux/src/main/share_page.rs 'Joining Device ID' 'Linux admin action'
 
 require crates/nostr-vpn-web/src/main.rs '/api/manual_add_network' 'web joiner API'
 require web/control-panel/src/App.svelte 'Admin Device ID' 'web joiner fields'

@@ -344,21 +344,6 @@ fn saved_network_row(
     mesh.append(&copy);
     body.append(&mesh);
 
-    switch_row_enabled(
-        app,
-        &body,
-        "Allow join requests",
-        network.join_requests_enabled,
-        network.local_is_admin,
-        {
-            let network_id = network.id.clone();
-            move |enabled| NativeAppAction::SetNetworkJoinRequestsEnabled {
-                network_id: network_id.clone(),
-                enabled,
-            }
-        },
-    );
-
     section_header(&body, "Devices", "");
     let participants = sorted_participants(network, state);
     if participants.is_empty() {
@@ -435,7 +420,7 @@ fn saved_network_participant_row(
     }
 
     let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-    copy.set_tooltip_text(Some("Copy npub"));
+    copy.set_tooltip_text(Some("Copy Device ID"));
     {
         let npub = participant.npub.clone();
         copy.connect_clicked(move |_| copy_text(&npub));
@@ -534,7 +519,6 @@ fn saved_network_participant_row(
 fn device_row(
     app: &AppRef,
     parent: &gtk::Box,
-    network: &NativeNetworkState,
     participant: &NativeParticipantState,
     state: &NativeAppState,
     selected: bool,
@@ -576,88 +560,40 @@ fn device_row(
     name.set_xalign(0.0);
     name.set_ellipsize(gtk::pango::EllipsizeMode::End);
     name_row.append(&name);
-    if participant.is_admin {
-        name_row.append(&badge("Admin", "muted"));
-    }
-    if participant.offers_exit_node {
-        name_row.append(&badge(
-            exit_node_badge_text(participant, state),
-            exit_node_badge_style(participant, state),
-        ));
-    }
     text.append(&name_row);
 
+    let details = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let subtitle = gtk::Label::new(Some(&device_subtitle(participant)));
     subtitle.add_css_class("caption");
     subtitle.add_css_class("dim-label");
     subtitle.set_xalign(0.0);
-    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    text.append(&subtitle);
+    details.append(&subtitle);
+    if is_self(participant, state) {
+        details.append(&badge("This device", "ok"));
+    } else if !participant.roster_accepted {
+        details.append(&badge("Joining", "warn"));
+    }
+    if participant.is_admin {
+        details.append(&badge("Admin", "muted"));
+    }
+    if participant.offers_exit_node {
+        details.append(&badge(
+            exit_node_badge_text(participant, state),
+            exit_node_badge_style(participant, state),
+        ));
+    }
+    if matches!(fips_path_kind(participant), FipsPathKind::Routed) {
+        details.append(&badge("via mesh", "muted"));
+    }
+    text.append(&details);
     row.append(&text);
 
-    row.append(&badge(
+    let status = badge(
         &device_status_text(participant),
         if participant.reachable { "ok" } else { "muted" },
-    ));
-    if matches!(fips_path_kind(participant), FipsPathKind::Routed) {
-        row.append(&badge("via mesh", "muted"));
-    }
-
-    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-    copy.set_tooltip_text(Some("Copy npub"));
-    {
-        let npub = participant.npub.clone();
-        copy.connect_clicked(move |_| copy_text(&npub));
-    }
-    row.append(&copy);
-
-    if network.local_is_admin && !is_self(participant, state) {
-        let admin = gtk::Button::from_icon_name(if participant.is_admin {
-            "starred-symbolic"
-        } else {
-            "non-starred-symbolic"
-        });
-        admin.set_tooltip_text(Some(if participant.is_admin {
-            "Remove admin"
-        } else {
-            "Make admin"
-        }));
-        {
-            let app = app.clone();
-            let network_id = network.id.clone();
-            let npub = participant.npub.clone();
-            let is_admin = participant.is_admin;
-            admin.connect_clicked(move |_| {
-                dispatch(
-                    &app,
-                    if is_admin {
-                        NativeAppAction::RemoveAdmin {
-                            network_id: network_id.clone(),
-                            npub: npub.clone(),
-                        }
-                    } else {
-                        NativeAppAction::AddAdmin {
-                            network_id: network_id.clone(),
-                            npub: npub.clone(),
-                        }
-                    },
-                );
-            });
-        }
-        row.append(&admin);
-
-        let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
-        remove.set_tooltip_text(Some("Remove device"));
-        remove.add_css_class("destructive-action");
-        connect_remove_participant_confirmation(
-            &remove,
-            app,
-            network.id.clone(),
-            participant.npub.clone(),
-            device_name(participant),
-        );
-        row.append(&remove);
-    }
+    );
+    status.set_valign(gtk::Align::Center);
+    row.append(&status);
 
     parent.append(&row);
 }

@@ -400,21 +400,6 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         mesh.append(&save);
         network.append(&mesh);
 
-        switch_row_enabled(
-            app,
-            &network,
-            "Allow join requests",
-            active.join_requests_enabled,
-            active.local_is_admin,
-            {
-                let network_id = active.id.clone();
-                move |enabled| NativeAppAction::SetNetworkJoinRequestsEnabled {
-                    network_id: network_id.clone(),
-                    enabled,
-                }
-            },
-        );
-
         let delete_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         delete_row.set_halign(gtk::Align::Start);
         let delete = icon_text_button("Delete network", "edit-delete-symbolic");

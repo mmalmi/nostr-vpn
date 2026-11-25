@@ -53,6 +53,7 @@ fn render_background_change(app: &AppRef) {
     let editing = focus.as_ref().is_some_and(|focus| {
         [
             gtk::Entry::static_type(),
+            gtk::SearchEntry::static_type(),
             gtk::TextView::static_type(),
             gtk::DropDown::static_type(),
         ]
@@ -179,9 +180,14 @@ fn render(app: &AppRef) {
     page_box.set_size_request(560, -1);
     page_box.set_sensitive(app.borrow().pending_actions.is_empty());
 
+    append_status_banner(app, &page_box, &state);
     match page {
         Page::Devices => build_devices_page(app, &page_box, &state),
         Page::Share => build_share_page(app, &page_box, &state),
+        Page::AddNetwork => {
+            page_title(&page_box, "Add Network", "list-add-symbolic");
+            build_network_setup(app, &page_box, &state);
+        }
         Page::ExitNodes => build_exit_nodes_page(app, &page_box, &state),
         Page::PaidRoutes => build_paid_routes_page(app, &page_box, &state),
         Page::SellInternet => build_paid_exit_seller_page(app, &page_box, &state),
@@ -191,6 +197,127 @@ fn render(app: &AppRef) {
 
     scroll.set_child(Some(&page_box));
     restore_scroll_offset(&scroll, scroll_offset);
+}
+
+/// One place for action notices and core errors, above every page.
+fn append_status_banner(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
+    let notice = app.borrow().notice.trim().to_string();
+    let error = state.error.trim().to_string();
+    for (text, dismissible) in [(notice, true), (error, false)] {
+        if text.is_empty() {
+            continue;
+        }
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+        row.add_css_class("card");
+        row.add_css_class("nvpn-banner");
+        let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
+        icon.add_css_class("warning");
+        row.append(&icon);
+        let label = gtk::Label::new(Some(&text));
+        label.set_wrap(true);
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_selectable(true);
+        row.append(&label);
+        if dismissible {
+            let close = gtk::Button::from_icon_name("window-close-symbolic");
+            close.add_css_class("flat");
+            close.set_tooltip_text(Some("Dismiss"));
+            close.set_valign(gtk::Align::Center);
+            let app = app.clone();
+            close.connect_clicked(move |_| set_notice(&app, String::new()));
+            row.append(&close);
+        }
+        page.append(&row);
+    }
+}
+
+/// Active network name and count; opens a menu to switch or add networks.
+fn network_menu_button(
+    app: &AppRef,
+    state: &NativeAppState,
+    network: &NativeNetworkState,
+) -> gtk::MenuButton {
+    let summary = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    let name = gtk::Label::new(Some(&display_network_name(network)));
+    name.add_css_class("caption-heading");
+    name.set_xalign(0.0);
+    name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    summary.append(&name);
+    let count = gtk::Label::new(Some(&device_availability_text(network)));
+    {
+        let network_id = network.id.clone();
+        bind_live_label(app, &count, move |state| {
+            state
+                .networks
+                .iter()
+                .find(|network| network.id == network_id)
+                .map(device_availability_text)
+                .unwrap_or_default()
+        });
+    }
+    count.add_css_class("caption");
+    count.add_css_class("dim-label");
+    count.set_xalign(0.0);
+    summary.append(&count);
+
+    let menu = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    menu.set_margin_top(6);
+    menu.set_margin_bottom(6);
+    menu.set_margin_start(6);
+    menu.set_margin_end(6);
+    let popover = gtk::Popover::new();
+    for candidate in &state.networks {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let check = gtk::Image::from_icon_name("object-select-symbolic");
+        check.set_opacity(if candidate.id == network.id { 1.0 } else { 0.0 });
+        row.append(&check);
+        let label = gtk::Label::new(Some(&display_network_name(candidate)));
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        row.append(&label);
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button.set_child(Some(&row));
+        let app = app.clone();
+        let popover = popover.clone();
+        let network_id = candidate.id.clone();
+        let current = candidate.id == network.id;
+        button.connect_clicked(move |_| {
+            popover.popdown();
+            if !current {
+                dispatch(
+                    &app,
+                    NativeAppAction::SetNetworkEnabled {
+                        network_id: network_id.clone(),
+                        enabled: true,
+                    },
+                );
+            }
+        });
+        menu.append(&button);
+    }
+    menu.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    let add = icon_text_button("Add Network", "list-add-symbolic");
+    add.add_css_class("flat");
+    {
+        let app = app.clone();
+        let popover = popover.clone();
+        add.connect_clicked(move |_| {
+            popover.popdown();
+            set_page(&app, Page::AddNetwork);
+        });
+    }
+    menu.append(&add);
+    popover.set_child(Some(&menu));
+
+    let button = gtk::MenuButton::new();
+    button.add_css_class("flat");
+    button.add_css_class("nvpn-sidebar-summary");
+    button.set_child(Some(&summary));
+    button.set_popover(Some(&popover));
+    button.set_tooltip_text(Some("Switch or add network"));
+    button
 }
 
 fn build_update_stripe(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
@@ -372,28 +499,7 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
     sidebar.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     if let Some(network) = active_network(state) {
-        let summary = gtk::Box::new(gtk::Orientation::Vertical, 4);
-        summary.add_css_class("nvpn-sidebar-summary");
-
-        let name = gtk::Label::new(Some(&display_network_name(network)));
-        name.add_css_class("caption-heading");
-        name.set_xalign(0.0);
-        name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        summary.append(&name);
-
-        let count = gtk::Label::new(Some(&format!(
-            "{} of {} connected",
-            state.connected_peer_count, state.expected_peer_count
-        )));
-        bind_live_label(app, &count, |state| format!(
-            "{} of {} connected", state.connected_peer_count, state.expected_peer_count
-        ));
-        count.add_css_class("caption");
-        count.add_css_class("dim-label");
-        count.set_xalign(0.0);
-        summary.append(&count);
-
-        sidebar.append(&summary);
+        sidebar.append(&network_menu_button(app, state, network));
     }
 
     let spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -406,5 +512,6 @@ fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page:
     status.add_css_class("dim-label");
     status.set_xalign(0.0);
     status.set_wrap(true);
+    status.set_max_width_chars(24);
     sidebar.append(&status);
 }

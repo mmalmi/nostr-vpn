@@ -501,20 +501,21 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
         if state.paid_route_market.supported {
             exit_children.push(radio_item(
                 34,
-                "Paid · Automatic · Experimental",
+                "Paid Internet · Automatic",
                 state.internet_source == "paid_automatic",
                 TrayCommand::SetInternetSource("paid_automatic".to_string()),
             ));
             exit_children.push(radio_item(
                 35,
-                "Paid · Choose manually",
+                "Paid Internet · Manual",
                 state.internet_source == "paid_manual",
                 TrayCommand::SetInternetSource("paid_manual".to_string()),
             ));
         }
-        exit_children.push(radio_item(
+        exit_children.push(toggle_item(
             36,
             "WireGuard VPN",
+            state.wireguard_exit_configured,
             state.internet_source == "wireguard",
             TrayCommand::SetInternetSource("wireguard".to_string()),
         ));

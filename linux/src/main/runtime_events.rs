@@ -111,6 +111,11 @@ fn drain_tray_commands(app: &AppRef) {
             }
             tray::TrayCommand::CopyPeer(npub) => copy_text(&npub),
             tray::TrayCommand::SetInternetSource(source) => {
+                // Manual paid exits need a provider choice in the window.
+                if source == "paid_manual" {
+                    show_window(app);
+                    set_page(app, Page::PaidRoutes);
+                }
                 dispatch(
                     app,
                     NativeAppAction::UpdateSettings {
@@ -391,7 +396,7 @@ fn drain_pending_urls(runtime: &AppRuntime) {
 fn handle_deep_link(app: &AppRef, raw: &str) {
     match deep_link::parse(raw) {
         Some(deep_link::DeepLink::JoinRequest(request)) => {
-            dispatch(app, NativeAppAction::ImportJoinRequest { request });
+            confirm_join_request(app, request);
         }
         #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::Tick)) => {
@@ -434,11 +439,6 @@ fn handle_deep_link(app: &AppRef, raw: &str) {
     }
 }
 
-fn create_network(app: &AppRef, name: String) {
-    let name = non_empty_or(&name, "Private network");
-    dispatch(app, NativeAppAction::AddNetwork { name });
-}
-
 fn set_notice(app: &AppRef, notice: impl Into<String>) {
     app.borrow_mut().notice = notice.into();
     render(app);
@@ -449,6 +449,10 @@ fn set_page(app: &AppRef, page: Page) {
         let mut model = app.borrow_mut();
         if model.page == Page::Share && page != Page::Share {
             model.add_network_join_status.clear();
+        }
+        if model.page != page {
+            model.notice.clear();
+            model.network_setup_mode = None;
         }
         model.page = page;
     }

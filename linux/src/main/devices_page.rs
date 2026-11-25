@@ -1,12 +1,5 @@
 fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     build_network_hero(app, page, state);
-    build_file_transfers(app, page, state);
-
-    if !state.error.trim().is_empty() {
-        let card = card();
-        row_label(&card, "Status", &state.error, "dialog-warning-symbolic");
-        page.append(&card);
-    }
 
     let Some(network) = active_network(state).cloned() else {
         build_network_setup(app, page, state);
@@ -18,21 +11,39 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     devices.set_size_request(330, -1);
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.set_valign(gtk::Align::Center);
+    let heading = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    heading.set_hexpand(true);
     let title = gtk::Label::new(Some("Devices"));
     title.add_css_class("title-3");
     title.set_xalign(0.0);
-    title.set_hexpand(true);
-    header.append(&title);
-    let add = gtk::Button::from_icon_name("list-add-symbolic");
-    add.set_tooltip_text(Some("Add device"));
-    add.update_property(&[gtk::accessible::Property::Label(
-        "nvpn-manual-join-admin-open",
-    )]);
+    heading.append(&title);
+    let availability = gtk::Label::new(Some(&device_availability_text(&network)));
     {
+        let network_id = network.id.clone();
+        bind_live_label(app, &availability, move |state| {
+            state
+                .networks
+                .iter()
+                .find(|network| network.id == network_id)
+                .map(device_availability_text)
+                .unwrap_or_default()
+        });
+    }
+    availability.add_css_class("caption");
+    availability.add_css_class("dim-label");
+    availability.set_xalign(0.0);
+    heading.append(&availability);
+    header.append(&heading);
+    if network.local_is_admin {
+        let add = icon_text_button("Link device", "list-add-symbolic");
+        add.set_widget_name("nvpn-link-device");
+        add.update_property(&[gtk::accessible::Property::Label(
+            "nvpn-manual-join-admin-open",
+        )]);
         let app = app.clone();
         add.connect_clicked(move |_| set_page(&app, Page::Share));
+        header.append(&add);
     }
-    header.append(&add);
     devices.append(&header);
 
     let participants = sorted_participants(&network, state);
@@ -40,162 +51,47 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     if participants.is_empty() {
         empty_row(&devices, "No devices yet");
     } else {
+        let search = (participants.len() > SEARCH_VISIBILITY_THRESHOLD).then(|| {
+            let search = gtk::SearchEntry::new();
+            search.set_placeholder_text(Some("Search"));
+            search.set_widget_name("nvpn-device-search");
+            devices.append(&search);
+            search
+        });
+        let mut rows = Vec::new();
         for participant in participants {
             let selected = selected_key
                 .as_deref()
                 .map(|key| participant_key(&participant) == key)
                 .unwrap_or(false);
-            device_row(app, &devices, &network, &participant, state, selected);
+            device_row(app, &devices, &participant, state, selected);
+            let haystack = format!(
+                "{} {} {}",
+                device_name(&participant),
+                participant.npub,
+                clean_ip(&participant.tunnel_ip)
+            )
+            .to_lowercase();
+            rows.push((devices.last_child().unwrap(), haystack));
         }
-    }
-
-    if network.local_is_admin {
-        let expander = gtk::Expander::new(Some("Manage devices"));
-        let body = gtk::Box::new(gtk::Orientation::Vertical, 10);
-        body.set_margin_top(10);
-
-        let input_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        let npub = entry("npub", &app.borrow().drafts.participant_npub);
-        {
+        if let Some(search) = search {
+            // Filter in place: a re-render would drop focus while typing.
+            let filter = move |query: &str| {
+                let query = query.trim().to_lowercase();
+                for (row, haystack) in &rows {
+                    row.set_visible(query.is_empty() || haystack.contains(&query));
+                }
+            };
+            let query = app.borrow().drafts.device_search.clone();
+            search.set_text(&query);
+            filter(&query);
             let app = app.clone();
-            npub.connect_changed(move |entry| {
-                app.borrow_mut().drafts.participant_npub = entry.text().to_string();
+            search.connect_search_changed(move |search| {
+                let query = search.text().to_string();
+                filter(&query);
+                app.borrow_mut().drafts.device_search = query;
             });
         }
-        let alias = entry("Name", &app.borrow().drafts.participant_alias);
-        alias.set_width_chars(16);
-        {
-            let app = app.clone();
-            alias.connect_changed(move |entry| {
-                app.borrow_mut().drafts.participant_alias = entry.text().to_string();
-            });
-        }
-        let add = icon_text_button("Add", "list-add-symbolic");
-        {
-            let app = app.clone();
-            let network_id = network.id.clone();
-            add.connect_clicked(move |_| {
-                let (npub, alias) = {
-                    let model = app.borrow();
-                    (
-                        model.drafts.participant_npub.trim().to_string(),
-                        model.drafts.participant_alias.trim().to_string(),
-                    )
-                };
-                if npub.is_empty() {
-                    return;
-                }
-                {
-                    let mut model = app.borrow_mut();
-                    model.drafts.participant_npub.clear();
-                    model.drafts.participant_alias.clear();
-                }
-                dispatch(
-                    &app,
-                    NativeAppAction::AddParticipant {
-                        network_id: network_id.clone(),
-                        npub,
-                        alias: (!alias.is_empty()).then_some(alias),
-                    },
-                );
-            });
-        }
-        input_row.append(&npub);
-        input_row.append(&alias);
-        input_row.append(&add);
-        body.append(&input_row);
-
-        let scan_request = icon_text_button("Scan approval request", "camera-photo-symbolic");
-        {
-            let app = app.clone();
-            scan_request.connect_clicked(move |button| scan_join_request_qr(&app, button));
-        }
-        body.append(&scan_request);
-
-        for participant in &network.participants {
-            let participant_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            participant_row.set_valign(gtk::Align::Center);
-
-            let name = gtk::Label::new(Some(&device_name(participant)));
-            name.set_width_chars(16);
-            name.set_xalign(0.0);
-            name.set_ellipsize(gtk::pango::EllipsizeMode::End);
-            participant_row.append(&name);
-
-            let alias = entry("Name", &participant.magic_dns_alias);
-            alias.set_width_chars(18);
-            participant_row.append(&alias);
-
-            let save = gtk::Button::with_label("Save");
-            {
-                let app = app.clone();
-                let npub = participant.npub.clone();
-                let alias = alias.clone();
-                save.connect_clicked(move |_| {
-                    dispatch(
-                        &app,
-                        NativeAppAction::SetParticipantAlias {
-                            npub: npub.clone(),
-                            alias: alias.text().trim().to_string(),
-                        },
-                    );
-                });
-            }
-            participant_row.append(&save);
-
-            if !is_self(participant, state) {
-                let admin = gtk::Button::from_icon_name(if participant.is_admin {
-                    "starred-symbolic"
-                } else {
-                    "non-starred-symbolic"
-                });
-                admin.set_tooltip_text(Some(if participant.is_admin {
-                    "Remove admin"
-                } else {
-                    "Make admin"
-                }));
-                {
-                    let app = app.clone();
-                    let network_id = network.id.clone();
-                    let npub = participant.npub.clone();
-                    let is_admin = participant.is_admin;
-                    admin.connect_clicked(move |_| {
-                        dispatch(
-                            &app,
-                            if is_admin {
-                                NativeAppAction::RemoveAdmin {
-                                    network_id: network_id.clone(),
-                                    npub: npub.clone(),
-                                }
-                            } else {
-                                NativeAppAction::AddAdmin {
-                                    network_id: network_id.clone(),
-                                    npub: npub.clone(),
-                                }
-                            },
-                        );
-                    });
-                }
-                participant_row.append(&admin);
-
-                let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
-                remove.set_tooltip_text(Some("Remove device"));
-                remove.add_css_class("destructive-action");
-                connect_remove_participant_confirmation(
-                    &remove,
-                    app,
-                    network.id.clone(),
-                    participant.npub.clone(),
-                    device_name(participant),
-                );
-                participant_row.append(&remove);
-            }
-
-            body.append(&participant_row);
-        }
-
-        expander.set_child(Some(&body));
-        devices.append(&expander);
     }
 
     let split = gtk::Box::new(gtk::Orientation::Horizontal, 16);
@@ -207,6 +103,7 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     detail.set_hexpand(true);
     split.append(&detail);
     page.append(&split);
+    build_file_transfers(app, page, state);
 
     append_join_requests(app, page, &network);
 }
@@ -219,17 +116,7 @@ fn scan_join_request_qr(app: &AppRef, button: &gtk::Button) {
     let app_for_error = app.clone();
     qr_scan::open_scanner(
         parent.as_ref(),
-        move |request| {
-            dispatch_with_completion(
-                &app_for_result,
-                NativeAppAction::ImportJoinRequest { request },
-                |app, state| {
-                    if state.error.trim().is_empty() {
-                        set_page(app, Page::Devices);
-                    }
-                },
-            );
-        },
+        move |request| confirm_join_request(&app_for_result, request),
         move |error| set_notice(&app_for_error, error),
     );
 }
@@ -268,7 +155,7 @@ fn append_join_requests(app: &AppRef, parent: &gtk::Box, network: &NativeNetwork
         row.append(&text);
 
         let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-        copy.set_tooltip_text(Some("Copy npub"));
+        copy.set_tooltip_text(Some("Copy Device ID"));
         {
             let npub = request.requester_npub.clone();
             copy.connect_clicked(move |_| copy_text(&npub));
@@ -516,19 +403,13 @@ fn device_detail_card(
 
     let addresses = gtk::Box::new(gtk::Orientation::Vertical, 8);
     section_header(&addresses, "Addresses", "");
-    detail_row(
-        &addresses,
-        "MagicDNS",
-        &device_magic_dns_name(&participant, state),
-    );
-    detail_row(&addresses, "VPN IP", &clean_ip(&participant.tunnel_ip));
-    detail_row(&addresses, "Device ID", &participant.npub);
-    let copy = icon_text_button("Copy device ID", "edit-copy-symbolic");
-    {
-        let npub = participant.npub.clone();
-        copy.connect_clicked(move |_| copy_text(&npub));
+    for (title, value) in [
+        ("MagicDNS", device_magic_dns_name(&participant, state)),
+        ("VPN IP", clean_ip(&participant.tunnel_ip)),
+        ("Device ID", participant.npub.clone()),
+    ] {
+        copy_detail_row(&addresses, title, &value);
     }
-    addresses.append(&copy);
     detail.append(&addresses);
 
     let connectivity = gtk::Box::new(gtk::Orientation::Vertical, 8);
@@ -541,6 +422,18 @@ fn device_detail_card(
         ("Role", device_role_text(&participant, state)),
         ("State", device_status_text(&participant)),
         ("FIPS path", fips_path_text(&participant)),
+        (
+            "Latency age",
+            format_duration_ms(participant.fips_srtt_age_ms),
+        ),
+        (
+            "Control seen",
+            non_empty_or(&participant.last_fips_control_seen_text, "-"),
+        ),
+        (
+            "Data seen",
+            non_empty_or(&participant.last_fips_data_seen_text, "-"),
+        ),
         (
             "Address hints",
             if participant.fips_endpoint_hints.is_empty() {
@@ -565,6 +458,9 @@ fn device_detail_card(
                 "Role" => device_role_text(participant, state),
                 "State" => device_status_text(participant),
                 "FIPS path" => fips_path_text(participant),
+                "Latency age" => format_duration_ms(participant.fips_srtt_age_ms),
+                "Control seen" => non_empty_or(&participant.last_fips_control_seen_text, "-"),
+                "Data seen" => non_empty_or(&participant.last_fips_data_seen_text, "-"),
                 "Address hints" => non_empty_or(&participant.fips_endpoint_hints.join(", "), "-"),
                 "Last seen" => non_empty_or(&participant.last_seen_text, "-"),
                 "Sent" => format_bytes(participant.tx_bytes),
@@ -667,7 +563,9 @@ fn build_network_hero(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     } else if state.exit_node_active && !state.exit_node_status_text.trim().is_empty() {
         badges.append(&badge(&state.exit_node_status_text, "ok"));
     }
-    text.append(&badges);
+    if network.is_some() {
+        text.append(&badges);
+    }
     top.append(&text);
 
     hero.append(&top);
@@ -675,26 +573,7 @@ fn build_network_hero(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     let identity = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     identity.set_valign(gtk::Align::Center);
     identity.set_margin_top(8);
-    let own = gtk::Label::new(Some(&format!(
-        "This device  {}",
-        non_empty_or(&short_text(&state.own_npub, 18), "-")
-    )));
-    own.add_css_class("caption");
-    own.add_css_class("dim-label");
-    own.set_xalign(0.0);
-    own.set_selectable(true);
-    own.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    own.set_hexpand(true);
-    identity.append(&own);
-    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
-    copy.set_tooltip_text(Some("Copy npub"));
-    copy.set_sensitive(!state.own_npub.is_empty());
-    {
-        let npub = state.own_npub.clone();
-        copy.connect_clicked(move |_| copy_text(&npub));
-    }
-    identity.append(&copy);
-    if !clean_ip(&state.tunnel_ip).is_empty() {
+    if network.is_some() && !clean_ip(&state.tunnel_ip).is_empty() {
         identity.append(&badge(&clean_ip(&state.tunnel_ip), "muted"));
     }
     if !state.exit_node_status_text.trim().is_empty() {
@@ -709,7 +588,9 @@ fn build_network_hero(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             },
         ));
     }
-    hero.append(&identity);
+    if identity.first_child().is_some() {
+        hero.append(&identity);
+    }
 
     page.append(&hero);
 }

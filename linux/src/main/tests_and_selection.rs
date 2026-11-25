@@ -3,7 +3,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn background_refresh_preserves_expanders_and_settings_scroll() {
+    fn background_refresh_preserves_controls_and_settings_scroll() {
         if std::env::var_os("NVPN_MANAGE_DEVICES_UI_TEST").is_none() {
             let directory = std::env::temp_dir()
                 .join(format!("nvpn-manage-devices-test-{}", std::process::id()));
@@ -11,7 +11,7 @@ mod tests {
             let result = std::process::Command::new(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
-                    "tests::background_refresh_preserves_expanders_and_settings_scroll",
+                    "tests::background_refresh_preserves_controls_and_settings_scroll",
                     "--nocapture",
                 ])
                 .env("NVPN_MANAGE_DEVICES_UI_TEST", "1")
@@ -22,22 +22,6 @@ mod tests {
             std::fs::remove_dir_all(directory).unwrap();
             assert!(result.unwrap().success());
             return;
-        }
-
-        fn find_expander(widget: &gtk::Widget) -> Option<gtk::Expander> {
-            if let Some(expander) = widget.downcast_ref::<gtk::Expander>() {
-                if expander.label().as_deref() == Some("Manage devices") {
-                    return Some(expander.clone());
-                }
-            }
-            let mut child = widget.first_child();
-            while let Some(widget) = child {
-                if let Some(expander) = find_expander(&widget) {
-                    return Some(expander);
-                }
-                child = widget.next_sibling();
-            }
-            None
         }
 
         fn contains_label(widget: &gtk::Widget, text: &str) -> bool {
@@ -94,13 +78,9 @@ mod tests {
         };
         let app = Rc::new(RefCell::new(model));
         render(&app);
-        let expander = find_expander(content.upcast_ref()).unwrap();
-        assert!(!expander.is_expanded());
-        expander.set_expanded(true);
+        let link_device = find_named_control(content.upcast_ref(), "nvpn-link-device").unwrap();
 
-        for expanded in [true, true, false, false] {
-            let expander = find_expander(content.upcast_ref()).unwrap();
-            expander.set_expanded(expanded);
+        for _ in 0..4 {
             let mut state = app.borrow().state.clone();
             state.rev += 1;
             state.vpn_status = format!("Refresh {}", state.rev);
@@ -116,17 +96,12 @@ mod tests {
                 .unwrap();
             drain_core_results(&app);
             assert_eq!(
-                find_expander(content.upcast_ref()).unwrap(),
-                expander,
-                "Routine polling replaced the Manage devices widget"
+                find_named_control(content.upcast_ref(), "nvpn-link-device").unwrap(),
+                link_device,
+                "Routine polling replaced the Devices controls"
             );
             assert!(contains_label(content.upcast_ref(), &sent), "Traffic counter did not update");
             assert!(contains_label(content.upcast_ref(), &last_seen), "Last-seen text did not update");
-            assert_eq!(
-                find_expander(content.upcast_ref()).unwrap().is_expanded(),
-                expanded,
-                "Manage devices lost its state during a background refresh"
-            );
         }
 
         let window = app.borrow().window.clone();
@@ -701,13 +676,7 @@ fn device_role_text(participant: &NativeParticipantState, state: &NativeAppState
 }
 
 fn device_subtitle(participant: &NativeParticipantState) -> String {
-    let ip = clean_ip(&participant.tunnel_ip);
-    let id = short_text(&participant.npub, 18);
-    if ip.is_empty() {
-        id
-    } else {
-        format!("{id}  {ip}")
-    }
+    clean_ip(&participant.tunnel_ip)
 }
 
 fn device_status_text(participant: &NativeParticipantState) -> String {
