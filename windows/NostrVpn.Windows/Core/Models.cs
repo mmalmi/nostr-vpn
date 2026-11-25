@@ -73,6 +73,7 @@ public sealed class NativeAppState
     public bool ExitNodeLeakProtection { get; set; } = true;
     public bool ExitNodeActive { get; set; }
     public bool ExitNodeBlocked { get; set; }
+    public bool ExitNodeNeedsAttention { get; set; }
     public string ExitNodeStatusText { get; set; } = "";
     public string ExitDnsMode { get; set; } = "automatic";
     public string ExitDnsDohProvider { get; set; } = "cloudflare";
@@ -133,6 +134,7 @@ public sealed class NativePaidExitSellerState
 {
     public bool Supported { get; set; }
     public bool Enabled { get; set; }
+    public bool Ready { get; set; }
     public string StatusText { get; set; } = "";
     public string ProviderLink { get; set; } = "";
     public string Upstream { get; set; } = "";

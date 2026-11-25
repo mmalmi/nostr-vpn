@@ -114,25 +114,9 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
             ExitChoice::PaidManual,
         );
     }
-    page.append(&exit);
-    build_trusted_exit_card(app, page, &network, state);
-
-    let offer = card();
     switch_row(
         app,
-        &offer,
-        "Offer this device as an exit node",
-        state.advertise_exit_node,
-        |enabled| NativeAppAction::UpdateSettings {
-            patch: SettingsPatch {
-                advertise_exit_node: Some(enabled),
-                ..SettingsPatch::default()
-            },
-        },
-    );
-    switch_row(
-        app,
-        &offer,
+        &exit,
         "Block internet if selected source disconnects",
         state.exit_node_leak_protection,
         |enabled| NativeAppAction::UpdateSettings {
@@ -142,18 +126,65 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
             },
         },
     );
-    page.append(&offer);
+    page.append(&exit);
+    build_trusted_exit_card(app, page, &network, state);
+
+    // Private sharing and public selling stay in separate cards so it is
+    // clear who can use this device's connection.
+    let share = card();
+    section_header(
+        &share,
+        "Share with trusted devices",
+        "security-high-symbolic",
+    );
+    switch_row(
+        app,
+        &share,
+        "Share this device's internet",
+        state.advertise_exit_node,
+        |enabled| NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                advertise_exit_node: Some(enabled),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    empty_row(
+        &share,
+        &format!(
+            "Only devices in {} can use it. Nothing is offered publicly.",
+            if network.name.trim().is_empty() {
+                "this network"
+            } else {
+                network.name.trim()
+            }
+        ),
+    );
+    page.append(&share);
+
     if state.paid_exit_seller.supported {
-        let sell = icon_text_button("Sell internet access · Experimental", "mail-send-symbolic");
-        sell.set_widget_name("nvpn-paid-exit-seller-open");
-        sell.update_property(&[gtk::accessible::Property::Label(
+        let sell = card();
+        section_header(&sell, "Sell internet publicly", "mail-send-symbolic");
+        empty_row(
+            &sell,
+            "Anyone can pay to use this device's internet · Experimental",
+        );
+        empty_row(
+            &sell,
+            &paid_exit_seller_status_text(&state.paid_exit_seller),
+        );
+        let open = gtk::Button::with_label("Selling settings");
+        open.set_halign(gtk::Align::Start);
+        open.set_widget_name("nvpn-paid-exit-seller-open");
+        open.update_property(&[gtk::accessible::Property::Label(
             "nvpn-paid-exit-seller-open",
         )]);
         {
             let app = app.clone();
-            sell.connect_clicked(move |_| set_page(&app, Page::SellInternet));
+            open.connect_clicked(move |_| set_page(&app, Page::SellInternet));
         }
-        offer.append(&sell);
+        sell.append(&open);
+        page.append(&sell);
     }
     if state.internet_source == "wireguard" {
         build_wireguard_settings_card(app, page, state);

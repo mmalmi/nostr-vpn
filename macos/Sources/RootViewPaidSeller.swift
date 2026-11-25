@@ -18,7 +18,7 @@ extension RootView {
     var paidExitSellerStatusSettings: some View {
         surface {
             HStack(spacing: 12) {
-                sectionHeader("Paid Internet · Experimental", systemImage: "bitcoinsign.circle.fill")
+                sectionHeader("Sell internet publicly · Experimental", systemImage: "bitcoinsign.circle.fill")
                 Spacer(minLength: 16)
                 Toggle("", isOn: Binding(
                     get: { state.paidExitSeller.enabled },

@@ -138,6 +138,10 @@ fn drain_tray_commands(app: &AppRef) {
                     },
                 );
             }
+            tray::TrayCommand::OpenSellSettings => {
+                show_window(app);
+                set_page(app, Page::SellInternet);
+            }
             tray::TrayCommand::Quit => quit_app(app),
         }
     }

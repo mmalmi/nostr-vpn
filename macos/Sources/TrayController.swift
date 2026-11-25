@@ -17,13 +17,13 @@ import SwiftUI
 ///     Copy Device ID
 ///     ─────────────
 ///     <network-name> ▶            ← list of network peers (copy npub)
-///     Internet Source ▶           ← share toggle + selection
-///       <exit status, if any>
-///       ☐ Share This Device
-///       ─────────
+///     Internet · <source> ▶       ← where this Mac's internet comes from
+///       <status>
 ///       ☑ This Device
-///       Device 1
-///       Device 2
+///       Paid / WireGuard / trusted devices
+///     ─────────────
+///     ☐ Share Internet with <network>   ← private: network devices only
+///     Sell Internet Publicly ▶          ← public, paid
 ///     ─────────────
 ///     Open Nostr VPN
 ///     Quit
@@ -45,6 +45,7 @@ final class TrayController: NSObject {
     private let exitNodeSubmenuItem = NSMenuItem()
     private let sellingSubmenuItem = NSMenuItem()
     private let sellingSubmenu = NSMenu()
+    private let sellingCaptionItem = NSMenuItem()
     private let sellingUpstreamItem = NSMenuItem()
     private let sellingStatusItem = NSMenuItem()
     private let sellingSettingsItem = NSMenuItem()
@@ -54,9 +55,11 @@ final class TrayController: NSObject {
     private let networkSubmenu = NSMenu()
     private let exitNodeSubmenu = NSMenu()
 
+    // Private sharing, kept apart from the public selling submenu.
+    private let offerExitItem = NSMenuItem()
+
     // Stable items inside Internet Source submenu
     private let exitNodeStatusItem = NSMenuItem()
-    private let offerExitItem = NSMenuItem()
     private let exitNodeSelectionSeparator = NSMenuItem.separator()
     private let noExitNodeItem = NSMenuItem()
     private let paidAutomaticItem = NSMenuItem()
@@ -136,15 +139,18 @@ final class TrayController: NSObject {
         exitNodeSubmenuItem.title = "Internet Source"
         exitNodeSubmenuItem.submenu = exitNodeSubmenu
 
-        sellingSubmenuItem.title = "Sell internet"
+        sellingSubmenuItem.title = "Sell Internet Publicly"
         sellingSubmenuItem.submenu = sellingSubmenu
+        sellingCaptionItem.title = "Anyone can pay to use this connection"
+        sellingCaptionItem.isEnabled = false
         sellingUpstreamItem.isEnabled = false
         sellingStatusItem.isEnabled = false
         sellingSettingsItem.title = "Settings…"
         sellingSettingsItem.target = self
         sellingSettingsItem.action = #selector(handleOpenSelling)
-        sellingSubmenu.addItem(sellingUpstreamItem)
+        sellingSubmenu.addItem(sellingCaptionItem)
         sellingSubmenu.addItem(sellingStatusItem)
+        sellingSubmenu.addItem(sellingUpstreamItem)
         sellingSubmenu.addItem(.separator())
         sellingSubmenu.addItem(sellingSettingsItem)
 
@@ -152,7 +158,7 @@ final class TrayController: NSObject {
         exitNodeStatusItem.isEnabled = false
         exitNodeStatusItem.isHidden = true
 
-        offerExitItem.title = "Share This Device"
+        offerExitItem.title = "Share Internet with Trusted Devices"
         offerExitItem.target = self
         offerExitItem.action = #selector(handleToggleOfferExit)
 
@@ -173,7 +179,6 @@ final class TrayController: NSObject {
         wireGuardItem.action = #selector(handleSelectWireGuard)
 
         exitNodeSubmenu.addItem(exitNodeStatusItem)
-        exitNodeSubmenu.addItem(offerExitItem)
         exitNodeSubmenu.addItem(exitNodeSelectionSeparator)
         exitNodeSubmenu.addItem(noExitNodeItem)
         exitNodeSubmenu.addItem(paidAutomaticItem)
@@ -197,6 +202,8 @@ final class TrayController: NSObject {
         menu.addItem(.separator())
         menu.addItem(networkSubmenuItem)
         menu.addItem(exitNodeSubmenuItem)
+        menu.addItem(.separator())
+        menu.addItem(offerExitItem)
         menu.addItem(sellingSubmenuItem)
         menu.addItem(.separator())
         menu.addItem(openItem)
@@ -243,6 +250,9 @@ final class TrayController: NSObject {
         exitNodeSubmenuItem.image = snapshot.internetIndicator.image
         statusItem.button?.setAccessibilityLabel("Nostr VPN · \(snapshot.tooltip)")
         exitNodeStatusItem.isHidden = snapshot.exitNodeStatusText.isEmpty
+        exitNodeSelectionSeparator.isHidden = snapshot.exitNodeStatusText.isEmpty
+        offerExitItem.title = snapshot.shareTitle
+        offerExitItem.toolTip = snapshot.shareHelp
         offerExitItem.state = snapshot.advertiseExitNode ? .on : .off
         noExitNodeItem.state = snapshot.internetSource == "direct" ? .on : .off
         paidAutomaticItem.state = snapshot.internetSource == "paid_automatic" ? .on : .off
@@ -377,6 +387,8 @@ private struct MenuSnapshot: Equatable {
     let sellingUpstream: String
     let sellingStatus: String
     let advertiseExitNode: Bool
+    let shareTitle: String
+    let shareHelp: String
     let internetSource: String
     let paidInternetAvailable: Bool
     let wireGuardConfigured: Bool
@@ -435,9 +447,15 @@ private struct MenuSnapshot: Equatable {
         let trayIndicator = InternetExitIndicator.tray(
             connection: internetIndicator, selling: sellingIndicator,
             vpnEnabled: state.vpnEnabled, vpnActive: state.vpnActive)
+        let networkName = activeNetwork.map(\.name).flatMap { $0.isEmpty ? nil : $0 }
+        let shareTitle = "Share Internet with \(networkName ?? "Trusted Devices")"
+        let shareHelp = "Only devices in \(networkName ?? "this network") can use this Mac's internet. Nothing is offered publicly."
         var tooltip = "VPN: \(manager.vpnStatusText)\nInternet: \(internetTitle) · \(internetStatus)"
+        if state.advertiseExitNode {
+            tooltip += "\nSharing internet with trusted devices"
+        }
         if selling.enabled {
-            tooltip += "\n\(selling.internetText) · \(selling.statusText)"
+            tooltip += "\nSelling internet · \(selling.statusText)"
         }
 
         return MenuSnapshot(
@@ -457,6 +475,8 @@ private struct MenuSnapshot: Equatable {
             sellingUpstream: selling.internetText,
             sellingStatus: selling.statusText,
             advertiseExitNode: state.advertiseExitNode,
+            shareTitle: shareTitle,
+            shareHelp: shareHelp,
             internetSource: state.internetSource,
             paidInternetAvailable: state.paidRouteMarket.supported,
             wireGuardConfigured: state.wireguardExitConfigured,

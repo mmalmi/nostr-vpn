@@ -191,7 +191,7 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await expect(page.getByLabel('Block internet if exit node disconnects')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'WireGuard Upstream' })).toBeVisible();
     await expect(page.getByLabel('Config')).toBeVisible();
-    const exitToggleBox = await page.getByRole('checkbox', { name: 'Offer exit' }).boundingBox();
+    const exitToggleBox = await page.getByRole('checkbox', { name: "Share this device's internet" }).boundingBox();
     expect(exitToggleBox?.width).toBeLessThanOrEqual(40);
     expect(exitToggleBox?.height).toBeLessThanOrEqual(24);
 

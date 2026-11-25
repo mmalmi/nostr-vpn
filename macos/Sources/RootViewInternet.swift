@@ -148,7 +148,7 @@ extension RootView {
     var shareInternetSettings: some View {
         surface {
             HStack(spacing: 12) {
-                sectionHeader("Trusted devices", systemImage: "lock.shield.fill")
+                sectionHeader("Share with trusted devices", systemImage: "lock.shield.fill")
                 Spacer(minLength: 16)
                 Toggle("", isOn: Binding(
                     get: { state.advertiseExitNode },
@@ -159,7 +159,7 @@ extension RootView {
                 .accessibilityLabel("Share with trusted devices")
                 .disabled(manager.actionInFlight)
             }
-            Text("Only devices in \(shownNetworkLabel) can use it.")
+            Text("Only devices in \(shownNetworkLabel) can use this Mac's internet. Nothing is offered publicly.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -171,7 +171,7 @@ extension RootView {
 
     var paidExitSellerSummaryText: String {
         if !state.paidExitSeller.enabled {
-            return "People can pay to use this Mac's internet connection."
+            return "Anyone can pay to use this Mac's internet connection. Separate from sharing with trusted devices."
         }
         return "Sharing is on. Save changes to refresh the listing automatically."
     }

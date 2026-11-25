@@ -1554,32 +1554,32 @@
                 <div class="empty-state">{exitSearchQuery ? 'No exit nodes found' : 'No exit nodes offered'}</div>
               {/each}
             </div>
+            <label class="switch-row">
+              <span>Block internet if exit node disconnects</span>
+              <input
+                type="checkbox"
+                checked={state.exitNodeLeakProtection}
+                on:change={(event) =>
+                  setExitNodeLeakProtection((event.currentTarget as HTMLInputElement).checked)}
+              />
+            </label>
           </div>
 
           <div class="panel-stack">
             <div class="panel">
               <div class="section-heading">
                 <div>
-                  <h3>This Device</h3>
-                  <p>Exit node</p>
+                  <h3>Share with trusted devices</h3>
+                  <p>Only devices in your network can use this device's internet. Nothing is offered publicly.</p>
                 </div>
               </div>
               <label class="switch-row">
-                <span>Offer exit</span>
+                <span>Share this device's internet</span>
                 <input
                   type="checkbox"
                   checked={state.advertiseExitNode}
                   on:change={(event) =>
                     setAdvertiseExitNode((event.currentTarget as HTMLInputElement).checked)}
-                />
-              </label>
-              <label class="switch-row">
-                <span>Block internet if exit node disconnects</span>
-                <input
-                  type="checkbox"
-                  checked={state.exitNodeLeakProtection}
-                  on:change={(event) =>
-                    setExitNodeLeakProtection((event.currentTarget as HTMLInputElement).checked)}
                 />
               </label>
             </div>

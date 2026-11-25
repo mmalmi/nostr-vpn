@@ -237,6 +237,7 @@ fn empty_row(parent: &gtk::Box, text: &str) {
     let label = gtk::Label::new(Some(text));
     label.add_css_class("dim-label");
     label.set_xalign(0.0);
+    label.set_wrap(true);
     label.set_margin_top(4);
     parent.append(&label);
 }

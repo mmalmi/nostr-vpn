@@ -551,12 +551,12 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         ?? State.Networks.FirstOrDefault();
     public bool HasActiveNetwork => ActiveNetwork is not null;
     public bool ShowJoinRequestQr => !HasEnabledNetwork && !string.IsNullOrWhiteSpace(State.JoinRequestQrCodeOrLink);
-    public string OfferExitNodeLabel
+    public string ShareInternetCaption
     {
         get
         {
             var name = string.IsNullOrWhiteSpace(ActiveNetwork?.Name) ? "this network" : ActiveNetwork!.Name;
-            return $"Share this device's internet in {name}";
+            return $"Only devices in {name} can use it. Nothing is offered publicly.";
         }
     }
     public IEnumerable<NativeNetworkState> InactiveNetworks => State.Networks.Where(network => !network.Enabled);

@@ -187,7 +187,7 @@ public sealed partial class AppViewModel
         OnPropertyChanged(nameof(HasActiveNetwork));
         OnPropertyChanged(nameof(HasEnabledNetwork));
         OnPropertyChanged(nameof(ShowJoinRequestQr));
-        OnPropertyChanged(nameof(OfferExitNodeLabel));
+        OnPropertyChanged(nameof(ShareInternetCaption));
         OnPropertyChanged(nameof(InactiveNetworks));
         OnPropertyChanged(nameof(SelectedParticipantKey));
         OnPropertyChanged(nameof(SelectedParticipant));

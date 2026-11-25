@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use glib::variant::ToVariant;
-use image::{GenericImageView, Rgba, RgbaImage};
+use image::{Rgba, RgbaImage};
 use nostr_vpn_app_core::{NativeAppState, NativeNetworkState, NativeParticipantState};
 
 use crate::APP_ID;
@@ -103,7 +103,7 @@ const MENU_XML: &str = r#"
 </node>
 "#;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayCommand {
     ShowWindow,
     ToggleVpn,
@@ -112,17 +112,42 @@ pub enum TrayCommand {
     CopyPeer(String),
     SetInternetSource(String),
     SetExitNode(String),
+    OpenSellSettings,
     Quit,
 }
 
+/// Everything the D-Bus handlers serve, derived once per state change.
+struct TraySnapshot {
+    indicator: Indicator,
+    icon: glib::Variant,
+    tooltip: String,
+    menu: MenuNode,
+}
+
+impl TraySnapshot {
+    fn capture(state: &NativeAppState, previous: Option<&TraySnapshot>) -> Self {
+        let indicator = tray_indicator(state);
+        let icon = match previous {
+            Some(previous) if previous.indicator == indicator => previous.icon.clone(),
+            _ => tray_icon(indicator),
+        };
+        Self {
+            indicator,
+            icon,
+            tooltip: tray_tooltip(state),
+            menu: build_menu(state),
+        }
+    }
+}
+
 pub struct TrayRuntime {
-    state: Rc<RefCell<NativeAppState>>,
+    snapshot: Rc<RefCell<TraySnapshot>>,
     receiver: Receiver<TrayCommand>,
     connection: Option<gio::DBusConnection>,
     sni_registration: Option<gio::RegistrationId>,
     menu_registration: Option<gio::RegistrationId>,
     owner_id: Option<gio::OwnerId>,
-    menu_revision: Rc<RefCell<u32>>,
+    menu_revision: Rc<Cell<u32>>,
     last_error: Rc<RefCell<Option<String>>>,
     watcher_registered: Rc<Cell<bool>>,
 }
@@ -130,12 +155,12 @@ pub struct TrayRuntime {
 impl TrayRuntime {
     pub fn start(state: &NativeAppState) -> Self {
         let (sender, receiver) = mpsc::channel();
-        let state = Rc::new(RefCell::new(state.clone()));
-        let menu_revision = Rc::new(RefCell::new(1));
+        let snapshot = Rc::new(RefCell::new(TraySnapshot::capture(state, None)));
+        let menu_revision = Rc::new(Cell::new(1));
         let last_error = Rc::new(RefCell::new(None));
         let watcher_registered = Rc::new(Cell::new(false));
         let mut runtime = Self {
-            state: state.clone(),
+            snapshot: snapshot.clone(),
             receiver,
             connection: None,
             sni_registration: None,
@@ -177,7 +202,7 @@ impl TrayRuntime {
         };
 
         let sni_registration =
-            register_sni_object(&connection, &sni_info, state.clone(), sender.clone())
+            register_sni_object(&connection, &sni_info, snapshot.clone(), sender.clone())
                 .map_err(|error| {
                     *last_error.borrow_mut() = Some(format!("tray registration failed: {error}"));
                 })
@@ -186,7 +211,7 @@ impl TrayRuntime {
         let menu_registration = register_menu_object(
             &connection,
             &menu_info,
-            state.clone(),
+            snapshot,
             menu_revision.clone(),
             sender,
         )
@@ -235,27 +260,38 @@ impl TrayRuntime {
         runtime
     }
 
+    /// Signals only what changed: a layout update makes hosts rebuild the
+    /// menu, which closes a submenu the user has open.
     pub fn update(&self, state: &NativeAppState) {
-        self.state.replace(state.clone());
-        let next_revision = self.menu_revision.borrow().wrapping_add(1).max(1);
-        *self.menu_revision.borrow_mut() = next_revision;
-        if let Some(connection) = &self.connection {
+        let next = TraySnapshot::capture(state, Some(&self.snapshot.borrow()));
+        let previous = self.snapshot.replace(next);
+        let next = self.snapshot.borrow();
+        let Some(connection) = &self.connection else {
+            return;
+        };
+        if previous.indicator != next.indicator {
             let _ = connection.emit_signal(
                 None,
                 SNI_OBJECT_PATH,
                 SNI_INTERFACE,
                 "NewStatus",
-                Some(&(sni_status(state),).to_variant()),
+                Some(&(sni_status(next.indicator),).to_variant()),
             );
             let _ = connection.emit_signal(None, SNI_OBJECT_PATH, SNI_INTERFACE, "NewIcon", None);
+        }
+        if previous.tooltip != next.tooltip {
             let _ =
                 connection.emit_signal(None, SNI_OBJECT_PATH, SNI_INTERFACE, "NewToolTip", None);
+        }
+        if previous.menu != next.menu {
+            let revision = self.menu_revision.get().wrapping_add(1).max(1);
+            self.menu_revision.set(revision);
             let _ = connection.emit_signal(
                 None,
                 MENU_OBJECT_PATH,
                 MENU_INTERFACE,
                 "LayoutUpdated",
-                Some(&(*self.menu_revision.borrow(), 0i32).to_variant()),
+                Some(&(revision, 0i32).to_variant()),
             );
         }
     }
@@ -300,7 +336,7 @@ impl Drop for TrayRuntime {
 fn register_sni_object(
     connection: &gio::DBusConnection,
     interface_info: &gio::DBusInterfaceInfo,
-    state: Rc<RefCell<NativeAppState>>,
+    snapshot: Rc<RefCell<TraySnapshot>>,
     sender: Sender<TrayCommand>,
 ) -> Result<gio::RegistrationId, glib::Error> {
     connection
@@ -322,27 +358,30 @@ fn register_sni_object(
         })
         .property(
             move |_connection, _sender_name, _path, _interface, property| {
-                let state = state.borrow();
-                let icon = tray_icon(state.exit_node_blocked);
+                let snapshot = snapshot.borrow();
                 match property {
                     "Category" => "ApplicationStatus".to_variant(),
                     "Id" => APP_ID.to_variant(),
                     "Title" => "Nostr VPN".to_variant(),
-                    "Status" => sni_status(&state).to_variant(),
+                    "Status" => sni_status(snapshot.indicator).to_variant(),
                     "WindowId" => 0u32.to_variant(),
-                    "IconName" => "nostr-vpn".to_variant(),
-                    "IconPixmap" | "OverlayIconPixmap" | "AttentionIconPixmap" => icon.clone(),
-                    "OverlayIconName" | "AttentionIconName" | "AttentionMovieName" => {
+                    // Hosts prefer a themed icon name over pixmaps, which would
+                    // hide the status dot drawn into the pixmap.
+                    "IconName" | "OverlayIconName" | "AttentionIconName" | "AttentionMovieName" => {
                         String::new().to_variant()
                     }
+                    "IconPixmap" | "AttentionIconPixmap" => snapshot.icon.clone(),
+                    "OverlayIconPixmap" => empty_pixmaps(),
                     "ToolTip" => glib::Variant::tuple_from_iter([
-                        "nostr-vpn".to_variant(),
-                        icon.clone(),
+                        String::new().to_variant(),
+                        empty_pixmaps(),
                         "Nostr VPN".to_variant(),
-                        tray_status(&state).to_variant(),
+                        glib::markup_escape_text(&snapshot.tooltip).to_variant(),
                     ]),
                     "ItemIsMenu" => false.to_variant(),
-                    "Menu" => MENU_OBJECT_PATH.to_variant(),
+                    "Menu" => glib::variant::ObjectPath::try_from(MENU_OBJECT_PATH)
+                        .expect("menu object path")
+                        .to_variant(),
                     _ => glib::Variant::from_none(glib::VariantTy::VARIANT),
                 }
             },
@@ -353,30 +392,35 @@ fn register_sni_object(
 fn register_menu_object(
     connection: &gio::DBusConnection,
     interface_info: &gio::DBusInterfaceInfo,
-    state: Rc<RefCell<NativeAppState>>,
-    revision: Rc<RefCell<u32>>,
+    snapshot: Rc<RefCell<TraySnapshot>>,
+    revision: Rc<Cell<u32>>,
     sender: Sender<TrayCommand>,
 ) -> Result<gio::RegistrationId, glib::Error> {
     connection
         .register_object(MENU_OBJECT_PATH, interface_info)
         .method_call(
             move |_connection, _sender_name, _path, _interface, method, parameters, invocation| {
-                let state = state.borrow();
-                let root = build_menu(&state);
+                let snapshot = snapshot.borrow();
+                let root = &snapshot.menu;
                 match method {
                     "GetLayout" => {
-                        invocation.return_value(Some(
-                            &(*revision.borrow(), menu_node_layout(&root)).to_variant(),
-                        ));
+                        let parent = parameters.child_get::<i32>(0);
+                        let node = find_menu_node(root, parent).unwrap_or(root);
+                        // A Rust tuple holding a Variant serializes as `v`;
+                        // build the reply tuple so the layout keeps its type.
+                        invocation.return_value(Some(&glib::Variant::tuple_from_iter([
+                            revision.get().to_variant(),
+                            menu_node_layout(node),
+                        ])));
                     }
                     "GetGroupProperties" => {
                         let ids = parameters.child_get::<Vec<i32>>(0);
                         let items = if ids.is_empty() {
-                            menu_group_properties(&root)
+                            menu_group_properties(root)
                         } else {
                             ids.into_iter()
                                 .filter_map(|id| {
-                                    find_menu_node(&root, id).map(|node| {
+                                    find_menu_node(root, id).map(|node| {
                                         glib::Variant::tuple_from_iter([
                                             id.to_variant(),
                                             menu_properties(node).to_variant(),
@@ -387,12 +431,13 @@ fn register_menu_object(
                         };
                         let item_type = glib::VariantTy::new("(ia{sv})").expect("menu item type");
                         let properties = glib::Variant::array_from_iter_with_type(item_type, items);
-                        invocation.return_value(Some(&(properties,).to_variant()));
+                        invocation
+                            .return_value(Some(&glib::Variant::tuple_from_iter([properties])));
                     }
                     "GetProperty" => {
                         let id = parameters.child_get::<i32>(0);
                         let name = parameters.child_get::<String>(1);
-                        let value = find_menu_node(&root, id)
+                        let value = find_menu_node(root, id)
                             .and_then(|node| menu_properties(node).remove(&name))
                             .unwrap_or_else(|| false.to_variant());
                         invocation.return_value(Some(&(value,).to_variant()));
@@ -402,7 +447,7 @@ fn register_menu_object(
                         let event = parameters.child_get::<String>(1);
                         if event == "clicked" {
                             if let Some(command) =
-                                find_menu_node(&root, id).and_then(|node| node.command.clone())
+                                find_menu_node(root, id).and_then(|node| node.command.clone())
                             {
                                 let _ = sender.send(command);
                             }
@@ -419,7 +464,7 @@ fn register_menu_object(
         .build()
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct MenuNode {
     id: i32,
     label: String,
@@ -428,13 +473,17 @@ struct MenuNode {
     /// Display as a checkmark toggle (None = no toggle indicator).
     /// Renders via dbusmenu `toggle-type=checkmark` + `toggle-state`.
     toggle: Option<bool>,
+    /// PNG shown beside the label, used for status dots.
+    icon: Option<Vec<u8>>,
     command: Option<TrayCommand>,
     children: Vec<MenuNode>,
 }
 
+/// Mirrors macOS `TrayController`: the VPN toggle, this device, the network,
+/// where internet comes from, then private sharing and public selling kept
+/// apart so it is clear who can use this device's connection.
 fn build_menu(state: &NativeAppState) -> MenuNode {
-    // 1. VPN toggle (first), 2. device-name section, 3. network/exit submenus,
-    // 4. open/quit. See macOS TrayController.swift for the canonical layout.
+    let network = active_network(state);
     let mut children = vec![
         toggle_item(
             1,
@@ -443,10 +492,9 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
             state.vpn_enabled,
             TrayCommand::ToggleVpn,
         ),
-        // Status subtitle right below the toggle, mirrors macOS subtitle line.
-        label_node(2, &vpn_status_text(state), false),
+        label_node(2, &vpn_status_text(state)),
         separator(3),
-        label_node(4, &device_display_name(state), false),
+        label_node(4, &device_display_name(state)),
         item(
             5,
             "Copy Device ID",
@@ -456,94 +504,110 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
         separator(6),
     ];
 
-    if let Some(network) = active_network(state) {
-        children.push(MenuNode {
-            id: 20,
-            label: display_network_name(network),
-            enabled: true,
-            separator: false,
-            toggle: None,
-            command: None,
-            children: network
+    if let Some(network) = network {
+        children.push(submenu(
+            20,
+            &display_network_name(network),
+            network
                 .participants
                 .iter()
                 .enumerate()
                 .map(|(index, participant)| {
                     item(
-                        100 + index as i32,
+                        1000 + index as i32,
                         &participant_menu_title(participant),
                         !participant.npub.is_empty(),
                         TrayCommand::CopyPeer(participant.npub.clone()),
                     )
                 })
                 .collect(),
-        });
-
-        let mut exit_children: Vec<MenuNode> = Vec::new();
-        let status = tray_status(state);
-        if !status.is_empty() {
-            exit_children.push(label_node(29, &status, false));
-        }
-        exit_children.push(toggle_item(
-            30,
-            "Share This Device",
-            true,
-            state.advertise_exit_node,
-            TrayCommand::ToggleExitOffer,
         ));
-        exit_children.push(separator(31));
-        exit_children.push(radio_item(
-            32,
+    }
+
+    let mut internet = vec![
+        label_node(31, &internet_status(state)),
+        separator(32),
+        toggle_item(
+            33,
             "This Device",
+            true,
             state.internet_source == "direct",
             TrayCommand::SetInternetSource("direct".to_string()),
+        ),
+    ];
+    if state.paid_route_market.supported {
+        internet.push(toggle_item(
+            34,
+            "Paid Internet · Automatic · Experimental",
+            true,
+            state.internet_source == "paid_automatic",
+            TrayCommand::SetInternetSource("paid_automatic".to_string()),
         ));
-        if state.paid_route_market.supported {
-            exit_children.push(radio_item(
-                34,
-                "Paid Internet · Automatic",
-                state.internet_source == "paid_automatic",
-                TrayCommand::SetInternetSource("paid_automatic".to_string()),
-            ));
-            exit_children.push(radio_item(
-                35,
-                "Paid Internet · Manual",
-                state.internet_source == "paid_manual",
-                TrayCommand::SetInternetSource("paid_manual".to_string()),
-            ));
-        }
-        exit_children.push(toggle_item(
-            36,
-            "WireGuard VPN",
-            state.wireguard_exit_configured,
-            state.internet_source == "wireguard",
-            TrayCommand::SetInternetSource("wireguard".to_string()),
+        internet.push(toggle_item(
+            35,
+            "Paid Internet · Manual",
+            true,
+            state.internet_source == "paid_manual",
+            TrayCommand::SetInternetSource("paid_manual".to_string()),
         ));
-        exit_children.extend(
-            network
-                .participants
-                .iter()
-                .filter(|participant| participant.offers_exit_node && !is_self(participant, state))
-                .enumerate()
-                .map(|(index, participant)| {
-                    radio_item(
-                        200 + index as i32,
-                        &exit_node_label(participant),
-                        state.internet_source == "private_vpn"
-                            && state.exit_node == participant.npub,
-                        TrayCommand::SetExitNode(participant.npub.clone()),
-                    )
-                }),
+    }
+    internet.push(toggle_item(
+        36,
+        "WireGuard",
+        state.wireguard_exit_configured,
+        state.internet_source == "wireguard",
+        TrayCommand::SetInternetSource("wireguard".to_string()),
+    ));
+    let exits = exit_candidates(state);
+    if !exits.is_empty() {
+        internet.push(separator(37));
+        internet.extend(exits.iter().enumerate().map(|(index, participant)| {
+            toggle_item(
+                2000 + index as i32,
+                &exit_node_label(participant),
+                true,
+                state.internet_source == "private_vpn" && state.exit_node == participant.npub,
+                TrayCommand::SetExitNode(participant.npub.clone()),
+            )
+        }));
+    }
+    let mut internet = submenu(
+        30,
+        &format!("Internet · {}", internet_title(state)),
+        internet,
+    );
+    internet.icon = dot_png(internet_indicator(state));
+    children.push(internet);
+
+    children.push(separator(40));
+    children.push(toggle_item(
+        41,
+        &share_label(network),
+        true,
+        state.advertise_exit_node,
+        TrayCommand::ToggleExitOffer,
+    ));
+    let seller = &state.paid_exit_seller;
+    if seller.supported {
+        let mut sell = submenu(
+            50,
+            "Sell Internet Publicly",
+            vec![
+                label_node(51, "Anyone can pay to use this connection"),
+                label_node(52, &seller_status_text(seller)),
+                label_node(
+                    53,
+                    &format!(
+                        "Uplink: {}",
+                        non_empty(&seller.internet_text, "This device")
+                    ),
+                ),
+                separator(54),
+                item(55, "Settings…", true, TrayCommand::OpenSellSettings),
+            ],
         );
-        children.push(MenuNode {
-            id: 33,
-            label: "Internet Source".to_string(),
-            enabled: true,
-            separator: false,
-            toggle: None,
-            command: None,
-            children: exit_children,
-        });
+        sell.icon = dot_png(selling_indicator(state));
+        children.push(sell);
     }
 
     children.extend([
@@ -552,15 +616,28 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
         item(10, "Quit", true, TrayCommand::Quit),
     ]);
 
-    MenuNode {
-        id: 0,
-        label: String::new(),
-        enabled: true,
-        separator: false,
-        toggle: None,
-        command: None,
-        children,
+    let mut root = submenu(0, "", children);
+    root.enabled = true;
+    root
+}
+
+fn share_label(network: Option<&NativeNetworkState>) -> String {
+    match network.map(|network| network.name.trim()) {
+        Some(name) if !name.is_empty() => format!("Share Internet with {name}"),
+        _ => "Share Internet with Trusted Devices".to_string(),
     }
+}
+
+fn exit_candidates(state: &NativeAppState) -> Vec<&NativeParticipantState> {
+    active_network(state)
+        .map(|network| {
+            network
+                .participants
+                .iter()
+                .filter(|participant| participant.offers_exit_node && !is_self(participant, state))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn is_self(participant: &NativeParticipantState, state: &NativeAppState) -> bool {
@@ -576,6 +653,7 @@ fn item(id: i32, label: &str, enabled: bool, command: TrayCommand) -> MenuNode {
         enabled,
         separator: false,
         toggle: None,
+        icon: None,
         command: Some(command),
         children: Vec::new(),
     }
@@ -583,44 +661,30 @@ fn item(id: i32, label: &str, enabled: bool, command: TrayCommand) -> MenuNode {
 
 fn toggle_item(id: i32, label: &str, enabled: bool, on: bool, command: TrayCommand) -> MenuNode {
     MenuNode {
-        id,
-        label: label.to_string(),
-        enabled,
-        separator: false,
         toggle: Some(on),
-        command: Some(command),
-        children: Vec::new(),
+        ..item(id, label, enabled, command)
     }
 }
 
-fn radio_item(id: i32, label: &str, on: bool, command: TrayCommand) -> MenuNode {
-    // Reuse checkmark rendering for the exit-node selection list — most
-    // dbusmenu hosts render `toggle-type=radio` identically, but checkmarks
-    // are universally supported.
-    toggle_item(id, label, true, on, command)
+fn submenu(id: i32, label: &str, children: Vec<MenuNode>) -> MenuNode {
+    MenuNode {
+        command: None,
+        children,
+        ..item(id, label, true, TrayCommand::ShowWindow)
+    }
 }
 
 fn separator(id: i32) -> MenuNode {
     MenuNode {
-        id,
-        label: String::new(),
-        enabled: false,
         separator: true,
-        toggle: None,
-        command: None,
-        children: Vec::new(),
+        ..label_node(id, "")
     }
 }
 
-fn label_node(id: i32, label: &str, enabled: bool) -> MenuNode {
+fn label_node(id: i32, label: &str) -> MenuNode {
     MenuNode {
-        id,
-        label: label.to_string(),
-        enabled,
-        separator: false,
-        toggle: None,
         command: None,
-        children: Vec::new(),
+        ..item(id, label, false, TrayCommand::ShowWindow)
     }
 }
 
@@ -660,7 +724,14 @@ fn menu_properties(node: &MenuNode) -> HashMap<String, glib::Variant> {
     if node.separator {
         properties.insert("type".to_string(), "separator".to_variant());
     } else {
-        properties.insert("label".to_string(), node.label.to_variant());
+        // dbusmenu treats `_` as a mnemonic marker; device names may contain it.
+        properties.insert(
+            "label".to_string(),
+            node.label.replace('_', "__").to_variant(),
+        );
+    }
+    if let Some(icon) = &node.icon {
+        properties.insert("icon-data".to_string(), icon.to_variant());
     }
     if let Some(on) = node.toggle {
         properties.insert("toggle-type".to_string(), "checkmark".to_variant());
@@ -785,58 +856,171 @@ fn participant_menu_title(participant: &NativeParticipantState) -> String {
     }
 }
 
-fn tray_status(state: &NativeAppState) -> String {
+fn internet_title(state: &NativeAppState) -> String {
+    match state.internet_source.as_str() {
+        "wireguard" => "WireGuard".to_string(),
+        "private_vpn" => exit_candidates(state)
+            .into_iter()
+            .find(|participant| participant.npub == state.exit_node)
+            .map(exit_node_label)
+            .unwrap_or_else(|| "Private VPN".to_string()),
+        "paid_automatic" => "Automatic".to_string(),
+        "paid_manual" => "Paid VPN".to_string(),
+        _ => "Direct".to_string(),
+    }
+}
+
+fn internet_status(state: &NativeAppState) -> String {
     if !state.exit_node_status_text.trim().is_empty() {
-        return state.exit_node_status_text.clone();
+        state.exit_node_status_text.clone()
+    } else if state.internet_source == "direct" {
+        "Using device internet".to_string()
+    } else {
+        vpn_status_text(state)
     }
-    if state.vpn_active {
-        format!(
-            "{} of {} devices connected",
-            state.connected_peer_count, state.expected_peer_count
+}
+
+fn seller_status_text(
+    seller: &nostr_vpn_app_core::native_state::NativePaidExitSellerState,
+) -> String {
+    if !seller.enabled {
+        "Off".to_string()
+    } else {
+        non_empty(
+            &seller.status_text,
+            if seller.ready { "Ready" } else { "Waiting" },
         )
-    } else if !state.vpn_status.trim().is_empty() {
-        state.vpn_status.clone()
-    } else {
-        "Disconnected".to_string()
     }
 }
 
-fn sni_status(state: &NativeAppState) -> &'static str {
-    if state.exit_node_blocked {
-        return "NeedsAttention";
+fn non_empty(value: &str, fallback: &str) -> String {
+    if value.trim().is_empty() {
+        fallback.to_string()
+    } else {
+        value.to_string()
     }
-    if state.vpn_enabled {
+}
+
+fn tray_tooltip(state: &NativeAppState) -> String {
+    let mut tooltip = format!(
+        "VPN: {}\nInternet: {} · {}",
+        vpn_status_text(state),
+        internet_title(state),
+        internet_status(state)
+    );
+    if state.advertise_exit_node {
+        tooltip.push_str("\nSharing internet with trusted devices");
+    }
+    let seller = &state.paid_exit_seller;
+    if seller.enabled {
+        tooltip.push_str(&format!(
+            "\nSelling internet · {}",
+            seller_status_text(seller)
+        ));
+    }
+    tooltip
+}
+
+/// Same states and colors as macOS `InternetExitIndicator`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Indicator {
+    Hidden,
+    Connecting,
+    Connected,
+    Attention,
+}
+
+impl Indicator {
+    fn color(self) -> Option<Rgba<u8>> {
+        match self {
+            Self::Hidden => None,
+            Self::Connecting => Some(Rgba([255, 149, 0, 255])),
+            Self::Connected => Some(Rgba([52, 199, 89, 255])),
+            Self::Attention => Some(Rgba([255, 59, 48, 255])),
+        }
+    }
+}
+
+fn internet_indicator(state: &NativeAppState) -> Indicator {
+    if !state.vpn_enabled || state.internet_source == "direct" {
+        Indicator::Hidden
+    } else if state.exit_node_needs_attention || state.exit_node_blocked {
+        Indicator::Attention
+    } else if state.exit_node_active {
+        Indicator::Connected
+    } else {
+        Indicator::Connecting
+    }
+}
+
+fn selling_indicator(state: &NativeAppState) -> Indicator {
+    match (state.paid_exit_seller.enabled, state.paid_exit_seller.ready) {
+        (false, _) => Indicator::Hidden,
+        (true, true) => Indicator::Connected,
+        (true, false) => Indicator::Connecting,
+    }
+}
+
+fn tray_indicator(state: &NativeAppState) -> Indicator {
+    let connection = internet_indicator(state);
+    let selling = selling_indicator(state);
+    if connection == Indicator::Attention {
+        Indicator::Attention
+    } else if connection == Indicator::Connecting
+        || selling == Indicator::Connecting
+        || (state.vpn_enabled && !state.vpn_active)
+    {
+        Indicator::Connecting
+    } else if connection == Indicator::Connected
+        || selling == Indicator::Connected
+        || (state.vpn_enabled && state.vpn_active)
+    {
+        Indicator::Connected
+    } else {
+        Indicator::Hidden
+    }
+}
+
+/// Keeps the icon visible in hosts that hide passive items (Waybar does by
+/// default), as on macOS and Windows.
+fn sni_status(indicator: Indicator) -> &'static str {
+    if indicator == Indicator::Attention {
+        "NeedsAttention"
+    } else {
         "Active"
-    } else {
-        "Passive"
     }
 }
 
-fn tray_icon(blocked: bool) -> glib::Variant {
+fn empty_pixmaps() -> glib::Variant {
+    glib::Variant::array_from_iter_with_type(
+        glib::VariantTy::new("(iiay)").expect("icon pixmap type"),
+        std::iter::empty::<glib::Variant>(),
+    )
+}
+
+fn tray_icon(indicator: Indicator) -> glib::Variant {
     let icon_type = glib::VariantTy::new("(iiay)").expect("icon pixmap type");
     glib::Variant::array_from_iter_with_type(
         icon_type,
         [
-            tray_icon_pixmap(
-                include_bytes!("../resources/nostr-vpn-tray-24.png"),
-                blocked,
-            ),
-            tray_icon_pixmap(
-                include_bytes!("../resources/nostr-vpn-tray-48.png"),
-                blocked,
-            ),
-        ],
+            include_bytes!("../resources/nostr-vpn-tray-24.png").as_slice(),
+            include_bytes!("../resources/nostr-vpn-tray-48.png").as_slice(),
+        ]
+        .into_iter()
+        .map(|bytes| tray_icon_pixmap(bytes, indicator)),
     )
 }
 
-fn tray_icon_pixmap(bytes: &[u8], blocked: bool) -> glib::Variant {
+fn tray_icon_pixmap(bytes: &[u8], indicator: Indicator) -> glib::Variant {
     let mut image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
-        .expect("bundled tray icon is a valid PNG");
-    if blocked {
-        draw_blocked_dot(&mut image);
+        .expect("bundled tray icon is a valid PNG")
+        .into_rgba8();
+    if let Some(color) = indicator.color() {
+        draw_badge(&mut image, color);
     }
     let (width, height) = image.dimensions();
-    let mut data = image.into_rgba8().into_vec();
+    // StatusNotifierItem pixmaps are ARGB32 in network byte order.
+    let mut data = image.into_vec();
     for pixel in data.chunks_exact_mut(4) {
         pixel.rotate_right(1);
     }
@@ -847,54 +1031,103 @@ fn tray_icon_pixmap(bytes: &[u8], blocked: bool) -> glib::Variant {
     ])
 }
 
-fn draw_blocked_dot(image: &mut image::DynamicImage) {
-    let mut rgba = image.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    let radius = (width.min(height) / 5).max(3);
-    let center_x = width.saturating_sub(radius + 1);
-    let center_y = radius + 1;
-    draw_filled_circle(
-        &mut rgba,
-        center_x,
-        center_y,
-        radius,
-        Rgba([220, 38, 38, 255]),
-    );
-    *image = image::DynamicImage::ImageRgba8(rgba);
+/// Status dot in the bottom-right corner. A transparent ring separates it
+/// from the logo so the color reads on light and dark panels.
+fn draw_badge(image: &mut RgbaImage, color: Rgba<u8>) {
+    let size = image.width().min(image.height()) as f32;
+    let radius = size * 0.2;
+    let gap = (size / 16.0).max(1.5);
+    paint_dot(image, size - radius - 0.5, radius, gap, color);
 }
 
-fn draw_filled_circle(
-    image: &mut RgbaImage,
-    center_x: u32,
-    center_y: u32,
-    radius: u32,
-    color: Rgba<u8>,
-) {
-    let radius_squared = i64::from(radius) * i64::from(radius);
-    let min_x = center_x.saturating_sub(radius);
-    let max_x = (center_x + radius).min(image.width().saturating_sub(1));
-    let min_y = center_y.saturating_sub(radius);
-    let max_y = (center_y + radius).min(image.height().saturating_sub(1));
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
-            let dx = i64::from(x) - i64::from(center_x);
-            let dy = i64::from(y) - i64::from(center_y);
-            if dx * dx + dy * dy <= radius_squared {
-                image.put_pixel(x, y, color);
+/// Antialiased dot at (center, center), clearing `gap` pixels around it.
+fn paint_dot(image: &mut RgbaImage, center: f32, radius: f32, gap: f32, color: Rgba<u8>) {
+    for y in 0..image.height() {
+        for x in 0..image.width() {
+            let dx = x as f32 + 0.5 - center;
+            let dy = y as f32 + 0.5 - center;
+            let distance = (dx * dx + dy * dy).sqrt();
+            let pixel = image.get_pixel_mut(x, y);
+            let keep = (distance - radius - gap + 0.5).clamp(0.0, 1.0);
+            pixel[3] = (f32::from(pixel[3]) * keep).round() as u8;
+            let fill = (radius + 0.5 - distance).clamp(0.0, 1.0);
+            if fill > 0.0 {
+                let alpha = f32::from(pixel[3]) / 255.0;
+                let out = fill + alpha * (1.0 - fill);
+                for channel in 0..3 {
+                    pixel[channel] = ((f32::from(color[channel]) * fill
+                        + f32::from(pixel[channel]) * alpha * (1.0 - fill))
+                        / out)
+                        .round() as u8;
+                }
+                pixel[3] = (out * 255.0).round() as u8;
             }
         }
     }
+}
+
+/// Small colored dot for menu items, matching the macOS submenu images.
+fn dot_png(indicator: Indicator) -> Option<Vec<u8>> {
+    let color = indicator.color()?;
+    let mut image = RgbaImage::new(12, 12);
+    paint_dot(&mut image, 6.0, 4.0, 0.0, color);
+    let mut bytes = Vec::new();
+    image
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .ok()?;
+    Some(bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn ids(node: &MenuNode, out: &mut Vec<i32>) {
+        out.push(node.id);
+        node.children.iter().for_each(|child| ids(child, out));
+    }
+
     #[test]
-    fn menu_layout_has_dbusmenu_type() {
-        let state = NativeAppState::default();
+    fn menu_layout_has_unique_ids_and_keeps_private_sharing_apart_from_selling() {
+        let mut state = NativeAppState::default();
+        state.paid_exit_seller.supported = true;
         let root = build_menu(&state);
-        let layout = menu_node_layout(&root);
-        assert_eq!(layout.type_().as_str(), "(ia{sv}av)");
+        assert_eq!(menu_node_layout(&root).type_().as_str(), "(ia{sv}av)");
+        let reply = glib::Variant::tuple_from_iter([1u32.to_variant(), menu_node_layout(&root)]);
+        assert_eq!(reply.type_().as_str(), "(u(ia{sv}av))");
+
+        let mut all = Vec::new();
+        ids(&root, &mut all);
+        let count = all.len();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), count, "dbusmenu ids must be unique");
+
+        let share = root
+            .children
+            .iter()
+            .find(|node| node.command == Some(TrayCommand::ToggleExitOffer))
+            .expect("private sharing is a top-level toggle");
+        assert_eq!(share.label, "Share Internet with Trusted Devices");
+        for submenu in root
+            .children
+            .iter()
+            .filter(|node| !node.children.is_empty())
+        {
+            assert!(
+                submenu
+                    .children
+                    .iter()
+                    .all(|node| node.command != Some(TrayCommand::ToggleExitOffer))
+            );
+        }
+        assert!(
+            root.children
+                .iter()
+                .any(|node| node.label == "Sell Internet Publicly")
+        );
     }
 }

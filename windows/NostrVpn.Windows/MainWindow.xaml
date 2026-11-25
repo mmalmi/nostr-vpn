@@ -507,10 +507,24 @@
             </Border>
 
             <Border Style="{StaticResource Card}">
+              <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Block internet if source disconnects" IsChecked="{Binding State.ExitNodeLeakProtection, Mode=OneWay}" Click="ExitLeakProtection_Click" />
+            </Border>
+
+            <!-- Private sharing and public selling stay in separate cards so it
+                 is clear who can use this device's connection. -->
+            <Border Style="{StaticResource Card}">
               <StackPanel>
+                <TextBlock Text="Share with trusted devices" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Share this device's internet" IsChecked="{Binding State.AdvertiseExitNode, Mode=OneWay}" Click="AdvertiseExit_Click" />
-                <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Block internet if source disconnects" IsChecked="{Binding State.ExitNodeLeakProtection, Mode=OneWay}" Click="ExitLeakProtection_Click" Margin="0,10,0,0" />
-                <Button Content="Sell internet access · Experimental" Command="{Binding ShowSellAccessCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock Text="{Binding ShareInternetCaption}" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,8,0,0" />
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="Sell internet publicly" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Anyone can pay to use this device's internet · Experimental" Foreground="{DynamicResource TextSecondary}" TextWrapping="Wrap" Margin="0,2,0,10" />
+                <Button Content="Selling settings" Command="{Binding ShowSellAccessCommand}" HorizontalAlignment="Left" />
               </StackPanel>
             </Border>
 
