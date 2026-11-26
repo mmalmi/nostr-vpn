@@ -72,12 +72,14 @@ fn paid_route_peers_from_admissions(
             let participant_pubkey = parse_nostr_pubkey_bytes(&admission.participant_pubkey)?;
             let endpoint_node_addr = endpoint_node_addr_from_pubkey_bytes(participant_pubkey);
             let endpoint_npub = npub_for_pubkey_bytes(&participant_pubkey).ok()?;
+            let has_default_route = routes.iter().any(|route| route.is_default_route());
             Some(FipsMeshPeerRuntime {
                 participant_pubkey: Some(participant_pubkey),
                 participant_pubkey_hex: hex::encode(participant_pubkey),
                 endpoint_npub: Some(endpoint_npub),
                 endpoint_node_addr: Some(endpoint_node_addr),
                 routes,
+                has_default_route,
             })
         })
         .collect::<Vec<_>>();

@@ -6,59 +6,95 @@ const EXIT_TCP_IDLE: Duration = Duration::from_secs(5 * 24 * 60 * 60);
 const EXIT_UDP_IDLE: Duration = Duration::from_secs(3 * 60);
 const EXIT_ICMP_IDLE: Duration = Duration::from_secs(30);
 
+#[derive(Debug, Clone, Copy)]
+struct ExitFlowEntry {
+    seen: Instant,
+    generation: u64,
+}
+
 #[derive(Debug, Default)]
 pub struct ExitFlowFilter {
-    flows: HashMap<ExitFlowKey, Instant>,
-    order: VecDeque<ExitFlowKey>,
+    flows: HashMap<ExitFlowKey, ExitFlowEntry>,
+    order: VecDeque<(ExitFlowKey, u64)>,
+    next_generation: u64,
 }
 
 impl ExitFlowFilter {
     pub fn note_outbound(&mut self, peer: [u8; 16], packet: &[u8]) {
-        let Some(key) = outbound_exit_flow_key(peer, packet, false) else {
-            return;
-        };
-        let now = Instant::now();
-        if let Some(seen) = self.flows.get_mut(&key) {
-            *seen = now;
-            return;
+        if let Some(key) = Self::outbound_key(peer, packet) {
+            self.note_outbound_key(key, Instant::now());
         }
-        while self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
-            let Some(oldest) = self.order.pop_front() else {
-                break;
-            };
-            self.flows.remove(&oldest);
-        }
-        self.flows.insert(key, now);
-        self.order.push_back(key);
     }
 
     pub fn admits_inbound(&mut self, peer: [u8; 16], packet: &[u8]) -> bool {
-        let Some(transport) = complete_ip_transport(packet) else {
-            return false;
-        };
+        Self::inbound_key(peer, packet)
+            .is_some_and(|key| self.admits_inbound_key(key, Instant::now()))
+    }
+
+    pub(crate) fn outbound_key(peer: [u8; 16], packet: &[u8]) -> Option<ExitFlowKey> {
+        outbound_exit_flow_key(peer, packet, false)
+    }
+
+    pub(crate) fn inbound_key(peer: [u8; 16], packet: &[u8]) -> Option<ExitFlowKey> {
+        let transport = complete_ip_transport(packet)?;
         if !is_public_exit_source(transport.source_addr) {
-            return false;
+            return None;
         }
-        let Some(key) = inbound_exit_flow_key(peer, packet, transport) else {
-            return false;
-        };
+        inbound_exit_flow_key(peer, packet, transport)
+    }
+
+    pub(crate) fn note_outbound_key(&mut self, key: ExitFlowKey, now: Instant) {
+        if let Some(entry) = self.flows.get_mut(&key) {
+            entry.seen = now;
+            return;
+        }
+        while self.flows.len() >= MAX_TRACKED_EXIT_FLOWS {
+            let Some((oldest, generation)) = self.order.pop_front() else {
+                break;
+            };
+            if self
+                .flows
+                .get(&oldest)
+                .is_some_and(|entry| entry.generation == generation)
+            {
+                self.flows.remove(&oldest);
+            }
+        }
+        let generation = self.next_generation;
+        self.next_generation = self.next_generation.wrapping_add(1);
+        self.flows.insert(
+            key,
+            ExitFlowEntry {
+                seen: now,
+                generation,
+            },
+        );
+        self.order.push_back((key, generation));
+        if self.order.len() > MAX_TRACKED_EXIT_FLOWS * 2 {
+            self.order.retain(|(candidate, generation)| {
+                self.flows
+                    .get(candidate)
+                    .is_some_and(|entry| entry.generation == *generation)
+            });
+        }
+    }
+
+    pub(crate) fn admits_inbound_key(&mut self, key: ExitFlowKey, now: Instant) -> bool {
         let timeout = exit_flow_timeout(key.protocol);
-        let now = Instant::now();
-        let Some(seen) = self.flows.get_mut(&key) else {
+        let Some(entry) = self.flows.get_mut(&key) else {
             return false;
         };
-        if now.saturating_duration_since(*seen) > timeout {
+        if now.saturating_duration_since(entry.seen) > timeout {
             self.flows.remove(&key);
-            self.order.retain(|candidate| candidate != &key);
             return false;
         }
-        *seen = now;
+        entry.seen = now;
         true
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct ExitFlowKey {
+pub(crate) struct ExitFlowKey {
     peer: [u8; 16],
     local_addr: IpAddressKey,
     remote_addr: IpAddressKey,

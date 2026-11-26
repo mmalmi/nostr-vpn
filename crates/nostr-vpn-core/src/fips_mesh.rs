@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
@@ -111,9 +112,11 @@ pub struct FipsEndpointSourceAdmitter<'a> {
     credit_window: Option<&'a CreditWindow>,
 }
 
+/// Route lookups for one peer in one receive batch. Flow admission runs per packet.
 #[derive(Debug, Default, Clone)]
 pub struct FipsEndpointAdmissionCache {
     source: Option<(IpAddr, bool)>,
+    source_uses_default_route: Option<(IpAddr, bool)>,
     destination: Option<(IpAddr, bool)>,
 }
 
@@ -147,6 +150,7 @@ struct FipsMeshPeerRuntime {
     endpoint_npub: Option<String>,
     endpoint_node_addr: Option<[u8; 16]>,
     routes: Vec<IpRoute>,
+    has_default_route: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,11 +244,12 @@ impl FipsMeshRuntime {
         let peers = peers
             .into_iter()
             .map(|peer| {
-                let routes = peer
+                let routes: Vec<IpRoute> = peer
                     .allowed_ips
                     .iter()
                     .filter_map(|route| IpRoute::parse(route))
                     .collect();
+                let has_default_route = routes.iter().any(|route| route.is_default_route());
 
                 let endpoint_pubkey = parse_nostr_pubkey_bytes(&peer.endpoint_npub);
                 let endpoint_node_addr = endpoint_pubkey.map(endpoint_node_addr_from_pubkey_bytes);
@@ -259,6 +264,7 @@ impl FipsMeshRuntime {
                     endpoint_npub,
                     endpoint_node_addr,
                     routes,
+                    has_default_route,
                 }
             })
             .collect::<Vec<_>>();
@@ -588,6 +594,9 @@ impl FipsMeshRuntime {
     }
 
     fn peer_uses_default_route(&self, peer: &FipsMeshPeerRuntime, address: IpAddr) -> bool {
+        if !peer.has_default_route {
+            return false;
+        }
         peer.routes
             .iter()
             .filter(|route| route.matches(address))
@@ -602,14 +611,15 @@ impl FipsMeshRuntime {
         let Some(peer) = peer.endpoint_node_addr else {
             return;
         };
-        if let Ok(mut flows) = self.exit_flows.lock() {
-            flows.note_outbound(peer, packet);
-        }
+        self.note_cached_exit_outbound(peer, packet);
     }
 
     pub fn note_cached_exit_outbound(&self, peer: [u8; 16], packet: &[u8]) {
+        let Some(key) = ExitFlowFilter::outbound_key(peer, packet) else {
+            return;
+        };
         if let Ok(mut flows) = self.exit_flows.lock() {
-            flows.note_outbound(peer, packet);
+            flows.note_outbound_key(key, Instant::now());
         }
     }
 
@@ -618,16 +628,34 @@ impl FipsMeshRuntime {
         peer: &FipsMeshPeerRuntime,
         source: IpAddr,
         packet: &[u8],
+        cache: Option<&mut FipsEndpointAdmissionCache>,
     ) -> bool {
-        if !self.peer_uses_default_route(peer, source) {
+        if !peer.has_default_route {
             return true;
         }
-        let Some(peer) = peer.endpoint_node_addr else {
+        let uses_default = match cache {
+            Some(cache) => match cache.source_uses_default_route {
+                Some((cached_source, uses_default)) if cached_source == source => uses_default,
+                _ => {
+                    let uses_default = self.peer_uses_default_route(peer, source);
+                    cache.source_uses_default_route = Some((source, uses_default));
+                    uses_default
+                }
+            },
+            None => self.peer_uses_default_route(peer, source),
+        };
+        if !uses_default {
+            return true;
+        }
+        let Some(peer_addr) = peer.endpoint_node_addr else {
+            return false;
+        };
+        let Some(key) = ExitFlowFilter::inbound_key(peer_addr, packet) else {
             return false;
         };
         self.exit_flows
             .lock()
-            .is_ok_and(|mut flows| flows.admits_inbound(peer, packet))
+            .is_ok_and(|mut flows| flows.admits_inbound_key(key, Instant::now()))
     }
 }
 
@@ -701,7 +729,7 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         }
         if !self
             .runtime
-            .admits_exit_inbound(self.peer, packet_source, data)
+            .admits_exit_inbound(self.peer, packet_source, data, cache)
         {
             return None;
         }
