@@ -56,15 +56,34 @@ impl FipsPrivateTunnelRuntime {
                 config.interface_mtu(),
                 linux_tun_tx_queue_len(),
             );
+        // The fd00::/8 main-table rule survives interface deletion in RPDB.
+        // Only a rule this runtime created is journaled as owned; a rule that
+        // already exists is borrowed and left to whoever installed it.
+        let fd00_main_rule = main_routes.iter().any(|route| route == "fd00::/8")
+            && interface_addresses
+                .iter()
+                .any(|address| crate::linux_tunnel_address_is_ipv6(address));
         if !unchanged_control_only_state {
+            if self.mesh_fd00_main_rule && !fd00_main_rule {
+                crate::remove_linux_fd00_main_rule()
+                    .context("remove mesh fd00::/8 main-table policy rule")?;
+                self.mesh_fd00_main_rule = false;
+            }
             self.persist_network_cleanup_ownership()?;
-            crate::apply_local_interface_network_with_mtu_and_addresses(
-                &self.iface,
-                &interface_addresses,
-                &main_routes,
-                config.interface_mtu(),
-            )
-            .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
+            let fd00_rule_created =
+                crate::apply_local_interface_network_with_mtu_and_addresses(
+                    &self.iface,
+                    &interface_addresses,
+                    &main_routes,
+                    config.interface_mtu(),
+                )
+                .with_context(|| {
+                    format!("failed to configure FIPS tunnel interface {}", self.iface)
+                })?;
+            if fd00_rule_created && !self.mesh_fd00_main_rule {
+                self.mesh_fd00_main_rule = true;
+                self.persist_network_cleanup_ownership()?;
+            }
             apply_linux_tun_tx_queue_len(&self.iface)?;
             self.reconcile_linux_exit_node_forwarding(
                 config,

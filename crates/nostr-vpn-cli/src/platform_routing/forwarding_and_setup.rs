@@ -431,13 +431,90 @@ fn remove_stale_linux_interface_addresses(iface: &str, desired: &[String]) -> Re
     Ok(())
 }
 
+// This mesh rule lives in RPDB beyond the tunnel interface lifetime, so Linux
+// cleanup state journals its ownership and removes it during teardown.
+#[cfg(any(target_os = "linux", test))]
+fn linux_fd00_main_rule_present(rules: &str) -> bool {
+    rules.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with("5265:")
+            && line.contains("to fd00::/8 ")
+            && line.contains("lookup main")
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_ipv6_rule_show() -> Result<String> {
+    let output = ProcessCommand::new("ip")
+        .args(["-6", "rule", "show"])
+        .output()
+        .context("inspect Linux IPv6 policy rules")?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "inspect Linux IPv6 policy rules failed with {}",
+            output.status
+        ));
+    }
+    std::str::from_utf8(&output.stdout)
+        .context("Linux IPv6 policy rules were not UTF-8")
+        .map(str::to_owned)
+}
+
+// Returns whether this call created the rule. A pre-existing identical rule is
+// borrowed from whoever installed it, so it must not be journaled for our
+// cleanup.
+#[cfg(target_os = "linux")]
+pub(crate) fn ensure_linux_fd00_main_rule() -> Result<bool> {
+    if linux_fd00_main_rule_present(&linux_ipv6_rule_show()?) {
+        return Ok(false);
+    }
+    run_checked(
+        ProcessCommand::new("ip").args([
+            "-6",
+            "rule",
+            "add",
+            "to",
+            "fd00::/8",
+            "table",
+            "main",
+            "priority",
+            "5265",
+        ]),
+    )
+    .context("add mesh fd00::/8 main-table policy rule")?;
+    Ok(true)
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn remove_linux_fd00_main_rule() -> Result<()> {
+    if !linux_fd00_main_rule_present(&linux_ipv6_rule_show()?) {
+        return Ok(());
+    }
+    run_checked(
+        ProcessCommand::new("ip").args([
+            "-6",
+            "rule",
+            "del",
+            "to",
+            "fd00::/8",
+            "table",
+            "main",
+            "priority",
+            "5265",
+        ]),
+    )
+    .context("remove mesh fd00::/8 main-table policy rule")
+}
+
+// Returns whether the Linux fd00::/8 main-table policy rule was created by
+// this call; on Linux a pre-existing rule is borrowed, not owned.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
     iface: &str,
     addresses: &[String],
     route_targets: &[String],
     mtu: u16,
-) -> Result<()> {
+) -> Result<bool> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     let mtu = mtu.to_string();
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -474,6 +551,7 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
                 .arg("dev")
                 .arg(iface),
         )?;
+        let mut fd00_rule_created = false;
         for target in route_targets {
             if linux_route_target_is_ipv4(target) && !local_has_ipv4 {
                 continue;
@@ -489,20 +567,10 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
             ));
             run_checked(&mut command)?;
             if target == "fd00::/8" {
-                let _ = ProcessCommand::new("ip")
-                    .arg("-6")
-                    .arg("rule")
-                    .arg("add")
-                    .arg("to")
-                    .arg(target)
-                    .arg("table")
-                    .arg("main")
-                    .arg("priority")
-                    .arg("5265")
-                    .status();
+                fd00_rule_created |= ensure_linux_fd00_main_rule()?;
             }
         }
-        return Ok(());
+        return Ok(fd00_rule_created);
     }
 
     #[cfg(target_os = "macos")]
@@ -548,7 +616,7 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
         for target in route_targets {
             apply_macos_route(iface, target)?;
         }
-        return Ok(());
+        return Ok(false);
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]

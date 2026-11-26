@@ -128,6 +128,26 @@ mod tests {
     }
 
     #[test]
+    fn linux_fd00_main_rule_presence_matches_only_the_owned_rule() {
+        let rules = "0:\tfrom all lookup local\n\
+                     5265:\tfrom all to fd00::/8 lookup main\n\
+                     32766:\tfrom all lookup main\n";
+        assert!(linux_fd00_main_rule_present(rules));
+        assert!(!linux_fd00_main_rule_present(
+            "0:\tfrom all lookup local\n32766:\tfrom all lookup main\n"
+        ));
+        assert!(!linux_fd00_main_rule_present(
+            "5265:\tfrom all to fd00::/8 lookup 20054\n"
+        ));
+        assert!(!linux_fd00_main_rule_present(
+            "5265:\tfrom all to fd00::/80 lookup main\n"
+        ));
+        assert!(!linux_fd00_main_rule_present(
+            "52650:\tfrom all to fd00::/8 lookup main\n"
+        ));
+    }
+
+    #[test]
     fn linux_tunnel_address_reconciliation_removes_only_stale_owned_addresses() {
         let state = r#"[{
             "addr_info": [
