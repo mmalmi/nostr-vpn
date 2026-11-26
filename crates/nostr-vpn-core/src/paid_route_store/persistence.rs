@@ -1,5 +1,6 @@
 use super::*;
 use std::fs::OpenOptions;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::fs::File;
@@ -30,9 +31,18 @@ pub fn paid_route_payment_id(envelope: &StreamingRoutePaymentEnvelope) -> Result
 }
 
 pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
+    read_paid_route_store(path).map(|(store, _)| store)
+}
+
+/// Reads the store. An unreadable file yields an empty store plus the file's
+/// contents, which the next locked write keeps beside the store (it holds the
+/// channels that collection and refunds find their work through).
+fn read_paid_route_store(path: &Path) -> Result<(PaidRouteStore, Option<String>)> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(PaidRouteStore::default()),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok((PaidRouteStore::default(), None));
+        }
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("failed to read paid route store {}", path.display()));
@@ -43,10 +53,10 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
         Ok(value) => value,
         Err(error) => {
             eprintln!(
-                "discarding unreadable paid route store {}: {error}",
+                "ignoring unreadable paid route store {}: {error}",
                 path.display()
             );
-            return Ok(PaidRouteStore::default());
+            return Ok((PaidRouteStore::default(), Some(raw)));
         }
     };
     let stored_version = value
@@ -76,14 +86,37 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
         Ok(store) => store,
         Err(error) => {
             eprintln!(
-                "discarding unreadable paid route store {}: {error}",
+                "ignoring unreadable paid route store {}: {error}",
                 path.display()
             );
-            return Ok(PaidRouteStore::default());
+            return Ok((PaidRouteStore::default(), Some(raw)));
         }
     };
     store.retain_valid();
-    Ok(store)
+    Ok((store, None))
+}
+
+/// Copies an unreadable store aside before it is replaced, so a downgrade or a
+/// damaged file never silently drops payment recovery state.
+fn keep_unreadable_paid_route_store(path: &Path, raw: &str) -> Result<()> {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let kept = path.with_extension(format!("json.unreadable-{suffix}"));
+    crate::config::write_private_file_preserving_user_owner(&kept, raw.as_bytes()).with_context(
+        || {
+            format!(
+                "failed to keep unreadable paid route store {}",
+                kept.display()
+            )
+        },
+    )?;
+    eprintln!(
+        "kept unreadable paid route store {} as {}",
+        path.display(),
+        kept.display()
+    );
+    Ok(())
 }
 
 fn write_paid_route_store(path: &Path, store: &PaidRouteStore) -> Result<()> {
@@ -165,10 +198,13 @@ pub fn update_paid_route_store<T>(
     #[cfg(unix)]
     repair_paid_route_lock(&lock, &lock_path, preferred_paid_route_lock_owner(path))?;
 
-    let mut store = load_paid_route_store(path)?;
+    let (mut store, unreadable) = read_paid_route_store(path)?;
     let original = store.clone();
     let result = update(&mut store)?;
     if store != original {
+        if let Some(raw) = unreadable {
+            keep_unreadable_paid_route_store(path, &raw)?;
+        }
         write_paid_route_store(path, &store)?;
     }
     Ok(result)
