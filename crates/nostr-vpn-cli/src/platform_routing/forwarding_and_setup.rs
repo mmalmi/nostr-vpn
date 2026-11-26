@@ -153,8 +153,151 @@ pub(crate) fn linux_exit_node_legacy_forward_out_rule(
     ]
 }
 
+// The exit NAT matches the interface a connection entered on. iptables cannot
+// match it at POSTROUTING, and the source range alone also matches a local
+// network numbered inside the mesh range.
 #[cfg(target_os = "linux")]
-pub(crate) fn linux_exit_node_ipv4_masquerade_rule(
+fn linux_nft_name(name: &str) -> Result<&str> {
+    if name.is_empty()
+        || name.len() > 15
+        || !name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+    {
+        return Err(anyhow!("unsupported interface name for nftables: {name:?}"));
+    }
+    Ok(name)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_exit_node_nat_table(tunnel_iface: &str) -> Result<String> {
+    Ok(format!("nvpn_exit_nat_{}", linux_nft_name(tunnel_iface)?))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_exit_node_ipv4_nat_script(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Result<String> {
+    let table = linux_exit_node_nat_table(tunnel_iface)?;
+    let outbound_iface = linux_nft_name(outbound_iface)?;
+    let (address, prefix) = tunnel_source_cidr
+        .split_once('/')
+        .ok_or_else(|| anyhow!("invalid exit source range: {tunnel_source_cidr}"))?;
+    let address = address
+        .parse::<Ipv4Addr>()
+        .with_context(|| format!("invalid exit source range: {tunnel_source_cidr}"))?;
+    let prefix = prefix
+        .parse::<u8>()
+        .ok()
+        .filter(|prefix| *prefix <= 32)
+        .ok_or_else(|| anyhow!("invalid exit source range: {tunnel_source_cidr}"))?;
+    // Declaring the table first makes the delete succeed on first install, so
+    // the replacement is one atomic transaction.
+    Ok(format!(
+        "table ip {table}\n\
+         delete table ip {table}\n\
+         table ip {table} {{\n\
+         \tchain postrouting {{\n\
+         \t\ttype nat hook postrouting priority 100; policy accept;\n\
+         \t\tiifname \"{tunnel_iface}\" oifname \"{outbound_iface}\" ip saddr {address}/{prefix} counter masquerade\n\
+         \t}}\n\
+         }}\n"
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_nft(script: &str) -> Result<()> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = ProcessCommand::new("nft")
+        .args(["-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Linux exit NAT requires nftables: failed to run nft")?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("nft stdin unavailable"))?
+        .write_all(script.as_bytes())?;
+    let output = child.wait_with_output()?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "nft: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Masquerades IPv4 traffic that entered on the mesh interface and leaves on
+/// the uplink. Replaces the iptables rule earlier versions installed.
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_exit_node_apply_ipv4_nat(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Result<()> {
+    linux_nft(&linux_exit_node_ipv4_nat_script(
+        tunnel_iface,
+        outbound_iface,
+        tunnel_source_cidr,
+    )?)?;
+    linux_iptables_delete_rule(
+        LinuxExitNodeIpFamily::V4,
+        Some("nat"),
+        &linux_exit_node_ipv4_legacy_masquerade_rule(outbound_iface, tunnel_source_cidr),
+    )
+}
+
+/// Removes nvpn's exit NAT table and the iptables rule earlier versions used.
+#[cfg(target_os = "linux")]
+pub(crate) fn linux_exit_node_remove_ipv4_nat(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+) -> Result<()> {
+    let mut failures = Vec::new();
+    // Install refuses an interface name nftables cannot express, so no table
+    // exists for one; the iptables rule below is still removed.
+    if let Ok(table) = linux_exit_node_nat_table(tunnel_iface)
+        && let Err(error) = linux_nft(&format!("table ip {table}\ndelete table ip {table}\n"))
+    {
+        // Without nft the table cannot be removed or listed. A table left
+        // behind only matches the mesh interface, so it cannot touch a local
+        // network's traffic.
+        if error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        {
+            eprintln!("fips: skipping unavailable nftables exit NAT cleanup: {error:#}");
+        } else {
+            failures.push(format!("remove exit NAT table: {error:#}"));
+        }
+    }
+    if let Err(error) = linux_iptables_delete_rule(
+        LinuxExitNodeIpFamily::V4,
+        Some("nat"),
+        &linux_exit_node_ipv4_legacy_masquerade_rule(outbound_iface, tunnel_source_cidr),
+    ) {
+        failures.push(format!("remove legacy masquerade rule: {error:#}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(failures.join("; ")))
+    }
+}
+
+// Earlier versions masqueraded the whole source range with iptables, which
+// also covered a local network inside it. Upgrade and cleanup remove it.
+#[cfg(target_os = "linux")]
+fn linux_exit_node_ipv4_legacy_masquerade_rule(
     outbound_iface: &str,
     tunnel_source_cidr: &str,
 ) -> Vec<String> {
@@ -284,27 +427,6 @@ fn linux_iptables_rule_exists(
         stdout.trim(),
         stderr.trim()
     ))
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn linux_iptables_ensure_rule(
-    family: LinuxExitNodeIpFamily,
-    table: Option<&str>,
-    rule: &[String],
-) -> Result<()> {
-    if linux_iptables_rule_exists(family, table, rule)? {
-        return Ok(());
-    }
-
-    let mut command = ProcessCommand::new(linux_exit_node_firewall_binary(family));
-    if let Some(table) = table {
-        command.arg("-t").arg(table);
-    }
-    command.arg("-A");
-    for arg in rule {
-        command.arg(arg);
-    }
-    run_checked(&mut command)
 }
 
 #[cfg(target_os = "linux")]
@@ -563,4 +685,166 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_tunnel_ipv4_netmask() -> &'static str {
     "255.255.255.255"
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_exit_nat_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const RECEIVED: &str = "/tmp/exit-nat-received";
+    const HOST_SNAT: &[&str] = &[
+        "POSTROUTING", "-o", "uplink0", "-s", "10.44.0.0/24", "-j", "SNAT", "--to-source",
+        "192.0.2.99",
+    ];
+    const HOST_LAN_MARK: &[&str] = &[
+        "PREROUTING", "-i", "lan0", "-j", "CONNMARK", "--set-xmark", "0x1000000/0x1000000",
+    ];
+
+    fn run(program: &str, args: &[&str]) -> String {
+        let output = Command::new(program).args(args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{program} {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    fn iptables_has(table: &str, rule: &[&str]) -> bool {
+        Command::new("iptables")
+            .args(["-t", table, "-C"])
+            .args(rule)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    }
+
+    /// Sends one datagram from a new socket and returns the source address the
+    /// internet side saw.
+    fn source_seen_from(namespace: &str, payload: &str) -> String {
+        run(
+            "ip",
+            &[
+                "netns",
+                "exec",
+                namespace,
+                "python3",
+                "-c",
+                "import socket,sys\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\ns.sendto(sys.argv[1].encode(),('192.0.2.2',39002))",
+                payload,
+            ],
+        );
+        let suffix = format!(" {payload}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let received = std::fs::read_to_string(RECEIVED).unwrap_or_default();
+            if let Some(source) = received.lines().find_map(|line| line.strip_suffix(&suffix)) {
+                return source.to_owned();
+            }
+            assert!(Instant::now() < deadline, "{payload} never reached the internet");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    #[ignore = "run with scripts/test-linux-egress-lifecycle in an isolated root namespace"]
+    fn exit_nat_masquerades_only_traffic_from_the_mesh_interface() {
+        assert_eq!(std::env::var("NVPN_EGRESS_ISOLATED").as_deref(), Ok("1"));
+        assert_eq!(std::fs::read_dir("/sys/class/net").unwrap().count(), 1);
+        // This namespace is the exit. Its LAN is numbered inside the mesh range.
+        run("ip", &["link", "set", "lo", "up"]);
+        for (namespace, interface, local, remote, gateway) in [
+            ("internet", "uplink0", "192.0.2.1/24", "192.0.2.2/24", None),
+            ("lan", "lan0", "10.44.0.1/24", "10.44.0.5/24", Some("10.44.0.1")),
+            ("mesh", "nvpnmesh0", "10.44.200.1/16", "10.44.12.34/16", Some("10.44.200.1")),
+        ] {
+            run("ip", &["netns", "add", namespace]);
+            run("ip", &["link", "add", interface, "type", "veth", "peer", "name", "remote"]);
+            run("ip", &["link", "set", "remote", "netns", namespace]);
+            run("ip", &["addr", "add", local, "dev", interface]);
+            run("ip", &["link", "set", interface, "up"]);
+            let inside = |args: &[&str]| {
+                run("ip", &[&["netns", "exec", namespace, "ip"][..], args].concat());
+            };
+            inside(&["link", "set", "lo", "up"]);
+            inside(&["addr", "add", remote, "dev", "remote"]);
+            inside(&["link", "set", "remote", "up"]);
+            if let Some(gateway) = gateway {
+                inside(&["route", "add", "default", "via", gateway]);
+            }
+        }
+        // The host's own SNAT address for its LAN, next to the uplink's primary.
+        run("ip", &["addr", "add", "192.0.2.99/24", "dev", "uplink0"]);
+        run("ip", &["route", "add", "default", "via", "192.0.2.2"]);
+        std::fs::write("/proc/sys/net/ipv4/ip_forward", "1").unwrap();
+        let mut receiver = Command::new("ip")
+            .args(["netns", "exec", "internet", "python3", "-u", "-c",
+                "import socket\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\ns.bind(('192.0.2.2',39002))\nprint('ready',flush=True)\nwhile True:\n data,(source,_)=s.recvfrom(64)\n with open('/tmp/exit-nat-received','a') as f: f.write(source+' '+data.decode()+'\\n')"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        BufReader::new(receiver.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready.trim(), "ready");
+
+        // Upgrade: an earlier version masqueraded the whole range with iptables.
+        let legacy = linux_exit_node_ipv4_legacy_masquerade_rule("uplink0", "10.44.0.0/16");
+        let legacy = legacy.iter().map(String::as_str).collect::<Vec<_>>();
+        run("iptables", &[&["-t", "nat", "-A"][..], &legacy].concat());
+        linux_exit_node_apply_ipv4_nat("nvpnmesh0", "uplink0", "10.44.0.0/16").unwrap();
+        assert!(!iptables_has("nat", &legacy), "upgrade kept the iptables masquerade");
+
+        // The host adds its own NAT and marks after nvpn, as a firewall reload
+        // would. LAN connections carry the connection-mark bit an earlier
+        // revision of this fix relied on; the counting rule proves they do.
+        run("iptables", &[&["-t", "nat", "-A"][..], HOST_SNAT].concat());
+        run("iptables", &[&["-t", "mangle", "-A"][..], HOST_LAN_MARK].concat());
+        run(
+            "iptables",
+            &["-t", "mangle", "-A", "POSTROUTING", "-o", "uplink0", "-m", "connmark", "--mark",
+                "0x1000000/0x1000000"],
+        );
+        assert_eq!(source_seen_from("mesh", "mesh-1"), "192.0.2.1");
+        assert_eq!(source_seen_from("lan", "lan-1"), "192.0.2.99");
+        let marked = run("iptables", &["-t", "mangle", "-L", "POSTROUTING", "-v", "-x", "-n"]);
+        let marked = marked
+            .lines()
+            .find(|line| line.contains("connmark"))
+            .and_then(|line| line.split_whitespace().next())
+            .and_then(|packets| packets.parse::<u64>().ok());
+        assert!(marked.is_some_and(|packets| packets > 0), "LAN traffic was not marked");
+
+        // Removing nvpn's NAT leaves the host's NAT and marks working.
+        linux_exit_node_remove_ipv4_nat("nvpnmesh0", "uplink0", "10.44.0.0/16").unwrap();
+        assert!(!run("nft", &["list", "tables"]).contains("nvpn_exit_nat_"));
+        assert!(iptables_has("nat", HOST_SNAT));
+        assert!(iptables_has("mangle", HOST_LAN_MARK));
+        assert_eq!(source_seen_from("lan", "lan-2"), "192.0.2.99");
+
+        // A name nftables cannot express is refused, and cleanup still removes
+        // the iptables rule an earlier version installed for it.
+        run("iptables", &[&["-t", "nat", "-A"][..], &legacy].concat());
+        assert!(linux_exit_node_apply_ipv4_nat("bad\"name", "uplink0", "10.44.0.0/16").is_err());
+        linux_exit_node_remove_ipv4_nat("bad\"name", "uplink0", "10.44.0.0/16").unwrap();
+        assert!(!iptables_has("nat", &legacy));
+
+        // Without nftables the exit fails instead of masquerading the LAN.
+        let nft = run("sh", &["-c", "command -v nft"]).trim().to_owned();
+        run("mount", &["--bind", "/dev/null", &nft]);
+        let error = linux_exit_node_apply_ipv4_nat("nvpnmesh0", "uplink0", "10.44.0.0/16");
+        run("umount", &[&nft]);
+        let error = format!("{:#}", error.unwrap_err());
+        assert!(error.contains("requires nftables"), "{error}");
+        assert!(!iptables_has("nat", &legacy));
+        assert!(!run("nft", &["list", "tables"]).contains("nvpn_exit_nat_"));
+
+        receiver.kill().unwrap();
+        receiver.wait().unwrap();
+    }
 }
