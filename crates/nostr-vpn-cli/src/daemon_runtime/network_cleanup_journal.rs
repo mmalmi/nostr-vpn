@@ -715,7 +715,6 @@ mod windows_network_cleanup_journal_tests {
 #[cfg(all(test, target_os = "linux"))]
 mod linux_cleanup_journal_files {
     use super::*;
-    use std::io::Read as _;
     use std::os::unix::ffi::OsStrExt as _;
     use std::os::unix::fs::{MetadataExt as _, symlink};
 
@@ -827,7 +826,7 @@ mod linux_cleanup_journal_files {
         fs::rename(&retained_file, retained.join("opened.json")).unwrap();
         fs::write(&retained_file, b"another replacement").unwrap();
         let mut read = Vec::new();
-        file.read_to_end(&mut read).unwrap();
+        std::io::Read::read_to_end(&mut file, &mut read).unwrap();
         assert_eq!(read, original);
         assert_eq!(
             fs::read(replacement.join("daemon.cleanup.json")).unwrap(),
