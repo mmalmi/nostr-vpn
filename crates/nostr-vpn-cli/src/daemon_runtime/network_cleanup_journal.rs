@@ -206,10 +206,92 @@ pub(crate) fn persist_daemon_network_cleanup_state(
 }
 
 #[cfg(target_os = "windows")]
-fn windows_network_cleanup_journal_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+const WINDOWS_CLEANUP_JOURNAL_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+// Exclusive LockFileEx byte-range lock on `<journal>.lock` held for the whole
+// read-modify-write cycle. The lock belongs to the file handle, so in-process
+// threads and separate nvpn processes contend equally, and the kernel releases
+// it when the holding process dies, so a crashed holder cannot wedge the
+// journal forever.
+#[cfg(target_os = "windows")]
+struct WindowsCleanupJournalLock {
+    file: fs::File,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsCleanupJournalLock {
+    fn acquire(lock_path: &Path) -> Result<Self> {
+        Self::acquire_with_wait(lock_path, WINDOWS_CLEANUP_JOURNAL_LOCK_WAIT)
+    }
+
+    fn acquire_with_wait(lock_path: &Path, wait: std::time::Duration) -> Result<Self> {
+        if let Some(parent) = lock_path.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create {}", parent.display()))?;
+        }
+        // Never truncate: a racing process may already hold the lock here.
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(lock_path)
+            .with_context(|| {
+                format!("failed to open cleanup journal lock {}", lock_path.display())
+            })?;
+        let deadline = std::time::Instant::now() + wait;
+        loop {
+            if Self::try_exclusive_lock(&file) {
+                return Ok(Self { file });
+            }
+            if std::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timed out after {}s waiting for the cleanup journal lock {}",
+                    wait.as_secs(),
+                    lock_path.display()
+                );
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    fn try_exclusive_lock(file: &fs::File) -> bool {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+        };
+        use windows_sys::Win32::System::IO::OVERLAPPED;
+
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        let locked = unsafe {
+            LockFileEx(
+                file.as_raw_handle() as _,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                1,
+                0,
+                &mut overlapped,
+            )
+        };
+        locked != 0
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsCleanupJournalLock {
+    fn drop(&mut self) {
+        use std::os::windows::io::AsRawHandle as _;
+        use windows_sys::Win32::Storage::FileSystem::UnlockFile;
+
+        unsafe { UnlockFile(self.file.as_raw_handle() as _, 0, 0, 1, 0) };
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_network_cleanup_journal_lock(config_path: &Path) -> Result<WindowsCleanupJournalLock> {
+    let journal = daemon_network_cleanup_file_path(config_path)?;
+    let mut lock_name = journal.into_os_string();
+    lock_name.push(".lock");
+    WindowsCleanupJournalLock::acquire(Path::new(&lock_name))
 }
 
 #[cfg(target_os = "windows")]
@@ -218,7 +300,7 @@ pub(crate) fn persist_windows_route_cleanup_intent(
     routes: &crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot,
     retain: bool,
 ) -> Result<()> {
-    let _journal_lock = windows_network_cleanup_journal_lock();
+    let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
     let path = daemon_network_cleanup_file_path(config_path)?;
     let mut state = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
     if retain {
@@ -239,7 +321,7 @@ pub(crate) fn persist_windows_route_cleanup_result(
     attempted: &crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot,
     remaining: &crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot,
 ) -> Result<()> {
-    let _journal_lock = windows_network_cleanup_journal_lock();
+    let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
     let path = daemon_network_cleanup_file_path(config_path)?;
     let mut state = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
     state.routes.remove(attempted);
@@ -256,7 +338,7 @@ pub(crate) fn persist_windows_native_wireguard_cleanup_intent(
     config_path: &Path,
     cleanup: &crate::wg_upstream_runtime::WindowsNativeWireGuardCleanupState,
 ) -> Result<()> {
-    let _journal_lock = windows_network_cleanup_journal_lock();
+    let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
     let path = daemon_network_cleanup_file_path(config_path)?;
     let mut state = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
     state
@@ -306,7 +388,7 @@ pub(crate) fn persist_fips_daemon_network_cleanup_state(
 
     #[cfg(target_os = "windows")]
     {
-        let _journal_lock = windows_network_cleanup_journal_lock();
+        let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
         let path = daemon_network_cleanup_file_path(config_path)?;
         let durable = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
         let mut state = WindowsNetworkCleanupState::from_runtime_and_pending(runtime);
@@ -346,7 +428,7 @@ fn persist_fips_failed_mutation_network_cleanup_state(
 ) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let _journal_lock = windows_network_cleanup_journal_lock();
+        let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
         let path = daemon_network_cleanup_file_path(config_path)?;
         let mut durable = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
         let current = WindowsNetworkCleanupState::from_runtime_and_pending(runtime);
@@ -386,7 +468,7 @@ pub(crate) fn persist_fips_secure_dns_cleanup_intent(
     intent: &crate::secure_dns_runtime::SystemDnsCleanupIntent,
 ) -> Result<()> {
     #[cfg(target_os = "windows")]
-    let _journal_lock = windows_network_cleanup_journal_lock();
+    let _journal_lock = windows_network_cleanup_journal_lock(config_path)?;
     let path = daemon_network_cleanup_file_path(config_path)?;
     let mut state = read_daemon_network_cleanup_state(&path)?.unwrap_or_default();
 
@@ -708,6 +790,84 @@ mod windows_network_cleanup_journal_tests {
             "successful exact native cleanup must not be resurrected"
         );
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn journal_lock_excludes_a_second_holder_until_release() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-windows-journal-lock-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create test directory");
+        let lock_path = dir.join("daemon.cleanup.json.lock");
+        let held = WindowsCleanupJournalLock::acquire(&lock_path).expect("acquire the lock");
+        assert!(
+            WindowsCleanupJournalLock::acquire_with_wait(
+                &lock_path,
+                std::time::Duration::from_millis(50)
+            )
+            .is_err(),
+            "a second holder must not acquire the journal lock while it is held"
+        );
+        drop(held);
+        WindowsCleanupJournalLock::acquire(&lock_path).expect("reacquire after release");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_journal_writers_preserve_every_persisted_intent() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-windows-journal-lock-rmw-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).expect("create test directory");
+        let config_path = std::sync::Arc::new(dir.join("config.toml"));
+        const WRITERS: usize = 8;
+        let writers: Vec<_> = (0..WRITERS)
+            .map(|writer| {
+                let config_path = std::sync::Arc::clone(&config_path);
+                std::thread::spawn(move || {
+                    let routes: crate::wg_upstream_runtime::WindowsRouteCleanupSnapshot =
+                        serde_json::from_value(serde_json::json!({
+                            "owned_routes": [{
+                                "prefix": format!("198.51.100.{writer}/32"),
+                                "interface_index": writer + 1,
+                                "next_hop": "192.0.2.1",
+                                "metric": 1,
+                                "interface_identity": "test-interface"
+                            }]
+                        }))
+                        .expect("route cleanup fixture");
+                    persist_windows_route_cleanup_intent(&config_path, &routes, true)
+                        .expect("persist route intent");
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().expect("journal writer thread");
+        }
+        let cleanup_path = daemon_network_cleanup_file_path(&config_path).expect("cleanup path");
+        let retained = read_daemon_network_cleanup_state(&cleanup_path)
+            .expect("read retained state")
+            .expect("journal survives concurrent writers");
+        let owned_routes = serde_json::to_value(&retained.routes)
+            .expect("serialize retained routes")["owned_routes"]
+            .as_array()
+            .expect("owned routes array")
+            .len();
+        assert_eq!(
+            owned_routes, WRITERS,
+            "every concurrent writer must leave its intent in the journal"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
