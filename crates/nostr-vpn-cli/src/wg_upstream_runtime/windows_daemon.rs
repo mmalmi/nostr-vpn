@@ -15,6 +15,15 @@ pub(crate) fn windows_wireguard_ipv6_default(config: &WireGuardExitConfig) -> Re
         .iter()
         .any(|route| nostr_vpn_core::config::route_is_ipv6(route));
     if !routes_ipv6 {
+        if config.allowed_ips.iter().any(|route| route == "0.0.0.0/0") {
+            // Without ::/0 the IPv6 default stays on the physical adapter
+            // and no firewall block covers it.
+            return Err(anyhow!(
+                "Windows WireGuard exit claiming the IPv4 default (0.0.0.0/0) must also \
+                 route ::/0; import a dual-stack provider config so IPv6 traffic cannot \
+                 bypass the tunnel"
+            ));
+        }
         return Ok(false);
     }
     if !config.allowed_ips.iter().any(|route| route == "::/0") {
@@ -96,113 +105,133 @@ async fn apply_daemon_wg_upstream_native(
     cleanup_journal_config_path: &Path,
 ) -> Result<DaemonWgUpstream> {
     let manage_default_v6 = windows_wireguard_ipv6_default(config)?;
-    let tools = resolve_windows_wireguard_tools()?;
-    retry_pending_windows_native_cleanup_journaled(cleanup_journal_config_path)
-        .context("clean up pending native WireGuard before startup")?;
     let fingerprint = WireGuardExitFingerprint::from_config(config);
     let tunnel_name = windows_native_wireguard_tunnel_name(config);
-    let owner_token = windows_native_wireguard_owner_token();
-    let config_path = windows_native_wireguard_config_path(&tunnel_name, &owner_token);
-    let mut config_intent = WindowsNativeWireGuardCleanupState {
-        name: tunnel_name.clone(),
-        config_path: config_path.clone(),
-        wireguard_exe: tools.wireguard_exe.clone(),
-        owner_token: owner_token.clone(),
-        service_owned: false,
-        config_owned: true,
-    };
-    crate::daemon_runtime::persist_windows_native_wireguard_cleanup_intent(
-        cleanup_journal_config_path,
-        &config_intent,
-    )
-    .context("fsync native WireGuard config cleanup intent before creation")?;
-    let owned_config =
-        match write_windows_native_wireguard_config(&tunnel_name, config, &owner_token) {
-            Ok(config) => config,
-            Err(error) => {
-                let cleanup = cleanup_windows_native_wireguard_state(&mut config_intent);
-                let persist =
-                    crate::daemon_runtime::persist_windows_native_wireguard_cleanup_intent(
-                        cleanup_journal_config_path,
-                        &config_intent,
-                    );
+    let blocking_config = config.clone();
+    let blocking_tunnel_name = tunnel_name.clone();
+    let blocking_journal_config_path = cleanup_journal_config_path.to_path_buf();
+    // Synchronous bring-up child processes must not stall async workers or defeat the outer timeout.
+    let (tools, mut tunnel) = tokio::task::spawn_blocking(
+        move || -> Result<(WindowsWireGuardTools, WindowsNativeWireGuardTunnel)> {
+            let tools = resolve_windows_wireguard_tools()?;
+            let owner_token = windows_native_wireguard_owner_token();
+            let config_path =
+                windows_native_wireguard_config_path(&blocking_tunnel_name, &owner_token);
+            retry_pending_windows_native_cleanup_journaled(&blocking_journal_config_path)
+                .context("clean up pending native WireGuard before startup")?;
+            let mut config_intent = WindowsNativeWireGuardCleanupState {
+                name: blocking_tunnel_name.clone(),
+                config_path: config_path.clone(),
+                wireguard_exe: tools.wireguard_exe.clone(),
+                owner_token: owner_token.clone(),
+                service_owned: false,
+                config_owned: true,
+            };
+            crate::daemon_runtime::persist_windows_native_wireguard_cleanup_intent(
+                &blocking_journal_config_path,
+                &config_intent,
+            )
+            .context("fsync native WireGuard config cleanup intent before creation")?;
+            let owned_config = match write_windows_native_wireguard_config(
+                &blocking_tunnel_name,
+                &blocking_config,
+                &owner_token,
+            ) {
+                Ok(config) => config,
+                Err(error) => {
+                    let cleanup = cleanup_windows_native_wireguard_state(&mut config_intent);
+                    let persist =
+                        crate::daemon_runtime::persist_windows_native_wireguard_cleanup_intent(
+                            &blocking_journal_config_path,
+                            &config_intent,
+                        );
+                    return Err(with_windows_native_cleanup_error(
+                        with_windows_native_cleanup_error(
+                            error,
+                            "retry native WireGuard config cleanup after creation failure",
+                            cleanup,
+                        ),
+                        "persist actual native WireGuard config ownership after creation failure",
+                        persist,
+                    ));
+                }
+            };
+
+            let mut tunnel = WindowsNativeWireGuardTunnel {
+                name: blocking_tunnel_name.clone(),
+                config_path: owned_config.transfer(),
+                wireguard_exe: tools.wireguard_exe.clone(),
+                owner_token,
+                service_owned: false,
+                config_owned: true,
+                cleanup_journal_config_path: blocking_journal_config_path.clone(),
+            };
+
+            if let Err(error) = ensure_windows_native_wireguard_service_absent(
+                &tools.wireguard_exe,
+                &blocking_tunnel_name,
+            ) {
+                let cleanup = tunnel.cleanup();
                 return Err(with_windows_native_cleanup_error(
-                    with_windows_native_cleanup_error(
-                        error,
-                        "retry native WireGuard config cleanup after creation failure",
-                        cleanup,
-                    ),
-                    "persist actual native WireGuard config ownership after creation failure",
-                    persist,
+                    error,
+                    "remove owned native WireGuard config after service-name collision",
+                    cleanup,
                 ));
             }
-        };
-
-    let mut tunnel = WindowsNativeWireGuardTunnel {
-        name: tunnel_name.clone(),
-        config_path: owned_config.transfer(),
-        wireguard_exe: tools.wireguard_exe.clone(),
-        owner_token,
-        service_owned: false,
-        config_owned: true,
-        cleanup_journal_config_path: cleanup_journal_config_path.to_path_buf(),
-    };
-
-    if let Err(error) =
-        ensure_windows_native_wireguard_service_absent(&tools.wireguard_exe, &tunnel_name)
-    {
-        let cleanup = tunnel.cleanup();
-        return Err(with_windows_native_cleanup_error(
-            error,
-            "remove owned native WireGuard config after service-name collision",
-            cleanup,
-        ));
-    }
-    // Write-ahead ownership is deliberately conservative: once the service
-    // create is attempted, cleanup audits its exact description token and
-    // removes it if present. A failed New-Service call can still have created
-    // the service before PowerShell reported an error.
-    tunnel.service_owned = true;
-    if let Err(error) = crate::daemon_runtime::persist_windows_native_wireguard_cleanup_intent(
-        cleanup_journal_config_path,
-        &tunnel
-            .cleanup_state()
-            .expect("native WireGuard config/service intent is owned"),
-    ) {
-        tunnel.service_owned = false;
-        let cleanup = tunnel.cleanup();
-        return Err(with_windows_native_cleanup_error(
-            error.context("fsync native WireGuard service cleanup intent before creation"),
-            "remove owned native WireGuard config after journal failure",
-            cleanup,
-        ));
-    }
-    if let Err(error) = create_windows_native_wireguard_service(
-        &tools.wireguard_exe,
-        &tunnel.config_path,
-        &tunnel_name,
-        &tunnel.owner_token,
+            // Write-ahead ownership is deliberately conservative: once the service
+            // create is attempted, cleanup audits its exact description token and
+            // removes it if present. A failed New-Service call can still have created
+            // the service before PowerShell reported an error.
+            tunnel.service_owned = true;
+            if let Err(error) =
+                crate::daemon_runtime::persist_windows_native_wireguard_cleanup_intent(
+                    &blocking_journal_config_path,
+                    &tunnel
+                        .cleanup_state()
+                        .expect("native WireGuard config/service intent is owned"),
+                )
+            {
+                tunnel.service_owned = false;
+                let cleanup = tunnel.cleanup();
+                return Err(with_windows_native_cleanup_error(
+                    error.context("fsync native WireGuard service cleanup intent before creation"),
+                    "remove owned native WireGuard config after journal failure",
+                    cleanup,
+                ));
+            }
+            if let Err(error) = create_windows_native_wireguard_service(
+                &tools.wireguard_exe,
+                &tunnel.config_path,
+                &blocking_tunnel_name,
+                &tunnel.owner_token,
+            )
+            .with_context(|| {
+                format!(
+                    "create owned native WireGuardNT tunnel service from {}",
+                    tunnel.config_path.display()
+                )
+            }) {
+                let cleanup = tunnel.cleanup();
+                return Err(with_windows_native_cleanup_error(
+                    error,
+                    "remove owned native WireGuard config",
+                    cleanup,
+                ));
+            }
+            if let Err(error) =
+                configure_and_start_windows_native_wireguard_service(&blocking_tunnel_name)
+            {
+                return Err(with_windows_native_cleanup_error(
+                    error.context("configure and start owned native WireGuardNT tunnel service"),
+                    "remove owned native WireGuard service/config after startup failure",
+                    tunnel.cleanup(),
+                ));
+            }
+            Ok((tools, tunnel))
+        },
     )
-    .with_context(|| {
-        format!(
-            "create owned native WireGuardNT tunnel service from {}",
-            tunnel.config_path.display()
-        )
-    }) {
-        let cleanup = tunnel.cleanup();
-        return Err(with_windows_native_cleanup_error(
-            error,
-            "remove owned native WireGuard config",
-            cleanup,
-        ));
-    }
-    if let Err(error) = configure_and_start_windows_native_wireguard_service(&tunnel_name) {
-        return Err(with_windows_native_cleanup_error(
-            error.context("configure and start owned native WireGuardNT tunnel service"),
-            "remove owned native WireGuard service/config after startup failure",
-            tunnel.cleanup(),
-        ));
-    }
+    .await
+    .map_err(|error| anyhow!("native Windows WireGuard bring-up task failed: {error}"))??;
     // The WireGuard tunnel service receives the config path as its
     // startup argument, so keep the file around while the native
     // service is alive. `WindowsNativeWireGuardTunnel::cleanup` removes
