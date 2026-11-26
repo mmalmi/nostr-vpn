@@ -676,6 +676,7 @@ impl MobileTunnel {
         };
         self.native_tun = Some(NativeTunRuntime::start(
             fd,
+            self.runtime.handle(),
             self.outbound_tx.clone(),
             inbound_rx,
             native_tun_packet_capacity(mtu),
