@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use std::process::Command;
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{RwLock, mpsc};
 use std::thread;
@@ -461,9 +463,9 @@ fn macos_resolver_path(suffix: &str) -> PathBuf {
     PathBuf::from("/etc/resolver").join(suffix)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const LINUX_HOSTS_BEGIN: &str = "# BEGIN nostr-vpn MagicDNS";
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 const LINUX_HOSTS_END: &str = "# END nostr-vpn MagicDNS";
 #[cfg(target_os = "linux")]
 const LINUX_HOSTS_PATH: &str = "/etc/hosts";
@@ -480,6 +482,15 @@ fn install_linux_resolver(
     } else {
         format!("{nameserver}:{port}")
     };
+
+    // Remember the loopback settings we are about to replace so uninstall
+    // can restore them instead of reverting the whole link.
+    if let Ok(mut guard) = LINUX_LO_DNS_BASELINE.lock() {
+        *guard = Some(LinuxLoDnsBaseline {
+            dns: run_linux_resolvectl_capturing(&["dns", "lo"]).unwrap_or_default(),
+            domains: run_linux_resolvectl_capturing(&["domain", "lo"]).unwrap_or_default(),
+        });
+    }
 
     let resolved_install = (|| -> Result<()> {
         run_linux_resolvectl(&["dns", "lo", &resolver])?;
@@ -507,7 +518,15 @@ fn install_linux_resolver(
 
 #[cfg(target_os = "linux")]
 fn uninstall_linux_resolver(_suffix: &str) -> Result<()> {
-    let resolved_uninstall = run_linux_resolvectl(&["revert", "lo"]);
+    let baseline = LINUX_LO_DNS_BASELINE
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.take());
+    let (dns_output, domain_output) = baseline
+        .map(|baseline| (baseline.dns, baseline.domains))
+        .unwrap_or_default();
+    let resolved_uninstall =
+        restore_linux_lo_dns(linux_lo_dns_restore_action(&dns_output, &domain_output));
     let hosts_uninstall = uninstall_linux_hosts_fallback();
 
     match (resolved_uninstall, hosts_uninstall) {
@@ -522,7 +541,96 @@ fn uninstall_linux_resolver(_suffix: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+struct LinuxLoDnsBaseline {
+    dns: String,
+    domains: String,
+}
+
+// Captured at install time so uninstall restores the loopback DNS that
+// nVPN replaced; a failed capture falls back to the blanket revert.
+#[cfg(target_os = "linux")]
+static LINUX_LO_DNS_BASELINE: Mutex<Option<LinuxLoDnsBaseline>> = Mutex::new(None);
+
+/// How to undo nVPN's loopback link settings at uninstall time.
+#[cfg(any(target_os = "linux", test))]
+enum LinuxLoDnsRestore {
+    Revert,
+    Apply {
+        dns: Option<Vec<String>>,
+        domains: Option<Vec<String>>,
+    },
+}
+
+/// Decide the uninstall action from the loopback settings captured before
+/// install. Empty output on both means lo carried nothing of ours to save,
+/// so the whole-link revert is safe; otherwise re-apply what was there and
+/// clear the aspects that were empty (an empty resolvectl argument resets
+/// that aspect).
+#[cfg(any(target_os = "linux", test))]
+fn linux_lo_dns_restore_action(dns_output: &str, domain_output: &str) -> LinuxLoDnsRestore {
+    let dns = linux_resolvectl_link_tokens(dns_output);
+    let domains = linux_resolvectl_link_tokens(domain_output);
+    if dns.is_none() && domains.is_none() {
+        return LinuxLoDnsRestore::Revert;
+    }
+    LinuxLoDnsRestore::Apply { dns, domains }
+}
+
+/// Collect the tokens `resolvectl dns|domain lo` prints for the link,
+/// skipping the `Link N (lo):` header and joining indented continuation
+/// lines. None when the link carries no settings.
+#[cfg(any(target_os = "linux", test))]
+fn linux_resolvectl_link_tokens(output: &str) -> Option<Vec<String>> {
+    let mut tokens = Vec::new();
+    for line in output.lines() {
+        let line = line.trim_start();
+        let values = if line.starts_with("Link ") {
+            line.split_once(':').map(|(_, values)| values).unwrap_or("")
+        } else {
+            line
+        };
+        tokens.extend(values.split_whitespace().map(str::to_string));
+    }
+    if tokens.is_empty() {
+        None
+    } else {
+        Some(tokens)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn restore_linux_lo_dns(action: LinuxLoDnsRestore) -> Result<()> {
+    match action {
+        LinuxLoDnsRestore::Revert => run_linux_resolvectl(&["revert", "lo"]),
+        LinuxLoDnsRestore::Apply { dns, domains } => {
+            match dns {
+                Some(servers) => {
+                    let mut args = vec!["dns", "lo"];
+                    args.extend(servers.iter().map(String::as_str));
+                    run_linux_resolvectl(&args)?;
+                }
+                None => run_linux_resolvectl(&["dns", "lo", ""])?,
+            }
+            match domains {
+                Some(search) => {
+                    let mut args = vec!["domain", "lo"];
+                    args.extend(search.iter().map(String::as_str));
+                    run_linux_resolvectl(&args)?;
+                }
+                None => run_linux_resolvectl(&["domain", "lo", ""])?,
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn run_linux_resolvectl(args: &[&str]) -> Result<()> {
+    run_linux_resolvectl_capturing(args).map(|_| ())
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_resolvectl_capturing(args: &[&str]) -> Result<String> {
     let output = Command::new("resolvectl").args(args).output();
     let output = match output {
         Ok(output) => output,
@@ -537,7 +645,7 @@ fn run_linux_resolvectl(args: &[&str]) -> Result<()> {
     };
 
     if output.status.success() {
-        return Ok(());
+        return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -552,12 +660,27 @@ fn run_linux_resolvectl(args: &[&str]) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn install_linux_hosts_fallback(suffix: &str, records: &HashMap<String, Ipv4Addr>) -> Result<()> {
+    let block = build_linux_hosts_block(suffix, records)?;
+    let current = read_linux_hosts_file()?;
+    let mut next = remove_linux_hosts_magic_dns_block(&current);
+    if !next.ends_with('\n') && !next.is_empty() {
+        next.push('\n');
+    }
+    next.push_str(&block);
+    write_linux_hosts_file(&next)
+}
+
+/// Build the managed /etc/hosts block. glibc's files NSS module applies no
+/// search-domain expansion, so the bare aliases ship alongside the
+/// suffix-qualified names to match what the DNS server path answers.
+#[cfg(any(target_os = "linux", test))]
+fn build_linux_hosts_block(suffix: &str, records: &HashMap<String, Ipv4Addr>) -> Result<String> {
     let suffix = suffix.trim().trim_matches('.').to_ascii_lowercase();
     let mut entries = records
         .iter()
         .filter_map(|(name, ip)| {
             let name = name.trim().trim_matches('.').to_ascii_lowercase();
-            if name.ends_with(&format!(".{suffix}")) {
+            if name.ends_with(&format!(".{suffix}")) || !name.contains('.') {
                 Some((name, *ip))
             } else {
                 None
@@ -573,21 +696,16 @@ fn install_linux_hosts_fallback(suffix: &str, records: &HashMap<String, Ipv4Addr
         ));
     }
 
-    let current = read_linux_hosts_file()?;
-    let mut next = remove_linux_hosts_magic_dns_block(&current);
-    if !next.ends_with('\n') && !next.is_empty() {
-        next.push('\n');
-    }
-    next.push_str(LINUX_HOSTS_BEGIN);
-    next.push('\n');
-    next.push_str("# Managed by nostr-vpn. Changes inside this block will be overwritten.\n");
+    let mut block = String::new();
+    block.push_str(LINUX_HOSTS_BEGIN);
+    block.push('\n');
+    block.push_str("# Managed by nostr-vpn. Changes inside this block will be overwritten.\n");
     for (name, ip) in entries {
-        next.push_str(&format!("{ip}\t{name}\n"));
+        block.push_str(&format!("{ip}\t{name}\n"));
     }
-    next.push_str(LINUX_HOSTS_END);
-    next.push('\n');
-
-    write_linux_hosts_file(&next)
+    block.push_str(LINUX_HOSTS_END);
+    block.push('\n');
+    Ok(block)
 }
 
 /// Rewrite the nostr-vpn block in `/etc/hosts` with `records` iff a block
@@ -914,5 +1032,76 @@ mod tests {
         let error = windows_nameserver(Ipv4Addr::LOCALHOST, 1053)
             .expect_err("non-53 port should be rejected");
         assert!(error.to_string().contains("port 53"));
+    }
+
+    #[test]
+    fn linux_hosts_fallback_block_keeps_bare_aliases_and_suffix_names() {
+        let mut records = HashMap::new();
+        records.insert("alice".to_string(), Ipv4Addr::new(10, 44, 1, 2));
+        records.insert("alice.nvpn".to_string(), Ipv4Addr::new(10, 44, 1, 2));
+        records.insert("bob".to_string(), Ipv4Addr::new(10, 44, 1, 3));
+        records.insert("bob.nvpn".to_string(), Ipv4Addr::new(10, 44, 1, 3));
+
+        let block = super::build_linux_hosts_block("nvpn", &records).expect("hosts block");
+
+        assert!(block.contains("10.44.1.2\talice\n"));
+        assert!(block.contains("10.44.1.2\talice.nvpn\n"));
+        assert!(block.contains("10.44.1.3\tbob\n"));
+        assert!(block.contains("10.44.1.3\tbob.nvpn\n"));
+        assert!(block.starts_with(super::LINUX_HOSTS_BEGIN));
+        assert!(block.trim_end().ends_with(super::LINUX_HOSTS_END));
+    }
+
+    #[test]
+    fn linux_hosts_fallback_block_drops_unrelated_names() {
+        let mut records = HashMap::new();
+        records.insert("alice.nvpn".to_string(), Ipv4Addr::new(10, 44, 1, 2));
+        records.insert("peer.example".to_string(), Ipv4Addr::new(10, 44, 1, 4));
+
+        let block = super::build_linux_hosts_block("nvpn", &records).expect("hosts block");
+
+        assert!(block.contains("alice.nvpn"));
+        assert!(!block.contains("peer.example"));
+    }
+
+    #[test]
+    fn linux_lo_dns_restore_action_reverts_when_nothing_was_set() {
+        assert!(matches!(
+            super::linux_lo_dns_restore_action("", ""),
+            super::LinuxLoDnsRestore::Revert
+        ));
+        assert!(matches!(
+            super::linux_lo_dns_restore_action("Link 1 (lo):\n", "Link 1 (lo):\n"),
+            super::LinuxLoDnsRestore::Revert
+        ));
+    }
+
+    #[test]
+    fn linux_lo_dns_restore_action_reapplies_captured_settings() {
+        let super::LinuxLoDnsRestore::Apply { dns, domains } = super::linux_lo_dns_restore_action(
+            "Link 1 (lo): 127.0.0.53\n",
+            "Link 1 (lo): ~nvpn ~fips\n",
+        ) else {
+            panic!("captured settings must be reapplied, not reverted");
+        };
+        assert_eq!(dns.as_deref(), Some(["127.0.0.53".to_string()].as_slice()));
+        assert_eq!(
+            domains.as_deref(),
+            Some(["~nvpn".to_string(), "~fips".to_string()].as_slice())
+        );
+
+        // Continuation lines hold additional servers; an empty domain list
+        // must be cleared rather than reverted or copied.
+        let super::LinuxLoDnsRestore::Apply { dns, domains } = super::linux_lo_dns_restore_action(
+            "Link 1 (lo): 10.0.0.1\n              fd00::1\n",
+            "Link 1 (lo):\n",
+        ) else {
+            panic!("captured servers must be reapplied, not reverted");
+        };
+        assert_eq!(
+            dns.as_deref(),
+            Some(["10.0.0.1".to_string(), "fd00::1".to_string()].as_slice())
+        );
+        assert!(domains.is_none());
     }
 }
