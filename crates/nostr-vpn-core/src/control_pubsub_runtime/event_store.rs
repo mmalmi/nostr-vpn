@@ -291,7 +291,7 @@ impl ControlEventStore {
             }
         }
         while self.events.len() >= STORE_MAX_EVENTS {
-            let remove_index = self
+            let Some(remove_index) = self
                 .order
                 .iter()
                 .position(|stored_id| {
@@ -306,10 +306,15 @@ impl ControlEventStore {
                         evictable
                     })
                 })
-                .unwrap_or(0);
-            let Some(oldest) = self.order.remove(remove_index) else {
-                break;
+            else {
+                // Only pinned roster and update events remain, so the insert
+                // is rejected instead of evicting a pinned entry for it.
+                return false;
             };
+            let oldest = self
+                .order
+                .remove(remove_index)
+                .expect("eviction index refers to an ordered event");
             self.remove_memory(&oldest);
         }
         self.order.push_back(event_id.clone());
