@@ -227,6 +227,26 @@ mod tests {
     }
 
     #[test]
+    fn macos_saved_default_replay_restores_only_without_a_physical_default() {
+        let foreign_physical = crate::MacosRouteSpec {
+            gateway: Some("198.51.100.1".to_string()),
+            interface: "en7".to_string(),
+        };
+        let utun_only = crate::MacosRouteSpec {
+            gateway: Some("198.51.100.1".to_string()),
+            interface: "utun9".to_string(),
+        };
+
+        assert!(!crate::macos_network::macos_saved_default_restore_required(&[
+            foreign_physical
+        ]));
+        assert!(crate::macos_network::macos_saved_default_restore_required(&[
+            utun_only
+        ]));
+        assert!(crate::macos_network::macos_saved_default_restore_required(&[]));
+    }
+
+    #[test]
     fn exit_node_forward_rules_are_scoped_to_mesh_source_and_outbound_iface() {
         assert_eq!(
             linux_exit_node_forward_in_rule(

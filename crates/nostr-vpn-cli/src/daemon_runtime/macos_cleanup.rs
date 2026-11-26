@@ -171,10 +171,17 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
             }
         }
 
-        if let Some(route) = state.original_default_route.as_ref()
-            && let Err(error) = restore_macos_default_route(route)
-        {
-            failures.push(format!("restore default route: {error}"));
+        if let Some(route) = state.original_default_route.as_ref() {
+            let routes = macos_default_routes().ok();
+            if routes.is_some_and(|routes| {
+                !crate::macos_network::macos_saved_default_restore_required(&routes)
+            }) {
+                eprintln!(
+                    "repair-network: keeping the active physical macOS default route; the replayed restore is stale"
+                );
+            } else if let Err(error) = restore_macos_default_route(route) {
+                failures.push(format!("restore default route: {error}"));
+            }
         }
 
         if state.pf_was_enabled.is_some() {
