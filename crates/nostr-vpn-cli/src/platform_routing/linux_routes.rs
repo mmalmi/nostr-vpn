@@ -549,11 +549,13 @@ pub(crate) fn write_macos_ipv4_forwarding(enabled: bool) -> Result<()> {
 
 #[cfg(target_os = "macos")]
 pub(crate) fn apply_macos_exit_node_pf_rules(
+    config_path: &Path,
     tunnel_iface: &str,
     outbound_iface: &str,
     tunnel_source_cidr: &str,
 ) -> Result<()> {
     crate::macos_network::apply_macos_exit_node_pf_rules(
+        config_path,
         tunnel_iface,
         outbound_iface,
         tunnel_source_cidr,
@@ -566,8 +568,8 @@ pub(crate) fn enable_macos_pf() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn cleanup_macos_pf_nat() -> Result<()> {
-    crate::macos_network::cleanup_macos_pf_nat()
+pub(crate) fn cleanup_macos_pf_nat(anchor: &str) -> Result<()> {
+    crate::macos_network::cleanup_macos_pf_nat(anchor)
 }
 
 #[cfg(target_os = "linux")]

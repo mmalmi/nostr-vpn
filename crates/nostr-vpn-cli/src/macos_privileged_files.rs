@@ -214,7 +214,60 @@ pub(crate) fn runtime_directory(config_path: &Path) -> Result<PathBuf> {
     use std::os::unix::ffi::OsStrExt;
     let config_path = nostr_vpn_core::macos_file_io::absolute_path(config_path)?;
     let identity = format!("{:x}", Sha256::digest(config_path.as_os_str().as_bytes()));
-    Ok(Path::new("/Library/Application Support/nvpn/runtime").join(identity))
+    Ok(runtime_root().join(identity))
+}
+
+pub(crate) fn runtime_root() -> &'static Path {
+    Path::new("/Library/Application Support/nvpn/runtime")
+}
+
+/// Root-owned per-config claim that this configuration is actively selling
+/// exit. Machine-global knobs (PF, IPv4 forwarding) may only be disabled
+/// once no foreign claim remains.
+fn exit_claim_path(config_path: &Path) -> Result<PathBuf> {
+    let name = format!(
+        "{}{}",
+        crate::macos_network::macos_config_identity(config_path),
+        crate::macos_network::MACOS_EXIT_CLAIM_SUFFIX
+    );
+    Ok(runtime_root().join(name))
+}
+
+pub(crate) fn write_exit_claim(config_path: &Path) -> Result<()> {
+    write_runtime_state(&exit_claim_path(config_path)?, b"1\n")
+}
+
+pub(crate) fn remove_exit_claim(config_path: &Path) -> Result<()> {
+    let path = exit_claim_path(config_path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("failed to remove {}", path.display())),
+    }
+}
+
+pub(crate) fn other_exit_claims_remain(claims_root: &Path, config_path: &Path) -> Result<bool> {
+    // Directory entries carry the claim suffix; the checker compares bare
+    // config identities, the same representation `exit_claim_path` names
+    // claim files with.
+    let own = crate::macos_network::macos_config_identity(config_path);
+    let directory = match fs::read_dir(claims_root) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to inspect {}", claims_root.display()));
+        }
+    };
+    let mut entries = Vec::new();
+    for entry in directory {
+        let entry =
+            entry.with_context(|| format!("failed to inspect {}", claims_root.display()))?;
+        entries.push(entry.file_name().to_string_lossy().to_string());
+    }
+    Ok(crate::macos_network::macos_other_exit_claims_remain(
+        &entries, &own,
+    ))
 }
 
 pub(crate) fn network_cleanup_path(config_path: &Path) -> Result<PathBuf> {
