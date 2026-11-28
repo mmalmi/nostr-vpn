@@ -70,7 +70,6 @@
             participant_key: run_participant_key,
             identity: run_identity,
             payloads,
-            packet_count,
             ..
         }) = run.as_ref()
         else {
@@ -79,7 +78,6 @@
         assert!(run_participant_fallback.is_none());
         assert_eq!(*run_participant_key, Some(participant_key));
         assert_eq!(*run_identity, identity);
-        assert_eq!(*packet_count, 2);
         assert_eq!(*payloads, vec![vec![1], vec![2]]);
 
         let previous = push_mobile_endpoint_send_run(
@@ -91,13 +89,7 @@
             vec![3],
         )
         .expect("peer change should flush previous run");
-        let MobileEndpointSendRun {
-            packet_count,
-            payloads,
-            ..
-        } = previous;
-        assert_eq!(packet_count, 2);
-        assert_eq!(payloads, vec![vec![1], vec![2]]);
+        assert_eq!(previous.payloads, vec![vec![1], vec![2]]);
         assert!(run.is_none());
     }
 

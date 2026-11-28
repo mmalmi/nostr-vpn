@@ -241,7 +241,7 @@ struct LinuxVnetTcp4GroState {
     psh_set: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq)]
 struct LinuxVnetTcp4GroFlow {
     tos: u8,
     df_reserved_flags: u8,
@@ -253,6 +253,22 @@ struct LinuxVnetTcp4GroFlow {
     ack: u32,
     tcp_options_len: u8,
     tcp_options: [u8; LINUX_TCP_OPTIONS_MAX_LEN],
+}
+
+impl PartialEq for LinuxVnetTcp4GroFlow {
+    fn eq(&self, other: &Self) -> bool {
+        let len = usize::from(self.tcp_options_len);
+        self.src_port == other.src_port
+            && self.dst_port == other.dst_port
+            && self.src_addr == other.src_addr
+            && self.dst_addr == other.dst_addr
+            && self.ack == other.ack
+            && self.tcp_options_len == other.tcp_options_len
+            && self.tos == other.tos
+            && self.df_reserved_flags == other.df_reserved_flags
+            && self.ttl == other.ttl
+            && self.tcp_options[..len] == other.tcp_options[..len]
+    }
 }
 #[derive(Clone, Debug)]
 struct LinuxVnetTcp4GroCandidate {
@@ -585,18 +601,18 @@ fn linux_vnet_finish_tcp4_write_frame(
     let packet = &mut frame.first_header;
 
     packet[2..4].copy_from_slice(&(packet_len as u16).to_be_bytes());
-    linux_vnet_finalize_ipv4_header_checksum(&mut packet[..ip_header_len]);
+    nostr_vpn_core::packet_checksums::finalize_ipv4_header_checksum(&mut packet[..ip_header_len]);
     if state.psh_set {
         packet[ip_header_len + LINUX_TCP_FLAGS_OFFSET] |= LINUX_TCP_FLAG_PSH;
     }
 
-    let pseudo = linux_vnet_pseudo_header_sum(
+    let pseudo = nostr_vpn_core::packet_checksums::pseudo_header_base_sum(
         LINUX_IPPROTO_TCP,
         &packet[LINUX_IPV4_SRC_ADDR_OFFSET..LINUX_IPV4_SRC_ADDR_OFFSET + 4],
         &packet[LINUX_IPV4_SRC_ADDR_OFFSET + 4..LINUX_IPV4_SRC_ADDR_OFFSET + 8],
-        transport_len as u16,
-    );
-    let partial = !linux_vnet_checksum(&[], pseudo);
+    ) + transport_len as u64;
+    // CHECKSUM_PARTIAL starts with the uninverted pseudo-header sum.
+    let partial = nostr_vpn_core::packet_checksums::fold_checksum(pseudo);
     let checksum_at = ip_header_len + 16;
     packet[checksum_at..checksum_at + 2].copy_from_slice(&partial.to_be_bytes());
 
@@ -675,11 +691,8 @@ fn linux_vnet_tcp4_gro_candidate(packet: &[u8]) -> Option<LinuxVnetTcp4GroCandid
     })
 }
 
-fn linux_vnet_finalize_ipv4_header_checksum(header: &mut [u8]) {
-    header[10] = 0;
-    header[11] = 0;
-    let checksum = !linux_vnet_checksum(header, 0);
-    header[10..12].copy_from_slice(&checksum.to_be_bytes());
+fn invalid_vnet_data(message: impl Into<Box<dyn std::error::Error + Send + Sync>>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
 }
 
 fn handle_linux_vnet_read(frame: &mut [u8], batch: &mut TunPipelineBatch) -> io::Result<usize> {
@@ -690,102 +703,69 @@ fn handle_linux_vnet_read(frame: &mut [u8], batch: &mut TunPipelineBatch) -> io:
     if gso_type == LINUX_VIRTIO_NET_HDR_GSO_NONE {
         if hdr.flags & LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM != 0 {
             linux_vnet_gso_none_checksum(packet, hdr.csum_start, hdr.csum_offset)?;
+        } else {
+            nostr_vpn_core::packet_checksums::finalize_transport_checksum(packet);
         }
-        push_tun_pipeline_packet(batch, packet);
+        push_tun_pipeline_packet_owned_finalized(batch, copy_with_fips_endpoint_headroom(packet));
         return Ok(1);
     }
 
     if hdr.gso_type & LINUX_VIRTIO_NET_HDR_GSO_ECN != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Linux vnet TUN GSO ECN packets are not supported yet",
-        ));
+        return Err(invalid_vnet_data("Linux vnet TUN GSO ECN packets are not supported yet"));
     }
     if hdr.gso_size == 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Linux vnet TUN GSO packet has zero segment size",
-        ));
+        return Err(invalid_vnet_data("Linux vnet TUN GSO packet has zero segment size"));
     }
-
-    match gso_type {
+    if !matches!(
+        gso_type,
         LINUX_VIRTIO_NET_HDR_GSO_TCPV4
-        | LINUX_VIRTIO_NET_HDR_GSO_TCPV6
-        | LINUX_VIRTIO_NET_HDR_GSO_UDP_L4 => {}
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unsupported Linux vnet TUN GSO type {gso_type}"),
-            ));
-        }
+            | LINUX_VIRTIO_NET_HDR_GSO_TCPV6
+            | LINUX_VIRTIO_NET_HDR_GSO_UDP_L4
+    ) {
+        return Err(invalid_vnet_data(format!("unsupported Linux vnet TUN GSO type {gso_type}")));
     }
 
     let Some((&version_byte, _)) = packet.split_first() else {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "empty Linux vnet TUN packet",
-        ));
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "empty Linux vnet TUN packet"));
     };
     let is_v6 = match version_byte >> 4 {
-        4 => {
-            if gso_type != LINUX_VIRTIO_NET_HDR_GSO_TCPV4
-                && gso_type != LINUX_VIRTIO_NET_HDR_GSO_UDP_L4
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "IPv4 packet has non-IPv4 GSO type",
-                ));
-            }
-            false
-        }
-        6 => {
-            if gso_type != LINUX_VIRTIO_NET_HDR_GSO_TCPV6
-                && gso_type != LINUX_VIRTIO_NET_HDR_GSO_UDP_L4
-            {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "IPv6 packet has non-IPv6 GSO type",
-                ));
-            }
-            true
-        }
-        version => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid Linux vnet TUN packet IP version {version}"),
-            ));
-        }
+        4 if matches!(gso_type, LINUX_VIRTIO_NET_HDR_GSO_TCPV4 | LINUX_VIRTIO_NET_HDR_GSO_UDP_L4) => false,
+        4 => return Err(invalid_vnet_data("IPv4 packet has non-IPv4 GSO type")),
+        6 if matches!(gso_type, LINUX_VIRTIO_NET_HDR_GSO_TCPV6 | LINUX_VIRTIO_NET_HDR_GSO_UDP_L4) => true,
+        6 => return Err(invalid_vnet_data("IPv6 packet has non-IPv6 GSO type")),
+        version => return Err(invalid_vnet_data(format!("invalid Linux vnet TUN packet IP version {version}"))),
     };
 
+    let csum_start = usize::from(hdr.csum_start);
+    let valid_ip_header = if is_v6 {
+        csum_start >= 40
+    } else {
+        let ihl = usize::from(version_byte & 0x0f) * 4;
+        ihl >= 20 && ihl == csum_start
+    };
+    let udp = gso_type == LINUX_VIRTIO_NET_HDR_GSO_UDP_L4;
+    let expected_offset = if udp { 6 } else { 16 };
+    if !valid_ip_header || hdr.csum_offset != expected_offset {
+        return Err(invalid_vnet_data("invalid Linux vnet TUN transport offsets"));
+    }
     let mut hdr = hdr;
     if gso_type == LINUX_VIRTIO_NET_HDR_GSO_UDP_L4 {
-        hdr.hdr_len = hdr.csum_start.saturating_add(8);
+        hdr.hdr_len = hdr.csum_start.checked_add(8).ok_or_else(|| invalid_vnet_data("UDP header overflow"))?;
     } else {
         let tcp_data_offset_at = usize::from(hdr.csum_start).saturating_add(12);
         let Some(&data_offset_byte) = packet.get(tcp_data_offset_at) else {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "Linux vnet TUN TCP GSO packet is too short",
-            ));
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Linux vnet TUN TCP GSO packet is too short"));
         };
         let tcp_header_len = u16::from(data_offset_byte >> 4) * 4;
         if !(20..=60).contains(&tcp_header_len) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid Linux vnet TUN TCP header length {tcp_header_len}"),
-            ));
+            return Err(invalid_vnet_data(format!("invalid Linux vnet TUN TCP header length {tcp_header_len}")));
         }
-        hdr.hdr_len = hdr.csum_start.saturating_add(tcp_header_len);
+        hdr.hdr_len = hdr.csum_start.checked_add(tcp_header_len).ok_or_else(|| invalid_vnet_data("TCP header overflow"))?;
     }
 
     let hdr_len = usize::from(hdr.hdr_len);
-    let csum_start = usize::from(hdr.csum_start);
-    let csum_at = csum_start.saturating_add(usize::from(hdr.csum_offset));
-    if packet.len() < hdr_len || hdr_len < csum_start || csum_at + 1 >= packet.len() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "invalid Linux vnet TUN GSO header bounds",
-        ));
+    if packet.len() < hdr_len {
+        return Err(invalid_vnet_data("invalid Linux vnet TUN GSO header bounds"));
     }
 
     let record_stats = crate::pipeline_profile::enabled();
@@ -800,6 +780,14 @@ fn handle_linux_vnet_read(frame: &mut [u8], batch: &mut TunPipelineBatch) -> io:
 struct LinuxVnetGsoSplitStats {
     count: usize,
     bytes: usize,
+}
+
+fn linux_vnet_is_udp_packet(packet: &[u8]) -> bool {
+    match packet.first().map(|byte| byte >> 4) {
+        Some(4) => packet.len() >= 20 && packet[9] == LINUX_IPPROTO_UDP,
+        Some(6) => packet.len() >= 40 && packet[6] == LINUX_IPPROTO_UDP,
+        _ => false,
+    }
 }
 
 fn linux_vnet_gso_none_checksum(
@@ -818,7 +806,14 @@ fn linux_vnet_gso_none_checksum(
     let initial = u16::from_be_bytes([packet[csum_at], packet[csum_at + 1]]);
     packet[csum_at] = 0;
     packet[csum_at + 1] = 0;
-    let checksum = !linux_vnet_checksum(&packet[csum_start..], u64::from(initial));
+    let sum = nostr_vpn_core::packet_checksums::checksum_sum(
+        u64::from(initial),
+        &packet[csum_start..],
+    );
+    let mut checksum = !nostr_vpn_core::packet_checksums::fold_checksum(sum);
+    if checksum == 0 && csum_offset == 6 && linux_vnet_is_udp_packet(packet) {
+        checksum = 0xffff;
+    }
     packet[csum_at..csum_at + 2].copy_from_slice(&checksum.to_be_bytes());
     Ok(())
 }
@@ -831,12 +826,12 @@ fn linux_vnet_gso_split(
     record_stats: bool,
     batch: &mut TunPipelineBatch,
 ) -> io::Result<LinuxVnetGsoSplitStats> {
+    use nostr_vpn_core::packet_checksums::{checksum_sum, fold_checksum, pseudo_header_base_sum};
+
     let ip_header_len = usize::from(hdr.csum_start);
-    let transport_csum_at = usize::from(hdr.csum_start + hdr.csum_offset);
-    if !is_v6 {
-        packet[10] = 0;
-        packet[11] = 0;
-    }
+    let csum_start = usize::from(hdr.csum_start);
+    let hdr_len = usize::from(hdr.hdr_len);
+    let transport_csum_at = csum_start + usize::from(hdr.csum_offset);
     packet[transport_csum_at] = 0;
     packet[transport_csum_at + 1] = 0;
 
@@ -846,17 +841,6 @@ fn linux_vnet_gso_split(
         LINUX_IPPROTO_TCP
     } else {
         LINUX_IPPROTO_UDP
-    };
-    let first_tcp_seq = if protocol == LINUX_IPPROTO_TCP {
-        let seq_at = usize::from(hdr.csum_start).saturating_add(4);
-        u32::from_be_bytes([
-            packet[seq_at],
-            packet[seq_at + 1],
-            packet[seq_at + 2],
-            packet[seq_at + 3],
-        ])
-    } else {
-        0
     };
 
     let src_addr_offset = if is_v6 {
@@ -873,7 +857,7 @@ fn linux_vnet_gso_split(
     }
     let src = &packet[src_addr_offset..src_addr_offset + addr_len];
     let dst = &packet[src_addr_offset + addr_len..src_addr_offset + addr_len * 2];
-    let pseudo_header_base_sum = linux_vnet_pseudo_header_base_sum(protocol, src, dst);
+    let pseudo_base = pseudo_header_base_sum(protocol, src, dst);
     let destination = if is_v6 {
         let mut octets = [0_u8; 16];
         octets.copy_from_slice(dst);
@@ -882,8 +866,35 @@ fn linux_vnet_gso_split(
         Some(IpAddr::V4(Ipv4Addr::new(dst[0], dst[1], dst[2], dst[3])))
     };
 
-    let csum_start = usize::from(hdr.csum_start);
-    let hdr_len = usize::from(hdr.hdr_len);
+    // Precompute the constant IPv4 header sum (with total_len, id, checksum zeroed)
+    // and constant transport header sum (with seq+flags or udp_len zeroed) once per
+    // super-packet so each split segment only sums its own payload bytes.
+    let (base_ip_id, ip_header_base_sum) = if !is_v6 {
+        let base_id = u16::from_be_bytes([packet[4], packet[5]]);
+        packet[2..6].fill(0);
+        packet[10..12].fill(0);
+        (base_id, checksum_sum(0, &packet[..ip_header_len]))
+    } else {
+        (0, 0)
+    };
+    let (first_tcp_seq, base_tcp_flags) = if protocol == LINUX_IPPROTO_TCP {
+        let seq = u32::from_be_bytes([
+            packet[csum_start + 4],
+            packet[csum_start + 5],
+            packet[csum_start + 6],
+            packet[csum_start + 7],
+        ]);
+        let flags = packet[csum_start + LINUX_TCP_FLAGS_OFFSET];
+        packet[csum_start + 4..csum_start + 8].fill(0);
+        packet[csum_start + LINUX_TCP_FLAGS_OFFSET] = 0;
+        (seq, flags)
+    } else {
+        packet[csum_start + 4..csum_start + 6].fill(0);
+        (0, 0)
+    };
+    let transport_header_base_sum = checksum_sum(pseudo_base, &packet[csum_start..hdr_len]);
+    let non_last_tcp_flags = base_tcp_flags & !(LINUX_TCP_FLAG_FIN | LINUX_TCP_FLAG_PSH);
+
     let payload_len = packet.len() - hdr_len;
     let gso_size = usize::from(hdr.gso_size);
     batch.reserve(payload_len.div_ceil(gso_size));
@@ -902,43 +913,51 @@ fn linux_vnet_gso_split(
             ));
         }
 
+        let payload = &packet[next_segment_data_at..next_segment_end];
         let mut out = vec_with_fips_endpoint_headroom(total_len);
         out.extend_from_slice(&packet[..hdr_len]);
-        out.extend_from_slice(&packet[next_segment_data_at..next_segment_end]);
+        out.extend_from_slice(payload);
+
+        let transport_len = total_len - csum_start;
         if !is_v6 {
-            if count > 0 {
-                let id = u16::from_be_bytes([out[4], out[5]]).wrapping_add(count as u16);
-                out[4..6].copy_from_slice(&id.to_be_bytes());
-            }
+            let id = base_ip_id.wrapping_add(count as u16);
             out[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
-            let ip_checksum = !linux_vnet_checksum(&out[..ip_header_len], 0);
+            out[4..6].copy_from_slice(&id.to_be_bytes());
+            let ip_checksum =
+                !fold_checksum(ip_header_base_sum + total_len as u64 + u64::from(id));
             out[10..12].copy_from_slice(&ip_checksum.to_be_bytes());
         } else {
-            out[4..6].copy_from_slice(&((total_len - ip_header_len) as u16).to_be_bytes());
+            out[4..6].copy_from_slice(&((total_len - 40) as u16).to_be_bytes());
         }
 
-        if protocol == LINUX_IPPROTO_TCP {
+        let seg_header_sum = if protocol == LINUX_IPPROTO_TCP {
             let tcp_seq = first_tcp_seq.wrapping_add(u32::from(hdr.gso_size) * count as u32);
+            let flags = if next_segment_end != packet.len() {
+                non_last_tcp_flags
+            } else {
+                base_tcp_flags
+            };
             out[csum_start + 4..csum_start + 8].copy_from_slice(&tcp_seq.to_be_bytes());
-            if next_segment_end != packet.len() {
-                out[csum_start + LINUX_TCP_FLAGS_OFFSET] &=
-                    !(LINUX_TCP_FLAG_FIN | LINUX_TCP_FLAG_PSH);
-            }
+            out[csum_start + LINUX_TCP_FLAGS_OFFSET] = flags;
+            transport_header_base_sum
+                + transport_len as u64
+                + u64::from(tcp_seq >> 16)
+                + u64::from(tcp_seq & 0xffff)
+                + u64::from(flags)
         } else {
             let udp_len = (hdr.hdr_len - hdr.csum_start) + segment_data_len as u16;
             out[csum_start + 4..csum_start + 6].copy_from_slice(&udp_len.to_be_bytes());
+            transport_header_base_sum + transport_len as u64 + u64::from(udp_len)
+        };
+
+        let mut transport_checksum = !fold_checksum(checksum_sum(seg_header_sum, payload));
+        if protocol == LINUX_IPPROTO_UDP && transport_checksum == 0 {
+            transport_checksum = 0xffff;
         }
+        out[transport_csum_at..transport_csum_at + 2]
+            .copy_from_slice(&transport_checksum.to_be_bytes());
 
-        let transport_len = total_len - csum_start;
-        let pseudo_sum = pseudo_header_base_sum + transport_len as u64;
-        let transport_checksum = !linux_vnet_checksum(&out[csum_start..], pseudo_sum);
-        let out_csum_at = csum_start + usize::from(hdr.csum_offset);
-        out[out_csum_at..out_csum_at + 2].copy_from_slice(&transport_checksum.to_be_bytes());
-
-        batch.push(TunPipelinePacket::from_destination(
-            out,
-            destination,
-        ));
+        batch.push(TunPipelinePacket::from_destination(out, destination));
         if record_stats {
             segment_bytes = segment_bytes.saturating_add(total_len);
         }
@@ -950,45 +969,6 @@ fn linux_vnet_gso_split(
         count,
         bytes: segment_bytes,
     })
-}
-
-fn linux_vnet_pseudo_header_sum(protocol: u8, src: &[u8], dst: &[u8], total_len: u16) -> u64 {
-    linux_vnet_pseudo_header_base_sum(protocol, src, dst) + u64::from(total_len)
-}
-
-fn linux_vnet_pseudo_header_base_sum(protocol: u8, src: &[u8], dst: &[u8]) -> u64 {
-    let mut sum = linux_vnet_add_words(0, src);
-    sum = linux_vnet_add_words(sum, dst);
-    sum += u64::from(protocol);
-    sum
-}
-
-fn linux_vnet_checksum(bytes: &[u8], initial: u64) -> u16 {
-    let mut sum = linux_vnet_add_words(initial, bytes);
-    while sum > 0xffff {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-    sum as u16
-}
-
-fn linux_vnet_add_words(mut sum: u64, bytes: &[u8]) -> u64 {
-    let mut chunks = bytes.chunks_exact(8);
-    for chunk in &mut chunks {
-        let word = u64::from_be_bytes(chunk.try_into().expect("chunk is 8 bytes"));
-        sum += (word >> 48)
-            + ((word >> 32) & 0xffff)
-            + ((word >> 16) & 0xffff)
-            + (word & 0xffff);
-    }
-
-    let mut tail = chunks.remainder().chunks_exact(2);
-    for chunk in &mut tail {
-        sum += u64::from(u16::from_be_bytes([chunk[0], chunk[1]]));
-    }
-    if let Some(&byte) = tail.remainder().first() {
-        sum += u64::from(byte) << 8;
-    }
-    sum
 }
 
 include!("linux_vnet_tun_tests.rs");

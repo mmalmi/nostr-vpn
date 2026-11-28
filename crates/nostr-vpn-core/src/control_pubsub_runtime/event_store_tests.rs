@@ -539,6 +539,61 @@ mod tests {
         fs::remove_dir_all(directory).expect("remove event store directory");
     }
 
+    #[tokio::test(flavor = "current_thread")]
+    async fn control_store_graph_revision_tracks_social_graph_and_fast_prune_expires_accurately() {
+        let directory = async_store_directory();
+        let path = directory.join("events.json");
+        let owner = Keys::generate();
+        let mut store = ControlEventStore::load_for_owner(
+            Some(path),
+            test_update_events(),
+            Some(owner.public_key()),
+        )
+        .expect("store");
+        let now_secs = now_ms() / 1_000;
+        assert_eq!(store.graph_revision, 0);
+
+        let rater = Keys::generate();
+        let subject = Keys::generate().public_key().to_hex();
+        store
+            .insert(rating_event(&rater, &subject, "fips.peer", 50, now_secs))
+            .expect("rating");
+        assert_eq!(store.graph_revision, 0);
+
+        let contacts = EventBuilder::new(Kind::ContactList, "")
+            .sign_with_keys(&owner)
+            .expect("contacts");
+        store.insert(contacts).expect("insert contacts");
+        assert_eq!(store.graph_revision, 1);
+
+        #[cfg(feature = "paid-exit")]
+        {
+            let seller = Keys::generate();
+            store
+                .insert(paid_offer_event(&seller, "fast-prune-offer", now_secs))
+                .expect("offer");
+            assert_eq!(store.graph_revision, 1);
+            assert!(!store.has_expired_events(now_secs + 10));
+            assert!(store.has_expired_events(now_secs + PAID_ROUTE_OFFER_TTL_SECS));
+        }
+
+        let events = Arc::new(Mutex::new(store));
+        assert_eq!(
+            prune_control_events(&events, now_secs + 10)
+                .await
+                .expect("idle prune"),
+            0
+        );
+        #[cfg(feature = "paid-exit")]
+        assert!(
+            prune_control_events(&events, now_secs + PAID_ROUTE_OFFER_TTL_SECS)
+                .await
+                .expect("expired offer prune")
+                >= 1
+        );
+        fs::remove_dir_all(&directory).expect("cleanup");
+    }
+
     fn test_update_events() -> UpdateEventCache {
         let keys = Keys::generate();
         let reference = crate::updater::UpdateRef {

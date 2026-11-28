@@ -115,7 +115,7 @@ impl FipsPrivateMeshRuntime {
                             return Ok(None);
                         }
                         match self.direct_endpoint_rx.recv_timeout(
-                            Duration::from_millis(100),
+                            Duration::from_secs(60),
                             FIPS_MESH_RECV_BURST,
                         ) {
                             Ok(runs) => break runs,
@@ -175,7 +175,7 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn wake_blocking_mesh_recv(&self) {
         self.direct_endpoint_rx.interrupt();
     }

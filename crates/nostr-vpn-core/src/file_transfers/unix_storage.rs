@@ -152,16 +152,12 @@ pub(super) fn open_owned(config: &Path, path: &Path) -> Result<File> {
     Ok(file)
 }
 
-/// The iOS app and its share extension publish commands from separate processes.
-/// Probe the already-verified directory handle on idle ticks. A nonempty or
-/// replaced queue goes through the normal protected path walk before processing.
-#[cfg(any(target_os = "ios", all(test, target_os = "macos")))]
+/// Probe the verified directory handle. Producers can publish commands between ticks.
 pub(super) struct IdleCommandQueue {
     path: PathBuf,
     verified: Option<(File, fs::Metadata)>,
 }
 
-#[cfg(any(target_os = "ios", all(test, target_os = "macos")))]
 impl IdleCommandQueue {
     pub(super) fn new(config: &Path) -> Self {
         Self {
@@ -173,12 +169,16 @@ impl IdleCommandQueue {
     pub(super) fn is_empty(&mut self, config: &Path) -> Result<bool> {
         let metadata = match fs::symlink_metadata(&self.path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.verified = None;
+                return Ok(true);
+            }
             Err(error) => return Err(error.into()),
         };
         let handle = match &self.verified {
             Some((handle, saved))
-                if metadata.dev() == saved.dev()
+                if metadata.is_dir()
+                    && metadata.dev() == saved.dev()
                     && metadata.ino() == saved.ino()
                     && metadata.uid() == saved.uid()
                     && metadata.mode() & 0o022 == 0 =>
@@ -264,7 +264,7 @@ pub(super) fn remove(path: &Path, is_directory: bool) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod ios_queue_tests {
     use super::*;
     use std::os::unix::fs::symlink;
@@ -282,8 +282,14 @@ mod ios_queue_tests {
         owned_dir(&config, &queue).unwrap();
         assert!(probe.is_empty(&config).unwrap());
 
+        // Publishing a regular file does not change the directory link count.
+        // A filesystem may also report the same mtime for consecutive changes.
+        let timestamp = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60);
+        File::open(&queue).unwrap().set_modified(timestamp).unwrap();
+        assert!(probe.is_empty(&config).unwrap());
         let command = queue.join("first.json");
         write_atomic(&config, &command, b"{}").unwrap();
+        File::open(&queue).unwrap().set_modified(timestamp).unwrap();
         assert!(!probe.is_empty(&config).unwrap());
         fs::remove_file(&command).unwrap();
         assert!(probe.is_empty(&config).unwrap());

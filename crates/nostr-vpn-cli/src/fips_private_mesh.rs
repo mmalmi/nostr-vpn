@@ -32,12 +32,10 @@ use nostr_vpn_core::fips_control_tcp::{
 #[cfg(test)]
 use nostr_vpn_core::fips_discovery::FIPS_LAN_DISCOVERY_SCOPE_PREFIX;
 use nostr_vpn_core::fips_discovery::fips_lan_discovery_scope;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use nostr_vpn_core::fips_mesh::RoutedFipsPeer;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use nostr_vpn_core::fips_mesh::packet_endpoints;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
+use nostr_vpn_core::fips_mesh::{
+    FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter, RoutedFipsPeer, packet_endpoints,
+};
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 use nostr_vpn_core::magic_dns::build_magic_dns_records;
@@ -252,7 +250,7 @@ pub(crate) struct FipsPrivateMeshRuntime {
     other_link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
     peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
     #[cfg(feature = "paid-exit")]
-    paid_route_accounting: Mutex<FipsPaidRouteAccounting>,
+    paid_route_accounting: FipsPaidRouteAccountingCell,
     #[cfg(feature = "paid-exit")]
     candidate_probe: arc_swap::ArcSwapOption<exit_probe::ProbeFlow>,
 }

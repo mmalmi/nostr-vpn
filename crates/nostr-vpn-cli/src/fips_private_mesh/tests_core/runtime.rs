@@ -359,6 +359,73 @@
         let invalid_usage = accounting.drain("not-a-pubkey");
         assert_eq!(invalid_usage.tx_bytes, 0);
         assert_eq!(invalid_usage.billable_bytes, 0);
+
+        let cell = super::FipsPaidRouteAccountingCell::default();
+        assert!(cell.lock_if_outbound_active().unwrap().is_none());
+        assert!(cell.lock_if_inbound_active().unwrap().is_none());
+        cell.lock()
+            .unwrap()
+            .replace_peers([FipsPaidRouteAccountingPeer::parse(
+                &participant,
+                FipsPaidRouteAccountingRole::LocalBuyer,
+            )
+            .expect("accounting peer")]);
+        assert!(cell.lock_if_outbound_active().unwrap().is_some());
+        assert!(cell.lock_if_inbound_active().unwrap().is_some());
+        cell.lock().unwrap().replace_peers(std::iter::empty());
+        assert!(cell.lock_if_outbound_active().unwrap().is_none());
+        assert!(cell.lock_if_inbound_active().unwrap().is_none());
+    }
+
+    #[cfg(all(feature = "paid-exit", any(target_os = "linux", target_os = "macos")))]
+    #[tokio::test]
+    async fn outbound_accounting_can_activate_during_a_send_turn() {
+        use super::{FipsPaidRouteAccountingPeer, FipsPaidRouteAccountingRole};
+
+        let keys = Keys::generate();
+        let participant = keys.public_key().to_hex();
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant,
+            vec!["198.51.100.1/32".to_string()],
+        ).expect("route");
+        let runtime = bind_endpoint_data_test_runtime(
+            keys.secret_key().to_bech32().expect("nsec"), "accounting-turn", vec![peer],
+        ).await;
+        let packets = (0..2).map(|index| {
+            if index == 1 {
+                let buyer = FipsPaidRouteAccountingPeer::parse(
+                    &participant, FipsPaidRouteAccountingRole::LocalBuyer,
+                ).expect("buyer");
+                runtime.set_paid_route_accounting_peers(vec![buyer]).unwrap();
+            }
+            TunPipelinePacket::new(paid_route_test_ipv4_udp_packet(64))
+        });
+        runtime.build_tun_pipeline_send_runs(packets, 2, &mut Vec::new()).unwrap();
+        let usage = runtime.drain_paid_route_usage(&participant).unwrap();
+        assert_eq!((usage.tx_packets, usage.tx_bytes), (1, 64));
+        runtime.endpoint().shutdown().await.unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn closing_stop_socket_releases_tun_poll() {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::net::UnixStream;
+
+        let (tun_reader, _idle_tun) = UnixStream::pair().unwrap();
+        let (wake_reader, wake_writer) = UnixStream::pair().unwrap();
+        let (done, result) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let readable = super::wait_fd_readable_blocking(
+                tun_reader.as_raw_fd(),
+                wake_reader.as_raw_fd(),
+                &std::sync::atomic::AtomicBool::new(false),
+            );
+            done.send(readable).unwrap();
+        });
+        drop(wake_writer);
+        assert!(!result.recv_timeout(Duration::from_secs(2)).expect("shutdown wake"));
+        thread.join().unwrap();
     }
 
     #[test]

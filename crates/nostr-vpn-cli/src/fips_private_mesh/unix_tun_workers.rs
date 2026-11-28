@@ -4,17 +4,20 @@ fn spawn_tun_send_worker(
     fips_host_enabled: bool,
 ) -> Result<FipsTunSendWorker> {
     let stop = Arc::new(AtomicBool::new(false));
+    let (wake_reader, wake_writer) = std::os::unix::net::UnixStream::pair()
+        .context("failed to create TUN wake socket pair")?;
     let thread_stop = Arc::clone(&stop);
     let thread = std::thread::Builder::new()
         .name("nvpn-fips-tun-send".to_string())
         .spawn(move || {
             let tun_fd = BorrowedTunFd::new(tun.as_raw_fd());
+            let wake_fd = wake_reader.as_raw_fd();
             let mut buf = vec![0_u8; tun.read_buffer_len()];
             let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
             let mut send_runs = Vec::new();
             let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
-                if !wait_fd_readable_blocking(tun_fd.as_raw_fd(), &thread_stop) {
+                if !wait_fd_readable_blocking(tun_fd.as_raw_fd(), wake_fd, &thread_stop) {
                     break;
                 }
                 batch.clear();
@@ -85,26 +88,38 @@ fn spawn_tun_send_worker(
             }
         })
         .context("failed to spawn FIPS TUN send worker")?;
-    Ok(FipsTunSendWorker { stop, thread })
+    Ok(FipsTunSendWorker { stop, wake_writer, thread })
 }
 
 async fn stop_tun_send_worker(worker: FipsTunSendWorker) {
     worker.stop.store(true, Ordering::Release);
+    drop(worker.wake_writer);
     let _ = tokio::task::spawn_blocking(move || {
         let _ = worker.thread.join();
     })
     .await;
 }
-fn wait_fd_readable_blocking(fd: RawFd, stop: &AtomicBool) -> bool {
+fn wait_fd_readable_blocking(fd: RawFd, wake_fd: RawFd, stop: &AtomicBool) -> bool {
     while !stop.load(Ordering::Acquire) {
-        let mut poll_fd = libc::pollfd {
-            fd,
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let result = unsafe { libc::poll(&mut poll_fd, 1, 100) };
+        let mut poll_fds = [
+            libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: wake_fd,
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        let result = unsafe { libc::poll(poll_fds.as_mut_ptr(), 2, -1) };
         if result > 0 {
-            return true;
+            if poll_fds[1].revents != 0 {
+                return false;
+            }
+            return poll_fds[0].revents & libc::POLLIN != 0
+                && poll_fds[0].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) == 0;
         }
         if result == 0 {
             continue;

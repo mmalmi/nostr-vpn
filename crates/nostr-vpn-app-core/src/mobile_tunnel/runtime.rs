@@ -588,19 +588,11 @@ impl MobileTunnel {
                         received = endpoint.recv_batch_into(&mut messages, MOBILE_FIPS_RECV_BATCH) => {
                             let Some(_) = received else { break; };
                             inbound_packets.clear();
-                            for message in messages.drain(..) {
-                                match handle_mobile_endpoint_message(
-                                    &control,
-                                    &mut inbound_packets,
-                                    message,
-                                ).await {
-                                    Ok(true) => {}
-                                    Ok(false) => break 'recv,
-                                    Err(error) => {
-                                        tracing::warn!(?error, "mobile: failed to handle FIPS datagram");
-                                    }
-                                }
-                            }
+                            handle_mobile_endpoint_message_batch(
+                                &control,
+                                &mut inbound_packets,
+                                messages.drain(..),
+                            ).await;
                             if let Some(exit_dns_nat) = inbound_exit_dns_nat.as_deref() {
                                 for packet in &mut inbound_packets {
                                     exit_dns_nat.rewrite_response(packet);

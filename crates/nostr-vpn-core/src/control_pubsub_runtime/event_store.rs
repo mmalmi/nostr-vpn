@@ -7,15 +7,25 @@ struct StoredEventsFile<E = Event> {
     paid_offer_watermarks: Vec<E>,
 }
 
+type PaidOfferCoordinate = (u16, String, String);
+
+struct PaidOfferState {
+    coordinate: PaidOfferCoordinate,
+    window: (u64, u64),
+    is_live: bool,
+}
+
 #[derive(Debug)]
 struct ControlEventStore {
     graph_root: Option<PublicKey>,
+    graph_revision: u64,
     path: Option<PathBuf>,
     dirty: bool,
     events: HashMap<String, Event>,
     order: VecDeque<String>,
     encoded_events: HashMap<nostr_sdk::prelude::EventId, Box<serde_json::value::RawValue>>,
-    paid_offer_watermarks: HashMap<(u16, String, String), Event>,
+    live_paid_offer_windows: HashMap<String, (u64, u64)>,
+    paid_offer_watermarks: HashMap<PaidOfferCoordinate, Event>,
     rating_events: HashMap<RatingEventStoreKey, RatingEventStoreEntry>,
     #[cfg(feature = "updater")]
     update_events: UpdateEventCache,
@@ -69,6 +79,9 @@ async fn prune_control_events(
     now_secs: u64,
 ) -> Result<usize> {
     let mut store = Arc::clone(events).lock_owned().await;
+    if !store.dirty && !store.has_expired_events(now_secs) {
+        return Ok(0);
+    }
     if store.path.is_none() {
         return store.prune_expired_events(now_secs);
     }
@@ -102,31 +115,22 @@ impl ControlEventStore {
         #[cfg(feature = "updater")] update_events: UpdateEventCache,
         graph_root: Option<PublicKey>,
     ) -> Result<Self> {
-        let Some(path) = path else {
-            return Ok(Self {
-                graph_root,
-                path: None,
-                dirty: false,
-                events: HashMap::new(),
-                order: VecDeque::new(),
-                encoded_events: HashMap::new(),
-                paid_offer_watermarks: HashMap::new(),
-                rating_events: HashMap::new(),
-                #[cfg(feature = "updater")]
-                update_events,
-            });
-        };
         let mut store = Self {
             graph_root,
-            path: Some(path.clone()),
+            graph_revision: 0,
+            path: path.clone(),
             dirty: false,
             events: HashMap::new(),
             order: VecDeque::new(),
             encoded_events: HashMap::new(),
+            live_paid_offer_windows: HashMap::new(),
             paid_offer_watermarks: HashMap::new(),
             rating_events: HashMap::new(),
             #[cfg(feature = "updater")]
             update_events,
+        };
+        let Some(path) = path else {
+            return Ok(store);
         };
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -218,32 +222,31 @@ impl ControlEventStore {
                 self.remove_memory(&previous_id);
             }
         }
-        let paid_offer = if u16::from(event.kind) == PAID_EXIT_OFFER_KIND {
+        let paid_offer_window = if u16::from(event.kind) == PAID_EXIT_OFFER_KIND {
             let Some(state) = paid_offer_state(&event, now_secs) else {
                 return false;
             };
-            Some(state)
-        } else {
-            None
-        };
-        if let Some((coordinate, is_live)) = paid_offer {
-            if let Some(stored) = self.paid_offer_watermarks.get(&coordinate)
+            if let Some(stored) = self.paid_offer_watermarks.get(&state.coordinate)
                 && !paid_offer_supersedes(&event, stored)
             {
                 return false;
             }
             if let Some(stored_id) = self.events.iter().find_map(|(stored_id, stored)| {
-                (paid_offer_coordinate(stored).as_ref() == Some(&coordinate))
+                (paid_offer_coordinate(stored).as_ref() == Some(&state.coordinate))
                     .then(|| stored_id.clone())
             }) {
                 self.remove_memory(&stored_id);
             }
-            self.paid_offer_watermarks.insert(coordinate, event.clone());
+            self.paid_offer_watermarks
+                .insert(state.coordinate, event.clone());
             self.dirty = true;
-            if !is_live {
+            if !state.is_live {
                 return true;
             }
-        }
+            Some(state.window)
+        } else {
+            None
+        };
         let rating = if u16::from(event.kind) == RATING_FACT_KIND {
             let Some((rating_key, created_at)) = retained_rating_event(&event, now_secs) else {
                 return false;
@@ -314,7 +317,13 @@ impl ControlEventStore {
         }
         self.order.push_back(event_id.clone());
         self.dirty |= control_event_is_persistent(&event);
+        if matches!(event.kind, Kind::ContactList | Kind::MuteList) {
+            self.graph_revision = self.graph_revision.wrapping_add(1);
+        }
         self.events.insert(event_id.clone(), event);
+        if let Some(window) = paid_offer_window {
+            self.live_paid_offer_windows.insert(event_id.clone(), window);
+        }
         if let Some((rating_key, created_at)) = rating {
             self.rating_events.insert(
                 rating_key,
@@ -332,10 +341,30 @@ impl ControlEventStore {
             return false;
         };
         self.dirty |= control_event_is_persistent(&event);
+        if matches!(event.kind, Kind::ContactList | Kind::MuteList) {
+            self.graph_revision = self.graph_revision.wrapping_add(1);
+        }
+        self.live_paid_offer_windows.remove(event_id);
         self.order.retain(|stored_id| stored_id != event_id);
         self.rating_events
             .retain(|_, stored| stored.event_id != event_id);
         true
+    }
+
+    fn has_expired_events(&self, now_secs: u64) -> bool {
+        self.rating_events.values().any(|stored| {
+            now_secs.saturating_sub(stored.created_at) > PEER_RATING_MAX_AGE.as_secs()
+        }) || self
+            .live_paid_offer_windows
+            .values()
+            .any(|&window| !paid_offer_window_is_live(window, now_secs))
+            || self.paid_offer_watermarks.values().any(|event| {
+                now_secs
+                    >= event
+                        .created_at
+                        .as_secs()
+                        .saturating_add(PAID_ROUTE_OFFER_TTL_SECS)
+            })
     }
 
     fn snapshot(&self) -> Vec<Event> {
@@ -355,12 +384,9 @@ impl ControlEventStore {
             .map(|(_, stored)| stored.event_id.clone())
             .collect::<Vec<_>>();
         remove.extend(
-            self.events
+            self.live_paid_offer_windows
                 .iter()
-                .filter(|(_, event)| {
-                    u16::from(event.kind) == PAID_EXIT_OFFER_KIND
-                        && retained_paid_offer_coordinate(event, now_secs).is_none()
-                })
+                .filter(|(_, window)| !paid_offer_window_is_live(**window, now_secs))
                 .map(|(event_id, _)| event_id.clone()),
         );
         remove.sort();
@@ -466,7 +492,7 @@ fn control_event_is_persistent(event: &Event) -> bool {
     u16::from(event.kind) != FIPS_PEER_ADVERT_KIND
 }
 
-fn paid_offer_coordinate(event: &Event) -> Option<(u16, String, String)> {
+fn paid_offer_coordinate(event: &Event) -> Option<PaidOfferCoordinate> {
     if u16::from(event.kind) != PAID_EXIT_OFFER_KIND {
         return None;
     }
@@ -477,17 +503,14 @@ fn paid_offer_coordinate(event: &Event) -> Option<(u16, String, String)> {
     ))
 }
 
-fn retained_paid_offer_coordinate(event: &Event, now_secs: u64) -> Option<(u16, String, String)> {
-    let (coordinate, is_live) = paid_offer_state(event, now_secs)?;
-    is_live.then_some(coordinate)
-}
-
-fn paid_offer_state(event: &Event, now_secs: u64) -> Option<((u16, String, String), bool)> {
+fn paid_offer_state(event: &Event, now_secs: u64) -> Option<PaidOfferState> {
     let signed = SignedPaidRouteOffer::from_event(event.clone()).ok()?;
-    Some((
-        paid_offer_coordinate(&signed.event)?,
-        signed.is_live_at(now_secs),
-    ))
+    let window = signed.live_window();
+    Some(PaidOfferState {
+        coordinate: paid_offer_coordinate(&signed.event)?,
+        window,
+        is_live: paid_offer_window_is_live(window, now_secs),
+    })
 }
 
 fn retained_rating_event(event: &Event, now_secs: u64) -> Option<(RatingEventStoreKey, u64)> {

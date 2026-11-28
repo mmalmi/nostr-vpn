@@ -429,8 +429,8 @@ impl FipsPrivateTunnelRuntime {
                 },
             )
             .await;
+            #[cfg(target_os = "linux")]
             if let Err(error) = started {
-                #[cfg(target_os = "linux")]
                 if self.secure_dns.is_none()
                     && config.native_dns_can_handle_listener_conflict()
                     && error
@@ -446,6 +446,8 @@ impl FipsPrivateTunnelRuntime {
                 }
                 return Err(error);
             }
+            #[cfg(not(target_os = "linux"))]
+            started?;
         }
         if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_config(

@@ -25,6 +25,7 @@ mod linux_vnet_tun_tests {
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].bytes.len(), packet.len());
         assert_eq!(&batch[0].bytes[..20], &packet[..20]);
+        assert_eq!(ipv4_transport_sum(&batch[0].bytes), 0xffff);
     }
 
     #[test]
@@ -210,6 +211,36 @@ mod linux_vnet_tun_tests {
     }
 
     #[test]
+    fn linux_vnet_tcp6_preserves_extension_in_segment_payload_length() {
+        let mut packet = ipv6_tcp_gso_packet(60, 30, LINUX_TCP_FLAG_ACK);
+        packet[6] = 60; // Destination Options before TCP.
+        packet.splice(40..40, [LINUX_IPPROTO_TCP, 0, 0, 0, 0, 0, 0, 0]);
+        let payload_len = (packet.len() - 40) as u16;
+        packet[4..6].copy_from_slice(&payload_len.to_be_bytes());
+        let mut frame = vec![0; LINUX_VIRTIO_NET_HDR_LEN];
+        LinuxVirtioNetHdr {
+            flags: LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: LINUX_VIRTIO_NET_HDR_GSO_TCPV6,
+            hdr_len: 68,
+            gso_size: 30,
+            csum_start: 48,
+            csum_offset: 16,
+        }.encode(&mut frame);
+        frame.extend_from_slice(&packet);
+        let mut segments = Vec::new();
+        assert_eq!(handle_linux_vnet_read(&mut frame, &mut segments).unwrap(), 2);
+        for segment in segments {
+            let bytes = &segment.bytes;
+            assert_eq!(usize::from(u16::from_be_bytes([bytes[4], bytes[5]])), bytes.len() - 40);
+            assert_eq!(&bytes[40..48], &packet[40..48]);
+            let pseudo = linux_vnet_pseudo_header_sum(
+                LINUX_IPPROTO_TCP, &bytes[8..24], &bytes[24..40], (bytes.len() - 48) as u16,
+            );
+            assert_eq!(linux_vnet_checksum(&bytes[48..], pseudo), 0xffff);
+        }
+    }
+
+    #[test]
     fn linux_vnet_udp4_gso_read_splits_into_checked_datagrams() {
         let packet = ipv4_udp_gso_packet(2400, 1200);
         let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];
@@ -286,17 +317,12 @@ mod linux_vnet_tun_tests {
         assert_eq!(linux_vnet_checksum(&packet[..20], 0), 0xffff);
         assert_ne!(packet[33] & LINUX_TCP_FLAG_PSH, 0);
 
-        let pseudo = linux_vnet_pseudo_header_sum(
-            LINUX_IPPROTO_TCP,
-            &packet[12..16],
-            &packet[16..20],
-            (packet.len() - 20) as u16,
-        );
-        let expected_partial = !linux_vnet_checksum(&[], pseudo);
-        assert_eq!(
-            u16::from_be_bytes([packet[36], packet[37]]),
-            expected_partial
-        );
+        // Complete CHECKSUM_PARTIAL as a virtio receiver does, then verify
+        // the finished packet including its pseudo-header.
+        let mut completed = packet.to_vec();
+        let sum = !linux_vnet_checksum(&completed[20..], 0);
+        completed[36..38].copy_from_slice(&sum.to_be_bytes());
+        assert_eq!(ipv4_transport_sum(&completed), 0xffff);
     }
 
     #[test]
@@ -498,6 +524,17 @@ mod linux_vnet_tun_tests {
             packet[40 + i] = (i % 251) as u8;
         }
         packet
+    }
+
+    fn linux_vnet_checksum(bytes: &[u8], initial: u64) -> u16 {
+        nostr_vpn_core::packet_checksums::fold_checksum(
+            nostr_vpn_core::packet_checksums::checksum_sum(initial, bytes),
+        )
+    }
+
+    fn linux_vnet_pseudo_header_sum(protocol: u8, src: &[u8], dst: &[u8], total_len: u16) -> u64 {
+        nostr_vpn_core::packet_checksums::pseudo_header_base_sum(protocol, src, dst)
+            + u64::from(total_len)
     }
 
     fn ipv4_transport_sum(packet: &[u8]) -> u16 {

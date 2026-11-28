@@ -77,7 +77,7 @@ impl FipsPrivateMeshRuntime {
             other_link_status: RwLock::new(HashMap::new()),
             peer_capabilities: RwLock::new(HashMap::new()),
             #[cfg(feature = "paid-exit")]
-            paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
+            paid_route_accounting: FipsPaidRouteAccountingCell::default(),
             #[cfg(feature = "paid-exit")]
             candidate_probe: Default::default(),
         })
@@ -100,6 +100,7 @@ impl FipsPrivateMeshRuntime {
         #[cfg(feature = "paid-exit")]
         let probe = self.candidate_probe.load();
         let mut routed_packets = 0usize;
+        let mut cached_destination_peer: Option<(IpAddr, RoutedFipsPeer<'_>)> = None;
 
         runs.clear();
         {
@@ -111,24 +112,38 @@ impl FipsPrivateMeshRuntime {
                     routed_packets += 1;
                     continue;
                 }
-                let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet) else {
+                let Some((_, destination)) = packet_endpoints(&packet) else {
                     continue;
                 };
+                let peer = if let Some((cached_dest, peer)) = cached_destination_peer.as_ref()
+                    && *cached_dest == destination
+                {
+                    *peer
+                } else {
+                    let Some(peer) = mesh.route_outbound_destination_peer(destination) else {
+                        continue;
+                    };
+                    cached_destination_peer = Some((destination, peer));
+                    peer
+                };
+                if peer.via_default_route {
+                    mesh.note_cached_exit_outbound(*peer.endpoint_node_addr, &packet);
+                }
                 routed_packets += 1;
-                let participant_key = outgoing.participant_pubkey_bytes.copied();
+                let participant_key = peer.participant_pubkey_bytes.copied();
                 #[cfg(feature = "paid-exit")]
                 self.note_paid_route_outbound_packet(
-                    Some(outgoing.participant_pubkey),
-                    outgoing.participant_pubkey_bytes,
-                    &outgoing.bytes,
+                    Some(peer.participant_pubkey),
+                    peer.participant_pubkey_bytes,
+                    &packet,
                 )?;
                 Self::push_endpoint_send_run(
                     runs,
                     &peer_identities,
-                    outgoing.participant_pubkey,
+                    peer.participant_pubkey,
                     participant_key,
-                    outgoing.endpoint_node_addr,
-                    outgoing.bytes,
+                    peer.endpoint_node_addr,
+                    packet,
                 );
             }
         }

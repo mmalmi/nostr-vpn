@@ -52,7 +52,8 @@
             endpoint_npub
         );
         assert_eq!(
-            mobile_identity_for_send(&identities, Some(&participant_key), &endpoint_node_addr)
+            identities
+                .identity_for_send(Some(&participant_key), &endpoint_node_addr)
                 .expect("send identity")
                 .npub(),
             endpoint_npub

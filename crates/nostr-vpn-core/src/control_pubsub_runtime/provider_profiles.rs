@@ -5,10 +5,13 @@ async fn sync_provider_profiles(
     events: &Arc<Mutex<ControlEventStore>>,
 ) {
     let Some(relay) = relay else { return };
-    let (root, snapshot) = {
+    let (root, graph_revision, snapshot) = {
         let store = events.lock().await;
         let Some(root) = store.graph_root else { return };
-        (root.to_hex(), store.snapshot())
+        if relay.profile_graph_revision == Some(store.graph_revision) {
+            return;
+        }
+        (root.to_hex(), store.graph_revision, store.snapshot())
     };
     let mut inputs = snapshot
         .iter()
@@ -17,6 +20,7 @@ async fn sync_provider_profiles(
         .collect::<Vec<_>>();
     inputs.sort();
     if relay.profile_inputs.as_ref() == Some(&inputs) {
+        relay.profile_graph_revision = Some(graph_revision);
         return;
     }
     let graph = crate::paid_provider_names::provider_name_graph(&root, &snapshot, now_ms() / 1_000);
@@ -39,6 +43,7 @@ async fn sync_provider_profiles(
         .collect::<Vec<_>>();
     if authors == relay.profile_authors && graph_authors == relay.profile_graph_authors {
         relay.profile_inputs = Some(inputs);
+        relay.profile_graph_revision = Some(graph_revision);
         return;
     }
     let filters = vec![
@@ -61,6 +66,7 @@ async fn sync_provider_profiles(
             relay.profile_authors = authors;
             relay.profile_graph_authors = graph_authors;
             relay.profile_inputs = Some(inputs);
+            relay.profile_graph_revision = Some(graph_revision);
         }
         Err(error) => tracing::debug!(%error, "provider profile subscription deferred"),
     }

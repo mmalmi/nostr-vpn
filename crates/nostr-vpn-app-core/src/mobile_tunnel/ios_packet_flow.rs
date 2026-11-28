@@ -35,9 +35,14 @@ impl IosPacketFlowCallbacks {
         })
     }
 
-    fn write(&self, packets: &[Vec<u8>]) -> bool {
+    fn write_with_scratch(
+        &self,
+        packets: &[Vec<u8>],
+        packet_lengths: &mut Vec<usize>,
+    ) -> bool {
         let packet_pointers = packets.iter().map(Vec::as_ptr).collect::<Vec<_>>();
-        let packet_lengths = packets.iter().map(Vec::len).collect::<Vec<_>>();
+        packet_lengths.clear();
+        packet_lengths.extend(packets.iter().map(Vec::len));
         unsafe {
             (self.write)(
                 self.context as *mut std::ffi::c_void,
@@ -101,28 +106,24 @@ async fn run_ios_packet_flow_writer(
     callbacks: IosPacketFlowCallbacks,
     counters: Arc<MobileTunAtomicCounters>,
 ) {
-    while let Some(packets) = inbound_rx.recv().await {
-        let mut valid_packets = Vec::with_capacity(packets.len());
-        for packet in packets {
-            if ios_packet_flow_packet_is_valid(&packet) {
-                valid_packets.push(packet);
-            } else {
-                counters.note_drop();
-            }
+    let mut packet_lengths = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
+    while let Some(mut packets) = inbound_rx.recv().await {
+        let before = packets.len();
+        packets.retain(|packet| ios_packet_flow_packet_is_valid(packet));
+        let invalid = before - packets.len();
+        if invalid > 0 {
+            counters.note_drop_batch(invalid);
         }
-        if valid_packets.is_empty() {
+        if packets.is_empty() {
             continue;
         }
-        if !callbacks.write(&valid_packets) {
-            for _ in &valid_packets {
-                counters.note_drop();
-            }
+        if !callbacks.write_with_scratch(&packets, &mut packet_lengths) {
+            counters.note_drop_batch(packets.len());
             callbacks.fail("NEPacketTunnelFlow rejected an inbound packet batch");
             return;
         }
-        for packet in &valid_packets {
-            counters.note_write(packet.len());
-        }
+        let total_bytes: usize = packet_lengths.iter().sum();
+        counters.note_write_batch(packets.len(), total_bytes);
     }
     callbacks.fail("mobile tunnel inbound packet channel stopped");
 }
@@ -175,11 +176,8 @@ fn send_ios_packet_flow_batch(
         ));
     }
 
-    let packet_lengths = packets.iter().map(Vec::len).collect::<Vec<_>>();
     if let Err(error) = outbound_tx.try_send(packets) {
-        for _ in &packet_lengths {
-            counters.note_drop();
-        }
+        counters.note_drop_batch(lengths.len());
         return match error {
             tokio_mpsc::error::TrySendError::Full(_) => {
                 // NEPacketTunnelFlow can deliver a startup burst faster than
@@ -192,9 +190,7 @@ fn send_ios_packet_flow_batch(
             }
         };
     }
-    for length in packet_lengths {
-        counters.note_read(length);
-    }
+    counters.note_read_batch(lengths.len(), bytes.len());
     Ok(())
 }
 

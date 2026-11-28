@@ -155,10 +155,11 @@ fn native_tun_read_loop(
     let mut read_packet = Vec::<u8>::with_capacity(packet_capacity);
     'read: loop {
         packets.clear();
+        let mut batch_bytes = 0usize;
         while packets.len() < MOBILE_FIPS_SEND_BATCH {
             match read_mobile_tun_packet(fd, &mut read_packet) {
                 NativeTunRead::Packet(packet) => {
-                    counters.note_read(packet.len());
+                    batch_bytes = batch_bytes.saturating_add(packet.len());
                     packets.push(packet);
                 }
                 NativeTunRead::WouldBlock => {
@@ -170,12 +171,19 @@ fn native_tun_read_loop(
                     }
                     continue;
                 }
-                NativeTunRead::Stopped => break 'read,
+                NativeTunRead::Stopped => {
+                    if !packets.is_empty() {
+                        counters.note_read_batch(packets.len(), batch_bytes);
+                        counters.note_drop_batch(packets.len());
+                    }
+                    break 'read;
+                }
             }
         }
         if !packets.is_empty() {
             let batch = std::mem::replace(&mut packets, Vec::with_capacity(MOBILE_FIPS_SEND_BATCH));
             let batch_len = batch.len();
+            counters.note_read_batch(batch_len, batch_bytes);
             let sent = !stop.is_stopped()
                 && match outbound_tx.try_send(batch) {
                     Ok(()) => true,
@@ -185,9 +193,7 @@ fn native_tun_read_loop(
                     Err(tokio_mpsc::error::TrySendError::Closed(_)) => false,
                 };
             if !sent {
-                for _ in 0..batch_len {
-                    counters.note_drop();
-                }
+                counters.note_drop_batch(batch_len);
                 break;
             }
         }
@@ -228,10 +234,10 @@ fn write_native_tun_inbound_packet(
 ) -> bool {
     let packet_len = packet.len();
     match write_mobile_tun_packet(fd, packet, stop) {
-        NativeTunWrite::Written => counters.note_write(packet_len),
-        NativeTunWrite::Dropped => counters.note_drop(),
+        NativeTunWrite::Written => counters.note_write_batch(1, packet_len),
+        NativeTunWrite::Dropped => counters.note_drop_batch(1),
         NativeTunWrite::Stopped => {
-            counters.note_drop();
+            counters.note_drop_batch(1);
             return false;
         }
     }
@@ -419,6 +425,23 @@ mod native_tun_stop_tests {
         Reader,
         Writer,
         Owner,
+    }
+
+    #[test]
+    fn partial_read_batch_at_eof_counts_reads_and_drops() {
+        use std::io::Write;
+        use std::os::fd::AsRawFd;
+
+        let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let stop = NativeTunStop::new(runtime.handle()).unwrap();
+        let (tun, mut peer) = UnixStream::pair().unwrap();
+        peer.write_all(b"out").unwrap();
+        peer.shutdown(Shutdown::Write).unwrap();
+        let (sender, _receiver) = tokio_mpsc::channel(1);
+        let counters = Arc::new(MobileTunAtomicCounters::default());
+        native_tun_read_loop(tun.as_raw_fd(), sender, &stop, counters.clone(), 1280);
+        let totals = counters.snapshot();
+        assert_eq!((totals.packets_read, totals.bytes_read, totals.packets_dropped), (1, 3, 1));
     }
 
     fn check_worker_shutdown(from: StopFrom) {

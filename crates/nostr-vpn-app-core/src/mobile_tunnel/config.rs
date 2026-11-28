@@ -82,22 +82,25 @@ impl MobileTunAtomicCounters {
     }
 
     #[cfg(any(test, target_os = "android", target_os = "ios"))]
-    fn note_read(&self, len: usize) {
-        self.packets_read.fetch_add(1, Ordering::Relaxed);
+    fn note_read_batch(&self, packets: usize, bytes: usize) {
+        self.packets_read
+            .fetch_add(u64::try_from(packets).unwrap_or(u64::MAX), Ordering::Relaxed);
         self.bytes_read
-            .fetch_add(u64::try_from(len).unwrap_or(u64::MAX), Ordering::Relaxed);
+            .fetch_add(u64::try_from(bytes).unwrap_or(u64::MAX), Ordering::Relaxed);
     }
 
     #[cfg(any(test, target_os = "android", target_os = "ios"))]
-    fn note_write(&self, len: usize) {
-        self.packets_written.fetch_add(1, Ordering::Relaxed);
+    fn note_write_batch(&self, packets: usize, bytes: usize) {
+        self.packets_written
+            .fetch_add(u64::try_from(packets).unwrap_or(u64::MAX), Ordering::Relaxed);
         self.bytes_written
-            .fetch_add(u64::try_from(len).unwrap_or(u64::MAX), Ordering::Relaxed);
+            .fetch_add(u64::try_from(bytes).unwrap_or(u64::MAX), Ordering::Relaxed);
     }
 
     #[cfg(any(test, target_os = "android", target_os = "ios"))]
-    fn note_drop(&self) {
-        self.packets_dropped.fetch_add(1, Ordering::Relaxed);
+    fn note_drop_batch(&self, packets: usize) {
+        self.packets_dropped
+            .fetch_add(u64::try_from(packets).unwrap_or(u64::MAX), Ordering::Relaxed);
     }
 }
 

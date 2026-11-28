@@ -13,6 +13,8 @@ struct RelayProvider {
     profile_graph_authors: Vec<PublicKey>,
     #[cfg(feature = "paid-exit")]
     profile_inputs: Option<Vec<nostr_sdk::prelude::EventId>>,
+    #[cfg(feature = "paid-exit")]
+    profile_graph_revision: Option<u64>,
 }
 
 impl RelayProvider {
@@ -84,6 +86,8 @@ impl RelayProvider {
             profile_graph_authors: Vec::new(),
             #[cfg(feature = "paid-exit")]
             profile_inputs: None,
+            #[cfg(feature = "paid-exit")]
+            profile_graph_revision: None,
         }))
     }
 }

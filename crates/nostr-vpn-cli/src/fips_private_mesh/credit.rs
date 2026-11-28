@@ -732,10 +732,7 @@ impl Node {
 
     fn recoverable_closures(&self) -> Result<Vec<String>> {
         let mesh = self.mesh.upgrade().context("tunnel stopped")?;
-        let meters = mesh
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("local meter unavailable"))?;
+        let meters = mesh.paid_route_accounting.lock()?;
         let store = self
             .store
             .lock()
@@ -815,10 +812,7 @@ impl Node {
         };
         ensure!(offer.payload == terms, "seller changed requested terms");
         let acceptance = {
-            let mut meters = mesh
-                .paid_route_accounting
-                .lock()
-                .map_err(|_| anyhow!("local meter unavailable"))?;
+            let mut meters = mesh.paid_route_accounting.lock()?;
             ensure!(
                 !meters.credit_uploads.contains_key(&key) && meters.credit_uploads.len() < 128,
                 "another credit purchase is active"
@@ -909,10 +903,7 @@ impl Node {
                 return Err(anyhow!("expected final meter"));
             };
             ensure!(agreement_id == id, "wrong agreement meter");
-            let meters = mesh
-                .paid_route_accounting
-                .lock()
-                .map_err(|_| anyhow!("local meter unavailable"))?;
+            let meters = mesh.paid_route_accounting.lock()?;
             let meter = meters
                 .credit_uploads
                 .get(&key)
@@ -945,10 +936,7 @@ impl Node {
                     .map_err(|_| anyhow!("credit account unavailable"))?;
                 Controller::new(&mut store, &self.key)?.acknowledge(&ack)?;
                 drop(store);
-                let mut meters = mesh
-                    .paid_route_accounting
-                    .lock()
-                    .map_err(|_| anyhow!("local meter unavailable"))?;
+                let mut meters = mesh.paid_route_accounting.lock()?;
                 if meters
                     .credit_uploads
                     .get(&key)

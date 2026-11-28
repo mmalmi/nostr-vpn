@@ -93,6 +93,73 @@ impl DirectTunWriteBatch {
 
 #[cfg(feature = "paid-exit")]
 #[derive(Default)]
+struct FipsPaidRouteAccountingCell {
+    outbound_active: AtomicBool,
+    inbound_active: AtomicBool,
+    inner: Mutex<FipsPaidRouteAccounting>,
+}
+
+#[cfg(feature = "paid-exit")]
+struct FipsPaidRouteAccountingGuard<'a> {
+    cell: &'a FipsPaidRouteAccountingCell,
+    guard: std::sync::MutexGuard<'a, FipsPaidRouteAccounting>,
+}
+
+#[cfg(feature = "paid-exit")]
+impl std::ops::Deref for FipsPaidRouteAccountingGuard<'_> {
+    type Target = FipsPaidRouteAccounting;
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+#[cfg(feature = "paid-exit")]
+impl std::ops::DerefMut for FipsPaidRouteAccountingGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
+#[cfg(feature = "paid-exit")]
+impl Drop for FipsPaidRouteAccountingGuard<'_> {
+    fn drop(&mut self) {
+        let has_peers = !self.guard.peers.is_empty();
+        let outbound_active = has_peers || !self.guard.credit_uploads.is_empty();
+        self.cell.inbound_active.store(has_peers, Ordering::Release);
+        self.cell
+            .outbound_active
+            .store(outbound_active, Ordering::Release);
+    }
+}
+
+#[cfg(feature = "paid-exit")]
+impl FipsPaidRouteAccountingCell {
+    fn lock(&self) -> Result<FipsPaidRouteAccountingGuard<'_>> {
+        let guard = self
+            .inner
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        Ok(FipsPaidRouteAccountingGuard { cell: self, guard })
+    }
+
+    fn lock_if_outbound_active(&self) -> Result<Option<FipsPaidRouteAccountingGuard<'_>>> {
+        if !self.outbound_active.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        self.lock().map(Some)
+    }
+
+    fn lock_if_inbound_active(&self) -> Result<Option<FipsPaidRouteAccountingGuard<'_>>> {
+        if !self.inbound_active.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        self.lock().map(Some)
+    }
+}
+
+#[cfg(feature = "paid-exit")]
+#[derive(Default)]
 struct FipsPaidRouteAccounting {
     credit_uploads: HashMap<ParticipantPubkeyBytes, credit::BuyerMeter>,
     peers: HashMap<ParticipantPubkeyBytes, FipsPaidRoutePeerAccounting>,
@@ -234,6 +301,7 @@ struct FipsMeshRecvWorker {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct FipsTunSendWorker {
     stop: Arc<AtomicBool>,
+    wake_writer: std::os::unix::net::UnixStream,
     thread: std::thread::JoinHandle<()>,
 }
 

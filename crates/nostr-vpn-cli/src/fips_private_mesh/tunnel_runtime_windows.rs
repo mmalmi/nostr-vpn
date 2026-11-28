@@ -443,7 +443,8 @@ impl FipsPrivateTunnelRuntime {
         }
         drop(runtime.file_transfers);
         runtime.state_control.stop().await;
-        runtime.stop.store(true, Ordering::Relaxed);
+        runtime.stop.store(true, Ordering::Release);
+        runtime.mesh.wake_blocking_mesh_recv();
         windows_fips_record_cleanup(
             &mut failures,
             "FIPS WinTun session",

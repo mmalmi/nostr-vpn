@@ -392,34 +392,29 @@ impl FipsPrivateMeshRuntime {
         &self,
         participants: Vec<FipsPaidRouteAccountingPeer>,
     ) -> Result<()> {
-        let mut accounting = self
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        let mut accounting = self.paid_route_accounting.lock()?;
         accounting.replace_peers(participants);
         Ok(())
     }
 
     #[cfg(feature = "paid-exit")]
     pub(crate) fn drain_paid_route_usage(&self, participant: &str) -> Result<PaidRouteUsage> {
-        let mut accounting = self
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        let Some(mut accounting) = self.paid_route_accounting.lock_if_inbound_active()? else {
+            return Ok(PaidRouteUsage::default());
+        };
         Ok(accounting.drain(participant))
     }
 
     #[cfg(feature = "paid-exit")]
-    fn note_paid_route_outbound_packet(
+    pub(crate) fn note_paid_route_outbound_packet(
         &self,
         participant: Option<&str>,
         participant_key: Option<&ParticipantPubkeyBytes>,
         packet: &[u8],
     ) -> Result<()> {
-        let mut accounting = self
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        let Some(mut accounting) = self.paid_route_accounting.lock_if_outbound_active()? else {
+            return Ok(());
+        };
         accounting.record_outbound(participant, participant_key, packet);
         Ok(())
     }
@@ -431,10 +426,9 @@ impl FipsPrivateMeshRuntime {
         participant_key: Option<&ParticipantPubkeyBytes>,
         packet: &[u8],
     ) -> Result<()> {
-        let mut accounting = self
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        let Some(mut accounting) = self.paid_route_accounting.lock_if_inbound_active()? else {
+            return Ok(());
+        };
         accounting.record_inbound(participant, participant_key, packet);
         Ok(())
     }
@@ -451,10 +445,9 @@ impl FipsPrivateMeshRuntime {
         if packets.is_empty() {
             return Ok(());
         }
-        let mut accounting = self
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        let Some(mut accounting) = self.paid_route_accounting.lock_if_inbound_active()? else {
+            return Ok(());
+        };
         for run in &packets.runs {
             let key = direct_run_admitter(mesh, run)
                 .and_then(|admitter| admitter.source_pubkey_bytes().copied())

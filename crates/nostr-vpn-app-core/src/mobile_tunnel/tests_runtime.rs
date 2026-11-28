@@ -587,6 +587,65 @@
         );
     }
 
+    #[tokio::test]
+    async fn failed_local_echo_reply_preserves_other_admitted_datagrams() {
+        let own = Keys::generate();
+        let peer = Keys::generate();
+        let peer_key = peer.public_key().to_hex();
+        let identity = PeerIdentity::from_npub(&peer.public_key().to_bech32().unwrap()).unwrap();
+        let local_ip = Ipv4Addr::new(10, 44, 10, 1);
+        let peer_ip = Ipv4Addr::new(10, 44, 10, 2);
+        let config = admin_mobile_join_request_config(
+            own.secret_key().to_bech32().unwrap(), "batch-error", available_tcp_port(),
+        );
+        let endpoint = bind_local_mobile_endpoint("batch-error", &config).await;
+        let stream = FipsControlTcpRuntime::start(endpoint.clone()).await.unwrap();
+        let state_control = stream.sender();
+        stream.stop().await;
+        endpoint.shutdown().await.unwrap();
+        assert!(endpoint.send_batch_to_peer(identity, vec![vec![1]]).await.is_err());
+
+        let mesh_peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &peer_key, vec![format!("{peer_ip}/32")],
+        ).unwrap();
+        let control = MobileEndpointReceiveContext {
+            endpoint: &endpoint,
+            mesh: &new_mobile_mesh(FipsMeshRuntime::with_local_routes(
+                vec![mesh_peer], vec![format!("{local_ip}/32")],
+            )),
+            mesh_peers: &Default::default(),
+            peer_identities: &Default::default(),
+            peer_hints: &Default::default(),
+            presence: &Default::default(),
+            config_state: &Arc::new(RwLock::new(config)),
+            app_config: &Arc::new(RwLock::new(AppConfig::generated())),
+            app_config_dirty: &AtomicBool::new(false),
+            file_roster: None,
+            pending_join_roster_receipts: &Default::default(),
+            config_path: None,
+            join_request_active: &AtomicBool::new(false),
+            state_control: &state_control,
+        };
+        let data = test_ipv4_packet(peer_ip, local_ip);
+        let mut echo = vec![0u8; 28];
+        echo[0] = 0x45;
+        echo[2..4].copy_from_slice(&28u16.to_be_bytes());
+        echo[9] = 1;
+        echo[12..16].copy_from_slice(&peer_ip.octets());
+        echo[16..20].copy_from_slice(&local_ip.octets());
+        echo[20] = 8;
+        let expected_bytes = data.len() * 2 + echo.len();
+        let messages = [data.clone(), echo, data.clone()].map(|bytes| FipsEndpointMessage {
+            source_peer: identity,
+            data: fips_endpoint::FipsEndpointData::new(bytes),
+            enqueued_at_ms: 0,
+        });
+        let mut received = Vec::new();
+        handle_mobile_endpoint_message_batch(&control, &mut received, messages).await;
+        assert_eq!(received, [data.clone(), data]);
+        assert_eq!(control.presence.read().unwrap()[&peer_key].rx_bytes, expected_bytes as u64);
+    }
+
     async fn handle_admin_mobile_join_request(
         admin_endpoint: &FipsEndpoint,
         admin_app: AppConfig,

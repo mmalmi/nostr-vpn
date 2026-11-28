@@ -12,7 +12,9 @@ use crate::control_pubsub::{
     CONTROL_PUBSUB_MAX_EVENT_BYTES, CONTROL_PUBSUB_MAX_WIRE_BYTES, FIPS_PEER_ADVERT_KIND,
     PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
 };
-use crate::paid_routes::{PAID_ROUTE_OFFER_TTL_SECS, SignedPaidRouteOffer};
+use crate::paid_routes::{
+    PAID_ROUTE_OFFER_TTL_SECS, SignedPaidRouteOffer, paid_offer_window_is_live,
+};
 #[cfg(feature = "updater")]
 use crate::updater::{UpdateEventCache, configured_update_ref};
 use anyhow::{Context, Result, anyhow};

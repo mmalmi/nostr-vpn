@@ -127,22 +127,13 @@ fn read_plain_tun_packets_into(
     match tun.read(scratch) {
         Ok([]) => Ok(0),
         Ok(packet) => {
-            push_tun_pipeline_packet(batch, packet);
+            let mut bytes = copy_with_fips_endpoint_headroom(packet);
+            nostr_vpn_core::packet_checksums::finalize_transport_checksum(&mut bytes);
+            push_tun_pipeline_packet_owned_finalized(batch, bytes);
             Ok(1)
         }
         Err(error) => Err(tun_error_to_io(error)),
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn push_tun_pipeline_packet(batch: &mut TunPipelineBatch, packet: &[u8]) {
-    push_tun_pipeline_packet_owned(batch, copy_with_fips_endpoint_headroom(packet));
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn push_tun_pipeline_packet_owned(batch: &mut TunPipelineBatch, mut bytes: Vec<u8>) {
-    nostr_vpn_core::packet_checksums::finalize_transport_checksum(&mut bytes);
-    push_tun_pipeline_packet_owned_finalized(batch, bytes);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

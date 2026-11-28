@@ -402,17 +402,25 @@ fn mobile_runtime_state_with_tun_counters(
     }
 }
 
-fn note_mobile_peer_rx(
-    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+fn presence_entry_mut<'a>(
+    presence: &'a mut HashMap<String, MobilePeerPresence>,
+    participant: &str,
+) -> &'a mut MobilePeerPresence {
+    if presence.contains_key(participant) {
+        presence.get_mut(participant).expect("checked participant")
+    } else {
+        presence.entry(participant.to_string()).or_default()
+    }
+}
+
+fn apply_mobile_peer_rx(
+    presence: &mut HashMap<String, MobilePeerPresence>,
     participant: &str,
     len: usize,
     kind: MobilePeerRxKind,
+    now: u64,
 ) {
-    let now = unix_timestamp();
-    let Ok(mut presence) = presence.write() else {
-        return;
-    };
-    let entry = presence.entry(participant.to_string()).or_default();
+    let entry = presence_entry_mut(presence, participant);
     entry.last_seen_at = Some(now);
     match kind {
         MobilePeerRxKind::Control => entry.last_control_seen_at = Some(now),
@@ -421,16 +429,42 @@ fn note_mobile_peer_rx(
     entry.rx_bytes = entry.rx_bytes.saturating_add(len as u64);
 }
 
+fn note_mobile_peer_rx(
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    participant: &str,
+    len: usize,
+    kind: MobilePeerRxKind,
+) {
+    note_mobile_peer_rx_batch(presence, Some((participant, len)), &[], kind);
+}
+
+fn note_mobile_peer_rx_batch(
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    first: Option<(&str, usize)>,
+    extra: &[(&str, usize)],
+    kind: MobilePeerRxKind,
+) {
+    if first.is_none() && extra.is_empty() {
+        return;
+    }
+    let now = unix_timestamp();
+    let Ok(mut presence) = presence.write() else {
+        return;
+    };
+    for &(participant, len) in first.iter().chain(extra.iter()) {
+        apply_mobile_peer_rx(&mut presence, participant, len, kind, now);
+    }
+}
+
 fn note_mobile_peer_tx(
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     participant: &str,
     len: usize,
 ) {
-    let Ok(mut presence) = presence.write() else {
-        return;
-    };
-    let entry = presence.entry(participant.to_string()).or_default();
-    entry.tx_bytes = entry.tx_bytes.saturating_add(len as u64);
+    if let Ok(mut presence) = presence.write() {
+        let entry = presence_entry_mut(&mut presence, participant);
+        entry.tx_bytes = entry.tx_bytes.saturating_add(len as u64);
+    }
 }
 
 fn note_mobile_peer_ping_attempt(
@@ -438,12 +472,11 @@ fn note_mobile_peer_ping_attempt(
     participant: &str,
     now: u64,
 ) {
-    let Ok(mut presence) = presence.write() else {
-        return;
-    };
-    let entry = presence.entry(participant.to_string()).or_default();
-    entry.last_ping_sent_at = Some(now);
-    entry.last_ping_started_at = Some(Instant::now());
+    if let Ok(mut presence) = presence.write() {
+        let entry = presence_entry_mut(&mut presence, participant);
+        entry.last_ping_sent_at = Some(now);
+        entry.last_ping_started_at = Some(Instant::now());
+    }
 }
 
 fn note_mobile_peer_pong(
@@ -679,14 +712,8 @@ fn sync_mobile_config_peer_hints(
     config_state: &Arc<RwLock<MobileTunnelConfig>>,
     peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
 ) -> Result<()> {
-    let hints = peer_hints
-        .read()
-        .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?
-        .clone();
-    let mut config = config_state
-        .write()
-        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
-    config.peer_hints = hints;
+    let hints = peer_hints.read().map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?.clone();
+    config_state.write().map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?.peer_hints = hints;
     Ok(())
 }
 
@@ -697,36 +724,22 @@ fn persist_mobile_peer_hints(
     source_pubkey: &str,
     capabilities: &PeerCapabilities,
 ) -> Result<()> {
-    let mut endpoints = capabilities
-        .endpoint_hints
-        .iter()
-        .filter_map(peer_endpoint_hint_addr)
-        .collect::<Vec<_>>();
+    let mut endpoints = capabilities.endpoint_hints.iter().filter_map(peer_endpoint_hint_addr).collect::<Vec<_>>();
     endpoints.sort();
     endpoints.dedup();
     if endpoints.is_empty() {
         return Ok(());
     }
 
-    let mut app = app_config
-        .write()
-        .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+    let mut app = app_config.write().map_err(|_| anyhow!("mobile app config lock poisoned"))?;
     if app.fips_peer_endpoints.get(source_pubkey) == Some(&endpoints) {
         return Ok(());
     }
-    app.fips_peer_endpoints
-        .insert(source_pubkey.to_string(), endpoints);
+    app.fips_peer_endpoints.insert(source_pubkey.to_string(), endpoints);
     app.ensure_defaults();
-    if let Some(config_path) = config_path
-        && let Err(error) = app.save(config_path)
-    {
-        mobile_debug_log(format!(
-            "mobile: peer hints updated in memory but config save failed: {error:#}"
-        ));
-        tracing::warn!(
-            ?error,
-            "mobile: peer hints updated in memory but config save failed"
-        );
+    if let Some(config_path) = config_path && let Err(error) = app.save(config_path) {
+        mobile_debug_log(format!("mobile: peer hints updated in memory but config save failed: {error:#}"));
+        tracing::warn!(?error, "mobile: peer hints updated in memory but config save failed");
     }
     app_config_dirty.store(true, Ordering::Relaxed);
     Ok(())
@@ -736,20 +749,14 @@ async fn refresh_mobile_endpoint_peers(
     endpoint: &FipsEndpoint,
     config_state: &Arc<RwLock<MobileTunnelConfig>>,
 ) -> Result<()> {
-    let config = config_state
-        .read()
-        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
-        .clone();
+    let config = config_state.read().map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?.clone();
     let peers = fips_peer_configs_from_mesh(
         &config.peers,
         &config.peer_hints,
         &config.bootstrap_peers,
         mobile_includes_non_roster_transit(&config),
     );
-    endpoint
-        .update_peers(peers)
-        .await
-        .context("mobile FIPS peer update failed")?;
+    endpoint.update_peers(peers).await.context("mobile FIPS peer update failed")?;
     Ok(())
 }
 

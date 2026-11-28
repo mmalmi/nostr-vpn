@@ -8,7 +8,7 @@
             ..Default::default()
         }).unwrap_err();
         assert!(error.to_string().contains("IPv4 only"));
-        assert!(serde_json::to_vec(&runtime.config).unwrap() == before);
+        assert!(serde_json::to_vec(&runtime.config).unwrap() == before, "rejected edit changed config");
     }
 
     #[test]
@@ -24,7 +24,7 @@
             })
             .unwrap_err();
         assert!(error.to_string().contains("at most 8 MiB"), "{error}");
-        assert!(serde_json::to_vec(&runtime.config).unwrap() == before);
+        assert!(serde_json::to_vec(&runtime.config).unwrap() == before, "rejected edit changed config");
     }
 
     #[test]

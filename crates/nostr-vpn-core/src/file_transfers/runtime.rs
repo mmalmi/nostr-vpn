@@ -210,8 +210,9 @@ async fn run(
         .filter(|state| !state.status.terminal())
         .map(|state| state.id)
         .collect::<HashSet<_>>();
-    #[cfg(target_os = "ios")]
+    #[cfg(unix)]
     let mut idle_queue = unix_storage::IdleCommandQueue::new(&config);
+    let mut state_dirty = true;
     let mut pending_cleanup = fs::read_dir(state_dir(&config).join("sources"))?
         .filter_map(std::result::Result::ok)
         .filter_map(|entry| {
@@ -267,6 +268,7 @@ async fn run(
                 }
                 _ => {}
             }
+            state_dirty = true;
             // Drain progress notifications cheaply; file-system
             // polling and UI snapshots run at most twice per second.
             continue;
@@ -294,6 +296,7 @@ async fn run(
             }
         };
         if let Some(peers) = updated_peers {
+            state_dirty = true;
             aliases = peers;
             allowed = aliases.keys().cloned().collect();
             sender
@@ -307,9 +310,12 @@ async fn run(
                 }
             }
         }
-        for snapshot in sender.snapshots() {
-            if let Some(registration) = registering.remove(&snapshot.id) {
-                remove_owned(&registration.command_path, false)?;
+        if !registering.is_empty() {
+            for snapshot in sender.snapshots() {
+                if let Some(registration) = registering.remove(&snapshot.id) {
+                    remove_owned(&registration.command_path, false)?;
+                    state_dirty = true;
+                }
             }
         }
         if preparing
@@ -323,15 +329,19 @@ async fn run(
             remove_owned(&job.command_path, false)?;
             pending_cleanup.insert(job.state.id.clone());
             failures.push(job.state.clone());
+            state_dirty = true;
         }
-        #[cfg(target_os = "ios")]
+        #[cfg(unix)]
         let paths = if idle_queue.is_empty(&config)? {
             Vec::new()
         } else {
             command_paths(&config)?
         };
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(unix))]
         let paths = command_paths(&config)?;
+        if !paths.is_empty() {
+            state_dirty = true;
+        }
         let mut commands = paths
             .into_iter()
             .map(|path| {
@@ -523,9 +533,20 @@ async fn run(
                     },
                 );
             }
+            state_dirty = true;
         }
-        let mut states = sender
-            .snapshots()
+        let snapshots = sender.snapshots();
+        if !state_dirty
+            && snapshots.is_empty()
+            && registering.is_empty()
+            && preparing.is_none()
+            && pending_cleanup.is_empty()
+        {
+            continue;
+        }
+        // Project the transition to an empty sender before skipping idle snapshots.
+        state_dirty = !snapshots.is_empty();
+        let mut states = snapshots
             .into_iter()
             .map(|snapshot| {
                 let status = match snapshot.status {
@@ -610,6 +631,9 @@ async fn run(
                 .filter(|state| !live.contains(&state.id))
                 .cloned(),
         );
+        if failures.len() > 32 {
+            failures.drain(..failures.len() - 32);
+        }
         states.extend(failures.iter().cloned());
         states.extend(
             registering
@@ -620,9 +644,6 @@ async fn run(
             let mut state = job.state.clone();
             state.transferred_bytes = job.progress.load(Ordering::Relaxed);
             states.push(state);
-        }
-        if failures.len() > 32 {
-            failures.drain(..failures.len() - 32);
         }
         pending_cleanup.retain(|id| !cleanup_sources(&config, id));
         bound_states(&mut states);

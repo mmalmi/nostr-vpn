@@ -81,51 +81,74 @@ fn mobile_elapsed_at_least(now: u64, timestamp: u64, interval_secs: u64) -> bool
     now - timestamp >= interval_secs
 }
 
-async fn handle_mobile_endpoint_message(
+async fn handle_mobile_endpoint_message_batch<I>(
     control: &MobileEndpointReceiveContext<'_>,
     inbound_packets: &mut Vec<Vec<u8>>,
-    message: FipsEndpointMessage,
-) -> Result<bool> {
-    if handle_mobile_probe_datagram(control, &message).await? {
-        return Ok(true);
-    }
+    messages: I,
+) where
+    I: IntoIterator<Item = FipsEndpointMessage>,
+{
+    let mesh = control.mesh.read().ok().map(|mesh| Arc::clone(&*mesh));
+    let local_address = control
+        .config_state
+        .read()
+        .ok()
+        .and_then(|config| parse_ipv4(&config.local_address));
+    let mut current_source_node_addr = None;
+    let mut current_admitter = None;
+    let mut admission_cache = FipsEndpointAdmissionCache::default();
+    let mut first_rx: Option<(&str, usize)> = None;
+    let mut extra_rx: Vec<(&str, usize)> = Vec::new();
 
-    let source_peer = message.source_peer;
-    let source_node_addr = *source_peer.node_addr();
-    let message_len = message.data.len();
-    let packet = control.mesh.read().ok().and_then(|mesh| {
-        mesh.receive_endpoint_data_owned_with_source_node_addr(
-            source_node_addr.as_bytes(),
-            message.data.into_vec(),
-        )
-        .map(|packet| (packet.source_pubkey.to_string(), packet.bytes))
-    });
-    if let Some((source_pubkey, mut bytes)) = packet {
-        note_mobile_peer_rx(
-            control.presence,
-            &source_pubkey,
-            message_len,
-            MobilePeerRxKind::Data,
-        );
-        let local_address = control
-            .config_state
-            .read()
-            .ok()
-            .and_then(|config| parse_ipv4(&config.local_address));
-        if let Some(reply) = local_address.and_then(|local_address| {
-            nostr_vpn_core::packet_checksums::ipv4_icmp_echo_reply(&bytes, local_address)
-        }) {
-            control
-                .endpoint
-                .send_batch_to_peer(source_peer, vec![reply])
-                .await
-                .context("failed to send mobile ICMP echo reply")?;
-            return Ok(true);
+    for message in messages {
+        match handle_mobile_probe_datagram(control, &message).await {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(?error, "mobile: failed to handle FIPS datagram");
+                continue;
+            }
+        }
+        let Some(mesh_ref) = mesh.as_deref() else {
+            continue;
+        };
+        let source_peer = message.source_peer;
+        let source_node_addr = *source_peer.node_addr().as_bytes();
+        if current_source_node_addr != Some(source_node_addr) {
+            current_source_node_addr = Some(source_node_addr);
+            current_admitter = mesh_ref.endpoint_source_admitter(&source_node_addr);
+            admission_cache = FipsEndpointAdmissionCache::default();
+        }
+        let Some(admitter) = current_admitter.as_ref() else {
+            continue;
+        };
+        let message_len = message.data.len();
+        if !admitter.admit_packet_cached(message.data.as_slice(), &mut admission_cache) {
+            continue;
+        }
+        let source_pubkey = admitter.source_pubkey();
+        match &mut first_rx {
+            None => first_rx = Some((source_pubkey, message_len)),
+            Some((pk, total)) if *pk == source_pubkey => *total = total.saturating_add(message_len),
+            Some(_) => match extra_rx.iter_mut().find(|(pk, _)| *pk == source_pubkey) {
+                Some((_, total)) => *total = total.saturating_add(message_len),
+                None => extra_rx.push((source_pubkey, message_len)),
+            },
+        }
+        let mut bytes = message.data.into_vec();
+        if let Some(reply) = local_address
+            .and_then(|addr| nostr_vpn_core::packet_checksums::ipv4_icmp_echo_reply(&bytes, addr))
+        {
+            if let Err(error) = control.endpoint.send_batch_to_peer(source_peer, vec![reply]).await {
+                tracing::warn!(?error, "mobile: failed to send ICMP echo reply");
+            }
+            continue;
         }
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut bytes);
         inbound_packets.push(bytes);
     }
-    Ok(true)
+
+    note_mobile_peer_rx_batch(control.presence, first_rx, &extra_rx, MobilePeerRxKind::Data);
 }
 
 async fn handle_mobile_probe_datagram(
@@ -375,34 +398,22 @@ async fn apply_mobile_roster_runtime_update(
         control.mesh,
         FipsMeshRuntime::with_local_routes(updated_peers.clone(), local_routes),
     )?;
-    {
-        let mut peers = control
-            .mesh_peers
-            .write()
-            .map_err(|_| anyhow!("mobile FIPS peer lock poisoned"))?;
-        *peers = updated_peers;
-    }
-    {
-        let mut identities = control
-            .peer_identities
-            .write()
-            .map_err(|_| anyhow!("mobile FIPS peer identity lock poisoned"))?;
-        *identities = updated_peer_identities;
-    }
-    {
-        let mut hints = control
-            .peer_hints
-            .write()
-            .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?;
-        *hints = updated_hints;
-    }
-    {
-        let mut config = control
-            .config_state
-            .write()
-            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
-        *config = updated.clone();
-    }
+    *control
+        .mesh_peers
+        .write()
+        .map_err(|_| anyhow!("mobile FIPS peer lock poisoned"))? = updated_peers;
+    *control
+        .peer_identities
+        .write()
+        .map_err(|_| anyhow!("mobile FIPS peer identity lock poisoned"))? = updated_peer_identities;
+    *control
+        .peer_hints
+        .write()
+        .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))? = updated_hints;
+    *control
+        .config_state
+        .write()
+        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))? = updated.clone();
     if updated.pending_join_request_recipient.trim().is_empty() {
         control.join_request_active.store(false, Ordering::Relaxed);
     }
@@ -466,16 +477,12 @@ async fn reply_mobile_ping(
     network_id: String,
     sent_at: u64,
 ) -> Result<()> {
-    let reply = FipsControlFrame::Pong {
+    let encoded = encode_fips_control_frame(&FipsControlFrame::Pong {
         network_id,
         sent_at,
         replied_at: unix_timestamp(),
-    };
-    let encoded = encode_fips_control_frame(&reply)?;
-    if let Err(error) = endpoint
-        .send_batch_to_peer(source_peer, vec![encoded])
-        .await
-    {
+    })?;
+    if let Err(error) = endpoint.send_batch_to_peer(source_peer, vec![encoded]).await {
         tracing::warn!(?error, "mobile: failed to reply to FIPS peer ping");
     }
     Ok(())
@@ -486,8 +493,7 @@ fn mobile_control_source_pubkey(
     source_peer: PeerIdentity,
     frame: &FipsControlFrame,
 ) -> Result<Option<String>> {
-    let mesh = mobile_mesh_snapshot(mesh)?;
-    Ok(control_frame_source_pubkey(&mesh, source_peer, frame))
+    Ok(control_frame_source_pubkey(mobile_mesh_snapshot(mesh)?.as_ref(), source_peer, frame))
 }
 
 fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlFrame) -> bool {
@@ -559,14 +565,7 @@ impl MobilePeerIdentityMap {
 
     fn identity_for_participant(&self, participant: &str) -> Option<PeerIdentity> {
         let participant = mobile_participant_pubkey_bytes(participant)?;
-        self.identity_for_participant_bytes(&participant)
-    }
-
-    fn identity_for_participant_bytes(
-        &self,
-        participant: &MobileParticipantPubkeyBytes,
-    ) -> Option<PeerIdentity> {
-        self.by_participant.get(participant).copied()
+        self.by_participant.get(&participant).copied()
     }
 }
 
@@ -597,14 +596,6 @@ fn mobile_peer_identity_map(
     identities
 }
 
-fn mobile_identity_for_send(
-    identities: &MobilePeerIdentityMap,
-    participant: Option<&MobileParticipantPubkeyBytes>,
-    endpoint_node_addr: &[u8; 16],
-) -> Option<PeerIdentity> {
-    identities.identity_for_send(participant, endpoint_node_addr)
-}
-
 fn mobile_participant_pubkey_bytes(value: &str) -> Option<MobileParticipantPubkeyBytes> {
     PublicKey::parse(value.trim())
         .ok()
@@ -625,7 +616,6 @@ struct MobileEndpointSendRun {
     endpoint_node_addr: [u8; 16],
     identity: PeerIdentity,
     payloads: Vec<Vec<u8>>,
-    packet_count: usize,
 }
 
 impl MobileEndpointSendRun {
@@ -636,16 +626,13 @@ impl MobileEndpointSendRun {
         identity: PeerIdentity,
         payload: Vec<u8>,
     ) -> Self {
-        let mut run = Self {
+        Self {
             participant_fallback,
             participant_key,
             endpoint_node_addr,
             identity,
-            payloads: Vec::new(),
-            packet_count: 0,
-        };
-        run.push_payload(payload);
-        run
+            payloads: vec![payload],
+        }
     }
 
     fn matches(
@@ -654,23 +641,12 @@ impl MobileEndpointSendRun {
         participant_fallback: Option<&str>,
         endpoint_node_addr: &[u8; 16],
     ) -> bool {
-        if self.endpoint_node_addr != *endpoint_node_addr {
-            return false;
-        }
-        match (self.participant_key, participant_key) {
-            (Some(left), Some(right)) => left == right,
-            (None, None) => self.participant_fallback.as_deref() == participant_fallback,
-            _ => false,
-        }
-    }
-
-    fn push_payload(&mut self, payload: Vec<u8>) {
-        self.payloads.push(payload);
-        self.packet_count = self.packet_count.saturating_add(1);
-    }
-
-    fn into_send_parts(self) -> (PeerIdentity, Vec<Vec<u8>>, usize) {
-        (self.identity, self.payloads, self.packet_count)
+        self.endpoint_node_addr == *endpoint_node_addr
+            && match (self.participant_key, participant_key) {
+                (Some(left), Some(right)) => left == right,
+                (None, None) => self.participant_fallback.as_deref() == participant_fallback,
+                _ => false,
+            }
     }
 }
 
@@ -716,6 +692,36 @@ impl MobileSecureDnsDispatch {
     }
 }
 
+fn packet_targets_ipv4_destination(packet: &[u8], destination: [u8; 4]) -> bool {
+    packet.len() >= 20 && packet[0] >> 4 == 4 && packet[16..20] == destination
+}
+
+fn route_mobile_outbound_packet_cached<'a>(
+    mesh: &'a FipsMeshRuntime,
+    packet: &[u8],
+    cached: &mut Option<(IpAddr, Option<RoutedFipsPeer<'a>>)>,
+) -> Option<(Option<String>, Option<MobileParticipantPubkeyBytes>, [u8; 16])> {
+    let (_, destination) = packet_endpoints(packet)?;
+    let peer = match *cached {
+        Some((cached_dest, peer)) if cached_dest == destination => peer,
+        _ => {
+            let peer = mesh.route_outbound_destination_peer(destination);
+            *cached = Some((destination, peer));
+            peer
+        }
+    }?;
+    if peer.via_default_route {
+        mesh.note_cached_exit_outbound(*peer.endpoint_node_addr, packet);
+    }
+    Some((
+        peer.participant_pubkey_bytes
+            .is_none()
+            .then(|| peer.participant_pubkey.to_string()),
+        peer.participant_pubkey_bytes.copied(),
+        *peer.endpoint_node_addr,
+    ))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_mobile_outbound_packets(
     endpoint: &FipsEndpoint,
@@ -735,13 +741,18 @@ async fn dispatch_mobile_outbound_packets(
     let mut pending_dns_responses = Vec::new();
     let mut pending_wg_packets = Vec::new();
     let mesh = mesh.read().ok().map(|mesh| Arc::clone(&*mesh));
+    let magic_dns_octets = magic_dns_server.map(|ip| ip.octets());
+    let mut cached_destination_peer: Option<(IpAddr, Option<RoutedFipsPeer<'_>>)> = None;
     for mut packet in packets {
+        let targets_magic_dns = magic_dns_octets
+            .is_some_and(|dns_octets| packet_targets_ipv4_destination(&packet, dns_octets));
         // With the Android app UID captured, reqwest's DoH connection returns
         // through this same TUN. Resolve off-loop so its TCP packets can reach
         // WG. The tunnel-owned JoinSet bounds work, aborts it on tunnel stop,
         // and lets saturation fall through to the SERVFAIL path below.
-        if let (Some(secure_dns), Some(magic_dns_server)) =
-            (secure_dns.as_mut(), magic_dns_server)
+        if targets_magic_dns
+            && let (Some(secure_dns), Some(magic_dns_server)) =
+                (secure_dns.as_mut(), magic_dns_server)
             && exit_dns_nat.is_none()
             && parse_mobile_magic_dns_query(&packet, magic_dns_server).is_some()
             && secure_dns.try_spawn_response(
@@ -757,7 +768,8 @@ async fn dispatch_mobile_outbound_packets(
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
         // as a remote nvpn node.
-        if let Some(magic_dns_server) = magic_dns_server
+        if targets_magic_dns
+            && let Some(magic_dns_server) = magic_dns_server
             && let Some(action) = mobile_dns_packet_action(
                 &packet,
                 app_config_for_dns,
@@ -786,20 +798,16 @@ async fn dispatch_mobile_outbound_packets(
             return false;
         }
 
-        if let Some(exit_dns_nat) = exit_dns_nat {
+        if targets_magic_dns && let Some(exit_dns_nat) = exit_dns_nat {
             exit_dns_nat.rewrite_query(&mut packet);
         }
 
-        let outgoing_peer = mesh.as_ref().and_then(|mesh| {
-            mesh.route_outbound_packet_peer(&packet).map(|peer| {
-                (
-                    peer.participant_pubkey_bytes
-                        .is_none()
-                        .then(|| peer.participant_pubkey.to_string()),
-                    peer.participant_pubkey_bytes.copied(),
-                    *peer.endpoint_node_addr,
-                )
-            })
+        let outgoing_peer = mesh.as_deref().and_then(|mesh| {
+            route_mobile_outbound_packet_cached(
+                mesh,
+                &packet,
+                &mut cached_destination_peer,
+            )
         });
         if let Some((participant_fallback, participant_key, endpoint_node_addr)) = outgoing_peer {
             if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
@@ -876,12 +884,12 @@ fn push_mobile_endpoint_send_run(
             &endpoint_node_addr,
         )
     {
-        current.push_payload(packet);
+        current.payloads.push(packet);
         return None;
     }
 
     let identity = peer_identities.read().ok().and_then(|identities| {
-        mobile_identity_for_send(&identities, participant_key.as_ref(), &endpoint_node_addr)
+        identities.identity_for_send(participant_key.as_ref(), &endpoint_node_addr)
     });
     let Some(identity) = identity else {
         return run.take();
@@ -902,29 +910,24 @@ async fn flush_mobile_endpoint_send_run(
     endpoint: &FipsEndpoint,
     run: &mut Option<MobileEndpointSendRun>,
 ) -> bool {
-    if let Some(run) = run.take() {
-        send_mobile_endpoint_run(endpoint, run).await
-    } else {
-        true
+    match run.take() {
+        Some(run) => send_mobile_endpoint_run(endpoint, run).await,
+        None => true,
     }
 }
 
 async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSendRun) -> bool {
-    let (identity, payloads, packet_count) = run.into_send_parts();
+    let packet_count = run.payloads.len();
     if packet_count == 0 {
         return true;
     }
-    match endpoint.send_batch_to_peer(identity, payloads).await {
-        Ok(()) => true,
-        Err(error) => {
-            tracing::warn!(
-                ?error,
-                packet_count,
-                "mobile: failed to send FIPS endpoint data batch"
-            );
-            false
-        }
-    }
+    endpoint
+        .send_batch_to_peer(run.identity, run.payloads)
+        .await
+        .inspect_err(|error| {
+            tracing::warn!(?error, packet_count, "mobile: failed to send FIPS endpoint data batch");
+        })
+        .is_ok()
 }
 
 fn push_mobile_wg_packet(
@@ -933,15 +936,23 @@ fn push_mobile_wg_packet(
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
 ) {
-    // No matching mesh peer route: hand the plaintext off to the WG runtime,
-    // which will boringtun-encapsulate and send out via the upstream UDP
-    // socket. SNAT first so the inner source IP matches the WG peer's
-    // configured address; Mullvad/Proton silently drop other source IPs.
+    // SNAT first so the inner source IP matches the WG peer's configured address.
     if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
         rewrite_ipv4_source(&mut packet, mesh, wg);
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
     }
     packets.push(packet);
+}
+
+fn resolve_mobile_peer_identity(
+    peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
+    participant: &str,
+) -> Result<PeerIdentity> {
+    peer_identities
+        .read()
+        .ok()
+        .and_then(|identities| identities.identity_for_participant(participant))
+        .ok_or_else(|| anyhow!("missing mobile FIPS endpoint identity for participant {participant}"))
 }
 
 async fn send_mobile_endpoint_data(
@@ -950,18 +961,7 @@ async fn send_mobile_endpoint_data(
     participant: &str,
     data: Vec<u8>,
 ) -> Result<()> {
-    let participant_key = mobile_participant_pubkey_bytes(participant);
-    let identity =
-        peer_identities
-            .read()
-            .ok()
-            .and_then(|identities| match participant_key.as_ref() {
-                Some(participant) => identities.identity_for_participant_bytes(participant),
-                None => identities.identity_for_participant(participant),
-            });
-    let identity = identity.ok_or_else(|| {
-        anyhow!("missing mobile FIPS endpoint identity for participant {participant}")
-    })?;
+    let identity = resolve_mobile_peer_identity(peer_identities, participant)?;
     endpoint
         .send_batch_to_peer(identity, vec![data])
         .await
@@ -974,16 +974,7 @@ async fn send_mobile_state_control(
     participant: &str,
     frame: &FipsControlFrame,
 ) -> Result<usize> {
-    let participant_key = mobile_participant_pubkey_bytes(participant);
-    let identity = peer_identities.read().ok().and_then(|identities| {
-        participant_key
-            .as_ref()
-            .and_then(|participant| identities.identity_for_participant_bytes(participant))
-            .or_else(|| identities.identity_for_participant(participant))
-    });
-    let identity = identity.ok_or_else(|| {
-        anyhow!("missing mobile FIPS endpoint identity for participant {participant}")
-    })?;
+    let identity = resolve_mobile_peer_identity(peer_identities, participant)?;
     state_control
         .send(identity, frame)
         .await

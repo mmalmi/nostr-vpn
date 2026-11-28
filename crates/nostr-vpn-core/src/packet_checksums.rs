@@ -44,14 +44,69 @@ pub fn ipv4_icmp_echo_reply(packet: &[u8], local_address: Ipv4Addr) -> Option<Ve
 
     reply[ihl + 2] = 0;
     reply[ihl + 3] = 0;
-    let icmp_checksum = finalize_sum(add_words(0, &reply[ihl..total_len]));
+    let icmp_checksum = !fold_checksum(checksum_sum(0, &reply[ihl..total_len]));
     reply[ihl + 2..ihl + 4].copy_from_slice(&icmp_checksum.to_be_bytes());
 
-    reply[10] = 0;
-    reply[11] = 0;
-    let header_checksum = finalize_sum(add_words(0, &reply[..ihl]));
-    reply[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+    finalize_ipv4_header_checksum(&mut reply[..ihl]);
     Some(reply)
+}
+
+/// Recompute the IPv4 header checksum in-place for a header slice of at least 20 bytes.
+pub fn finalize_ipv4_header_checksum(header: &mut [u8]) {
+    if header.len() < 20 {
+        return;
+    }
+    header[10] = 0;
+    header[11] = 0;
+    let checksum = !fold_checksum(checksum_sum(0, header));
+    header[10..12].copy_from_slice(&checksum.to_be_bytes());
+}
+
+/// Compute the protocol + source/destination address portion of an IPv4 or IPv6
+/// transport pseudo-header sum. Add the transport length before folding.
+#[inline]
+#[must_use]
+pub fn pseudo_header_base_sum(protocol: u8, src: &[u8], dst: &[u8]) -> u64 {
+    let sum = checksum_sum(u64::from(protocol), src);
+    checksum_sum(sum, dst)
+}
+
+/// Accumulate RFC 1071 ones'-complement 16-bit big-endian words from `bytes`
+/// onto `initial` using auto-vectorizable native-endian `u32` accumulation.
+#[inline]
+#[must_use]
+pub fn checksum_sum(mut sum: u64, bytes: &[u8]) -> u64 {
+    // By RFC 1071 byte-order independence, summing 16-bit words in native
+    // endianness with end-around carry and converting the folded 16-bit result
+    // from big-endian yields the exact big-endian 16-bit sum without per-word
+    // byte swaps in the inner loop. Chunking at 32,768 words prevents u32
+    // overflow (32,768 * 0xffff < 2^31).
+    let (pairs, rem) = bytes.as_chunks::<2>();
+    for block in pairs.chunks(32_768) {
+        let mut acc = 0_u32;
+        for &pair in block {
+            acc += u32::from(u16::from_ne_bytes(pair));
+        }
+        let folded = (acc & 0xffff) + (acc >> 16);
+        let folded = (folded & 0xffff) + (folded >> 16);
+        let ne_16 = u16::try_from(folded).expect("folded checksum fits u16");
+        sum += u64::from(u16::from_be(ne_16));
+    }
+    if let Some(&byte) = rem.first() {
+        sum += u64::from(byte) << 8;
+    }
+    sum
+}
+
+/// Fold an accumulated RFC 1071 sum to a 16-bit ones'-complement sum (not inverted).
+#[inline]
+#[must_use]
+pub fn fold_checksum(mut sum: u64) -> u16 {
+    sum = (sum & 0xffff_ffff) + (sum >> 32);
+    sum = (sum & 0xffff) + (sum >> 16);
+    sum = (sum & 0xffff) + (sum >> 16);
+    sum = (sum & 0xffff) + (sum >> 16);
+    u16::try_from(sum).expect("folded checksum fits u16")
 }
 
 /// Recompute TCP/UDP checksums for supported IP packets in-place.
@@ -154,41 +209,17 @@ pub fn finalize_ipv6_transport_checksum(packet: &mut [u8]) {
 
 fn ipv4_transport_checksum(packet: &[u8], ihl: usize, transport_len: u16, protocol: u8) -> u16 {
     let transport_len_usize = usize::from(transport_len);
-    let mut sum = 0_u32;
-    sum = add_words(sum, &packet[12..16]);
-    sum = add_words(sum, &packet[16..20]);
-    sum += u32::from(protocol);
-    sum += u32::from(transport_len);
-    sum = add_words(sum, &packet[ihl..ihl + transport_len_usize]);
-    finalize_sum(sum)
+    let sum = checksum_sum(
+        u64::from(protocol) + u64::from(transport_len),
+        &packet[12..20],
+    );
+    !fold_checksum(checksum_sum(sum, &packet[ihl..ihl + transport_len_usize]))
 }
 
 fn ipv6_transport_checksum(packet: &[u8], payload_len: u16, protocol: u8) -> u16 {
     let payload_len_usize = usize::from(payload_len);
-    let mut sum = 0_u32;
-    sum = add_words(sum, &packet[8..40]);
-    sum += u32::from(payload_len);
-    sum += u32::from(protocol);
-    sum = add_words(sum, &packet[40..40 + payload_len_usize]);
-    finalize_sum(sum)
-}
-
-fn add_words(mut sum: u32, bytes: &[u8]) -> u32 {
-    let (chunks, remainder) = bytes.as_chunks::<2>();
-    for chunk in chunks {
-        sum += u32::from(u16::from_be_bytes(*chunk));
-    }
-    if let Some(&byte) = remainder.first() {
-        sum += u32::from(byte) << 8;
-    }
-    sum
-}
-
-fn finalize_sum(mut sum: u32) -> u16 {
-    while sum > 0xffff {
-        sum = (sum & 0xffff) + (sum >> 16);
-    }
-    !u16::try_from(sum).expect("folded checksum fits u16")
+    let sum = checksum_sum(u64::from(protocol) + u64::from(payload_len), &packet[8..40]);
+    !fold_checksum(checksum_sum(sum, &packet[40..40 + payload_len_usize]))
 }
 
 #[cfg(test)]
@@ -214,10 +245,9 @@ mod tests {
         packet[24..26].copy_from_slice(&0x1234_u16.to_be_bytes());
         packet[26..28].copy_from_slice(&7_u16.to_be_bytes());
         packet[28..].copy_from_slice(payload);
-        let icmp_checksum = finalize_sum(add_words(0, &packet[20..]));
+        let icmp_checksum = !fold_checksum(checksum_sum(0, &packet[20..]));
         packet[22..24].copy_from_slice(&icmp_checksum.to_be_bytes());
-        let header_checksum = finalize_sum(add_words(0, &packet[..20]));
-        packet[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+        finalize_ipv4_header_checksum(&mut packet[..20]);
         packet
     }
 
@@ -232,9 +262,53 @@ mod tests {
         assert_eq!(&reply[16..20], &source.octets());
         assert_eq!(reply[20], 0);
         assert_eq!(reply[21], 0);
-        assert_eq!(finalize_sum(add_words(0, &reply[20..])), 0);
-        assert_eq!(finalize_sum(add_words(0, &reply[..20])), 0);
+        assert_eq!(!fold_checksum(checksum_sum(0, &reply[20..])), 0);
+        assert_eq!(!fold_checksum(checksum_sum(0, &reply[..20])), 0);
         assert_eq!(&reply[24..], &request[24..]);
+    }
+
+    #[test]
+    fn checksum_sum_matches_reference_across_lengths_and_carry_boundaries() {
+        fn ref_fold(initial: u64, bytes: &[u8]) -> u16 {
+            let mut sum = initial;
+            let (chunks, rem) = bytes.as_chunks::<2>();
+            for c in chunks {
+                sum += u64::from(u16::from_be_bytes(*c));
+            }
+            if let Some(&b) = rem.first() {
+                sum += u64::from(b) << 8;
+            }
+            while sum > 0xffff {
+                sum = (sum & 0xffff) + (sum >> 16);
+            }
+            u16::try_from(sum).expect("fits u16")
+        }
+
+        let buf = (0..4096usize)
+            .map(|i| u8::try_from((i.wrapping_mul(131) ^ (i >> 3) ^ 0x5a) & 0xff).expect("u8"))
+            .collect::<Vec<_>>();
+        for len in (0..=512).chain([1279, 1280, 1281, 1322, 1460, 4095, 4096]) {
+            for offset in 0..8 {
+                if offset + len <= buf.len() {
+                    let slice = &buf[offset..offset + len];
+                    assert_eq!(
+                        fold_checksum(checksum_sum(0x1_2345, slice)),
+                        ref_fold(0x1_2345, slice),
+                        "mismatch for len={len} offset={offset}"
+                    );
+                }
+            }
+        }
+        for pattern in [0x00_u8, 0xff_u8, 0x80_u8, 0x7f_u8] {
+            let uniform = vec![pattern; 1501];
+            for len in [0, 1, 2, 7, 8, 31, 32, 33, 63, 64, 65, 1500, 1501] {
+                assert_eq!(
+                    fold_checksum(checksum_sum(0xffff, &uniform[..len])),
+                    ref_fold(0xffff, &uniform[..len]),
+                    "mismatch for pattern={pattern:#x} len={len}"
+                );
+            }
+        }
     }
 
     #[test]
