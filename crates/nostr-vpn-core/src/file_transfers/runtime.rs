@@ -536,16 +536,11 @@ async fn run(
             state_dirty = true;
         }
         let snapshots = sender.snapshots();
-        if !state_dirty
-            && snapshots.is_empty()
-            && registering.is_empty()
-            && preparing.is_none()
-            && pending_cleanup.is_empty()
-        {
+        let local_work =
+            !registering.is_empty() || preparing.is_some() || !pending_cleanup.is_empty();
+        if !take_projection_request(&mut state_dirty, !snapshots.is_empty(), local_work) {
             continue;
         }
-        // Project the transition to an empty sender before skipping idle snapshots.
-        state_dirty = !snapshots.is_empty();
         let mut states = snapshots
             .into_iter()
             .map(|snapshot| {
@@ -656,6 +651,12 @@ async fn run(
             last_state = states;
         }
     }
+}
+
+fn take_projection_request(dirty: &mut bool, sender_active: bool, local_work: bool) -> bool {
+    // An active sender needs one more projection when its final snapshot disappears.
+    let requested = std::mem::replace(dirty, sender_active);
+    requested || sender_active || local_work
 }
 
 fn cancel_queued_send(config: &Path, id: &str) -> Result<Option<TransferState>> {
@@ -935,4 +936,21 @@ fn npub(hex: &str) -> Result<String> {
 }
 fn peer(hex: &str) -> Result<PeerIdentity> {
     PeerIdentity::from_npub(&npub(hex)?).map_err(Into::into)
+}
+
+#[cfg(test)]
+mod projection_tests {
+    use super::take_projection_request;
+
+    #[test]
+    fn final_empty_sender_projection_is_published_once() {
+        let mut dirty = false;
+        let projections = [false, true, true, false, false]
+            .map(|active| take_projection_request(&mut dirty, active, false));
+        assert_eq!(projections, [false, true, true, true, false]);
+        assert!(take_projection_request(&mut dirty, false, true));
+        dirty = true;
+        assert!(take_projection_request(&mut dirty, false, false));
+        assert!(!take_projection_request(&mut dirty, false, false));
+    }
 }
